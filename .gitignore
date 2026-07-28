@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage/
+work/
+.dart_tool/
+.flutter-plugins*
+build/
+ios/Pods/
