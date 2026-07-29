@@ -65,6 +65,11 @@ Abre `http://localhost:3000`. La API escucha en `http://localhost:3001`.
 
 - Administrador: `admin@mototaxi.local` / `Mototaxi2026!`
 - Soporte: `soporte@mototaxi.local` / `Soporte2026!`
+- Pasajera de prueba: `pasajera@mototaxi.local` / `Pasajera2026!`
+- Conductor de prueba: `conductor@mototaxi.local` / `Conductor2026!`
+
+Las dos últimas cuentas usan `POST /v1/auth/session` y representan el acceso de
+la aplicación móvil. No tienen acceso a la consola administrativa.
 
 El administrador puede aprobar/suspender conductores y pasajeros, publicar tarifas, dibujar zonas, consultar auditoría y comprobar PostGIS. Soporte tiene acceso de lectura y puede gestionar incidentes, pero no modificar tarifas, zonas ni aprobaciones.
 

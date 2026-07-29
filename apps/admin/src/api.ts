@@ -6,6 +6,12 @@ export interface QuoteRequest { zone: Zone; passengers: number; localTime: strin
 export interface Quote { currency: "USD"; totalCents: number; total: string; period: "DAY" | "NIGHT"; zone: Zone; passengers: number; appliedRule: string; pricingVersion: number; explanation: string }
 
 const base = "/api";
+function persistentPath(path: string, method?: string): string {
+  if (method === "POST" && path === "/v1/admin/pricing") return "/v1/admin/pricing/persist";
+  if (method === "POST" && path === "/v1/admin/zones") return "/v1/admin/zones/persist";
+  if (method === "PATCH" && /^\/v1\/admin\/incidents\/[^/]+$/.test(path)) return `${path}/persist`;
+  return path;
+}
 async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
@@ -17,7 +23,7 @@ export async function apiFetch<T>(path: string, token?: string, init: RequestIni
   const headers = new Headers(init.headers);
   if (init.body) headers.set("content-type", "application/json");
   if (token) headers.set("authorization", `Bearer ${token}`);
-  return parse<T>(await fetcher(`${base}${path}`, { ...init, headers }));
+  return parse<T>(await fetcher(`${base}${persistentPath(path, init.method)}`, { ...init, headers }));
 }
 export function login(email: string, password: string) { return apiFetch<Session>("/v1/admin/session", undefined, { method: "POST", body: JSON.stringify({ email, password }) }); }
 export async function requestQuote(input: QuoteRequest, signal?: AbortSignal, fetcher: typeof fetch = fetch): Promise<Quote> {

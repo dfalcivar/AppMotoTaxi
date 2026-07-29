@@ -1,187 +1,47 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
-void main() {
-  runApp(const MototaxiApp());
+const base = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.0.2.2:3001');
+void main()=>runApp(const MototaxiApp());
+class Session { const Session(this.token,this.role,this.name); final String token,role,name; }
+class Api {
+  Future<dynamic> call(String method,String path,{String? token,Object? body}) async { final request=http.Request(method,Uri.parse('$base$path')); request.headers.addAll({'content-type':'application/json',if(token!=null)'authorization':'Bearer $token'}); request.body=jsonEncode(body??{}); final response=await http.Response.fromStream(await request.send()); final data=response.body=='null'?null:jsonDecode(response.body); if(response.statusCode>=400)throw Exception(data?['error']??'Error de conexión'); return data; }
+  Future<Session> login(String e,String p) async { final d=await call('POST','/v1/auth/session',body:{'email':e,'password':p});return Session(d['token'],d['user']['role'],d['user']['name']); }
+  Future<dynamic> register(Map<String,dynamic> body)=>call('POST','/v1/auth/register',body:body);
+  Future<dynamic> active(String t)=>call('GET','/v1/trips/active',token:t);
+  Future<dynamic> trip(String t,String id)=>call('GET','/v1/trips/$id',token:t);
+  Future<dynamic> create(String t,int n,String o,String d)=>call('POST','/v1/trips',token:t,body:{'origin':{'longitude':-79.846,'latitude':0.865},'destination':{'longitude':-79.844,'latitude':0.867},'passengers':n,'originReference':o,'destinationReference':d});
+  Future<dynamic> profile(String t)=>call('GET','/v1/profile',token:t);
+  Future<dynamic> offers(String t)=>call('GET','/v1/driver/offers',token:t);
+  Future<void> available(String t,bool v)=>call('PUT','/v1/driver/availability',token:t,body:{'available':v,'location':{'longitude':-79.846,'latitude':0.865}});
+  Future<void> respond(String t,String id)=>call('POST','/v1/driver/offers/$id/respond',token:t,body:{'accept':true});
+  Future<void> action(String t,String id,String a)=>call('POST','/v1/trips/$id/action',token:t,body:{'action':a});
+  Future<void> rate(String t,String id,int score,List<String> tags,String comment)=>call('POST','/v1/trips/$id/ratings',token:t,body:{'score':score,'tags':tags,'comment':comment});
 }
+class MototaxiApp extends StatelessWidget { const MototaxiApp({super.key}); @override Widget build(BuildContext c)=>MaterialApp(debugShowCheckedModeBanner:false,theme:ThemeData(colorScheme:ColorScheme.fromSeed(seedColor:const Color(0xff087f8c)),useMaterial3:true),home:const Welcome()); }
+class Welcome extends StatelessWidget { const Welcome({super.key}); @override Widget build(BuildContext c)=>Scaffold(body:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[const Icon(Icons.two_wheeler,size:72),const SizedBox(height:20),Text('Muévete por Atacames',style:Theme.of(c).textTheme.headlineMedium),const SizedBox(height:30),FilledButton(onPressed:()=>open(c,'PASSENGER'),child:const Text('Ingresar como pasajero')),OutlinedButton(onPressed:()=>open(c,'DRIVER'),child:const Text('Ingresar como conductor')),TextButton(onPressed:()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>const Register())),child:const Text('Crear una cuenta'))]))); void open(BuildContext c,String r)=>Navigator.push(c,MaterialPageRoute(builder:(_)=>Login(r))); }
+class Login extends StatefulWidget { const Login(this.role,{super.key});final String role;@override State<Login> createState()=>_LoginState(); }
+class _LoginState extends State<Login> { late final TextEditingController email,password;String? error;@override void initState(){super.initState();final d=widget.role=='DRIVER';email=TextEditingController(text:d?'conductor@mototaxi.local':'pasajera@mototaxi.local');password=TextEditingController(text:d?'Conductor2026!':'Pasajera2026!');}Future<void> go()async{try{final s=await Api().login(email.text,password.text);if(mounted)Navigator.pushReplacement(context,MaterialPageRoute(builder:(_)=>s.role=='DRIVER'?Driver(s):Passenger(s)));}catch(e){setState(()=>error=e.toString());}}@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Ingresar')),body:Padding(padding:const EdgeInsets.all(20),child:Column(children:[TextField(controller:email,decoration:const InputDecoration(labelText:'Correo')),TextField(controller:password,obscureText:true,decoration:const InputDecoration(labelText:'Contraseña')),if(error!=null)Text(error!,style:const TextStyle(color:Colors.red)),const Spacer(),FilledButton(onPressed:go,child:const Text('Ingresar'))]))); }
+class Register extends StatefulWidget { const Register({super.key}); @override State<Register> createState()=>_RegisterState(); }
+class _RegisterState extends State<Register> { final name=TextEditingController(),email=TextEditingController(),phone=TextEditingController(),password=TextEditingController(),vehicle=TextEditingController(); String role='PASSENGER',message=''; bool busy=false; Future<void> submit()async{setState(()=>busy=true);try{final d=await Api().register({'fullName':name.text.trim(),'email':email.text.trim(),'phone':phone.text.trim(),'password':password.text,'role':role,if(role=='DRIVER')'vehicleIdentifier':vehicle.text.trim()});if(!mounted)return;if(role=='PASSENGER'&&d['token']!=null){final s=Session(d['token'],d['user']['role'],d['user']['name']);Navigator.pushReplacement(context,MaterialPageRoute(builder:(_)=>Passenger(s)));}else{setState(()=>message=d['message']??'Registro enviado.');}}catch(e){setState(()=>message=e.toString().replaceFirst('Exception: ',''));}finally{if(mounted)setState(()=>busy=false);}}@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Crear cuenta')),body:ListView(padding:const EdgeInsets.all(20),children:[TextField(controller:name,decoration:const InputDecoration(labelText:'Nombre completo')),TextField(controller:email,decoration:const InputDecoration(labelText:'Correo')),TextField(controller:phone,keyboardType:TextInputType.phone,decoration:const InputDecoration(labelText:'Teléfono, ej. +593...')),TextField(controller:password,obscureText:true,decoration:const InputDecoration(labelText:'Contraseña (mín. 8 caracteres)')),DropdownButtonFormField(value:role,items:const[DropdownMenuItem(value:'PASSENGER',child:Text('Pasajero')),DropdownMenuItem(value:'DRIVER',child:Text('Conductor'))],onChanged:(v)=>setState(()=>role=v!),decoration:const InputDecoration(labelText:'Tipo de cuenta')),if(role=='DRIVER')TextField(controller:vehicle,decoration:const InputDecoration(labelText:'Placa o identificador de moto')),if(message.isNotEmpty)Padding(padding:const EdgeInsets.all(12),child:Text(message)),FilledButton(onPressed:busy?null:submit,child:Text(busy?'Registrando…':'Crear cuenta'))])); }
 
-class MototaxiApp extends StatelessWidget {
-  const MototaxiApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    const seed = Color(0xFF087F8C);
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Mototaxi Atacames',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: seed),
-        scaffoldBackgroundColor: const Color(0xFFF1F6F7),
-        useMaterial3: true,
-      ),
-      home: const WelcomeScreen(),
-    );
+class PilotMap extends StatelessWidget {
+  const PilotMap(this.origin,this.destination,{required this.driverView,super.key});
+  final String origin,destination; final bool driverView;
+  @override Widget build(BuildContext c) {
+    const pickup=LatLng(0.865,-79.846), dropoff=LatLng(0.867,-79.844);
+    return ClipRRect(borderRadius:BorderRadius.circular(16),child:SizedBox(height:220,child:FlutterMap(options:const MapOptions(initialCenter:LatLng(0.866,-79.845),initialZoom:15),children:[TileLayer(urlTemplate:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',userAgentPackageName:'ec.mototaxi.atacames'),PolylineLayer(polylines:[Polyline(points:const[pickup,dropoff],color:Theme.of(c).colorScheme.primary,strokeWidth:4)]),MarkerLayer(markers:[Marker(point:pickup,width:120,height:70,child:Column(children:[const Icon(Icons.location_on,color:Colors.green,size:32),Text(origin,maxLines:1,overflow:TextOverflow.ellipsis)])),Marker(point:dropoff,width:120,height:70,child:Column(children:[const Icon(Icons.flag,color:Colors.red,size:30),Text(destination,maxLines:1,overflow:TextOverflow.ellipsis)]))])])));
   }
 }
-
-class WelcomeScreen extends StatelessWidget {
-  const WelcomeScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Spacer(),
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0B3B49),
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: const Icon(
-                  Icons.two_wheeler_rounded,
-                  color: Colors.white,
-                  size: 38,
-                ),
-              ),
-              const SizedBox(height: 28),
-              Text(
-                'Muévete por\nAtacames',
-                style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      color: const Color(0xFF0B3B49),
-                      fontWeight: FontWeight.w800,
-                      height: 1.05,
-                    ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                'Solicita una mototaxi cercana, conoce el valor antes de viajar y paga en efectivo.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: const Color(0xFF587078),
-                      height: 1.45,
-                    ),
-              ),
-              const Spacer(),
-              FilledButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const PassengerQuoteScreen(),
-                  ),
-                ),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(56),
-                  backgroundColor: const Color(0xFF0B3B49),
-                ),
-                child: const Text('Solicitar una mototaxi'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: () {},
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(56),
-                ),
-                child: const Text('Ingresar como conductor'),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class PassengerQuoteScreen extends StatefulWidget {
-  const PassengerQuoteScreen({super.key});
-
-  @override
-  State<PassengerQuoteScreen> createState() => _PassengerQuoteScreenState();
-}
-
-class _PassengerQuoteScreenState extends State<PassengerQuoteScreen> {
-  int passengers = 1;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Solicitar viaje')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Container(
-            height: 230,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              color: const Color(0xFFDCEAEC),
-            ),
-            child: const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.map_outlined, size: 54, color: Color(0xFF087F8C)),
-                  SizedBox(height: 10),
-                  Text('Mapa y ubicación de recogida'),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          const TextField(
-            decoration: InputDecoration(
-              labelText: '¿Dónde te recogemos?',
-              prefixIcon: Icon(Icons.my_location),
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          const TextField(
-            decoration: InputDecoration(
-              labelText: '¿A dónde vas?',
-              prefixIcon: Icon(Icons.location_on_outlined),
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 22),
-          Text(
-            'Pasajeros',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 10),
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 1, label: Text('1')),
-              ButtonSegment(value: 2, label: Text('2')),
-              ButtonSegment(value: 3, label: Text('3')),
-            ],
-            selected: {passengers},
-            onSelectionChanged: (value) {
-              setState(() => passengers = value.first);
-            },
-          ),
-          const SizedBox(height: 22),
-          Card(
-            child: ListTile(
-              contentPadding: const EdgeInsets.all(16),
-              title: const Text('El servidor calculará la tarifa'),
-              subtitle: Text('$passengers pasajero(s) · pago en efectivo'),
-              trailing: const Icon(Icons.chevron_right),
-            ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton(
-            onPressed: null,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(54),
-            ),
-            child: const Text('Selecciona origen y destino'),
-          ),
-        ],
-      ),
-    );
-  }
-}
+class Profile extends StatefulWidget { const Profile(this.s,{super.key});final Session s;@override State<Profile> createState()=>_ProfileState(); }
+class _ProfileState extends State<Profile> { dynamic p;@override void initState(){super.initState();Api().profile(widget.s.token).then((v){if(mounted)setState(()=>p=v);});}@override Widget build(BuildContext c){if(p==null)return const Scaffold(body:Center(child:CircularProgressIndicator()));final rs=p['reviews'] as List;return Scaffold(appBar:AppBar(title:const Text('Mi perfil')),body:ListView(padding:const EdgeInsets.all(20),children:[CircleAvatar(radius:35,child:Text(p['name'].substring(0,1))),Text(p['name'],textAlign:TextAlign.center,style:Theme.of(c).textTheme.headlineSmall),Text(p['role']=='DRIVER'?'Conductor':'Pasajero',textAlign:TextAlign.center),Card(child:ListTile(leading:const Icon(Icons.star,color:Colors.amber),title:Text('${(p['rating'] as num).toStringAsFixed(1)} de 5'),subtitle:Text('${p['ratingCount']} calificaciones'))),const Text('Comentarios recibidos'),...rs.map((r)=>Card(child:ListTile(title:Text(r['comment']?.toString().isNotEmpty==true?r['comment']:'Sin comentario'),subtitle:Text('${r['author']} · ${(r['tags'] as List).join(' · ')}'),trailing:Text('★ ${r['score']}'))))]));} }
+void profile(BuildContext c,Session s)=>Navigator.push(c,MaterialPageRoute(builder:(_)=>Profile(s)));
+Future<void> rating(BuildContext c,Session s,String tripId,VoidCallback done) async { int score=5;final note=TextEditingController();final tags=<String>{};await showModalBottomSheet(context:c,isScrollControlled:true,builder:(sheet)=>StatefulBuilder(builder:(c,set)=>Padding(padding:EdgeInsets.fromLTRB(20,20,20,20+MediaQuery.of(c).viewInsets.bottom),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('Califica tu experiencia'),Row(children:List.generate(5,(i)=>IconButton(onPressed:()=>set(()=>score=i+1),icon:Icon(i<score?Icons.star:Icons.star_border),color:Colors.amber))),Wrap(spacing:6,children:['Puntual','Amable','Conducción segura','Ubicación incorrecta'].map((x)=>FilterChip(label:Text(x),selected:tags.contains(x),onSelected:(v)=>set(()=>v?tags.add(x):tags.remove(x)))).toList()),TextField(controller:note,maxLines:3,decoration:const InputDecoration(labelText:'Comentario opcional')),FilledButton(onPressed:()async{await Api().rate(s.token,tripId,score,tags.toList(),note.text);done();if(c.mounted)Navigator.pop(c);},child:const Text('Guardar'))])))); }
+class _PassengerState extends State<Passenger> { final api=Api();final origin=TextEditingController(text:'Malecón de Atacames');final destination=TextEditingController(text:'Playa de Atacames');dynamic active;int people=1;String? message;bool rated=false;Timer? timer;@override void initState(){super.initState();load();timer=Timer.periodic(const Duration(seconds:3),(_)=>load());}@override void dispose(){timer?.cancel();super.dispose();}Future<void> load()async{try{final t=active==null?await api.active(widget.s.token):await api.trip(widget.s.token,active['tripId']);if(t!=null&&mounted)setState((){active=t;message={'SEARCHING':'Buscando conductor cercano.','ASSIGNED':'¡Viaje confirmado! ${t['driverName']} va en camino.','DRIVER_EN_ROUTE':'${t['driverName']} va en camino.','DRIVER_ARRIVED':'El conductor ya llegó.','IN_PROGRESS':'Tu viaje está en curso.'}[t['status']]??'Viaje finalizado. Califica a tu conductor.';});}catch(_){}}Future<void> create()async{try{final t=await api.create(widget.s.token,people,origin.text,destination.text);setState(()=>active={'tripId':t['tripId']});await load();}catch(e){setState(()=>message=e.toString());}}void newTrip(){setState((){active=null;rated=false;message=null;});} @override Widget build(BuildContext c){final o=active?['originReference']??origin.text;final d=active?['destinationReference']??destination.text;return Scaffold(appBar:AppBar(title:Text('Hola, ${widget.s.name}'),actions:[IconButton(onPressed:()=>profile(c,widget.s),icon:const Icon(Icons.person_outline))]),body:ListView(padding:const EdgeInsets.all(20),children:[PilotMap(o,d,driverView:false),if(active==null)...[TextField(controller:origin,decoration:const InputDecoration(labelText:'Origen')),TextField(controller:destination,decoration:const InputDecoration(labelText:'Destino')),SegmentedButton<int>(segments:const[ButtonSegment(value:1,label:Text('1')),ButtonSegment(value:2,label:Text('2')),ButtonSegment(value:3,label:Text('3'))],selected:{people},onSelectionChanged:(v)=>setState(()=>people=v.first))],if(message!=null)Padding(padding:const EdgeInsets.all(12),child:Text(message!)),if(active?['status']=='COMPLETED'&&!rated)FilledButton.icon(onPressed:()=>rating(c,widget.s,active['tripId'],()=>setState(()=>rated=true)),icon:const Icon(Icons.star),label:const Text('Calificar conductor')),if(active?['status']=='COMPLETED')OutlinedButton.icon(onPressed:newTrip,icon:const Icon(Icons.add),label:const Text('Solicitar otro viaje')),FilledButton(onPressed:active==null?create:null,child:Text(active==null?'Solicitar mototaxi':'Viaje en curso'))]));} }
+class Driver extends StatefulWidget { const Driver(this.s,{super.key});final Session s;@override State<Driver> createState()=>_DriverState(); }
+class _DriverState extends State<Driver> { final api=Api();dynamic active;List offers=[];bool available=false,rated=false;Timer? timer;@override void initState(){super.initState();restore();}@override void dispose(){timer?.cancel();super.dispose();}Future<void> restore()async{final t=await api.active(widget.s.token);if(mounted&&t!=null)setState(()=>active=t);}Future<void> toggle(bool v)async{await api.available(widget.s.token,v);setState(()=>available=v);if(v){await refresh();timer=Timer.periodic(const Duration(seconds:5),(_)=>refresh());}else{timer?.cancel();}}Future<void> refresh()async{if(available){final r=await api.offers(widget.s.token);if(mounted)setState(()=>offers=r);}}String? next()=>{'ASSIGNED':'EN_ROUTE','DRIVER_EN_ROUTE':'ARRIVED','DRIVER_ARRIVED':'START','IN_PROGRESS':'COMPLETE'}[active?['status']];String label(String a)=>{'EN_ROUTE':'Estoy en camino','ARRIVED':'Ya llegué','START':'Iniciar viaje','COMPLETE':'Finalizar viaje'}[a]!;@override Widget build(BuildContext c){final a=next();return Scaffold(appBar:AppBar(title:Text('Conductor · ${widget.s.name}'),actions:[IconButton(onPressed:()=>profile(c,widget.s),icon:const Icon(Icons.person_outline))]),body:ListView(padding:const EdgeInsets.all(20),children:[SwitchListTile(title:const Text('Disponible para viajes'),value:available,onChanged:toggle),if(active!=null)...[PilotMap(active['originReference']??'Origen',active['destinationReference']??'Destino',driverView:true),Text('Pasajero: ${active['passengerName']}'),Text('Estado: ${active['status']}'),if(a!=null)FilledButton(onPressed:()async{await api.action(widget.s.token,active['tripId'],a);if(a=='COMPLETE')setState(()=>active={...active,'status':'COMPLETED'});else await restore();},child:Text(label(a))),if(active['status']=='COMPLETED'&&!rated)FilledButton.icon(onPressed:()=>rating(c,widget.s,active['tripId'],()=>setState(()=>rated=true)),icon:const Icon(Icons.star),label:const Text('Calificar pasajero'))],...offers.map((o)=>Card(child:ListTile(title:Text('${o['passengers']} pasajero(s)'),subtitle:Text('${o['originReference']} → ${o['destinationReference']}'),trailing:FilledButton(onPressed:()async{await api.respond(widget.s.token,o['offerId']);await restore();await refresh();},child:const Text('Aceptar')))))]));} }
+class Passenger extends StatefulWidget { const Passenger(this.s,{super.key}); final Session s; @override State<Passenger> createState()=>_PassengerState(); }
