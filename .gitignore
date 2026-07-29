@@ -9,4 +9,5 @@ work/
 .dart_tool/
 .flutter-plugins*
 build/
+*.apk
 ios/Pods/

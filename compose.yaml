@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: mototaxi-postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mototaxi
+      POSTGRES_USER: mototaxi
+      POSTGRES_PASSWORD: mototaxi_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - mototaxi_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mototaxi -d mototaxi"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  mototaxi_postgres_data:

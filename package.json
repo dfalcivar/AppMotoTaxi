@@ -8,7 +8,10 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "dev:api": "pnpm --filter @mototaxi/api dev",
-    "dev:admin": "pnpm --filter @mototaxi/admin dev"
+    "dev:admin": "pnpm --filter @mototaxi/admin dev",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @mototaxi/api db:migrate"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

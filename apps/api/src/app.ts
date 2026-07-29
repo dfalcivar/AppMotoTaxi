@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { z } from "zod";
+import { registerAdminRoutes } from "./admin.js";
 
 const quoteSchema = z.object({
   zone: z.enum(["URBAN", "EXTENDED"]),
@@ -12,6 +13,7 @@ const quoteSchema = z.object({
 export async function buildApp() {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
+  await registerAdminRoutes(app);
 
   app.get("/health", async () => ({
     status: "ok",

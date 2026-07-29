@@ -1,82 +1,30 @@
-import { StrictMode, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
+import { apiFetch, login, type Session } from "./api.js";
 import "./styles.css";
 
-type Zone = "URBAN" | "EXTENDED";
+type Module = "dashboard"|"drivers"|"passengers"|"pricing"|"zones"|"incidents"|"audit"|"database";
+const labels: Record<Module,string>={dashboard:"Tablero",drivers:"Conductores",passengers:"Pasajeros",pricing:"Tarifas",zones:"Zonas",incidents:"Incidentes",audit:"Auditoría",database:"PostgreSQL"};
+const icons: Record<Module,string>={dashboard:"▦",drivers:"◉",passengers:"◎",pricing:"$",zones:"◇",incidents:"!",audit:"≡",database:"◫"};
 
-function quote(zone: Zone, passengers: number, time: string) {
-  const [hour = 0, minute = 0] = time.split(":").map(Number);
-  const minuteOfDay = hour * 60 + minute;
-  const night = minuteOfDay >= 20 * 60 || minuteOfDay < 6 * 60;
-  if (night) return { total: passengers, rule: "Tarifa nocturna por persona" };
-  if (zone === "EXTENDED") return { total: passengers, rule: "Zona extendida por persona" };
-  if (passengers === 3) return { total: 1, rule: "Promoción urbana diurna" };
-  return { total: passengers * 0.5, rule: "Tarifa urbana diurna" };
+function Login({onSession}:{onSession:(s:Session)=>void}){
+  const[email,setEmail]=useState("admin@mototaxi.local"); const[password,setPassword]=useState("Mototaxi2026!"); const[error,setError]=useState(""); const[busy,setBusy]=useState(false);
+  async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);setError("");try{onSession(await login(email,password));}catch(err){setError(err instanceof Error?err.message:"No se pudo ingresar");}finally{setBusy(false)}}
+  return <div className="login-shell"><form className="login-card" onSubmit={submit}><div className="brand-mark">M</div><span className="eyebrow">MOTOTAXI ATACAMES</span><h1>Centro de control</h1><p>Acceso seguro para administración y soporte.</p><label>Correo<input value={email} onChange={e=>setEmail(e.target.value)} type="email"/></label><label>Contraseña<input value={password} onChange={e=>setPassword(e.target.value)} type="password"/></label>{error&&<div className="alert error">{error}</div>}<button className="primary" disabled={busy}>{busy?"Ingresando…":"Ingresar"}</button><small>Demo: admin@mototaxi.local / Mototaxi2026!</small></form></div>
 }
+function Badge({value}:{value:string}){return <span className={`badge ${value.toLowerCase()}`}>{value.replaceAll("_"," ")}</span>}
+function Empty({text}:{text:string}){return <div className="empty">{text}</div>}
 
-function App() {
-  const [zone, setZone] = useState<Zone>("URBAN");
-  const [passengers, setPassengers] = useState(3);
-  const [time, setTime] = useState("18:30");
-  const result = useMemo(() => quote(zone, passengers, time), [zone, passengers, time]);
-
-  return (
-    <main>
-      <header>
-        <div>
-          <span className="eyebrow">MOTOTAXI ATACAMES</span>
-          <h1>Centro de control</h1>
-          <p>Primera base del panel administrativo del MVP.</p>
-        </div>
-        <span className="status">Configuración v1 activa</span>
-      </header>
-
-      <section className="metrics">
-        <article><span>Horario diurno</span><strong>06:00–19:59</strong></article>
-        <article><span>Horario nocturno</span><strong>20:00–05:59</strong></article>
-        <article><span>Pago</span><strong>Efectivo</strong></article>
-      </section>
-
-      <section className="grid">
-        <article className="panel">
-          <div className="panel-heading">
-            <div><span className="eyebrow">PRUEBA DE REGLAS</span><h2>Simulador tarifario</h2></div>
-          </div>
-          <label>Zona
-            <select value={zone} onChange={(event) => setZone(event.target.value as Zone)}>
-              <option value="URBAN">Casco urbano</option>
-              <option value="EXTENDED">Zona extendida</option>
-            </select>
-          </label>
-          <label>Pasajeros
-            <select value={passengers} onChange={(event) => setPassengers(Number(event.target.value))}>
-              {[1, 2, 3].map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
-          <label>Hora local
-            <input type="time" value={time} onChange={(event) => setTime(event.target.value)} />
-          </label>
-          <div className="quote">
-            <span>{result.rule}</span>
-            <strong>${result.total.toFixed(2)}</strong>
-            <small>Total a pagar en efectivo</small>
-          </div>
-        </article>
-
-        <article className="panel">
-          <span className="eyebrow">PARÁMETROS ACTIVOS</span>
-          <h2>Tarifas iniciales</h2>
-          <dl>
-            <div><dt>Urbana de día</dt><dd>$0,50/persona</dd></div>
-            <div><dt>Promoción urbana</dt><dd>3 por $1,00</dd></div>
-            <div><dt>Nocturna</dt><dd>$1,00/persona</dd></div>
-            <div><dt>Zona extendida</dt><dd>$1,00/persona</dd></div>
-          </dl>
-          <p className="note">La siguiente iteración conectará estos valores con la API y guardará versiones en PostgreSQL.</p>
-        </article>
-      </section>
-    </main>
-  );
-}
-
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+function Dashboard({token}:{token:string}){const[data,setData]=useState<any>();useEffect(()=>{apiFetch<any>("/v1/admin/dashboard",token).then(setData)},[token]);if(!data)return <Empty text="Cargando operación…"/>;return <><div className="metric-grid">{Object.entries(data.metrics).map(([k,v])=><article className="metric" key={k}><span>{({activeTrips:"Viajes activos",availableDrivers:"Conductores disponibles",pendingDrivers:"Por aprobar",openIncidents:"Incidentes abiertos"} as any)[k]}</span><strong>{String(v)}</strong></article>)}</div><section className="card"><div className="section-title"><div><span className="eyebrow">OPERACIÓN EN VIVO</span><h2>Viajes activos</h2></div><span className="live">● Actualizado</span></div><Table headers={["Viaje","Pasajero","Conductor","Estado","Zona","Total"]} rows={data.activeTrips.map((t:any)=>[t.id,t.passenger,t.driver,<Badge value={t.status}/>,t.zone,t.total])}/></section></>}
+function Table({headers,rows}:{headers:string[];rows:any[][]}){return <div className="table-wrap"><table><thead><tr>{headers.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j}>{c}</td>)}</tr>)}</tbody></table></div>}
+function Drivers({token,admin}:{token:string;admin:boolean}){const[data,setData]=useState<any[]>([]);const load=()=>apiFetch<any[]>("/v1/admin/drivers",token).then(setData);useEffect(()=>{void load()},[token]);async function change(id:string,status:string){await apiFetch(`/v1/admin/drivers/${id}`,token,{method:"PATCH",body:JSON.stringify({status,reason:"Revisión administrativa desde panel"})});load()}return <section className="card"><Header eyebrow="VALIDACIÓN" title="Conductores" action={`${data.length} registrados`}/><Table headers={["ID","Nombre","Teléfono","Vehículo","Documentos","Estado","Acción"]} rows={data.map(d=>[d.id,d.name,d.phone,d.vehicle,d.documents,<Badge value={d.status}/>,admin?<select value={d.status} onChange={e=>change(d.id,e.target.value)}><option>PENDING</option><option>ACTIVE</option><option>SUSPENDED</option><option>REJECTED</option></select>:"Solo lectura"])}/></section>}
+function Passengers({token,admin}:{token:string;admin:boolean}){const[data,setData]=useState<any[]>([]);const load=()=>apiFetch<any[]>("/v1/admin/passengers",token).then(setData);useEffect(()=>{void load()},[token]);async function change(id:string,status:string){await apiFetch(`/v1/admin/passengers/${id}`,token,{method:"PATCH",body:JSON.stringify({status,reason:"Decisión administrativa"})});load()}return <section className="card"><Header eyebrow="USUARIOS" title="Pasajeros" action={`${data.length} perfiles`}/><Table headers={["ID","Nombre","Teléfono","Viajes","Último viaje","Estado","Acción"]} rows={data.map(p=>[p.id,p.name,p.phone,p.trips,p.lastTrip,<Badge value={p.status}/>,admin?<button className="link" onClick={()=>change(p.id,p.status==="ACTIVE"?"SUSPENDED":"ACTIVE")}>{p.status==="ACTIVE"?"Suspender":"Reactivar"}</button>:"Solo lectura"])}/></section>}
+function Pricing({token,admin}:{token:string;admin:boolean}){const[data,setData]=useState<any[]>([]);const[form,setForm]=useState({urbanDayCents:50,nightCents:100,extendedCents:100,promotionPassengers:3,promotionTotalCents:100,activeFrom:new Date().toISOString().slice(0,16)});const load=()=>apiFetch<any[]>("/v1/admin/pricing",token).then(setData);useEffect(()=>{void load()},[token]);async function save(e:React.FormEvent){e.preventDefault();await apiFetch("/v1/admin/pricing",token,{method:"POST",body:JSON.stringify(form)});load()}return <div className="split"><section className="card"><Header eyebrow="HISTORIAL" title="Versiones tarifarias"/><Table headers={["Versión","Urbana","Noche","Extendida","Promoción","Vigencia","Estado"]} rows={data.map(p=>[`v${p.version}`,money(p.urbanDayCents),money(p.nightCents),money(p.extendedCents),`${p.promotionPassengers} por ${money(p.promotionTotalCents)}`,new Date(p.activeFrom).toLocaleString(),<Badge value={p.status}/>])}/></section>{admin&&<form className="card form-card" onSubmit={save}><Header eyebrow="PUBLICAR" title="Nueva versión"/><div className="form-grid">{([["urbanDayCents","Urbana día (centavos)"],["nightCents","Nocturna"],["extendedCents","Extendida"],["promotionPassengers","Pasajeros promo"],["promotionTotalCents","Total promo"]] as Array<[keyof typeof form,string]>).map(([k,l])=><label key={k}>{l}<input type="number" value={(form as any)[k]} onChange={e=>setForm({...form,[k]:Number(e.target.value)})}/></label>)}<label>Vigente desde<input type="datetime-local" value={form.activeFrom} onChange={e=>setForm({...form,activeFrom:e.target.value})}/></label></div><button className="primary">Publicar versión</button></form>}</div>}
+function Zones({token,admin}:{token:string;admin:boolean}){const[data,setData]=useState<any[]>([]);const[points,setPoints]=useState<{x:number;y:number}[]>([]);const[name,setName]=useState("Nueva zona piloto");const[type,setType]=useState("URBAN");const load=()=>apiFetch<any[]>("/v1/admin/zones",token).then(setData);useEffect(()=>{void load()},[token]);function click(e:MouseEvent<SVGSVGElement>){if(!admin)return;const r=e.currentTarget.getBoundingClientRect();setPoints([...points,{x:+(((e.clientX-r.left)/r.width)*100).toFixed(1),y:+(((e.clientY-r.top)/r.height)*100).toFixed(1)}])}async function save(){await apiFetch("/v1/admin/zones",token,{method:"POST",body:JSON.stringify({name,type,points})});setPoints([]);load()}const polygon=points.map(p=>`${p.x},${p.y}`).join(" ");return <div className="split zones-layout"><section className="card"><Header eyebrow="COBERTURA" title="Editor de zonas" action="Haz clic para dibujar"/><svg className="zone-map" viewBox="0 0 100 100" onClick={click}><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="#cfe0e2" strokeWidth=".35"/></pattern></defs><rect width="100" height="100" fill="url(#grid)"/><path d="M2 65 Q25 42 48 56 T98 38" fill="none" stroke="#71b7c0" strokeWidth="3" opacity=".55"/>{data.map(z=><polygon key={z.id} points={z.points.map((p:any)=>`${p.x},${p.y}`).join(" ")} className={`saved-zone ${z.type.toLowerCase()}`}/>)}{points.length>1&&<polygon points={polygon} className="draft-zone"/>}{points.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r="1.3"/>)}</svg>{admin&&<div className="zone-tools"><input value={name} onChange={e=>setName(e.target.value)}/><select value={type} onChange={e=>setType(e.target.value)}><option>URBAN</option><option>EXTENDED</option></select><button className="secondary" onClick={()=>setPoints([])}>Limpiar</button><button className="primary" disabled={points.length<3} onClick={save}>Guardar polígono</button></div>}</section><section className="card"><Header eyebrow="VERSIONES" title="Zonas activas"/>{data.map(z=><div className="list-row" key={z.id}><div><strong>{z.name}</strong><small>{z.points.length} vértices · versión {z.version}</small></div><Badge value={z.type}/></div>)}</section></div>}
+function Incidents({token}:{token:string}){const[data,setData]=useState<any[]>([]);const load=()=>apiFetch<any[]>("/v1/admin/incidents",token).then(setData);useEffect(()=>{void load()},[token]);async function change(id:string,status:string){await apiFetch(`/v1/admin/incidents/${id}`,token,{method:"PATCH",body:JSON.stringify({status,assignedTo:"Equipo de soporte"})});load()}return <section className="card"><Header eyebrow="SOPORTE" title="Incidentes" action={`${data.filter(i=>i.status!=="RESOLVED").length} pendientes`}/>{data.map(i=><article className="incident" key={i.id}><div><span className="eyebrow">{i.id} · {i.trip}</span><h3>{i.category}</h3><p>{i.description}</p><small>{new Date(i.createdAt).toLocaleString()} · {i.assignedTo}</small></div><select value={i.status} onChange={e=>change(i.id,e.target.value)}><option>OPEN</option><option>IN_REVIEW</option><option>RESOLVED</option></select></article>)}</section>}
+function Audit({token}:{token:string}){const[data,setData]=useState<any[]>([]);useEffect(()=>{apiFetch<any[]>("/v1/admin/audit",token).then(setData)},[token]);return <section className="card"><Header eyebrow="TRAZABILIDAD" title="Registro de auditoría"/><Table headers={["Fecha","Actor","Acción","Entidad","Detalle"]} rows={data.map(a=>[new Date(a.createdAt).toLocaleString(),a.actor,a.action,a.entity,a.detail])}/></section>}
+function Database({token}:{token:string}){const[data,setData]=useState<any>();useEffect(()=>{apiFetch<any>("/v1/admin/database",token).then(setData).catch(e=>setData({connected:false,message:e.message}))},[token]);return <section className="card database-card"><Header eyebrow="INFRAESTRUCTURA" title="PostgreSQL / PostGIS"/><div className={`connection ${data?.connected?"ok":"down"}`}><strong>{data?.connected?"Conectado":"Sin conexión"}</strong><p>{data?.connected?`Base ${data.database} disponible y extensión PostGIS activa.`:data?.message??"Verificando…"}</p></div>{data?.connected&&<pre>{data.postgis_version}</pre>}<p className="note">Para desarrollo local: <code>pnpm db:up</code> y luego <code>pnpm db:migrate</code>.</p></section>}
+function Header({eyebrow,title,action}:{eyebrow:string;title:string;action?:string}){return <div className="section-title"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div>{action&&<span className="muted-pill">{action}</span>}</div>}
+function money(c:number){return `$${(c/100).toFixed(2)}`}
+function App(){const[session,setSession]=useState<Session|undefined>(()=>{try{return JSON.parse(localStorage.getItem("admin-session")??"")}catch{return}});const[module,setModule]=useState<Module>("dashboard");function save(s:Session){localStorage.setItem("admin-session",JSON.stringify(s));setSession(s)}function logout(){localStorage.removeItem("admin-session");setSession(undefined)}if(!session)return <Login onSession={save}/>;const admin=session.user.role==="ADMIN";const visible=(Object.keys(labels) as Module[]).filter(m=>admin||!["audit","database"].includes(m));return <div className="app-shell"><aside><div className="brand"><div className="brand-mark">M</div><div><strong>Mototaxi</strong><small>Atacames</small></div></div><nav>{visible.map(m=><button key={m} className={module===m?"active":""} onClick={()=>setModule(m)}><span>{icons[m]}</span>{labels[m]}</button>)}</nav><div className="profile"><strong>{session.user.name}</strong><small>{session.user.role}</small><button onClick={logout}>Cerrar sesión</button></div></aside><main><header className="topbar"><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Operación piloto</span></header>{module==="dashboard"&&<Dashboard token={session.token}/>} {module==="drivers"&&<Drivers token={session.token} admin={admin}/>} {module==="passengers"&&<Passengers token={session.token} admin={admin}/>} {module==="pricing"&&<Pricing token={session.token} admin={admin}/>} {module==="zones"&&<Zones token={session.token} admin={admin}/>} {module==="incidents"&&<Incidents token={session.token}/>} {module==="audit"&&<Audit token={session.token}/>} {module==="database"&&<Database token={session.token}/>}</main></div>}
+createRoot(document.getElementById("root")!).render(<StrictMode><App/></StrictMode>);
