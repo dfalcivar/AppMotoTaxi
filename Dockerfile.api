@@ -1,0 +1,25 @@
+FROM node:24-bookworm-slim
+
+RUN npm install --global pnpm@11.9.0
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY packages/domain/package.json packages/domain/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY apps/api apps/api
+COPY packages/domain packages/domain
+
+RUN pnpm --filter @mototaxi/domain build \
+    && pnpm --filter @mototaxi/api build
+
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+
+WORKDIR /app/apps/api
+
+EXPOSE 3001
+
+CMD ["sh", "-c", "pnpm db:migrate && pnpm start"]

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
 import { database } from "./database.js";
+import { sendPush } from "./push.js";
 
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -30,11 +31,12 @@ const registrationSchema = z.object({
 });
 const pointSchema = z.object({ longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) });
 const availabilitySchema = z.object({ available: z.boolean(), location: pointSchema.optional() });
-const tripRequestSchema = z.object({ origin: pointSchema, destination: pointSchema, passengers: z.number().int().min(1).max(3), originReference: z.string().max(200).optional(), destinationReference: z.string().max(200).optional() });
+const tripRequestSchema = z.object({ origin: pointSchema, destination: pointSchema, passengers: z.number().int().min(1).max(3), paymentMethod: z.enum(['CASH','DEUNA']).default('CASH'), originReference: z.string().max(200).optional(), destinationReference: z.string().max(200).optional() });
 const tripActionSchema = z.object({ action: z.enum(["EN_ROUTE", "ARRIVED", "START", "COMPLETE"]) });
 const ratingSchema = z.object({ score: z.number().int().min(1).max(5), comment: z.string().trim().max(500).optional(), tags: z.array(z.string().trim().min(1).max(50)).max(5).optional() });
 const locationSearchSchema = z.object({ q: z.string().trim().min(3).max(160) });
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
+const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
 
 function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
   const user = userFrom(request as never);
@@ -53,6 +55,40 @@ export async function buildApp() {
   }));
 
   app.get("/v1/pricing/config", async () => initialPricingConfig);
+
+  // Cuando un conductor se libera, vuelve a publicar la solicitud mÃ¡s antigua
+  // que ya no tenga una oferta vigente. AsÃ­ una carrera no queda abandonada
+  // por haber llegado mientras todos los conductores estaban ocupados.
+  async function redispatchOldestTrip(): Promise<{ tripId: string; passengers: number; originReference: string | null; destinationReference: string | null; driverIds: string[] } | null> {
+    const dispatched = await database().begin(async tx => {
+      const [trip] = await tx`
+        select t.id::text as "tripId", t.passengers, t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+          ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude"
+        from trips t
+        where t.status='SEARCHING'
+          and not exists (select 1 from driver_offers o where o.trip_id=t.id and o.responded_at is null and o.expires_at > now())
+        order by t.requested_at
+        limit 1 for update skip locked
+      `;
+      if (!trip) return null;
+      const candidates = await tx`
+        select d.user_id from drivers d join users u on u.id=d.user_id
+        where d.is_available=true and u.status='ACTIVE' and d.last_location is not null
+          and d.last_location_at > now() - interval '5 minutes'
+          and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'))
+          and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography, 1000)
+        order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography)
+        limit 3
+      `;
+      for (const candidate of candidates) await tx`
+        insert into driver_offers (trip_id, driver_id, expires_at) values (${trip.tripId}, ${candidate.user_id}, now() + interval '30 seconds')
+        on conflict (trip_id, driver_id) do update set offered_at=now(), expires_at=excluded.expires_at, responded_at=null, accepted=null
+      `;
+      return { tripId: String(trip.tripId), passengers: Number(trip.passengers), originReference: trip.originReference as string | null, destinationReference: trip.destinationReference as string | null, driverIds: candidates.map(candidate => String(candidate.user_id)) };
+    });
+    if (dispatched) void Promise.all(dispatched.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${dispatched.passengers} pasajero(s): ${dispatched.originReference ?? "Origen"} → ${dispatched.destinationReference ?? "Destino"}`, { tripId: dispatched.tripId, type: "TRIP_OFFER" }))).catch(() => undefined);
+    return dispatched;
+  }
 
   app.get("/v1/locations/search", async (request, reply) => {
     const user = authenticatedUser(request, reply); if (!user) return;
@@ -91,15 +127,16 @@ export async function buildApp() {
     }
 
     const rows = await database()`
-      select id, email, full_name, role
+      select id, email, full_name, role, status
       from users
       where lower(email) = lower(${parsed.data.email})
         and password_hash = crypt(${parsed.data.password}, password_hash)
-        and status = 'ACTIVE'
         and role in ('PASSENGER', 'DRIVER')
     `;
-    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER" } | undefined;
+    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string } | undefined;
     if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
+    if (account.status === "PENDING" && account.role === "DRIVER") return reply.code(403).send({ error: "DRIVER_PENDING_APPROVAL" });
+    if (account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
 
     const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role };
     return { token: tokenFor(user), user };
@@ -134,6 +171,24 @@ export async function buildApp() {
     }
   });
 
+  app.put("/v1/devices/fcm-token", async (request, reply) => {
+    const user = authenticatedUser(request, reply); if (!user) return;
+    const parsed = deviceTokenSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_DEVICE_TOKEN" });
+    await database()`
+      insert into device_tokens (user_id, token, platform, last_seen_at)
+      values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now())
+      on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now()
+    `;
+    return { registered: true };
+  });
+
+  // Diagnóstico temporal del piloto: permite comprobar el envío al dispositivo
+  // autenticado sin depender de que exista un viaje nuevo.
+  app.post("/v1/devices/test-push", async (request, reply) => {
+    const user = authenticatedUser(request, reply); if (!user) return;
+    return sendPush(user.id!, "Prueba de notificación", "Este aviso confirma la recepción en segundo plano.", { type: "TEST_PUSH" });
+  });
+
   app.get("/v1/profile", async (request, reply) => {
     const user = authenticatedUser(request, reply); if (!user) return;
     const [profile] = await database()`
@@ -160,6 +215,7 @@ export async function buildApp() {
     const parsed = availabilitySchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_AVAILABILITY" });
     if (parsed.data.available && !parsed.data.location) return reply.code(400).send({ error: "LOCATION_REQUIRED" });
     await database()`update drivers set is_available=${parsed.data.available}, last_location=case when ${parsed.data.location ? true : false} then ST_SetSRID(ST_MakePoint(${parsed.data.location?.longitude ?? 0}, ${parsed.data.location?.latitude ?? 0}),4326)::geography else last_location end, last_location_at=case when ${parsed.data.location ? true : false} then now() else last_location_at end where user_id=${user.id!}`;
+    if (parsed.data.available) void redispatchOldestTrip().catch(() => undefined);
     return { available: parsed.data.available };
   });
 
@@ -177,12 +233,13 @@ export async function buildApp() {
     const isNight = Number(hour) >= 20 || Number(hour) < 6;
     const total = isNight ? Number(price.night_cents_per_passenger) * input.passengers : zone === "EXTENDED" ? Number(price.extended_cents_per_passenger) * input.passengers : Boolean(price.group_promotion_enabled) && input.passengers === Number(price.group_promotion_passengers) ? Number(price.group_promotion_total_cents) : Number(price.urban_day_cents_per_passenger) * input.passengers;
     const trip = await sql.begin(async tx => {
-      const [created] = await tx`insert into trips (passenger_id, passengers, origin, destination, origin_reference, destination_reference, service_zone, pricing_version, pricing_snapshot, quoted_total_cents) values (${user.id!}, ${input.passengers}, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography, ${input.originReference ?? null}, ${input.destinationReference ?? null}, ${zone}, ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total })}::jsonb, ${total}) returning id`;
+      const [created] = await tx`insert into trips (passenger_id, passengers, payment_method, origin, destination, origin_reference, destination_reference, service_zone, pricing_version, pricing_snapshot, quoted_total_cents) values (${user.id!}, ${input.passengers}, ${input.paymentMethod}, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography, ${input.originReference ?? null}, ${input.destinationReference ?? null}, ${zone}, ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total })}::jsonb, ${total}) returning id`;
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, '{}'::jsonb)`;
-      const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, 1000) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
+      const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, 1000) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
       for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '30 seconds')`;
-      return { id: created!.id, offers: candidates.length };
+      return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
+    void Promise.all(trip.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${input.destinationReference ?? "Destino"}`, { tripId: trip.id, type: "TRIP_OFFER" }))).catch(() => undefined);
     return reply.code(201).send({ tripId: trip.id, status: "SEARCHING", offers: trip.offers, quotedTotalCents: total, zone });
   });
 
@@ -192,7 +249,9 @@ export async function buildApp() {
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.quoted_total_cents as "quotedTotalCents",
         d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
-        t.origin_reference as "originReference", t.destination_reference as "destinationReference"
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
+        ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude"
       from trips t
       left join users d_user on d_user.id=t.driver_id
       join users p_user on p_user.id=t.passenger_id
@@ -209,7 +268,9 @@ export async function buildApp() {
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.quoted_total_cents as "quotedTotalCents",
         d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
-        t.origin_reference as "originReference", t.destination_reference as "destinationReference"
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
+        ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude"
       from trips t
       join users p_user on p_user.id=t.passenger_id
       left join users d_user on d_user.id=t.driver_id
@@ -219,6 +280,50 @@ export async function buildApp() {
       order by t.requested_at desc limit 1
     `;
     return rows[0] ?? null;
+  });
+
+  app.get("/v1/trips/mine", async (request, reply) => {
+    const user = authenticatedUser(request, reply); if (!user) return;
+    return database()`
+      select t.id::text as "tripId", t.status, t.requested_at as "requestedAt",
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        t.quoted_total_cents as "quotedTotalCents", passenger.full_name as "passengerName", driver.full_name as "driverName"
+      from trips t join users passenger on passenger.id=t.passenger_id
+      left join users driver on driver.id=t.driver_id
+      where ${user.id!}=t.passenger_id or ${user.id!}=t.driver_id
+      order by t.requested_at desc limit 30
+    `;
+  });
+
+  app.get("/v1/trips/pending-rating", async (request, reply) => {
+    const user = authenticatedUser(request, reply); if (!user) return;
+    const rows = await database()`
+      select t.id::text as "tripId", t.status, passenger.full_name as "passengerName", driver.full_name as "driverName"
+      from trips t join users passenger on passenger.id=t.passenger_id
+      join users driver on driver.id=t.driver_id
+      where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id) and t.status='COMPLETED'
+        and not exists (select 1 from ratings r where r.trip_id=t.id and r.author_id=${user.id!})
+      order by t.completed_at desc limit 1
+    `;
+    return rows[0] ?? null;
+  });
+
+  app.get("/v1/notifications", async (request, reply) => {
+    const user = authenticatedUser(request, reply); if (!user) return;
+    return database()`
+      select e.id, t.id::text as "tripId", e.to_status as status, e.occurred_at as "occurredAt",
+        case e.to_status
+          when 'ASSIGNED' then 'Viaje confirmado: conductor asignado.'
+          when 'DRIVER_EN_ROUTE' then 'El conductor va en camino.'
+          when 'DRIVER_ARRIVED' then 'El conductor llegó al punto de encuentro.'
+          when 'IN_PROGRESS' then 'Tu viaje inició.'
+          when 'COMPLETED' then 'Viaje finalizado. Puedes calificarlo.'
+          when 'CANCELLED' then 'El viaje fue cancelado.'
+          else 'Actualización de viaje.' end as message
+      from trip_events e join trips t on t.id=e.trip_id
+      where ${user.id!}=t.passenger_id or ${user.id!}=t.driver_id
+      order by e.occurred_at desc limit 50
+    `;
   });
 
   app.post("/v1/trips/:tripId/action", async (request, reply) => {
@@ -244,9 +349,16 @@ export async function buildApp() {
       `;
       if (!trip) return undefined;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id) values (${tripId}, ${transition.from}, ${transition.to}, ${user.id!})`;
+      // El conductor vuelve a estar disponible solamente al cerrar su viaje activo.
+      if (transition.to === "COMPLETED") await tx`update drivers set is_available=true where user_id=${user.id!}`;
       return trip;
     });
     if (!result) return reply.code(409).send({ error: "INVALID_TRIP_STATE" });
+    const [passenger] = await database()`select passenger_id from trips where id=${tripId}`;
+    const messages: Record<string, [string, string]> = { DRIVER_EN_ROUTE: ["Conductor en camino", "Tu conductor ya se dirige al punto de recogida."], DRIVER_ARRIVED: ["Tu conductor llegó", "Tu conductor está en el punto de recogida."], IN_PROGRESS: ["Viaje iniciado", "Tu viaje ya está en curso."], COMPLETED: ["Viaje finalizado", "Puedes calificar tu experiencia."] };
+    const notification = messages[result.status as string];
+    if (passenger && notification) void sendPush(String(passenger.passenger_id), notification[0], notification[1], { tripId, type: result.status }).catch(() => undefined);
+    if (result.status === "COMPLETED") void redispatchOldestTrip().catch(() => undefined);
     return result;
   });
 
@@ -272,25 +384,42 @@ export async function buildApp() {
   app.get("/v1/driver/offers", async (request, reply) => {
     const user = authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
-    return database()`select o.id::text as "offerId", t.id::text as "tripId", t.passengers, t.service_zone as zone, t.quoted_total_cents as "quotedTotalCents", t.origin_reference as "originReference", t.destination_reference as "destinationReference", o.expires_at as "expiresAt" from driver_offers o join trips t on t.id=o.trip_id where o.driver_id=${user.id!} and o.responded_at is null and o.expires_at > now() and t.status='SEARCHING' order by o.offered_at`;
+    return database()`select o.id::text as "offerId", t.id::text as "tripId", t.passengers, t.payment_method as "paymentMethod", t.service_zone as zone, t.quoted_total_cents as "quotedTotalCents", t.origin_reference as "originReference", t.destination_reference as "destinationReference", o.expires_at as "expiresAt" from driver_offers o join trips t on t.id=o.trip_id where o.driver_id=${user.id!} and o.responded_at is null and o.expires_at > now() and t.status='SEARCHING' order by o.offered_at`;
   });
 
   app.post("/v1/driver/offers/:offerId/respond", async (request, reply) => {
     const user = authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const body = z.object({ accept: z.boolean() }).safeParse(request.body); if (!body.success) return reply.code(400).send({ error: "INVALID_OFFER_RESPONSE" });
+    const offerId = (request.params as { offerId: string }).offerId;
     const result = await database().begin(async tx => {
-      const [offer] = await tx`select trip_id from driver_offers where id=${(request.params as { offerId: string }).offerId} and driver_id=${user.id!} and responded_at is null and expires_at > now() for update`;
+      const [offer] = await tx`select trip_id from driver_offers where id=${offerId} and driver_id=${user.id!} and responded_at is null and expires_at > now() for update`;
       if (!offer) return { error: "OFFER_UNAVAILABLE" };
-      await tx`update driver_offers set responded_at=now(), accepted=${body.data.accept} where id=${(request.params as { offerId: string }).offerId}`;
-      if (!body.data.accept) return { status: "REJECTED" };
-      const accepted = await tx`update trips set driver_id=${user.id!}, status='ASSIGNED', assigned_at=now() where id=${offer.trip_id} and status='SEARCHING' returning id`;
-      if (!accepted.length) return { error: "TRIP_ALREADY_ASSIGNED" };
-      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${offer.trip_id} and id<>${(request.params as { offerId: string }).offerId}`;
-      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id) values (${offer.trip_id}, 'SEARCHING', 'ASSIGNED', ${user.id!})`;
-      return { status: "ASSIGNED", tripId: offer.trip_id };
+      if (!body.data.accept) {
+        await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
+        return { status: "REJECTED" };
+      }
+      await tx`select pg_advisory_xact_lock(hashtext(${user.id!}::text))`;
+      const activeTrips = await tx`select id from trips where driver_id=${user.id!} and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS') limit 1 for update`;
+      if (activeTrips.length) {
+        await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
+        return { error: "DRIVER_BUSY" };
+      }
+      const accepted = await tx`update trips set driver_id=${user.id!}, status='DRIVER_EN_ROUTE', assigned_at=now() where id=${offer.trip_id} and status='SEARCHING' returning id`;
+      if (!accepted.length) {
+        await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
+        return { error: "TRIP_ALREADY_ASSIGNED" };
+      }
+      await tx`update driver_offers set responded_at=now(), accepted=true where id=${offerId}`;
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${offer.trip_id} and id<>${offerId}`;
+      await tx`update driver_offers set responded_at=now(), accepted=false where driver_id=${user.id!} and id<>${offerId} and responded_at is null`;
+      await tx`update drivers set is_available=false where user_id=${user.id!}`;
+      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id) values (${offer.trip_id}, 'SEARCHING', 'DRIVER_EN_ROUTE', ${user.id!})`;
+      return { status: "DRIVER_EN_ROUTE", tripId: offer.trip_id };
     });
     if ("error" in result) return reply.code(409).send(result);
+    const [trip] = await database()`select passenger_id from trips where id=${result.tripId}`;
+    if (trip) void sendPush(String(trip.passenger_id), "Viaje confirmado", "Un conductor aceptó tu solicitud y va en camino.", { tripId: result.tripId, type: "TRIP_ASSIGNED" }).catch(() => undefined);
     return result;
   });
 

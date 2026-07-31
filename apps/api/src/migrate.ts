@@ -16,4 +16,31 @@ for (const file of files) {
   });
   console.log(`Aplicada ${file}`);
 }
+
+const adminEmail = process.env.ADMIN_EMAIL;
+const adminPassword = process.env.ADMIN_PASSWORD;
+if (adminEmail && adminPassword) {
+  await sql`
+    update users
+    set email = ${adminEmail},
+        password_hash = crypt(${adminPassword}, gen_salt('bf')),
+        updated_at = now()
+    where role = 'ADMIN'
+  `;
+  console.log("Credenciales de administrador sincronizadas desde el entorno.");
+}
+
+const supportEmail = process.env.SUPPORT_EMAIL;
+const supportPassword = process.env.SUPPORT_PASSWORD;
+if (supportEmail && supportPassword) {
+  await sql`
+    update users
+    set email = ${supportEmail},
+        password_hash = crypt(${supportPassword}, gen_salt('bf')),
+        updated_at = now()
+    where role = 'SUPPORT'
+  `;
+  console.log("Credenciales de soporte sincronizadas desde el entorno.");
+}
+
 await closeDatabase();

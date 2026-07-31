@@ -13,6 +13,9 @@ dependencies:
   http: ^1.2.2
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
+  firebase_core: ^3.15.2
+  firebase_messaging: ^15.2.10
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:
@@ -21,3 +24,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/atacames-login-hero.png
+    - assets/images/mototaxi-atacames-logo.png

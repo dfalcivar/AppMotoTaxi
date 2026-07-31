@@ -40,7 +40,7 @@ const incidents: Incident[] = [
 const audits: AuditEntry[] = [];
 
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
-const driverSchema = z.object({ status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REJECTED"]), reason: z.string().min(3) });
+const driverSchema = z.object({ status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REJECTED"]), reason: z.string().min(3), deunaEnabled: z.boolean().optional(), deunaQrImageUrl: z.string().url().optional().or(z.literal("")) });
 const passengerSchema = z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().min(3) });
 const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
 const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
@@ -121,7 +121,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     if (!process.env.DATABASE_URL) return drivers;
     return await database()`
       select u.id, u.full_name as name, u.phone_e164 as phone, coalesce(v.identifier, 'Sin vehículo') as vehicle,
-        u.status, coalesce((select count(*)::text || '/' || count(*)::text || ' documentos' from driver_documents dd where dd.driver_id = d.user_id), '0/0 documentos') as documents,
+        u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/' || count(*)::text || ' documentos' from driver_documents dd where dd.driver_id = d.user_id), '0/0 documentos') as documents,
         coalesce(d.rating, 0)::float8 as rating
       from drivers d
       join users u on u.id = d.user_id
@@ -133,7 +133,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const user=requireAdmin(request); const body=driverSchema.parse(request.body);
     if (!process.env.DATABASE_URL) { const item=drivers.find(d=>d.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"DRIVER_STATUS",item.id,body.reason); return item; }
     const id=(request.params as { id: string }).id;
-    const rows=await database()`update users set status=${body.status}, updated_at=now() where id=${id} and role='DRIVER' returning id, full_name as name, phone_e164 as phone, status`;
+    const rows=await database().begin(async tx=>{ const updated=await tx`update users set status=${body.status}, updated_at=now() where id=${id} and role='DRIVER' returning id, full_name as name, phone_e164 as phone, status`; if(updated[0])await tx`update drivers set deuna_enabled=${body.deunaEnabled ?? false}, deuna_qr_image_url=${body.deunaQrImageUrl || null} where user_id=${id}`; return updated; });
     const item=rows[0]; if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,"DRIVER_STATUS","DRIVER",id,body.reason);
     return item;

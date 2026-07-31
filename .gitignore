@@ -3,6 +3,8 @@ dist/
 .env
 .env.*
 !.env.example
+apps/mobile/android/app/google-services.json
+apps/api/secrets/
 .DS_Store
 coverage/
 work/

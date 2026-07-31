@@ -5,7 +5,7 @@ export interface Session { token: string; user: SessionUser }
 export interface QuoteRequest { zone: Zone; passengers: number; localTime: string }
 export interface Quote { currency: "USD"; totalCents: number; total: string; period: "DAY" | "NIGHT"; zone: Zone; passengers: number; appliedRule: string; pricingVersion: number; explanation: string }
 
-const base = "/api";
+const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "/api";
 function persistentPath(path: string, method?: string): string {
   if (method === "POST" && path === "/v1/admin/pricing") return "/v1/admin/pricing/persist";
   if (method === "POST" && path === "/v1/admin/zones") return "/v1/admin/zones/persist";
