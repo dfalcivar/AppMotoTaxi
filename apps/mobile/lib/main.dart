@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -10,6 +12,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const base = String.fromEnvironment('API_BASE_URL',
     defaultValue: 'http://10.0.2.2:3001');
+const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
+
+http.Client buildHttpClient() {
+  if (apiHttpProxy.isEmpty) return http.Client();
+  final proxy = Uri.parse(apiHttpProxy);
+  final ioClient = HttpClient();
+  ioClient.findProxy = (_) => 'PROXY ${proxy.host}:${proxy.port}';
+  ioClient.connectionTimeout = const Duration(seconds: 30);
+  return IOClient(ioClient);
+}
+
+final apiHttpClient = buildHttpClient();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -76,6 +90,8 @@ String mensajeApi(dynamic code) =>
       'ACCOUNT_ALREADY_EXISTS': 'Ya existe una cuenta con estos datos.',
       'FORBIDDEN': 'No tienes permiso para realizar esta acción.',
       'UNAUTHORIZED': 'Tu sesión no es válida. Ingresa nuevamente.',
+      'SESSION_REPLACED':
+          'Tu cuenta inició sesión en otro dispositivo. Ingresa nuevamente.',
       'DRIVER_BUSY':
           'Ya tienes un viaje activo. Termínalo antes de aceptar otro.',
       'OFFER_UNAVAILABLE': 'Esta solicitud ya no está disponible.',
@@ -94,7 +110,8 @@ class Api {
       if (token != null) 'authorization': 'Bearer $token'
     });
     request.body = jsonEncode(body ?? {});
-    final response = await http.Response.fromStream(await request.send());
+    final response =
+        await http.Response.fromStream(await apiHttpClient.send(request));
     final data = response.body == 'null' ? null : jsonDecode(response.body);
     if (response.statusCode >= 400)
       throw ApiException(mensajeApi(data?['error']));
@@ -117,6 +134,9 @@ class Api {
             token: token, body: {'token': fcm, 'platform': 'ANDROID'});
     } catch (_) {}
   }
+
+  Future<void> logout(String token) =>
+      call('POST', '/v1/auth/logout', token: token);
 
   Future<dynamic> register(Map<String, dynamic> body) =>
       call('POST', '/v1/auth/register', body: body);
@@ -150,6 +170,8 @@ class Api {
           token: t));
   Future<dynamic> offers(String t) =>
       call('GET', '/v1/driver/offers', token: t);
+  Future<dynamic> driverState(String t) =>
+      call('GET', '/v1/driver/state', token: t);
   Future<void> available(String t, bool v) =>
       call('PUT', '/v1/driver/availability', token: t, body: {
         'available': v,
@@ -822,7 +844,11 @@ class _AccountHubState extends State<AccountHub> {
     });
   }
 
-  void logout(BuildContext c) {
+  Future<void> logout(BuildContext c) async {
+    try {
+      await Api().logout(widget.s.token);
+    } catch (_) {}
+    if (!c.mounted) return;
     Navigator.of(c).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
   }
@@ -1244,21 +1270,38 @@ class _DriverState extends State<Driver> {
   List offers = [];
   bool available = false;
   Timer? timer;
+  StreamSubscription<RemoteMessage>? messageSubscription;
   @override
   void initState() {
     super.initState();
+    messageSubscription = FirebaseMessaging.onMessage.listen((message) {
+      if (message.data['type'] == 'TRIP_OFFER') refresh();
+    });
     restore();
   }
 
   @override
   void dispose() {
     timer?.cancel();
+    messageSubscription?.cancel();
     super.dispose();
   }
 
   Future<void> restore() async {
-    final t = await api.active(widget.s.token);
-    if (mounted) setState(() => active = t);
+    await api.registerFcm(widget.s.token);
+    final values = await Future.wait(
+        [api.active(widget.s.token), api.driverState(widget.s.token)]);
+    if (!mounted) return;
+    final serverAvailable = values[1]['available'] == true;
+    setState(() {
+      active = values[0];
+      available = serverAvailable;
+    });
+    timer?.cancel();
+    if (serverAvailable) {
+      await refresh();
+      timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
+    }
   }
 
   Future<void> toggle(bool v) async {

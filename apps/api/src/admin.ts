@@ -8,7 +8,7 @@ export type SessionRole = "PASSENGER" | "DRIVER" | AdminRole;
 type DriverStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "REJECTED";
 type IncidentStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
 
-export interface SessionUser { id?: string; email: string; name: string; role: SessionRole }
+export interface SessionUser { id?: string; email: string; name: string; role: SessionRole; sessionId?: string }
 interface Driver { id: string; name: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
 interface Passenger { id: string; name: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
 interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; status: "ACTIVE" | "SCHEDULED" }

@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import { randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
@@ -38,9 +39,14 @@ const locationSearchSchema = z.object({ q: z.string().trim().min(3).max(160) });
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
 const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
 
-function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
+async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
   const user = userFrom(request as never);
-  if (!user?.id) { reply.code(401).send({ error: "UNAUTHORIZED" }); return; }
+  if (!user?.id || !user.sessionId) { reply.code(401).send({ error: "UNAUTHORIZED" }); return; }
+  const active = await database()`
+    select 1 from users
+    where id=${user.id} and active_session_id=${user.sessionId}::uuid
+  `;
+  if (!active.length) { reply.code(401).send({ error: "SESSION_REPLACED" }); return; }
   return user;
 }
 
@@ -62,7 +68,8 @@ export async function buildApp() {
   async function redispatchOldestTrip(): Promise<{ tripId: string; passengers: number; originReference: string | null; destinationReference: string | null; driverIds: string[] } | null> {
     const dispatched = await database().begin(async tx => {
       const [trip] = await tx`
-        select t.id::text as "tripId", t.passengers, t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        select t.id::text as "tripId", t.passengers, t.payment_method as "paymentMethod",
+          t.origin_reference as "originReference", t.destination_reference as "destinationReference",
           ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude"
         from trips t
         where t.status='SEARCHING'
@@ -74,6 +81,7 @@ export async function buildApp() {
       const candidates = await tx`
         select d.user_id from drivers d join users u on u.id=d.user_id
         where d.is_available=true and u.status='ACTIVE' and d.last_location is not null
+          and (${trip.paymentMethod}='CASH' or d.deuna_enabled=true)
           and d.last_location_at > now() - interval '5 minutes'
           and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'))
           and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography, 1000)
@@ -81,7 +89,7 @@ export async function buildApp() {
         limit 3
       `;
       for (const candidate of candidates) await tx`
-        insert into driver_offers (trip_id, driver_id, expires_at) values (${trip.tripId}, ${candidate.user_id}, now() + interval '30 seconds')
+        insert into driver_offers (trip_id, driver_id, expires_at) values (${trip.tripId}, ${candidate.user_id}, now() + interval '2 minutes')
         on conflict (trip_id, driver_id) do update set offered_at=now(), expires_at=excluded.expires_at, responded_at=null, accepted=null
       `;
       return { tripId: String(trip.tripId), passengers: Number(trip.passengers), originReference: trip.originReference as string | null, destinationReference: trip.destinationReference as string | null, driverIds: candidates.map(candidate => String(candidate.user_id)) };
@@ -91,7 +99,7 @@ export async function buildApp() {
   }
 
   app.get("/v1/locations/search", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = locationSearchSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION_QUERY" });
     try {
@@ -106,7 +114,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/routes", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = routeSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_ROUTE" });
     const key = process.env.ORS_API_KEY;
     if (!key) return reply.code(503).send({ error: "ROUTING_NOT_CONFIGURED", message: "Configura ORS_API_KEY para mostrar rutas navegables." });
@@ -138,7 +146,12 @@ export async function buildApp() {
     if (account.status === "PENDING" && account.role === "DRIVER") return reply.code(403).send({ error: "DRIVER_PENDING_APPROVAL" });
     if (account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
 
-    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role };
+    const sessionId = randomUUID();
+    await database().begin(async tx => {
+      await tx`update users set active_session_id=${sessionId} where id=${account.id}`;
+      await tx`delete from device_tokens where user_id=${account.id}`;
+    });
+    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId };
     return { token: tokenFor(user), user };
   });
 
@@ -162,7 +175,9 @@ export async function buildApp() {
         return user!;
       });
       if (account.role === "DRIVER") return reply.code(201).send({ status: "PENDING_APPROVAL", message: "Registro recibido. Un administrador debe aprobar tu perfil de conductor." });
-      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: "PASSENGER" };
+      const sessionId = randomUUID();
+      await database()`update users set active_session_id=${sessionId} where id=${account.id}`;
+      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: "PASSENGER", sessionId };
       return reply.code(201).send({ status: "ACTIVE", token: tokenFor(user), user });
     } catch (error) {
       const code = (error as { code?: string }).code;
@@ -171,8 +186,18 @@ export async function buildApp() {
     }
   });
 
+  app.post("/v1/auth/logout", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    await database().begin(async tx => {
+      await tx`update users set active_session_id=null where id=${user.id!} and active_session_id=${user.sessionId!}::uuid`;
+      await tx`delete from device_tokens where user_id=${user.id!}`;
+      if (user.role === "DRIVER") await tx`update drivers set is_available=false where user_id=${user.id!}`;
+    });
+    return { closed: true };
+  });
+
   app.put("/v1/devices/fcm-token", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = deviceTokenSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_DEVICE_TOKEN" });
     await database()`
       insert into device_tokens (user_id, token, platform, last_seen_at)
@@ -185,12 +210,12 @@ export async function buildApp() {
   // Diagnóstico temporal del piloto: permite comprobar el envío al dispositivo
   // autenticado sin depender de que exista un viaje nuevo.
   app.post("/v1/devices/test-push", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     return sendPush(user.id!, "Prueba de notificación", "Este aviso confirma la recepción en segundo plano.", { type: "TEST_PUSH" });
   });
 
   app.get("/v1/profile", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const [profile] = await database()`
       select u.id::text, u.full_name as name, u.role, u.phone_e164 as phone,
         coalesce(d.rating, (select avg(score)::numeric(3,2) from ratings where recipient_id=u.id), 0)::float8 as rating,
@@ -210,7 +235,7 @@ export async function buildApp() {
   });
 
   app.put("/v1/driver/availability", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = availabilitySchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_AVAILABILITY" });
     if (parsed.data.available && !parsed.data.location) return reply.code(400).send({ error: "LOCATION_REQUIRED" });
@@ -220,7 +245,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/trips", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = tripRequestSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_TRIP_REQUEST", details: parsed.error.issues });
     const input = parsed.data;
@@ -236,7 +261,7 @@ export async function buildApp() {
       const [created] = await tx`insert into trips (passenger_id, passengers, payment_method, origin, destination, origin_reference, destination_reference, service_zone, pricing_version, pricing_snapshot, quoted_total_cents) values (${user.id!}, ${input.passengers}, ${input.paymentMethod}, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography, ${input.originReference ?? null}, ${input.destinationReference ?? null}, ${zone}, ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total })}::jsonb, ${total}) returning id`;
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, '{}'::jsonb)`;
       const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, 1000) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
-      for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '30 seconds')`;
+      for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
       return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
     void Promise.all(trip.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${input.destinationReference ?? "Destino"}`, { tripId: trip.id, type: "TRIP_OFFER" }))).catch(() => undefined);
@@ -244,7 +269,7 @@ export async function buildApp() {
   });
 
   app.get("/v1/trips/:tripId", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const tripId = (request.params as { tripId: string }).tripId;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.quoted_total_cents as "quotedTotalCents",
@@ -264,7 +289,7 @@ export async function buildApp() {
   });
 
   app.get("/v1/trips/active", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.quoted_total_cents as "quotedTotalCents",
         d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
@@ -283,7 +308,7 @@ export async function buildApp() {
   });
 
   app.get("/v1/trips/mine", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     return database()`
       select t.id::text as "tripId", t.status, t.requested_at as "requestedAt",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
@@ -296,7 +321,7 @@ export async function buildApp() {
   });
 
   app.get("/v1/trips/pending-rating", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const rows = await database()`
       select t.id::text as "tripId", t.status, passenger.full_name as "passengerName", driver.full_name as "driverName"
       from trips t join users passenger on passenger.id=t.passenger_id
@@ -309,7 +334,7 @@ export async function buildApp() {
   });
 
   app.get("/v1/notifications", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     return database()`
       select e.id, t.id::text as "tripId", e.to_status as status, e.occurred_at as "occurredAt",
         case e.to_status
@@ -327,7 +352,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/trips/:tripId/action", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = tripActionSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_TRIP_ACTION" });
     const transitions = {
@@ -363,7 +388,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/trips/:tripId/ratings", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = ratingSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_RATING" });
     const tripId = (request.params as { tripId: string }).tripId;
     const rows = await database()`select passenger_id, driver_id, status from trips where id=${tripId} and (${user.id!}=passenger_id or ${user.id!}=driver_id)`;
@@ -382,13 +407,22 @@ export async function buildApp() {
   });
 
   app.get("/v1/driver/offers", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    await database()`update drivers set last_location_at=now() where user_id=${user.id!} and is_available=true`;
+    await redispatchOldestTrip();
     return database()`select o.id::text as "offerId", t.id::text as "tripId", t.passengers, t.payment_method as "paymentMethod", t.service_zone as zone, t.quoted_total_cents as "quotedTotalCents", t.origin_reference as "originReference", t.destination_reference as "destinationReference", o.expires_at as "expiresAt" from driver_offers o join trips t on t.id=o.trip_id where o.driver_id=${user.id!} and o.responded_at is null and o.expires_at > now() and t.status='SEARCHING' order by o.offered_at`;
   });
 
+  app.get("/v1/driver/state", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const [driver] = await database()`select is_available as available from drivers where user_id=${user.id!}`;
+    return { available: Boolean(driver?.available) };
+  });
+
   app.post("/v1/driver/offers/:offerId/respond", async (request, reply) => {
-    const user = authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const body = z.object({ accept: z.boolean() }).safeParse(request.body); if (!body.success) return reply.code(400).send({ error: "INVALID_OFFER_RESPONSE" });
     const offerId = (request.params as { offerId: string }).offerId;
