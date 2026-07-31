@@ -41,9 +41,16 @@ Future<Position> currentGpsPosition() async {
     throw const ApiException(
         'Permite el acceso a la ubicación en los ajustes del teléfono.');
   }
-  return Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)));
+  try {
+    return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)));
+  } on TimeoutException {
+    final lastPosition = await Geolocator.getLastKnownPosition();
+    if (lastPosition != null) return lastPosition;
+    throw const ApiException(
+        'No se pudo obtener la ubicación. Verifica el GPS e inténtalo nuevamente.');
+  }
 }
 
 Future<void> main() async {
