@@ -39,6 +39,11 @@ const locationSearchSchema = z.object({ q: z.string().trim().min(3).max(160) });
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
 const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
 
+async function configuredSearchRadius(): Promise<number> {
+  const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
+  return Number(settings?.search_radius_meters ?? 3000);
+}
+
 async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
   const user = userFrom(request as never);
   if (!user?.id || !user.sessionId) { reply.code(401).send({ error: "UNAUTHORIZED" }); return; }
@@ -66,6 +71,7 @@ export async function buildApp() {
   // que ya no tenga una oferta vigente. AsÃ­ una carrera no queda abandonada
   // por haber llegado mientras todos los conductores estaban ocupados.
   async function redispatchOldestTrip(): Promise<{ tripId: string; passengers: number; originReference: string | null; destinationReference: string | null; driverIds: string[] } | null> {
+    const searchRadius = await configuredSearchRadius();
     const dispatched = await database().begin(async tx => {
       const [trip] = await tx`
         select t.id::text as "tripId", t.passengers, t.payment_method as "paymentMethod",
@@ -84,7 +90,7 @@ export async function buildApp() {
           and (${trip.paymentMethod}='CASH' or d.deuna_enabled=true)
           and d.last_location_at > now() - interval '5 minutes'
           and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'))
-          and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography, 1000)
+          and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography, ${searchRadius})
         order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography)
         limit 3
       `;
@@ -250,6 +256,7 @@ export async function buildApp() {
     const parsed = tripRequestSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_TRIP_REQUEST", details: parsed.error.issues });
     const input = parsed.data;
     const sql = database();
+    const searchRadius = await configuredSearchRadius();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
     const prices = await sql`select version, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents from pricing_versions where active_from <= now() and (active_until is null or active_until > now()) order by version desc limit 1`;
@@ -260,7 +267,7 @@ export async function buildApp() {
     const trip = await sql.begin(async tx => {
       const [created] = await tx`insert into trips (passenger_id, passengers, payment_method, origin, destination, origin_reference, destination_reference, service_zone, pricing_version, pricing_snapshot, quoted_total_cents) values (${user.id!}, ${input.passengers}, ${input.paymentMethod}, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography, ${input.originReference ?? null}, ${input.destinationReference ?? null}, ${zone}, ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total })}::jsonb, ${total}) returning id`;
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, '{}'::jsonb)`;
-      const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, 1000) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
+      const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ${searchRadius}) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
       for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
       return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
@@ -268,19 +275,42 @@ export async function buildApp() {
     return reply.code(201).send({ tripId: trip.id, status: "SEARCHING", offers: trip.offers, quotedTotalCents: total, zone });
   });
 
+  app.post("/v1/trips/:tripId/cancel", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const tripId = (request.params as { tripId: string }).tripId;
+    const result = await database().begin(async tx => {
+      const [trip] = await tx`
+        update trips set status='CANCELLED', cancelled_at=now()
+        where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
+        returning id::text
+      `;
+      if (!trip) return null;
+      const drivers = await tx`select driver_id from driver_offers where trip_id=${tripId} and responded_at is null`;
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${tripId}`;
+      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code) values (${tripId}, 'SEARCHING', 'CANCELLED', ${user.id!}, 'PASSENGER_CANCELLED')`;
+      return drivers.map(driver => String(driver.driver_id));
+    });
+    if (!result) return reply.code(409).send({ error: "TRIP_NOT_CANCELLABLE" });
+    void Promise.all(result.map(driverId => sendPush(driverId, "Solicitud cancelada", "El pasajero canceló la solicitud antes de ser asignada.", { tripId, type: "TRIP_CANCELLED" }))).catch(() => undefined);
+    return { tripId, status: "CANCELLED", cancellationReason: "PASSENGER_CANCELLED" };
+  });
+
   app.get("/v1/trips/:tripId", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const tripId = (request.params as { tripId: string }).tripId;
     const rows = await database()`
-      select t.id::text as "tripId", t.status, t.quoted_total_cents as "quotedTotalCents",
+      select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
         d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
-        ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude"
+        ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
+        cancellation.reason_code as "cancellationReason"
       from trips t
       left join users d_user on d_user.id=t.driver_id
       join users p_user on p_user.id=t.passenger_id
       left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) v on true
+      left join lateral (select reason_code from trip_events where trip_id=t.id and to_status='CANCELLED' order by occurred_at desc limit 1) cancellation on true
       where t.id=${tripId} and (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
     `;
     const trip = rows[0];
@@ -291,7 +321,7 @@ export async function buildApp() {
   app.get("/v1/trips/active", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const rows = await database()`
-      select t.id::text as "tripId", t.status, t.quoted_total_cents as "quotedTotalCents",
+      select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
         d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",

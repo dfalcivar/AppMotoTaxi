@@ -1,0 +1,38 @@
+.alert.success {
+  background: #def3e6;
+  color: #245c40;
+}
+
+.settings-card form {
+  display: grid;
+  gap: 18px;
+  max-width: 760px;
+}
+
+.settings-card label {
+  display: grid;
+  gap: 10px;
+  color: #34555c;
+  font-weight: 750;
+}
+
+.radius-control {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 120px auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.radius-control input[type="range"] {
+  padding: 0;
+}
+
+.radius-control span {
+  color: #587178;
+}
+
+@media (max-width: 720px) {
+  .radius-control {
+    grid-template-columns: 1fr;
+  }
+}

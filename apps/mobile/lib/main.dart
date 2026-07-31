@@ -8,6 +8,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const base = String.fromEnvironment('API_BASE_URL',
@@ -24,6 +25,26 @@ http.Client buildHttpClient() {
 }
 
 final apiHttpClient = buildHttpClient();
+
+Future<Position> currentGpsPosition() async {
+  if (!await Geolocator.isLocationServiceEnabled()) {
+    throw const ApiException(
+        'Activa la ubicación GPS del teléfono para continuar.');
+  }
+  var permission = await Geolocator.checkPermission();
+  if (permission == LocationPermission.denied) {
+    permission = await Geolocator.requestPermission();
+  }
+  if (permission == LocationPermission.denied ||
+      permission == LocationPermission.deniedForever) {
+    throw const ApiException(
+        'Permite el acceso a la ubicación en los ajustes del teléfono.');
+  }
+  return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)));
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -96,6 +117,8 @@ String mensajeApi(dynamic code) =>
           'Ya tienes un viaje activo. Termínalo antes de aceptar otro.',
       'OFFER_UNAVAILABLE': 'Esta solicitud ya no está disponible.',
       'TRIP_ALREADY_ASSIGNED': 'Otro conductor ya aceptó este viaje.',
+      'TRIP_NOT_CANCELLABLE':
+          'La solicitud ya fue asignada y no puede cancelarse desde aquí.',
       'INVALID_TRIP_STATE':
           'Esta acción ya no está disponible para el estado actual del viaje.',
     }[code] ??
@@ -163,6 +186,8 @@ class Api {
         'originReference': o,
         'destinationReference': d
       });
+  Future<dynamic> cancelTrip(String t, String id) =>
+      call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
   Future<List<dynamic>> search(String t, String query) async =>
       List<dynamic>.from(await call(
@@ -172,10 +197,14 @@ class Api {
       call('GET', '/v1/driver/offers', token: t);
   Future<dynamic> driverState(String t) =>
       call('GET', '/v1/driver/state', token: t);
-  Future<void> available(String t, bool v) =>
+  Future<void> available(String t, bool v, [LatLng? location]) =>
       call('PUT', '/v1/driver/availability', token: t, body: {
         'available': v,
-        'location': {'longitude': -79.846, 'latitude': 0.865}
+        if (location != null)
+          'location': {
+            'longitude': location.longitude,
+            'latitude': location.latitude
+          }
       });
   Future<void> respond(String t, String id) =>
       call('POST', '/v1/driver/offers/$id/respond',
@@ -1111,6 +1140,7 @@ class _PassengerState extends State<Passenger> {
   void initState() {
     super.initState();
     load();
+    Future.microtask(useCurrentLocation);
     timer = Timer.periodic(const Duration(seconds: 3), (_) => load());
   }
 
@@ -1144,6 +1174,16 @@ class _PassengerState extends State<Passenger> {
         }
         return;
       }
+      if (t['status'] == 'CANCELLED') {
+        final administrative = t['cancellationReason'] == 'ADMIN_CANCELLED';
+        setState(() {
+          active = null;
+          message = administrative
+              ? 'El viaje fue cancelado por administración.'
+              : 'La solicitud fue cancelada.';
+        });
+        return;
+      }
       setState(() {
         active = t;
         if (t['originLatitude'] != null) {
@@ -1161,6 +1201,21 @@ class _PassengerState extends State<Passenger> {
         }[t['status']];
       });
     } catch (_) {}
+  }
+
+  Future<void> useCurrentLocation() async {
+    if (active != null) return;
+    try {
+      final position = await currentGpsPosition();
+      if (!mounted || active != null) return;
+      setState(() {
+        pickup = LatLng(position.latitude, position.longitude);
+        origin.text = 'Mi ubicación actual';
+        message = 'Origen actualizado con tu ubicación GPS.';
+      });
+    } catch (e) {
+      if (mounted) setState(() => message = e.toString());
+    }
   }
 
   Future<void> locate(bool isOrigin) async {
@@ -1201,6 +1256,38 @@ class _PassengerState extends State<Passenger> {
     }
   }
 
+  Future<void> cancel() async {
+    final tripId = active?['tripId']?.toString();
+    if (tripId == null) return;
+    final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+                    title: const Text('Cancelar solicitud'),
+                    content: const Text(
+                        '¿Deseas cancelar antes de que un conductor acepte?'),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('Volver')),
+                      FilledButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('Cancelar solicitud'))
+                    ])) ??
+        false;
+    if (!confirmed) return;
+    try {
+      await api.cancelTrip(widget.s.token, tripId);
+      if (!mounted) return;
+      setState(() {
+        active = null;
+        message = 'Solicitud cancelada correctamente.';
+      });
+    } catch (e) {
+      if (mounted) setState(() => message = e.toString());
+      await load();
+    }
+  }
+
   @override
   Widget build(BuildContext c) {
     final o = active?['originReference'] ?? origin.text;
@@ -1218,9 +1305,16 @@ class _PassengerState extends State<Passenger> {
                 controller: origin,
                 decoration: InputDecoration(
                     labelText: 'Origen',
-                    suffixIcon: IconButton(
-                        icon: const Icon(Icons.search),
-                        onPressed: () => locate(true)))),
+                    suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(
+                          tooltip: 'Usar mi ubicación GPS',
+                          icon: const Icon(Icons.my_location),
+                          onPressed: useCurrentLocation),
+                      IconButton(
+                          tooltip: 'Buscar dirección',
+                          icon: const Icon(Icons.search),
+                          onPressed: () => locate(true))
+                    ]))),
             TextField(
                 controller: destination,
                 decoration: InputDecoration(
@@ -1249,10 +1343,18 @@ class _PassengerState extends State<Passenger> {
           ],
           if (message != null)
             Padding(padding: const EdgeInsets.all(12), child: Text(message!)),
+          if (active?['status'] == 'SEARCHING')
+            OutlinedButton.icon(
+                onPressed: cancel,
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('Cancelar solicitud')),
           FilledButton(
               onPressed: active == null ? create : null,
-              child: Text(
-                  active == null ? 'Solicitar mototaxi' : 'Viaje en curso'))
+              child: Text(active == null
+                  ? 'Solicitar mototaxi'
+                  : active?['status'] == 'SEARCHING'
+                      ? 'Buscando conductor...'
+                      : 'Viaje en curso'))
         ]));
   }
 }
@@ -1269,22 +1371,57 @@ class _DriverState extends State<Driver> {
   dynamic active;
   List offers = [];
   bool available = false;
+  String? driverMessage;
   Timer? timer;
   StreamSubscription<RemoteMessage>? messageSubscription;
+  StreamSubscription<Position>? positionSubscription;
   @override
   void initState() {
     super.initState();
     messageSubscription = FirebaseMessaging.onMessage.listen((message) {
-      if (message.data['type'] == 'TRIP_OFFER') refresh();
+      if (message.data['type'] == 'TRIP_CANCELLED' && mounted) {
+        setState(() => driverMessage =
+            message.data['reason'] == 'ADMIN_CANCELLED'
+                ? 'El viaje fue cancelado por administración.'
+                : 'El pasajero canceló la solicitud.');
+      }
+      if (message.data['type'] == 'TRIP_OFFER' ||
+          message.data['type'] == 'TRIP_CANCELLED') refresh();
     });
     restore();
+    timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
   }
 
   @override
   void dispose() {
     timer?.cancel();
     messageSubscription?.cancel();
+    positionSubscription?.cancel();
     super.dispose();
+  }
+
+  LatLng pointFrom(Position position) =>
+      LatLng(position.latitude, position.longitude);
+
+  Future<void> startGpsTracking() async {
+    final position = await currentGpsPosition();
+    await api.available(widget.s.token, true, pointFrom(position));
+    await positionSubscription?.cancel();
+    positionSubscription = Geolocator.getPositionStream(
+            locationSettings: AndroidSettings(
+                accuracy: LocationAccuracy.high,
+                distanceFilter: 10,
+                intervalDuration: Duration(seconds: 10),
+                foregroundNotificationConfig: ForegroundNotificationConfig(
+                    notificationTitle: 'Mototaxi disponible',
+                    notificationText:
+                        'Actualizando ubicación para recibir viajes cercanos.',
+                    enableWakeLock: true)))
+        .listen((position) {
+      api
+          .available(widget.s.token, true, pointFrom(position))
+          .catchError((_) {});
+    });
   }
 
   Future<void> restore() async {
@@ -1297,29 +1434,73 @@ class _DriverState extends State<Driver> {
       active = values[0];
       available = serverAvailable;
     });
-    timer?.cancel();
     if (serverAvailable) {
+      try {
+        await startGpsTracking();
+        if (mounted) {
+          setState(() => driverMessage =
+              'Ubicación GPS activa. Esperando solicitudes cercanas.');
+        }
+      } catch (e) {
+        await api.available(widget.s.token, false);
+        if (mounted) {
+          setState(() {
+            available = false;
+            driverMessage = e.toString();
+          });
+        }
+      }
       await refresh();
-      timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
+    } else {
+      await positionSubscription?.cancel();
+      positionSubscription = null;
     }
   }
 
   Future<void> toggle(bool v) async {
-    await api.available(widget.s.token, v);
-    setState(() => available = v);
-    if (v) {
+    try {
+      if (v) {
+        await startGpsTracking();
+      } else {
+        await api.available(widget.s.token, false);
+        await positionSubscription?.cancel();
+        positionSubscription = null;
+      }
+      if (!mounted) return;
+      setState(() {
+        available = v;
+        driverMessage = v
+            ? 'Ubicación GPS activa. Esperando solicitudes cercanas.'
+            : 'No recibirás nuevas solicitudes.';
+      });
       await refresh();
-      timer?.cancel();
-      timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
-    } else {
-      timer?.cancel();
+    } catch (e) {
+      if (mounted) setState(() => driverMessage = e.toString());
     }
   }
 
   Future<void> refresh() async {
-    if (available) {
-      final r = await api.offers(widget.s.token);
-      if (mounted) setState(() => offers = r);
+    try {
+      if (active != null) {
+        final latest = await api.trip(widget.s.token, active['tripId']);
+        if (latest['status'] == 'CANCELLED') {
+          if (mounted) {
+            setState(() => driverMessage =
+                latest['cancellationReason'] == 'ADMIN_CANCELLED'
+                    ? 'El viaje fue cancelado por administración.'
+                    : 'El viaje fue cancelado.');
+          }
+          await restore();
+          return;
+        }
+        if (mounted) setState(() => active = latest);
+      }
+      if (available) {
+        final r = await api.offers(widget.s.token);
+        if (mounted) setState(() => offers = r);
+      }
+    } catch (e) {
+      if (mounted) setState(() => driverMessage = e.toString());
     }
   }
 
@@ -1365,6 +1546,10 @@ class _DriverState extends State<Driver> {
               title: const Text('Disponible para viajes'),
               value: available,
               onChanged: toggle),
+          if (driverMessage != null)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(driverMessage!)),
           if (active == null && available)
             const Padding(
                 padding: EdgeInsets.all(24),

@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
+import { sendPush } from "./push.js";
 
 export type AdminRole = "ADMIN" | "SUPPORT";
 export type SessionRole = "PASSENGER" | "DRIVER" | AdminRole;
@@ -46,6 +47,7 @@ const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), 
 const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
 const incidentSchema = z.object({ status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]), assignedTo: z.string().min(2) });
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
+const operationalSettingsSchema = z.object({ searchRadiusMeters: z.number().int().min(500).max(20000) });
 
 function zoneBoundaryWkt(points: Array<{ x: number; y: number }>): string {
   const coordinates = points.map(({ x, y }) => `${-79.858 + x * 0.0003} ${0.854 + y * 0.00024}`);
@@ -237,19 +239,45 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       order by t.requested_at desc limit 100
     `;
   } catch(e) { return guardError(e, reply); } });
+  app.get("/v1/admin/settings", async (request, reply) => { try {
+    requireUser(request);
+    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", updated_at as "updatedAt" from operational_settings where id=1`;
+    return settings ?? { searchRadiusMeters: 3000 };
+  } catch(e) { return guardError(e, reply); } });
+  app.patch("/v1/admin/settings", async (request, reply) => { try {
+    const user = requireAdmin(request);
+    const body = operationalSettingsSchema.parse(request.body);
+    const [settings] = await database()`
+      insert into operational_settings (id, search_radius_meters, updated_at, updated_by)
+      values (1, ${body.searchRadiusMeters}, now(), ${user.id!})
+      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, updated_at=now(), updated_by=excluded.updated_by
+      returning search_radius_meters as "searchRadiusMeters", updated_at as "updatedAt"
+    `;
+    await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Radio de búsqueda: ${body.searchRadiusMeters} metros`);
+    return settings;
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.post("/v1/admin/trips/:id/action", async (request, reply) => { try {
     const user = requireAdmin(request); const body = adminTripActionSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
     const id = (request.params as { id: string }).id;
-    const [trip] = await database()`
-      update trips set status='CANCELLED', cancelled_at=now()
-      where id=${id} and status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
-      returning id::text, status
-    `;
+    const trip = await database().begin(async tx => {
+      const [current] = await tx`
+        select id::text, passenger_id, driver_id, status
+        from trips where id=${id} and status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+        for update
+      `;
+      if (!current) return null;
+      await tx`update trips set status='CANCELLED', cancelled_at=now() where id=${id}`;
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${id}`;
+      if (current.driver_id) await tx`update drivers set is_available=true where user_id=${current.driver_id}`;
+      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code, metadata) values (${id}, ${current.status}, 'CANCELLED', ${user.id!}, 'ADMIN_CANCELLED', ${JSON.stringify({ reason: body.reason })}::jsonb)`;
+      return current;
+    });
     if (!trip) return reply.code(409).send({ error: "TRIP_NOT_CANCELLABLE" });
-    await database()`insert into trip_events (trip_id, to_status, actor_id, reason_code) values (${id}, 'CANCELLED', ${user.id!}, 'ADMIN_CANCELLED')`;
     await persistAudit(user, "TRIP_CANCELLED", "TRIP", id, body.reason);
-    return trip;
+    void sendPush(String(trip.passenger_id), "Viaje cancelado por administración", body.reason, { tripId: id, type: "TRIP_CANCELLED", reason: "ADMIN_CANCELLED" }).catch(() => undefined);
+    if (trip.driver_id) void sendPush(String(trip.driver_id), "Viaje cancelado por administración", body.reason, { tripId: id, type: "TRIP_CANCELLED", reason: "ADMIN_CANCELLED" }).catch(() => undefined);
+    return { id, status: "CANCELLED", cancellationReason: "ADMIN_CANCELLED" };
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.get("/v1/admin/audit", async (request, reply) => { try {
     requireAdmin(request);
