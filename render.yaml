@@ -35,7 +35,7 @@ services:
   - type: web
     name: mototaxi-atacames-admin
     runtime: static
-    buildCommand: npm install --global pnpm@11.9.0 && pnpm install --frozen-lockfile && pnpm --filter @mototaxi/admin build
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @mototaxi/admin build
     staticPublishPath: ./apps/admin/dist
     autoDeployTrigger: commit
     envVars:
