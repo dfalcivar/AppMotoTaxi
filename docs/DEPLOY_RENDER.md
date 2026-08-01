@@ -63,6 +63,10 @@ El APK queda en:
 apps/mobile/build/app/outputs/flutter-apk/app-release.apk
 ```
 
+Si `android/app/google-services.json` no está presente, la aplicación compila y
+funciona sin notificaciones push. Al agregar el archivo real del proyecto
+Firebase, Gradle activa automáticamente Google Services y la mensajería FCM.
+
 Para una distribución estable se debe crear una clave de firma propia antes de
 publicar en Google Play. Firebase App Distribution admite esta compilación para
 el piloto, pero todos los APK posteriores deben conservar la misma firma.

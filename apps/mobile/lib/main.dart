@@ -25,6 +25,7 @@ http.Client buildHttpClient() {
 }
 
 final apiHttpClient = buildHttpClient();
+bool firebaseReady = false;
 
 Future<Position> currentGpsPosition() async {
   if (!await Geolocator.isLocationServiceEnabled()) {
@@ -47,8 +48,13 @@ Future<Position> currentGpsPosition() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  await FirebaseMessaging.instance.requestPermission();
+  try {
+    await Firebase.initializeApp();
+    await FirebaseMessaging.instance.requestPermission();
+    firebaseReady = true;
+  } catch (_) {
+    // La mensajería push es opcional en instalaciones piloto sin credenciales.
+  }
   await appTheme.load();
   runApp(const MototaxiApp());
 }
@@ -168,6 +174,7 @@ class Api {
   }
 
   Future<void> registerFcm(String token) async {
+    if (!firebaseReady) return;
     try {
       final fcm = await FirebaseMessaging.instance.getToken();
       if (fcm != null) {
@@ -1439,18 +1446,20 @@ class _DriverState extends State<Driver> {
   @override
   void initState() {
     super.initState();
-    messageSubscription = FirebaseMessaging.onMessage.listen((message) {
-      if (message.data['type'] == 'TRIP_CANCELLED' && mounted) {
-        setState(() => driverMessage =
-            message.data['reason'] == 'ADMIN_CANCELLED'
-                ? 'El viaje fue cancelado por administración.'
-                : 'El pasajero canceló la solicitud.');
-      }
-      if (message.data['type'] == 'TRIP_OFFER' ||
-          message.data['type'] == 'TRIP_CANCELLED') {
-        refresh();
-      }
-    });
+    if (firebaseReady) {
+      messageSubscription = FirebaseMessaging.onMessage.listen((message) {
+        if (message.data['type'] == 'TRIP_CANCELLED' && mounted) {
+          setState(() => driverMessage =
+              message.data['reason'] == 'ADMIN_CANCELLED'
+                  ? 'El viaje fue cancelado por administración.'
+                  : 'El pasajero canceló la solicitud.');
+        }
+        if (message.data['type'] == 'TRIP_OFFER' ||
+            message.data['type'] == 'TRIP_CANCELLED') {
+          refresh();
+        }
+      });
+    }
     restore();
     timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
   }
