@@ -12,7 +12,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const base = String.fromEnvironment('API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:3001');
+    defaultValue: 'https://mototaxi-atacames-api.onrender.com');
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 
 http.Client buildHttpClient() {
@@ -127,18 +127,36 @@ String mensajeApi(dynamic code) =>
 class Api {
   Future<dynamic> call(String method, String path,
       {String? token, Object? body}) async {
-    final request = http.Request(method, Uri.parse('$base$path'));
-    request.headers.addAll({
-      'content-type': 'application/json',
-      if (token != null) 'authorization': 'Bearer $token'
-    });
-    request.body = jsonEncode(body ?? {});
-    final response =
-        await http.Response.fromStream(await apiHttpClient.send(request));
-    final data = response.body == 'null' ? null : jsonDecode(response.body);
-    if (response.statusCode >= 400)
-      throw ApiException(mensajeApi(data?['error']));
-    return data;
+    try {
+      final request = http.Request(method, Uri.parse('$base$path'));
+      request.headers.addAll({
+        'content-type': 'application/json',
+        if (token != null) 'authorization': 'Bearer $token'
+      });
+      request.body = jsonEncode(body ?? {});
+      final streamed = await apiHttpClient
+          .send(request)
+          .timeout(const Duration(seconds: 40));
+      final response = await http.Response.fromStream(streamed);
+      final data = response.body == 'null' || response.body.isEmpty
+          ? null
+          : jsonDecode(response.body);
+      if (response.statusCode >= 400) {
+        throw ApiException(mensajeApi(data?['error']));
+      }
+      return data;
+    } on ApiException {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiException(
+          'La API de Render tardó demasiado. Intenta nuevamente.');
+    } on SocketException {
+      throw const ApiException(
+          'No se pudo conectar con la API. Revisa tu conexión a Internet.');
+    } on http.ClientException {
+      throw const ApiException(
+          'No se pudo conectar con la API. Revisa tu conexión a Internet.');
+    }
   }
 
   Future<Session> login(String e, String p) async {
@@ -152,9 +170,10 @@ class Api {
   Future<void> registerFcm(String token) async {
     try {
       final fcm = await FirebaseMessaging.instance.getToken();
-      if (fcm != null)
+      if (fcm != null) {
         await call('PUT', '/v1/devices/fcm-token',
             token: token, body: {'token': fcm, 'platform': 'ANDROID'});
+      }
     } catch (_) {}
   }
 
@@ -721,7 +740,7 @@ class _RegisterState extends State<Register> {
             decoration: const InputDecoration(
                 labelText: 'Contraseña (mín. 8 caracteres)')),
         DropdownButtonFormField<String>(
-            value: role,
+            initialValue: role,
             items: const [
               DropdownMenuItem(value: 'PASSENGER', child: Text('Pasajero')),
               DropdownMenuItem(value: 'DRIVER', child: Text('Conductor'))
@@ -754,10 +773,12 @@ class PilotMap extends StatelessWidget {
       {this.pickup = const LatLng(0.865, -79.846),
       this.dropoff = const LatLng(0.867, -79.844),
       required this.driverView,
+      this.onDestinationSelected,
       super.key});
   final String origin, destination;
   final LatLng pickup, dropoff;
   final bool driverView;
+  final ValueChanged<LatLng>? onDestinationSelected;
   @override
   Widget build(BuildContext c) {
     final center = LatLng((pickup.latitude + dropoff.latitude) / 2,
@@ -766,43 +787,66 @@ class PilotMap extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         child: SizedBox(
             height: 220,
-            child: FlutterMap(
-                key: ValueKey(
-                    '${pickup.latitude},${pickup.longitude}-${dropoff.latitude},${dropoff.longitude}'),
-                options: MapOptions(initialCenter: center, initialZoom: 15),
-                children: [
-                  TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'ec.mototaxi.atacames'),
-                  PolylineLayer(polylines: [
-                    Polyline(
-                        points: [pickup, dropoff],
-                        color: Theme.of(c).colorScheme.primary,
-                        strokeWidth: 4)
+            child: Stack(children: [
+              FlutterMap(
+                  key: ValueKey(
+                      '${pickup.latitude},${pickup.longitude}-${dropoff.latitude},${dropoff.longitude}'),
+                  options: MapOptions(
+                      initialCenter: center,
+                      initialZoom: 15,
+                      onTap: onDestinationSelected == null
+                          ? null
+                          : (_, point) => onDestinationSelected!(point)),
+                  children: [
+                    TileLayer(
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'ec.mototaxi.atacames'),
+                    PolylineLayer(polylines: [
+                      Polyline(
+                          points: [pickup, dropoff],
+                          color: Theme.of(c).colorScheme.primary,
+                          strokeWidth: 4)
+                    ]),
+                    MarkerLayer(markers: [
+                      Marker(
+                          point: pickup,
+                          width: 120,
+                          height: 70,
+                          child: Column(children: [
+                            const Icon(Icons.location_on,
+                                color: Colors.green, size: 32),
+                            Text(origin,
+                                maxLines: 1, overflow: TextOverflow.ellipsis)
+                          ])),
+                      Marker(
+                          point: dropoff,
+                          width: 120,
+                          height: 70,
+                          child: Column(children: [
+                            const Icon(Icons.flag, color: Colors.red, size: 30),
+                            Text(destination,
+                                maxLines: 1, overflow: TextOverflow.ellipsis)
+                          ]))
+                    ])
                   ]),
-                  MarkerLayer(markers: [
-                    Marker(
-                        point: pickup,
-                        width: 120,
-                        height: 70,
-                        child: Column(children: [
-                          const Icon(Icons.location_on,
-                              color: Colors.green, size: 32),
-                          Text(origin,
-                              maxLines: 1, overflow: TextOverflow.ellipsis)
-                        ])),
-                    Marker(
-                        point: dropoff,
-                        width: 120,
-                        height: 70,
-                        child: Column(children: [
-                          const Icon(Icons.flag, color: Colors.red, size: 30),
-                          Text(destination,
-                              maxLines: 1, overflow: TextOverflow.ellipsis)
-                        ]))
-                  ])
-                ])));
+              if (onDestinationSelected != null)
+                Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 10,
+                    child: IgnorePointer(
+                        child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: .72),
+                                borderRadius: BorderRadius.circular(20)),
+                            child: const Text(
+                                'Toca el mapa para marcar el destino',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.white))))),
+            ])));
   }
 }
 
@@ -825,8 +869,9 @@ class _ProfileState extends State<Profile> {
 
   @override
   Widget build(BuildContext c) {
-    if (p == null)
+    if (p == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final rs = p['reviews'] as List;
     return Scaffold(
         appBar: AppBar(title: const Text('Mi perfil')),
@@ -941,8 +986,9 @@ class _TripsPanelState extends State<TripsPanel> {
   @override
   Widget build(BuildContext c) {
     final trips = data;
-    if (trips == null)
+    if (trips == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     return Scaffold(
         appBar: AppBar(title: const Text('Mis viajes')),
         body: ListView(
@@ -989,8 +1035,9 @@ class _ActivityPanelState extends State<ActivityPanel> {
   @override
   Widget build(BuildContext c) {
     final items = data;
-    if (items == null)
+    if (items == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     return Scaffold(
         appBar: AppBar(title: const Text('Actividad')),
         body: ListView(
@@ -1169,8 +1216,9 @@ class _PassengerState extends State<Passenger> {
         });
         if (!ratingPrompted) {
           ratingPrompted = true;
-          Future.microtask(() => rating(context, widget.s, t['tripId'],
-              () => setState(() => message = 'Gracias por tu calificación.')));
+          if (!mounted) return;
+          await rating(context, widget.s, t['tripId'],
+              () => setState(() => message = 'Gracias por tu calificación.'));
         }
         return;
       }
@@ -1243,6 +1291,15 @@ class _PassengerState extends State<Passenger> {
     }
   }
 
+  void selectDestination(LatLng point) {
+    setState(() {
+      dropoff = point;
+      destination.text =
+          'Punto marcado (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
+      message = 'Destino marcado en el mapa. Ya puedes solicitar el viaje.';
+    });
+  }
+
   Future<void> create() async {
     try {
       ratingPrompted = false;
@@ -1299,7 +1356,11 @@ class _PassengerState extends State<Passenger> {
               icon: const Icon(Icons.person_outline))
         ]),
         body: ListView(padding: const EdgeInsets.all(20), children: [
-          PilotMap(o, d, pickup: pickup, dropoff: dropoff, driverView: false),
+          PilotMap(o, d,
+              pickup: pickup,
+              dropoff: dropoff,
+              driverView: false,
+              onDestinationSelected: active == null ? selectDestination : null),
           if (active == null) ...[
             TextField(
                 controller: origin,
@@ -1331,7 +1392,7 @@ class _PassengerState extends State<Passenger> {
             }, onSelectionChanged: (v) => setState(() => people = v.first)),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-                value: paymentMethod,
+                initialValue: paymentMethod,
                 decoration: const InputDecoration(labelText: 'Método de pago'),
                 items: const [
                   DropdownMenuItem(
@@ -1386,7 +1447,9 @@ class _DriverState extends State<Driver> {
                 : 'El pasajero canceló la solicitud.');
       }
       if (message.data['type'] == 'TRIP_OFFER' ||
-          message.data['type'] == 'TRIP_CANCELLED') refresh();
+          message.data['type'] == 'TRIP_CANCELLED') {
+        refresh();
+      }
     });
     restore();
     timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
@@ -1411,8 +1474,8 @@ class _DriverState extends State<Driver> {
             locationSettings: AndroidSettings(
                 accuracy: LocationAccuracy.high,
                 distanceFilter: 10,
-                intervalDuration: Duration(seconds: 10),
-                foregroundNotificationConfig: ForegroundNotificationConfig(
+                intervalDuration: const Duration(seconds: 10),
+                foregroundNotificationConfig: const ForegroundNotificationConfig(
                     notificationTitle: 'Mototaxi disponible',
                     notificationText:
                         'Actualizando ubicación para recibir viajes cercanos.',
@@ -1507,7 +1570,10 @@ class _DriverState extends State<Driver> {
   Future<void> progress(BuildContext c, String action) async {
     final tripId = active['tripId'];
     await api.action(widget.s.token, tripId, action);
-    if (action == 'COMPLETE') await rating(c, widget.s, tripId, () => {});
+    if (action == 'COMPLETE') {
+      if (!c.mounted) return;
+      await rating(c, widget.s, tripId, () => {});
+    }
     await restore();
     await refresh();
   }

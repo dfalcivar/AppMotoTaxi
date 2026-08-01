@@ -18,6 +18,21 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(200);
   });
 
+  it("permite preflight CORS para cambios PATCH del panel", async () => {
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/admin/drivers/test",
+      headers: {
+        origin: "https://mototaxi-atacames-admin.onrender.com",
+        "access-control-request-method": "PATCH",
+        "access-control-request-headers": "authorization,content-type"
+      }
+    });
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-methods"]).toContain("PATCH");
+    expect(response.headers["access-control-allow-headers"]?.toLowerCase()).toContain("authorization");
+  });
+
   it("cotiza la promoción urbana de tres pasajeros", async () => {
     const response = await app.inject({
       method: "POST",

@@ -16,6 +16,27 @@
   font-weight: 750;
 }
 
+.database-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.database-details > div {
+  display: grid;
+  gap: 5px;
+  padding: 16px;
+  border: 1px solid #d9e5e7;
+  border-radius: 12px;
+  background: #f7fafb;
+}
+
+.database-details span,
+.database-details small {
+  color: #667e84;
+}
+
 .radius-control {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) 120px auto;
@@ -32,7 +53,8 @@
 }
 
 @media (max-width: 720px) {
-  .radius-control {
+  .radius-control,
+  .database-details {
     grid-template-columns: 1fr;
   }
 }

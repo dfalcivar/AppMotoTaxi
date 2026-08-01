@@ -57,7 +57,11 @@ async function authenticatedUser(request: { headers: Record<string, string | str
 
 export async function buildApp() {
   const app = Fastify({ logger: false });
-  await app.register(cors, { origin: true });
+  await app.register(cors, {
+    origin: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+  });
   await registerAdminRoutes(app);
 
   app.get("/health", async () => ({

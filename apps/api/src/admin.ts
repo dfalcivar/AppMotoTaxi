@@ -135,7 +135,22 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const user=requireAdmin(request); const body=driverSchema.parse(request.body);
     if (!process.env.DATABASE_URL) { const item=drivers.find(d=>d.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"DRIVER_STATUS",item.id,body.reason); return item; }
     const id=(request.params as { id: string }).id;
-    const rows=await database().begin(async tx=>{ const updated=await tx`update users set status=${body.status}, updated_at=now() where id=${id} and role='DRIVER' returning id, full_name as name, phone_e164 as phone, status`; if(updated[0])await tx`update drivers set deuna_enabled=${body.deunaEnabled ?? false}, deuna_qr_image_url=${body.deunaQrImageUrl || null} where user_id=${id}`; return updated; });
+    const rows=await database().begin(async tx=>{
+      const updated=await tx`update users set status=${body.status}, updated_at=now() where id=${id} and role='DRIVER' returning id, full_name as name, phone_e164 as phone, status`;
+      if(updated[0]) {
+        await tx`
+          update drivers
+          set deuna_enabled=${body.deunaEnabled ?? false},
+              deuna_qr_image_url=${body.deunaQrImageUrl || null},
+              approval_note=${body.reason},
+              approved_at=case when ${body.status}='ACTIVE' then now() else approved_at end,
+              approved_by=case when ${body.status}='ACTIVE' then ${user.id!} else approved_by end
+          where user_id=${id}
+        `;
+        await tx`update vehicles set status=${body.status} where driver_id=${id}`;
+      }
+      return updated;
+    });
     const item=rows[0]; if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,"DRIVER_STATUS","DRIVER",id,body.reason);
     return item;

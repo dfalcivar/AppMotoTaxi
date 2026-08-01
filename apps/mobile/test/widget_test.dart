@@ -5,7 +5,8 @@ void main() {
   testWidgets('muestra las dos entradas principales', (tester) async {
     await tester.pumpWidget(const MototaxiApp());
 
-    expect(find.text('Solicitar una mototaxi'), findsOneWidget);
+    expect(find.text('Ingresar como pasajero'), findsOneWidget);
     expect(find.text('Ingresar como conductor'), findsOneWidget);
+    expect(find.text('Crear una cuenta'), findsOneWidget);
   });
 }

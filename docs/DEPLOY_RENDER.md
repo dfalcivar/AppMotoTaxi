@@ -44,11 +44,17 @@ Si Render cambia el nombre de la API por estar ocupado, actualiza
 
 ## APK conectado a Internet
 
-Desde `apps/mobile`:
+La aplicación usa la API pública de Render por defecto. Para generar una nueva
+versión instalable ejecuta desde `apps/mobile`:
 
 ```powershell
-flutter build apk --release `
-  --dart-define=API_BASE_URL=https://mototaxi-atacames-api.onrender.com
+flutter build apk --release
+```
+
+Para desarrollo contra una API local en el emulador utiliza explícitamente:
+
+```powershell
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3001
 ```
 
 El APK queda en:

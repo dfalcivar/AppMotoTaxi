@@ -116,8 +116,12 @@ flutter run
 Para compilar un APK:
 
 ```bash
-flutter build apk --debug
+flutter build apk --release
 ```
+
+El APK de lanzamiento se conecta de forma predeterminada a la API publicada en
+Render. Para trabajar contra la API local desde un emulador, agrega
+`--dart-define=API_BASE_URL=http://10.0.2.2:3001` al comando `flutter run`.
 
 Para instalarlo en un teléfono o emulador:
 

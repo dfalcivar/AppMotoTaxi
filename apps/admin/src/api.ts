@@ -23,7 +23,12 @@ export async function apiFetch<T>(path: string, token?: string, init: RequestIni
   const headers = new Headers(init.headers);
   if (init.body) headers.set("content-type", "application/json");
   if (token) headers.set("authorization", `Bearer ${token}`);
-  return parse<T>(await fetcher(`${base}${persistentPath(path, init.method)}`, { ...init, headers }));
+  try {
+    return parse<T>(await fetcher(`${base}${persistentPath(path, init.method)}`, { ...init, headers }));
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("No se pudo conectar con la API de Render. Intenta nuevamente en unos segundos.");
+    throw error;
+  }
 }
 export function login(email: string, password: string) { return apiFetch<Session>("/v1/admin/session", undefined, { method: "POST", body: JSON.stringify({ email, password }) }); }
 export async function requestQuote(input: QuoteRequest, signal?: AbortSignal, fetcher: typeof fetch = fetch): Promise<Quote> {
