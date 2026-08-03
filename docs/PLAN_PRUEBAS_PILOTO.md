@@ -93,11 +93,12 @@ Especificación inicial: banner horizontal `1200 × 400 px` (relación 3:1), JPG
 |---|---|---|---|---|
 | ADS-01 | Cargar banner | Administrador carga imagen, título y vigencia | Banner queda disponible sin recompilar la APK | ☐ |
 | ADS-02 | Carrusel | Activar dos banners | La app alterna banners automáticamente | ☐ |
-| ADS-03 | Programación | Configurar inicio y fin | Solo aparece durante la vigencia | ☐ |
+| ADS-03 | Programación | Configurar una hora de inicio | Aparece desde esa hora y permanece activa sin vencimiento automático | ☐ |
 | ADS-04 | Desactivar | Desactivar desde panel | Desaparece al siguiente refresco | ☐ |
 | ADS-05 | Imagen inválida | Cargar formato/tamaño no permitido | Panel explica el requisito y no guarda | ☐ |
 | ADS-06 | Sin campañas | Desactivar todos los banners | Pasajero ve `Tu publicidad aquí`; conductor no muestra publicidad | ☐ |
 | ADS-07 | Viaje activo | Solicitar, aceptar e iniciar un viaje | El banner continúa visible en la parte superior durante la búsqueda, asignación y viaje en curso | ☐ |
+| ADS-08 | Editar campaña | Cambiar título, hora, orden o imagen desde el panel | Los cambios se guardan sin crear otro banner y respetan la hora local del navegador | ☐ |
 
 ## Evidencia por incidencia
 

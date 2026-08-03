@@ -63,11 +63,15 @@ const bannerSchema = z.object({
 });
 const bannerUpdateSchema = z.object({
   title: z.string().trim().min(3).max(120).optional(),
+  imageBase64: z.string().min(20).optional(),
+  imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
   targetUrl: z.string().url().optional().or(z.literal("")),
   startsAt: z.string().datetime({ offset: true }).optional(),
   endsAt: z.string().datetime({ offset: true }).optional().or(z.literal("")),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(999).optional()
+}).refine(value => Boolean(value.imageBase64) === Boolean(value.imageMime), {
+  message: "INVALID_BANNER_IMAGE"
 });
 
 export function imageDimensions(image: Buffer, mime: string): { width: number; height: number } | undefined {
@@ -354,7 +358,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       insert into affiliate_banners
         (title, placement, image_mime, image_data, target_url, starts_at, ends_at, active, sort_order, created_by)
       values (${body.title}, ${body.placement}, ${body.imageMime}, ${image}, ${body.targetUrl || null},
-        ${body.startsAt}, ${body.endsAt || null}, ${body.active}, ${body.sortOrder}, ${user.id!})
+        ${body.startsAt}, ${null}, ${body.active}, ${body.sortOrder}, ${user.id!})
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
         ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
         octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
@@ -369,13 +373,23 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const id = (request.params as { id: string }).id;
     const [current] = await database()`select * from affiliate_banners where id=${id}`;
     if (!current) return reply.code(404).send({ error: "NOT_FOUND" });
+    const image = body.imageBase64
+      ? Buffer.from(body.imageBase64.replace(/^data:[^;]+;base64,/, ""), "base64")
+      : current.image_data;
+    const imageMime = body.imageMime ?? current.image_mime;
+    if (!image.length || image.length > 1024 * 1024) return reply.code(400).send({ error: "INVALID_BANNER_IMAGE" });
+    if (body.imageBase64) {
+      const dimensions = imageDimensions(image, imageMime);
+      if (!dimensions || dimensions.width !== 1200 || dimensions.height !== 400) {
+        return reply.code(400).send({ error: "INVALID_BANNER_DIMENSIONS", message: "El banner debe medir exactamente 1200×400 px." });
+      }
+    }
     const startsAt = body.startsAt ?? current.starts_at;
-    const endsAt = body.endsAt === "" ? null : (body.endsAt ?? current.ends_at);
-    if (endsAt && new Date(endsAt) <= new Date(startsAt)) return reply.code(400).send({ error: "INVALID_BANNER_DATES" });
+    const endsAt = null;
     const [item] = await database()`
       update affiliate_banners set
         title=${body.title ?? current.title}, target_url=${body.targetUrl === "" ? null : (body.targetUrl ?? current.target_url)},
-        starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
+        image_mime=${imageMime}, image_data=${image}, starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
         sort_order=${body.sortOrder ?? current.sort_order}, updated_at=now()
       where id=${id}
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",

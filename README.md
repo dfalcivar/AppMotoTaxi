@@ -88,7 +88,7 @@ El administrador puede aprobar/suspender conductores y pasajeros, publicar tarif
 
 ### Publicidad dinámica
 
-El administrador puede publicar banners desde el módulo **Publicidad**. El formato del piloto es `1200 × 400 px`, JPG, PNG o WebP, con un máximo de 1 MB. Las imágenes permanecen en la parte superior de la pantalla del pasajero antes de solicitar y durante el viaje; no se muestran al conductor para no distraer su operación. La aplicación consulta las campañas vigentes cada cinco minutos y alterna varias piezas cada ocho segundos. Cuando no existen campañas se utiliza el banner demostrativo `Tu publicidad aquí`. Activar, desactivar o cambiar una campaña no requiere recompilar la APK.
+El administrador puede publicar y editar banners desde el módulo **Publicidad**. El formato del piloto es `1200 × 400 px`, JPG, PNG o WebP, con un máximo de 1 MB. Las imágenes permanecen en la parte superior de la pantalla del pasajero antes de solicitar y durante el viaje; no se muestran al conductor para no distraer su operación. La aplicación consulta las campañas vigentes cada cinco minutos y alterna varias piezas cada ocho segundos. Una campaña comienza en la fecha configurada y no vence automáticamente: permanece visible hasta que el administrador la desactive. Cuando no existen campañas se utiliza el banner demostrativo `Tu publicidad aquí`. Activar, desactivar o modificar una campaña no requiere recompilar la APK.
 
 Al tocar el mapa para elegir origen o destino, la API realiza geocodificación inversa y reemplaza las coordenadas por una dirección legible. Si el servicio geográfico no responde, el punto continúa siendo válido y las coordenadas quedan visibles como respaldo.
 

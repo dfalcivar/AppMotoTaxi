@@ -12,6 +12,9 @@
 .banner-card img, .banner-preview { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: cover; border-radius: 10px; background: #e7eff0; }
 .banner-card strong, .banner-card small { display: block; }
 .banner-card small { color: #6b8186; margin-top: 4px; }
+.banner-actions, .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.banner-actions { justify-content: flex-end; }
+.banner-actions button { white-space: nowrap; }
 .check-label { display: flex !important; align-items: center; gap: 8px; }
 .check-label input { width: auto; }
 .banner-preview { border: 1px solid #cbdcdf; }

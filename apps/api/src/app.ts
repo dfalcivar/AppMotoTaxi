@@ -94,7 +94,6 @@ export async function buildApp() {
         ends_at as "endsAt", sort_order as "sortOrder", updated_at as "updatedAt"
       from affiliate_banners
       where placement=${parsed.data.placement} and active=true and starts_at <= now()
-        and (ends_at is null or ends_at > now())
       order by sort_order, starts_at desc
     `;
   });

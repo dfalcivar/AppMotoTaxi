@@ -31,6 +31,10 @@ const stateLabels: Record<string, string> = {
 
 function errorText(error: unknown) { return error instanceof Error ? error.message : "No se pudo completar la operación."; }
 function money(cents: number) { return `$${(Number(cents) / 100).toFixed(2)}`; }
+function localDateTimeInput(value: string | Date = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
 function Badge({ value }: { value: string }) { return <span className={`badge ${value.toLowerCase()}`}>{stateLabels[value] ?? value.replaceAll("_", " ")}</span>; }
 function Header({ eyebrow, title, action }: { eyebrow: string; title: string; action?: string }) { return <div className="section-title"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div>{action && <span className="muted-pill">{action}</span>}</div>; }
 function Table({ headers, rows }: { headers: string[]; rows: React.ReactNode[][] }) { return <div className="table-wrap"><table><thead><tr>{headers.map(header => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody></table></div>; }
@@ -107,10 +111,18 @@ function Settings({ token, admin }: { token: string; admin: boolean }) {
 }
 
 function Advertising({ token, admin }: { token: string; admin: boolean }) {
+  const emptyForm = () => ({ title: "", placement: "PASSENGER_HOME", targetUrl: "", startsAt: localDateTimeInput(), sortOrder: 0, active: true, imageBase64: "", imageMime: "" });
   const [data, setData] = useState<any[]>([]); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ title: "", placement: "PASSENGER_HOME", targetUrl: "", startsAt: new Date().toISOString().slice(0, 16), endsAt: "", sortOrder: 0, active: true, imageBase64: "", imageMime: "" });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState(emptyForm);
   const load = () => apiFetch<any[]>("/v1/admin/banners", token).then(setData).catch(reason => setError(errorText(reason)));
   useEffect(() => { void load(); }, [token]);
+  function resetForm() { setEditingId(null); setForm(emptyForm()); }
+  function edit(item: any) {
+    setError(""); setSuccess(""); setEditingId(item.id);
+    setForm({ title: item.title, placement: item.placement, targetUrl: item.targetUrl ?? "", startsAt: localDateTimeInput(item.startsAt), sortOrder: item.sortOrder, active: item.active, imageBase64: "", imageMime: "" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
   function choose(file?: File) {
     setError(""); if (!file) return;
     if (file.size > 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) { setError("Usa una imagen JPG, PNG o WebP de máximo 1 MB."); return; }
@@ -119,11 +131,44 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
     image.onerror = () => { URL.revokeObjectURL(url); setError("No se pudo leer la imagen seleccionada."); }; image.src = url;
   }
   async function save(event: React.FormEvent) {
-    event.preventDefault(); setError(""); setSuccess(""); if (!form.imageBase64) { setError("Selecciona el banner de 1200×400 px."); return; }
-    setBusy(true); try { await apiFetch("/v1/admin/banners", token, { method: "POST", body: JSON.stringify({ ...form, startsAt: new Date(form.startsAt).toISOString(), endsAt: form.endsAt ? new Date(form.endsAt).toISOString() : "" }) }); setSuccess("Banner publicado. La app lo recibirá sin recompilarse."); setForm(previous => ({ ...previous, title: "", targetUrl: "", endsAt: "", imageBase64: "", imageMime: "" })); await load(); } catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
+    event.preventDefault(); setError(""); setSuccess("");
+    if (!editingId && !form.imageBase64) { setError("Selecciona el banner de 1200×400 px."); return; }
+    const payload = { ...form, startsAt: new Date(form.startsAt).toISOString(), endsAt: "" };
+    setBusy(true);
+    try {
+      await apiFetch(editingId ? `/v1/admin/banners/${editingId}` : "/v1/admin/banners", token, { method: editingId ? "PATCH" : "POST", body: JSON.stringify(payload) });
+      setSuccess(editingId ? "Publicidad actualizada. Permanecerá activa hasta que la desactives manualmente." : "Banner publicado sin fecha de vencimiento.");
+      resetForm(); await load();
+    } catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
   }
-  async function toggle(item: any) { try { await apiFetch(`/v1/admin/banners/${item.id}`, token, { method: "PATCH", body: JSON.stringify({ active: !item.active }) }); await load(); } catch (reason) { setError(errorText(reason)); } }
-  return <div className="advertising-layout"><section className="card"><Header eyebrow="COMERCIOS AFILIADOS" title="Banners publicados" action={`${data.filter(item => item.active).length} activos`} /><Notice error={error} success={success} /><p className="note">La publicidad se muestra únicamente al pasajero, antes de seleccionar origen y destino. Los banners vigentes rotan automáticamente y desaparecen al desactivarlos, sin publicar otra APK.</p>{data.length ? <div className="banner-grid">{data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}><img src={apiUrl(`/v1/banners/${item.id}/image?v=${encodeURIComponent(item.updatedAt)}`)} alt={item.title} /><div><strong>{item.title}</strong><small>Inicio del pasajero · orden {item.sortOrder}</small><small>{new Date(item.startsAt).toLocaleString()} {item.endsAt ? `— ${new Date(item.endsAt).toLocaleString()}` : "— sin fecha final"}</small></div>{admin && <button className="secondary" onClick={() => toggle(item)}>{item.active ? "Desactivar" : "Activar"}</button>}</article>)}</div> : <article className="banner-placeholder-card"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Vista previa en la app del pasajero</strong><p>Este banner demostrativo ocupa el espacio hasta que publiques la primera campaña.</p></div></article>}</section>{admin && <form className="card form-card advertising-form" onSubmit={save}><Header eyebrow="NUEVO BANNER" title="Publicar anuncio" /><p className="banner-spec">1200×400 px · JPG, PNG o WebP · máximo 1 MB</p><div className="placement-note"><strong>Ubicación: inicio del pasajero</strong><span>Se verá antes de escoger origen y destino. No aparecerá en la pantalla operativa del conductor.</span></div><label>Comercio o campaña<input required minLength={3} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Imagen<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={e => choose(e.target.files?.[0])} /></label>{form.imageBase64 && <img className="banner-preview" src={`data:${form.imageMime};base64,${form.imageBase64}`} alt="Vista previa" />}<label>Enlace opcional<input type="url" placeholder="https://comercio.example" value={form.targetUrl} onChange={e => setForm({ ...form, targetUrl: e.target.value })} /></label><div className="form-grid"><label>Mostrar desde<input required type="datetime-local" value={form.startsAt} onChange={e => setForm({ ...form, startsAt: e.target.value })} /></label><label>Mostrar hasta (opcional)<input type="datetime-local" value={form.endsAt} onChange={e => setForm({ ...form, endsAt: e.target.value })} /></label><label>Orden<input type="number" min="0" max="999" value={form.sortOrder} onChange={e => setForm({ ...form, sortOrder: Number(e.target.value) })} /></label><label className="check-label"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} /> Publicar activo</label></div><button className="primary" disabled={busy}>{busy ? "Publicando…" : "Publicar banner"}</button></form>}</div>;
+  async function toggle(item: any) { try { await apiFetch(`/v1/admin/banners/${item.id}`, token, { method: "PATCH", body: JSON.stringify({ active: !item.active }) }); setSuccess(item.active ? "Publicidad desactivada." : "Publicidad activada sin fecha de vencimiento."); await load(); } catch (reason) { setError(errorText(reason)); } }
+  return <div className="advertising-layout">
+    <section className="card">
+      <Header eyebrow="COMERCIOS AFILIADOS" title="Banners publicados" action={`${data.filter(item => item.active).length} activos`} />
+      <Notice error={error} success={success} />
+      <p className="note">Los anuncios aparecen al pasajero y rotan automáticamente. Después de su hora de inicio permanecen publicados sin fecha final; solo desaparecen al desactivarlos manualmente.</p>
+      {data.length ? <div className="banner-grid">{data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}>
+        <img src={apiUrl(`/v1/banners/${item.id}/image?v=${encodeURIComponent(item.updatedAt)}`)} alt={item.title} />
+        <div><strong>{item.title}</strong><small>Inicio del pasajero · orden {item.sortOrder}</small><small>Desde {new Date(item.startsAt).toLocaleString()} · sin vencimiento</small></div>
+        {admin && <div className="banner-actions"><button className="secondary" onClick={() => edit(item)}>Editar</button><button className="secondary" onClick={() => toggle(item)}>{item.active ? "Desactivar" : "Activar"}</button></div>}
+      </article>)}</div> : <article className="banner-placeholder-card"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Vista previa en la app del pasajero</strong><p>Este banner demostrativo ocupa el espacio hasta que publiques la primera campaña.</p></div></article>}
+    </section>
+    {admin && <form className="card form-card advertising-form" onSubmit={save}>
+      <Header eyebrow={editingId ? "EDITAR BANNER" : "NUEVO BANNER"} title={editingId ? "Modificar publicidad" : "Publicar anuncio"} />
+      <p className="banner-spec">1200×400 px · JPG, PNG o WebP · máximo 1 MB</p>
+      <div className="placement-note"><strong>Publicación permanente</strong><span>Comenzará en la fecha indicada y seguirá activa hasta que la desactives manualmente.</span></div>
+      <label>Comercio o campaña<input required minLength={3} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
+      <label>{editingId ? "Reemplazar imagen (opcional)" : "Imagen"}<input required={!editingId} type="file" accept="image/jpeg,image/png,image/webp" onChange={e => choose(e.target.files?.[0])} /></label>
+      {form.imageBase64 && <img className="banner-preview" src={`data:${form.imageMime};base64,${form.imageBase64}`} alt="Vista previa" />}
+      <label>Enlace opcional<input type="url" placeholder="https://comercio.example" value={form.targetUrl} onChange={e => setForm({ ...form, targetUrl: e.target.value })} /></label>
+      <div className="form-grid">
+        <label>Mostrar desde<input required type="datetime-local" value={form.startsAt} onChange={e => setForm({ ...form, startsAt: e.target.value })} /></label>
+        <label>Orden<input type="number" min="0" max="999" value={form.sortOrder} onChange={e => setForm({ ...form, sortOrder: Number(e.target.value) })} /></label>
+        <label className="check-label"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} /> Publicidad activa</label>
+      </div>
+      <div className="form-actions"><button className="primary" disabled={busy}>{busy ? "Guardando…" : editingId ? "Guardar cambios" : "Publicar banner"}</button>{editingId && <button className="secondary" type="button" onClick={resetForm}>Cancelar edición</button>}</div>
+    </form>}
+  </div>;
 }
 
 function Incidents({ token }: { token: string }) {
