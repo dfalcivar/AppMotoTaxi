@@ -18,6 +18,20 @@ const base = String.fromEnvironment('API_BASE_URL',
     defaultValue: 'https://mototaxi-atacames-api.onrender.com');
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 
+class AppHttpOverrides extends HttpOverrides {
+  AppHttpOverrides(this.proxy);
+
+  final Uri proxy;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    client.findProxy = (_) => 'PROXY ${proxy.host}:${proxy.port}';
+    client.connectionTimeout = const Duration(seconds: 30);
+    return client;
+  }
+}
+
 http.Client buildHttpClient() {
   if (apiHttpProxy.isEmpty) return http.Client();
   final proxy = Uri.parse(apiHttpProxy);
@@ -58,6 +72,9 @@ Future<Position> currentGpsPosition() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (apiHttpProxy.isNotEmpty) {
+    HttpOverrides.global = AppHttpOverrides(Uri.parse(apiHttpProxy));
+  }
   try {
     await Firebase.initializeApp();
     await FirebaseMessaging.instance.requestPermission();
