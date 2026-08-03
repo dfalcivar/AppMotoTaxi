@@ -6,6 +6,7 @@ export interface QuoteRequest { zone: Zone; passengers: number; localTime: strin
 export interface Quote { currency: "USD"; totalCents: number; total: string; period: "DAY" | "NIGHT"; zone: Zone; passengers: number; appliedRule: string; pricingVersion: number; explanation: string }
 
 const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "/api";
+export function apiUrl(path: string) { return `${base}${path}`; }
 function persistentPath(path: string, method?: string): string {
   if (method === "POST" && path === "/v1/admin/pricing") return "/v1/admin/pricing/persist";
   if (method === "POST" && path === "/v1/admin/zones") return "/v1/admin/zones/persist";

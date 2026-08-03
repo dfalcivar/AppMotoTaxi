@@ -1,7 +1,7 @@
 name: mototaxi_atacames
 description: Aplicación móvil del MVP de Mototaxi Atacames.
 publish_to: "none"
-version: 0.2.0+2
+version: 0.3.0+3
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -29,3 +29,4 @@ flutter:
   assets:
     - assets/images/atacames-login-hero.png
     - assets/images/mototaxi-atacames-logo.png
+    - assets/images/advertising-placeholder.png

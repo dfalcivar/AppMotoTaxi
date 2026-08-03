@@ -10,6 +10,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'affiliate_banners.dart';
 import 'chat_sheet.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
@@ -224,6 +225,10 @@ class Api {
       call('GET', '/v1/trips/pending-rating', token: t);
   Future<List<dynamic>> notifications(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/notifications', token: t));
+  Future<List<dynamic>> banners(String t, String placement) async =>
+      List<dynamic>.from(await call(
+          'GET', '/v1/banners?placement=${Uri.encodeQueryComponent(placement)}',
+          token: t));
   Future<dynamic> trip(String t, String id) =>
       call('GET', '/v1/trips/$id', token: t);
   Future<Map<String, dynamic>> route(
@@ -1574,6 +1579,11 @@ class _PassengerState extends State<Passenger> {
               icon: const Icon(Icons.person_outline))
         ]),
         body: ListView(padding: const EdgeInsets.all(20), children: [
+          if (active == null)
+            AffiliateBanners(
+                load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
+                imageUrl: (banner) =>
+                    '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}'),
           if (active == null)
             SegmentedButton<MapPointSelection>(
               segments: const [

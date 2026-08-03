@@ -48,6 +48,63 @@ const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "E
 const incidentSchema = z.object({ status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]), assignedTo: z.string().min(2) });
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
 const operationalSettingsSchema = z.object({ searchRadiusMeters: z.number().int().min(500).max(20000) });
+const bannerSchema = z.object({
+  title: z.string().trim().min(3).max(120),
+  placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]),
+  imageBase64: z.string().min(20),
+  imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  targetUrl: z.string().url().optional().or(z.literal("")),
+  startsAt: z.string().datetime({ offset: true }),
+  endsAt: z.string().datetime({ offset: true }).optional().or(z.literal("")),
+  active: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(999).default(0)
+}).refine(value => !value.endsAt || new Date(value.endsAt) > new Date(value.startsAt), {
+  message: "INVALID_BANNER_DATES"
+});
+const bannerUpdateSchema = z.object({
+  title: z.string().trim().min(3).max(120).optional(),
+  targetUrl: z.string().url().optional().or(z.literal("")),
+  startsAt: z.string().datetime({ offset: true }).optional(),
+  endsAt: z.string().datetime({ offset: true }).optional().or(z.literal("")),
+  active: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(999).optional()
+});
+
+export function imageDimensions(image: Buffer, mime: string): { width: number; height: number } | undefined {
+  if (mime === "image/png" && image.length >= 24 && image.subarray(1, 4).toString() === "PNG") {
+    return { width: image.readUInt32BE(16), height: image.readUInt32BE(20) };
+  }
+  if (mime === "image/jpeg" && image.length > 10 && image[0] === 0xff && image[1] === 0xd8) {
+    let offset = 2;
+    const startOfFrame = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+    while (offset + 8 < image.length) {
+      if (image[offset] !== 0xff) return undefined;
+      const marker = image[offset + 1]!;
+      offset += 2;
+      if (marker === 0xd8 || marker === 0xd9) continue;
+      const length = image.readUInt16BE(offset);
+      if (length < 2 || offset + length > image.length) return undefined;
+      if (startOfFrame.has(marker)) return { width: image.readUInt16BE(offset + 5), height: image.readUInt16BE(offset + 3) };
+      offset += length;
+    }
+  }
+  if (mime === "image/webp" && image.length >= 30 && image.subarray(0, 4).toString() === "RIFF" && image.subarray(8, 12).toString() === "WEBP") {
+    const chunk = image.subarray(12, 16).toString();
+    if (chunk === "VP8X") return {
+      width: image.readUIntLE(24, 3) + 1,
+      height: image.readUIntLE(27, 3) + 1
+    };
+    if (chunk === "VP8 " && image.length >= 30) return {
+      width: image.readUInt16LE(26) & 0x3fff,
+      height: image.readUInt16LE(28) & 0x3fff
+    };
+    if (chunk === "VP8L" && image.length >= 25 && image[20] === 0x2f) {
+      const bits = image.readUInt32LE(21);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+    }
+  }
+  return undefined;
+}
 
 function zoneBoundaryWkt(points: Array<{ x: number; y: number }>): string {
   const coordinates = points.map(({ x, y }) => `${-79.858 + x * 0.0003} ${0.854 + y * 0.00024}`);
@@ -272,6 +329,61 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
     await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Radio de búsqueda: ${body.searchRadiusMeters} metros`);
     return settings;
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
+  app.get("/v1/admin/banners", async (request, reply) => { try {
+    requireUser(request);
+    if (!process.env.DATABASE_URL) return [];
+    return await database()`
+      select id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
+        ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
+        octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
+      from affiliate_banners order by active desc, sort_order, starts_at desc
+    `;
+  } catch(e) { return guardError(e, reply); } });
+  app.post("/v1/admin/banners", async (request, reply) => { try {
+    const user = requireAdmin(request);
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const body = bannerSchema.parse(request.body);
+    const image = Buffer.from(body.imageBase64.replace(/^data:[^;]+;base64,/, ""), "base64");
+    if (!image.length || image.length > 1024 * 1024) return reply.code(400).send({ error: "INVALID_BANNER_IMAGE" });
+    const dimensions = imageDimensions(image, body.imageMime);
+    if (!dimensions || dimensions.width !== 1200 || dimensions.height !== 400) {
+      return reply.code(400).send({ error: "INVALID_BANNER_DIMENSIONS", message: "El banner debe medir exactamente 1200×400 px." });
+    }
+    const [item] = await database()`
+      insert into affiliate_banners
+        (title, placement, image_mime, image_data, target_url, starts_at, ends_at, active, sort_order, created_by)
+      values (${body.title}, ${body.placement}, ${body.imageMime}, ${image}, ${body.targetUrl || null},
+        ${body.startsAt}, ${body.endsAt || null}, ${body.active}, ${body.sortOrder}, ${user.id!})
+      returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
+        ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
+        octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
+    `;
+    if (!item) return reply.code(500).send({ error: "BANNER_NOT_CREATED" });
+    await persistAudit(user, "BANNER_CREATED", "AFFILIATE_BANNER", String(item.id), body.title);
+    return reply.code(201).send(item);
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
+  app.patch("/v1/admin/banners/:id", async (request, reply) => { try {
+    const user = requireAdmin(request);
+    const body = bannerUpdateSchema.parse(request.body);
+    const id = (request.params as { id: string }).id;
+    const [current] = await database()`select * from affiliate_banners where id=${id}`;
+    if (!current) return reply.code(404).send({ error: "NOT_FOUND" });
+    const startsAt = body.startsAt ?? current.starts_at;
+    const endsAt = body.endsAt === "" ? null : (body.endsAt ?? current.ends_at);
+    if (endsAt && new Date(endsAt) <= new Date(startsAt)) return reply.code(400).send({ error: "INVALID_BANNER_DATES" });
+    const [item] = await database()`
+      update affiliate_banners set
+        title=${body.title ?? current.title}, target_url=${body.targetUrl === "" ? null : (body.targetUrl ?? current.target_url)},
+        starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
+        sort_order=${body.sortOrder ?? current.sort_order}, updated_at=now()
+      where id=${id}
+      returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
+        ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
+        octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
+    `;
+    await persistAudit(user, "BANNER_UPDATED", "AFFILIATE_BANNER", id, body.active === false ? "Banner desactivado" : "Banner actualizado");
+    return item;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.post("/v1/admin/trips/:id/action", async (request, reply) => { try {
     const user = requireAdmin(request); const body = adminTripActionSchema.parse(request.body);

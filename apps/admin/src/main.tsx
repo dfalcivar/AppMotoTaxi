@@ -1,10 +1,11 @@
 import { StrictMode, useEffect, useState, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { apiFetch, login, type Session } from "./api.js";
+import { apiFetch, apiUrl, login, type Session } from "./api.js";
 import "./styles.css";
 import "./settings.css";
+import "./advertising.css";
 
-type Module = "dashboard" | "trips" | "drivers" | "passengers" | "pricing" | "zones" | "settings" | "incidents" | "audit" | "database";
+type Module = "dashboard" | "trips" | "drivers" | "passengers" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "audit" | "database";
 
 const labels: Record<Module, string> = {
   dashboard: "Tablero",
@@ -14,11 +15,12 @@ const labels: Record<Module, string> = {
   pricing: "Tarifas",
   zones: "Zonas",
   settings: "Radio de búsqueda",
+  advertising: "Publicidad",
   incidents: "Incidentes",
   audit: "Auditoría",
   database: "PostgreSQL"
 };
-const icons: Record<Module, string> = { dashboard: "▦", trips: "↔", drivers: "◉", passengers: "◎", pricing: "$", zones: "◇", settings: "⌖", incidents: "!", audit: "≡", database: "◫" };
+const icons: Record<Module, string> = { dashboard: "▦", trips: "↔", drivers: "◉", passengers: "◎", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", incidents: "!", audit: "≡", database: "◫" };
 const stateLabels: Record<string, string> = {
   SEARCHING: "Buscando conductor", ASSIGNED: "Asignado", DRIVER_EN_ROUTE: "Conductor en camino",
   DRIVER_ARRIVED: "Conductor llegó", IN_PROGRESS: "Viaje en curso", COMPLETED: "Finalizado",
@@ -104,6 +106,26 @@ function Settings({ token, admin }: { token: string; admin: boolean }) {
   return <section className="card settings-card"><Header eyebrow="DESPACHO" title="Radio máximo de búsqueda" action={`${(radius / 1000).toFixed(1)} km`} /><form onSubmit={save}><label>Distancia máxima entre el conductor disponible y el origen del pasajero<div className="radius-control"><input type="range" min="500" max="20000" step="500" value={radius} disabled={!admin} onChange={e => setRadius(Number(e.target.value))} /><input type="number" min="500" max="20000" step="500" value={radius} disabled={!admin} onChange={e => setRadius(Number(e.target.value))} /><span>metros</span></div></label><p className="note">Rango permitido: 500 metros a 20 kilómetros. El cálculo utiliza la última posición GPS real del conductor.</p><Notice error={error} success={success} />{admin && <button className="primary" type="submit">Guardar radio de búsqueda</button>}</form></section>;
 }
 
+function Advertising({ token, admin }: { token: string; admin: boolean }) {
+  const [data, setData] = useState<any[]>([]); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ title: "", placement: "PASSENGER_HOME", targetUrl: "", startsAt: new Date().toISOString().slice(0, 16), endsAt: "", sortOrder: 0, active: true, imageBase64: "", imageMime: "" });
+  const load = () => apiFetch<any[]>("/v1/admin/banners", token).then(setData).catch(reason => setError(errorText(reason)));
+  useEffect(() => { void load(); }, [token]);
+  function choose(file?: File) {
+    setError(""); if (!file) return;
+    if (file.size > 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) { setError("Usa una imagen JPG, PNG o WebP de máximo 1 MB."); return; }
+    const url = URL.createObjectURL(file); const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); if (image.naturalWidth !== 1200 || image.naturalHeight !== 400) { setError(`La imagen mide ${image.naturalWidth}×${image.naturalHeight}. Debe medir exactamente 1200×400 px.`); return; } const reader = new FileReader(); reader.onload = () => setForm(previous => ({ ...previous, imageBase64: String(reader.result).split(",")[1] ?? "", imageMime: file.type })); reader.readAsDataURL(file); };
+    image.onerror = () => { URL.revokeObjectURL(url); setError("No se pudo leer la imagen seleccionada."); }; image.src = url;
+  }
+  async function save(event: React.FormEvent) {
+    event.preventDefault(); setError(""); setSuccess(""); if (!form.imageBase64) { setError("Selecciona el banner de 1200×400 px."); return; }
+    setBusy(true); try { await apiFetch("/v1/admin/banners", token, { method: "POST", body: JSON.stringify({ ...form, startsAt: new Date(form.startsAt).toISOString(), endsAt: form.endsAt ? new Date(form.endsAt).toISOString() : "" }) }); setSuccess("Banner publicado. La app lo recibirá sin recompilarse."); setForm(previous => ({ ...previous, title: "", targetUrl: "", endsAt: "", imageBase64: "", imageMime: "" })); await load(); } catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
+  }
+  async function toggle(item: any) { try { await apiFetch(`/v1/admin/banners/${item.id}`, token, { method: "PATCH", body: JSON.stringify({ active: !item.active }) }); await load(); } catch (reason) { setError(errorText(reason)); } }
+  return <div className="advertising-layout"><section className="card"><Header eyebrow="COMERCIOS AFILIADOS" title="Banners publicados" action={`${data.filter(item => item.active).length} activos`} /><Notice error={error} success={success} /><p className="note">La publicidad se muestra únicamente al pasajero, antes de seleccionar origen y destino. Los banners vigentes rotan automáticamente y desaparecen al desactivarlos, sin publicar otra APK.</p>{data.length ? <div className="banner-grid">{data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}><img src={apiUrl(`/v1/banners/${item.id}/image?v=${encodeURIComponent(item.updatedAt)}`)} alt={item.title} /><div><strong>{item.title}</strong><small>Inicio del pasajero · orden {item.sortOrder}</small><small>{new Date(item.startsAt).toLocaleString()} {item.endsAt ? `— ${new Date(item.endsAt).toLocaleString()}` : "— sin fecha final"}</small></div>{admin && <button className="secondary" onClick={() => toggle(item)}>{item.active ? "Desactivar" : "Activar"}</button>}</article>)}</div> : <article className="banner-placeholder-card"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Vista previa en la app del pasajero</strong><p>Este banner demostrativo ocupa el espacio hasta que publiques la primera campaña.</p></div></article>}</section>{admin && <form className="card form-card advertising-form" onSubmit={save}><Header eyebrow="NUEVO BANNER" title="Publicar anuncio" /><p className="banner-spec">1200×400 px · JPG, PNG o WebP · máximo 1 MB</p><div className="placement-note"><strong>Ubicación: inicio del pasajero</strong><span>Se verá antes de escoger origen y destino. No aparecerá en la pantalla operativa del conductor.</span></div><label>Comercio o campaña<input required minLength={3} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Imagen<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={e => choose(e.target.files?.[0])} /></label>{form.imageBase64 && <img className="banner-preview" src={`data:${form.imageMime};base64,${form.imageBase64}`} alt="Vista previa" />}<label>Enlace opcional<input type="url" placeholder="https://comercio.example" value={form.targetUrl} onChange={e => setForm({ ...form, targetUrl: e.target.value })} /></label><div className="form-grid"><label>Mostrar desde<input required type="datetime-local" value={form.startsAt} onChange={e => setForm({ ...form, startsAt: e.target.value })} /></label><label>Mostrar hasta (opcional)<input type="datetime-local" value={form.endsAt} onChange={e => setForm({ ...form, endsAt: e.target.value })} /></label><label>Orden<input type="number" min="0" max="999" value={form.sortOrder} onChange={e => setForm({ ...form, sortOrder: Number(e.target.value) })} /></label><label className="check-label"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} /> Publicar activo</label></div><button className="primary" disabled={busy}>{busy ? "Publicando…" : "Publicar banner"}</button></form>}</div>;
+}
+
 function Incidents({ token }: { token: string }) {
   const [data, setData] = useState<any[]>([]); const [error, setError] = useState("");
   const load = () => apiFetch<any[]>("/v1/admin/incidents", token).then(setData).catch(reason => setError(errorText(reason)));
@@ -132,7 +154,7 @@ function App() {
   if (!session) return <Login onSession={save} />;
   const admin = session.user.role === "ADMIN";
   const visible = (Object.keys(labels) as Module[]).filter(item => admin || !["audit", "database"].includes(item));
-  return <div className="app-shell"><aside><div className="brand"><div className="brand-mark">M</div><div><strong>Mototaxi</strong><small>Atacames</small></div></div><nav>{visible.map(item => <button key={item} className={module === item ? "active" : ""} onClick={() => setModule(item)}><span>{icons[item]}</span>{labels[item]}</button>)}</nav><div className="profile"><strong>{session.user.name}</strong><small>{session.user.role}</small><button onClick={logout}>Cerrar sesión</button></div></aside><main><header className="topbar"><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Render conectado</span></header>{module === "dashboard" && <Dashboard token={session.token} />}{module === "trips" && <Trips token={session.token} admin={admin} />}{module === "drivers" && <Drivers token={session.token} admin={admin} />}{module === "passengers" && <Passengers token={session.token} admin={admin} />}{module === "pricing" && <Pricing token={session.token} admin={admin} />}{module === "zones" && <Zones token={session.token} admin={admin} />}{module === "settings" && <Settings token={session.token} admin={admin} />}{module === "incidents" && <Incidents token={session.token} />}{module === "audit" && <Audit token={session.token} />}{module === "database" && <Database token={session.token} />}</main></div>;
+  return <div className="app-shell"><aside><div className="brand"><div className="brand-mark">M</div><div><strong>Mototaxi</strong><small>Atacames</small></div></div><nav>{visible.map(item => <button key={item} className={module === item ? "active" : ""} onClick={() => setModule(item)}><span>{icons[item]}</span>{labels[item]}</button>)}</nav><div className="profile"><strong>{session.user.name}</strong><small>{session.user.role}</small><button onClick={logout}>Cerrar sesión</button></div></aside><main><header className="topbar"><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Render conectado</span></header>{module === "dashboard" && <Dashboard token={session.token} />}{module === "trips" && <Trips token={session.token} admin={admin} />}{module === "drivers" && <Drivers token={session.token} admin={admin} />}{module === "passengers" && <Passengers token={session.token} admin={admin} />}{module === "pricing" && <Pricing token={session.token} admin={admin} />}{module === "zones" && <Zones token={session.token} admin={admin} />}{module === "settings" && <Settings token={session.token} admin={admin} />}{module === "advertising" && <Advertising token={session.token} admin={admin} />}{module === "incidents" && <Incidents token={session.token} />}{module === "audit" && <Audit token={session.token} />}{module === "database" && <Database token={session.token} />}</main></div>;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

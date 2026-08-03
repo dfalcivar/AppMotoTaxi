@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
+import { imageDimensions } from "./admin.js";
 
 describe("consola administrativa", () => {
   let app: FastifyInstance;
@@ -19,6 +20,15 @@ describe("consola administrativa", () => {
   it("rechaza credenciales inválidas", async () => {
     const response = await app.inject({ method: "POST", url: "/v1/admin/session", payload: { email: "admin@mototaxi.local", password: "incorrecta" } });
     expect(response.statusCode).toBe(401);
+  });
+
+  it("valida las dimensiones del banner PNG", () => {
+    const image = Buffer.alloc(24);
+    image.write("PNG", 1);
+    image.writeUInt32BE(1200, 16);
+    image.writeUInt32BE(400, 20);
+    expect(imageDimensions(image, "image/png")).toEqual({ width: 1200, height: 400 });
+    expect(imageDimensions(Buffer.from("no-es-imagen"), "image/png")).toBeUndefined();
   });
 
   it("entrega métricas y viajes activos al administrador", async () => {

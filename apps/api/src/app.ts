@@ -45,6 +45,7 @@ const locationSearchSchema = z.object({
 }).refine(value => (value.latitude == null) === (value.longitude == null));
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
 const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
+const bannerPlacementSchema = z.object({ placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]).default("PASSENGER_HOME") });
 
 async function configuredSearchRadius(): Promise<number> {
   const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
@@ -63,7 +64,7 @@ async function authenticatedUser(request: { headers: Record<string, string | str
 }
 
 export async function buildApp() {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
   await app.register(cors, {
     origin: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -79,6 +80,31 @@ export async function buildApp() {
   }));
 
   app.get("/v1/pricing/config", async () => initialPricingConfig);
+
+  app.get("/v1/banners", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const parsed = bannerPlacementSchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_BANNER_PLACEMENT" });
+    return await database()`
+      select id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
+        ends_at as "endsAt", sort_order as "sortOrder", updated_at as "updatedAt"
+      from affiliate_banners
+      where placement=${parsed.data.placement} and active=true and starts_at <= now()
+        and (ends_at is null or ends_at > now())
+      order by sort_order, starts_at desc
+    `;
+  });
+
+  app.get("/v1/banners/:id/image", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const [banner] = await database()`
+      select image_mime, image_data from affiliate_banners where id=${id}
+    `;
+    if (!banner) return reply.code(404).send({ error: "NOT_FOUND" });
+    return reply.header("Content-Type", String(banner.image_mime))
+      .header("Cache-Control", "public, max-age=300, stale-while-revalidate=3600")
+      .send(banner.image_data);
+  });
 
   // Cuando un conductor se libera, vuelve a publicar la solicitud mÃ¡s antigua
   // que ya no tenga una oferta vigente. AsÃ­ una carrera no queda abandonada

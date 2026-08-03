@@ -50,6 +50,22 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("protege el listado de publicidad vigente", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/banners?placement=PASSENGER_HOME"
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("protege la administración de banners", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/admin/banners"
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
   it("cotiza la promoción urbana de tres pasajeros", async () => {
     const response = await app.inject({
       method: "POST",

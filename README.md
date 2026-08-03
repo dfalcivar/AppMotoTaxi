@@ -84,6 +84,11 @@ El administrador puede aprobar/suspender conductores y pasajeros, publicar tarif
 - Gestión de incidentes y asignación a soporte.
 - Registro de auditoría para acciones sensibles.
 - Diagnóstico de conexión PostgreSQL/PostGIS.
+- Publicidad programable de comercios afiliados en el inicio del pasajero.
+
+### Publicidad dinámica
+
+El administrador puede publicar banners desde el módulo **Publicidad**. El formato del piloto es `1200 × 400 px`, JPG, PNG o WebP, con un máximo de 1 MB. Las imágenes aparecen al pasajero antes de seleccionar origen y destino; no se muestran al conductor para no distraer su operación. La aplicación consulta las campañas vigentes cada cinco minutos y alterna varias piezas cada ocho segundos. Cuando no existen campañas se utiliza el banner demostrativo `Tu publicidad aquí`. Activar, desactivar o cambiar una campaña no requiere recompilar la APK.
 
 Los datos visibles de la consola son datos piloto en memoria para desarrollo. Las migraciones crean el modelo persistente; el siguiente paso de producción es implementar el repositorio PostgreSQL para sustituir el almacén piloto sin cambiar las rutas HTTP.
 
@@ -168,12 +173,15 @@ flutter run
 
 ```bash
 pnpm test
+pnpm test:flow
 pnpm typecheck
 pnpm build
 cd apps/mobile
 flutter analyze
 flutter test
 ```
+
+`pnpm test:flow` usa cuentas E2E temporales, recorre una carrera completa con chat y calificaciones y limpia los datos creados al terminar. Requiere PostgreSQL local y haber ejecutado `pnpm db:migrate`.
 
 ## Reglas tarifarias iniciales
 

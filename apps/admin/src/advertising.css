@@ -1,0 +1,30 @@
+.advertising-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(310px, .65fr);
+  gap: 18px;
+}
+
+.advertising-form { display: grid; align-content: start; gap: 12px; }
+.banner-spec { margin: 0; padding: 10px 12px; border-radius: 10px; background: #fff3cf; color: #735819; font-weight: 750; font-size: .8rem; }
+.banner-grid { display: grid; gap: 14px; }
+.banner-card { display: grid; grid-template-columns: minmax(180px, 280px) 1fr auto; gap: 16px; align-items: center; padding: 14px; border: 1px solid #dbe7e9; border-radius: 14px; }
+.banner-card.inactive { opacity: .5; }
+.banner-card img, .banner-preview { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: cover; border-radius: 10px; background: #e7eff0; }
+.banner-card strong, .banner-card small { display: block; }
+.banner-card small { color: #6b8186; margin-top: 4px; }
+.check-label { display: flex !important; align-items: center; gap: 8px; }
+.check-label input { width: auto; }
+.banner-preview { border: 1px solid #cbdcdf; }
+.placement-note { display: grid; gap: 4px; padding: 12px; border-radius: 12px; background: #e8f5f6; color: #24545d; }
+.placement-note span { font-size: .8rem; color: #587178; }
+.banner-placeholder-card { display: grid; gap: 14px; padding: 14px; border: 1px dashed #83afb5; border-radius: 14px; background: #f8fbfb; }
+.banner-placeholder-card img { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: cover; border-radius: 10px; }
+.banner-placeholder-card p { margin: 5px 0 0; color: #627b81; }
+
+@media (max-width: 1100px) {
+  .advertising-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .banner-card { grid-template-columns: 1fr; }
+}
