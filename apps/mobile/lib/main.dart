@@ -45,6 +45,16 @@ http.Client buildHttpClient() {
 final apiHttpClient = buildHttpClient();
 bool firebaseReady = false;
 
+Future<void> warmApi() async {
+  try {
+    await apiHttpClient
+        .get(Uri.parse('$base/health'))
+        .timeout(const Duration(seconds: 50));
+  } catch (_) {
+    // El inicio no se bloquea: la petición solo despierta Render en segundo plano.
+  }
+}
+
 Future<Position> currentGpsPosition() async {
   if (!await Geolocator.isLocationServiceEnabled()) {
     throw const ApiException(
@@ -76,6 +86,7 @@ Future<void> main() async {
   if (apiHttpProxy.isNotEmpty) {
     HttpOverrides.global = AppHttpOverrides(Uri.parse(apiHttpProxy));
   }
+  unawaited(warmApi());
   try {
     await Firebase.initializeApp();
     await FirebaseMessaging.instance.requestPermission();
