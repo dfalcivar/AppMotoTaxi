@@ -267,10 +267,19 @@ class Api {
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
-  Future<List<dynamic>> search(String t, String query) async =>
-      List<dynamic>.from(await call(
-          'GET', '/v1/locations/search?q=${Uri.encodeQueryComponent(query)}',
-          token: t));
+  Future<List<dynamic>> search(String t, String query, [LatLng? focus]) async {
+    final parameters = <String, String>{'q': query};
+    if (focus != null) {
+      parameters['latitude'] = focus.latitude.toString();
+      parameters['longitude'] = focus.longitude.toString();
+    }
+    return List<dynamic>.from(await call(
+        'GET',
+        Uri(path: '/v1/locations/search', queryParameters: parameters)
+            .toString(),
+        token: t));
+  }
+
   Future<dynamic> offers(String t) =>
       call('GET', '/v1/driver/offers', token: t);
   Future<dynamic> driverState(String t) =>
@@ -1155,6 +1164,7 @@ class _PassengerState extends State<Passenger> {
   final destination = TextEditingController();
   late final RealtimeService realtime;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
+  StreamSubscription<RemoteMessage>? openedMessageSubscription;
   LatLng? pickup;
   LatLng? dropoff;
   LatLng? driverPosition;
@@ -1177,6 +1187,14 @@ class _PassengerState extends State<Passenger> {
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
+    if (firebaseReady) {
+      openedMessageSubscription =
+          FirebaseMessaging.onMessageOpenedApp.listen((message) {
+        if (message.data['type'] == 'CHAT_MESSAGE') {
+          openPassengerChat(message.data['tripId']);
+        }
+      });
+    }
     load();
     Future.microtask(useCurrentLocation);
     timer = Timer.periodic(const Duration(seconds: 15), (_) => load());
@@ -1186,10 +1204,27 @@ class _PassengerState extends State<Passenger> {
   void dispose() {
     timer?.cancel();
     realtimeSubscription?.cancel();
+    openedMessageSubscription?.cancel();
     realtime.dispose();
     origin.dispose();
     destination.dispose();
     super.dispose();
+  }
+
+  Future<void> openPassengerChat([String? requestedTripId]) async {
+    if (active == null) await load();
+    if (!mounted) return;
+    final tripId = requestedTripId ?? active?['tripId']?.toString();
+    if (tripId == null || active?['tripId']?.toString() != tripId) return;
+    await showTripChat(
+      context: context,
+      tripId: tripId,
+      userId: widget.s.id,
+      realtime: realtime,
+      loadHistory: () => api.messages(widget.s.token, tripId),
+      sendFallback: (clientId, body) =>
+          api.sendMessage(widget.s.token, tripId, clientId, body),
+    );
   }
 
   void handleRealtime(Map<String, dynamic> event) {
@@ -1254,8 +1289,13 @@ class _PassengerState extends State<Passenger> {
       return;
     }
     if (type == 'chat:message') {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Tienes un nuevo mensaje sobre tu viaje.')));
+      final value = Map<String, dynamic>.from(event['message'] as Map);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Tienes un nuevo mensaje sobre tu viaje.'),
+          action: SnackBarAction(
+              label: 'Abrir',
+              onPressed: () =>
+                  openPassengerChat(value['tripId']?.toString()))));
     }
   }
 
@@ -1342,13 +1382,42 @@ class _PassengerState extends State<Passenger> {
 
   Future<void> locate(bool isOrigin) async {
     final field = isOrigin ? origin : destination;
+    if (field.text.trim().length < 3) {
+      setState(() => message = 'Escribe al menos tres letras de la dirección.');
+      return;
+    }
     try {
-      final results = await api.search(widget.s.token, field.text);
+      setState(() => message = 'Buscando direcciones cercanas...');
+      final results = await api.search(widget.s.token, field.text, pickup);
       if (results.isEmpty) {
         setState(() => message = 'No se encontraron ubicaciones cercanas.');
         return;
       }
-      final r = results.first;
+      if (!mounted) return;
+      final r = await showModalBottomSheet<dynamic>(
+          context: context,
+          showDragHandle: true,
+          builder: (sheetContext) => SafeArea(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.only(bottom: 12),
+                  children: [
+                    const ListTile(
+                        title: Text('Selecciona una ubicación'),
+                        subtitle:
+                            Text('Resultados cercanos a tu posición actual')),
+                    ...results.map((result) => ListTile(
+                          leading: const Icon(Icons.location_on_outlined),
+                          title: Text(result['label'].toString()),
+                          onTap: () => Navigator.pop(sheetContext, result),
+                        ))
+                  ],
+                ),
+              ));
+      if (r == null || !mounted) {
+        setState(() => message = null);
+        return;
+      }
       setState(() {
         field.text = r['label'];
         if (isOrigin) {
@@ -1583,19 +1652,7 @@ class _PassengerState extends State<Passenger> {
                 label: const Text('Cancelar solicitud')),
           if (active != null && active?['status'] != 'SEARCHING')
             OutlinedButton.icon(
-              onPressed: () => showTripChat(
-                context: context,
-                tripId: active['tripId'].toString(),
-                userId: widget.s.id,
-                realtime: realtime,
-                loadHistory: () =>
-                    api.messages(widget.s.token, active['tripId'].toString()),
-                sendFallback: (clientId, body) => api.sendMessage(
-                    widget.s.token,
-                    active['tripId'].toString(),
-                    clientId,
-                    body),
-              ),
+              onPressed: openPassengerChat,
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text('Chat con el conductor'),
             ),
@@ -1626,6 +1683,7 @@ class _DriverState extends State<Driver> {
   String? driverMessage;
   Timer? timer;
   StreamSubscription<RemoteMessage>? messageSubscription;
+  StreamSubscription<RemoteMessage>? openedMessageSubscription;
   StreamSubscription<Position>? positionSubscription;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   LatLng? currentDriverPosition;
@@ -1651,6 +1709,12 @@ class _DriverState extends State<Driver> {
           refresh();
         }
       });
+      openedMessageSubscription =
+          FirebaseMessaging.onMessageOpenedApp.listen((message) {
+        if (message.data['type'] == 'CHAT_MESSAGE') {
+          openDriverChat(message.data['tripId']);
+        }
+      });
     }
     restore();
     timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
@@ -1660,10 +1724,27 @@ class _DriverState extends State<Driver> {
   void dispose() {
     timer?.cancel();
     messageSubscription?.cancel();
+    openedMessageSubscription?.cancel();
     positionSubscription?.cancel();
     realtimeSubscription?.cancel();
     realtime.dispose();
     super.dispose();
+  }
+
+  Future<void> openDriverChat([String? requestedTripId]) async {
+    if (active == null) await refresh();
+    if (!mounted) return;
+    final tripId = requestedTripId ?? active?['tripId']?.toString();
+    if (tripId == null || active?['tripId']?.toString() != tripId) return;
+    await showTripChat(
+      context: context,
+      tripId: tripId,
+      userId: widget.s.id,
+      realtime: realtime,
+      loadHistory: () => api.messages(widget.s.token, tripId),
+      sendFallback: (clientId, body) =>
+          api.sendMessage(widget.s.token, tripId, clientId, body),
+    );
   }
 
   void handleRealtime(Map<String, dynamic> event) {
@@ -1676,8 +1757,12 @@ class _DriverState extends State<Driver> {
     } else if (event['type'] == 'trip:status') {
       refresh();
     } else if (event['type'] == 'chat:message') {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Tienes un nuevo mensaje del pasajero.')));
+      final value = Map<String, dynamic>.from(event['message'] as Map);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Tienes un nuevo mensaje del pasajero.'),
+          action: SnackBarAction(
+              label: 'Abrir',
+              onPressed: () => openDriverChat(value['tripId']?.toString()))));
     }
   }
 
@@ -1916,19 +2001,7 @@ class _DriverState extends State<Driver> {
                 'Pago: ${active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
             Text('Estado: ${estadoViaje(active['status'])}'),
             OutlinedButton.icon(
-              onPressed: () => showTripChat(
-                context: context,
-                tripId: active['tripId'].toString(),
-                userId: widget.s.id,
-                realtime: realtime,
-                loadHistory: () =>
-                    api.messages(widget.s.token, active['tripId'].toString()),
-                sendFallback: (clientId, body) => api.sendMessage(
-                    widget.s.token,
-                    active['tripId'].toString(),
-                    clientId,
-                    body),
-              ),
+              onPressed: openDriverChat,
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text('Chat con el pasajero'),
             ),
@@ -1937,17 +2010,36 @@ class _DriverState extends State<Driver> {
                   onPressed: () => progress(c, a), child: Text(label(a)))
           ],
           ...offers.map((o) => Card(
-              child: ListTile(
-                  title: Text('${o['passengers']} pasajero(s)'),
-                  subtitle: Text(
-                      '${o['originReference']} → ${o['destinationReference']}\nPago: ${o['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
-                  trailing: FilledButton(
-                      onPressed: () async {
-                        await api.respond(widget.s.token, o['offerId']);
-                        await restore();
-                        await refresh();
-                      },
-                      child: const Text('Aceptar')))))
+              child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(children: [
+                          const Icon(Icons.notifications_active_outlined),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: Text(
+                                  'Nuevo viaje · ${o['passengers']} pasajero(s)',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium))
+                        ]),
+                        const SizedBox(height: 12),
+                        Text('${o['originReference'] ?? 'Origen'} → '
+                            '${o['destinationReference'] ?? 'Destino'}'),
+                        const SizedBox(height: 6),
+                        Text(
+                            'Pago: ${o['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
+                        const SizedBox(height: 14),
+                        FilledButton.icon(
+                            onPressed: () async {
+                              await api.respond(widget.s.token, o['offerId']);
+                              await restore();
+                              await refresh();
+                            },
+                            icon: const Icon(Icons.check),
+                            label: const Text('Aceptar viaje'))
+                      ]))))
         ]));
   }
 }

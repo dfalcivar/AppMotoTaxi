@@ -9,6 +9,7 @@ import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./adm
 import { database } from "./database.js";
 import { sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
+import { searchLocations } from "./geocoding.js";
 
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -37,7 +38,11 @@ const availabilitySchema = z.object({ available: z.boolean(), location: pointSch
 const tripRequestSchema = z.object({ origin: pointSchema, destination: pointSchema, passengers: z.number().int().min(1).max(3), paymentMethod: z.enum(['CASH','DEUNA']).default('CASH'), originReference: z.string().max(200).optional(), destinationReference: z.string().max(200).optional() });
 const tripActionSchema = z.object({ action: z.enum(["EN_ROUTE", "ARRIVED", "START", "COMPLETE"]) });
 const ratingSchema = z.object({ score: z.number().int().min(1).max(5), comment: z.string().trim().max(500).optional(), tags: z.array(z.string().trim().min(1).max(50)).max(5).optional() });
-const locationSearchSchema = z.object({ q: z.string().trim().min(3).max(160) });
+const locationSearchSchema = z.object({
+  q: z.string().trim().min(3).max(160),
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional()
+}).refine(value => (value.latitude == null) === (value.longitude == null));
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
 const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
 
@@ -120,15 +125,11 @@ export async function buildApp() {
     const parsed = locationSearchSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION_QUERY" });
     try {
-      const url = new URL("https://nominatim.openstreetmap.org/search");
-      // La búsqueda no se fija a Atacames: durante las pruebas y al viajar se
-      // prioriza el texto real ingresado por el usuario dentro de Ecuador.
-      url.searchParams.set("q", `${parsed.data.q}, Ecuador`);
-      url.searchParams.set("format", "jsonv2"); url.searchParams.set("limit", "5"); url.searchParams.set("addressdetails", "1");
-      const response = await fetch(url, { headers: { "User-Agent": "MototaxiAtacamesMVP/0.1 (development contact: admin@mototaxi.local)", Accept: "application/json" } });
-      if (!response.ok) return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" });
-      const items = await response.json() as Array<{ display_name: string; lat: string; lon: string }>;
-      return items.map(item => ({ label: item.display_name, latitude: Number(item.lat), longitude: Number(item.lon) }));
+      const focus = parsed.data.latitude == null ? undefined : {
+        latitude: parsed.data.latitude,
+        longitude: parsed.data.longitude!
+      };
+      return await searchLocations(parsed.data.q, focus);
     } catch { return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" }); }
   });
 
