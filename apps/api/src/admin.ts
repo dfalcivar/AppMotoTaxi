@@ -55,7 +55,7 @@ const bannerSchema = z.object({
   imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
   targetUrl: z.string().url().optional().or(z.literal("")),
   startsAt: z.string().datetime({ offset: true }),
-  endsAt: z.string().datetime({ offset: true }).optional().or(z.literal("")),
+  endsAt: z.string().datetime({ offset: true }),
   active: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(999).default(0)
 }).refine(value => !value.endsAt || new Date(value.endsAt) > new Date(value.startsAt), {
@@ -358,7 +358,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       insert into affiliate_banners
         (title, placement, image_mime, image_data, target_url, starts_at, ends_at, active, sort_order, created_by)
       values (${body.title}, ${body.placement}, ${body.imageMime}, ${image}, ${body.targetUrl || null},
-        ${body.startsAt}, ${null}, ${body.active}, ${body.sortOrder}, ${user.id!})
+        ${body.startsAt}, ${body.endsAt}, ${body.active}, ${body.sortOrder}, ${user.id!})
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
         ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
         octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
@@ -385,7 +385,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       }
     }
     const startsAt = body.startsAt ?? current.starts_at;
-    const endsAt = null;
+    const endsAt = body.endsAt === "" ? null : (body.endsAt ?? current.ends_at);
+    if (endsAt && new Date(endsAt) <= new Date(startsAt)) return reply.code(400).send({ error: "INVALID_BANNER_DATES" });
     const [item] = await database()`
       update affiliate_banners set
         title=${body.title ?? current.title}, target_url=${body.targetUrl === "" ? null : (body.targetUrl ?? current.target_url)},
