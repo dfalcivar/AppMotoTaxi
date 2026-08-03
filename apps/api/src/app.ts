@@ -475,8 +475,33 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     await database()`update drivers set last_location_at=now() where user_id=${user.id!} and is_available=true`;
+    const [activeTrip] = await database()`
+      select id from trips
+      where driver_id=${user.id!}
+        and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+      limit 1
+    `;
+    if (activeTrip) {
+      await database()`
+        update driver_offers set responded_at=now(), accepted=false
+        where driver_id=${user.id!} and responded_at is null
+      `;
+      return [];
+    }
     await redispatchOldestTrip();
-    return database()`select o.id::text as "offerId", t.id::text as "tripId", t.passengers, t.payment_method as "paymentMethod", t.service_zone as zone, t.quoted_total_cents as "quotedTotalCents", t.origin_reference as "originReference", t.destination_reference as "destinationReference", o.expires_at as "expiresAt" from driver_offers o join trips t on t.id=o.trip_id where o.driver_id=${user.id!} and o.responded_at is null and o.expires_at > now() and t.status='SEARCHING' order by o.offered_at`;
+    return database()`
+      select o.id::text as "offerId", t.id::text as "tripId", t.passengers,
+        t.payment_method as "paymentMethod", t.service_zone as zone,
+        t.quoted_total_cents as "quotedTotalCents",
+        t.origin_reference as "originReference",
+        t.destination_reference as "destinationReference",
+        o.expires_at as "expiresAt"
+      from driver_offers o
+      join trips t on t.id=o.trip_id
+      where o.driver_id=${user.id!} and o.responded_at is null
+        and o.expires_at > now() and t.status='SEARCHING'
+      order by o.offered_at
+    `;
   });
 
   app.get("/v1/driver/state", async (request, reply) => {

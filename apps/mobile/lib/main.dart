@@ -1178,6 +1178,7 @@ class _PassengerState extends State<Passenger> {
   String? message;
   Timer? timer;
   bool ratingPrompted = false;
+  bool passengerChatOpen = false;
   DateTime? lastRouteAt;
   double? routeDistanceMeters;
   double? routeDurationSeconds;
@@ -1212,19 +1213,27 @@ class _PassengerState extends State<Passenger> {
   }
 
   Future<void> openPassengerChat([String? requestedTripId]) async {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    if (passengerChatOpen) return;
     if (active == null) await load();
     if (!mounted) return;
     final tripId = requestedTripId ?? active?['tripId']?.toString();
     if (tripId == null || active?['tripId']?.toString() != tripId) return;
-    await showTripChat(
-      context: context,
-      tripId: tripId,
-      userId: widget.s.id,
-      realtime: realtime,
-      loadHistory: () => api.messages(widget.s.token, tripId),
-      sendFallback: (clientId, body) =>
-          api.sendMessage(widget.s.token, tripId, clientId, body),
-    );
+    passengerChatOpen = true;
+    try {
+      await showTripChat(
+        context: context,
+        tripId: tripId,
+        userId: widget.s.id,
+        realtime: realtime,
+        loadHistory: () => api.messages(widget.s.token, tripId),
+        sendFallback: (clientId, body) =>
+            api.sendMessage(widget.s.token, tripId, clientId, body),
+      );
+    } finally {
+      passengerChatOpen = false;
+      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    }
   }
 
   void handleRealtime(Map<String, dynamic> event) {
@@ -1289,6 +1298,7 @@ class _PassengerState extends State<Passenger> {
       return;
     }
     if (type == 'chat:message') {
+      if (passengerChatOpen) return;
       final value = Map<String, dynamic>.from(event['message'] as Map);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Text('Tienes un nuevo mensaje sobre tu viaje.'),
@@ -1602,6 +1612,12 @@ class _PassengerState extends State<Passenger> {
                 textAlign: TextAlign.center,
               ),
             ),
+          if (active != null)
+            Card(
+                child: ListTile(
+                    leading: const Icon(Icons.route_outlined),
+                    title: const Text('Estado del viaje'),
+                    subtitle: Text(estadoViaje(active['status'])))),
           if (active == null) ...[
             TextField(
                 controller: origin,
@@ -1690,6 +1706,7 @@ class _DriverState extends State<Driver> {
   double currentDriverBearing = 0;
   List<LatLng> routePoints = [];
   DateTime? lastRouteAt;
+  bool driverChatOpen = false;
   @override
   void initState() {
     super.initState();
@@ -1732,19 +1749,27 @@ class _DriverState extends State<Driver> {
   }
 
   Future<void> openDriverChat([String? requestedTripId]) async {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    if (driverChatOpen) return;
     if (active == null) await refresh();
     if (!mounted) return;
     final tripId = requestedTripId ?? active?['tripId']?.toString();
     if (tripId == null || active?['tripId']?.toString() != tripId) return;
-    await showTripChat(
-      context: context,
-      tripId: tripId,
-      userId: widget.s.id,
-      realtime: realtime,
-      loadHistory: () => api.messages(widget.s.token, tripId),
-      sendFallback: (clientId, body) =>
-          api.sendMessage(widget.s.token, tripId, clientId, body),
-    );
+    driverChatOpen = true;
+    try {
+      await showTripChat(
+        context: context,
+        tripId: tripId,
+        userId: widget.s.id,
+        realtime: realtime,
+        loadHistory: () => api.messages(widget.s.token, tripId),
+        sendFallback: (clientId, body) =>
+            api.sendMessage(widget.s.token, tripId, clientId, body),
+      );
+    } finally {
+      driverChatOpen = false;
+      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    }
   }
 
   void handleRealtime(Map<String, dynamic> event) {
@@ -1757,6 +1782,7 @@ class _DriverState extends State<Driver> {
     } else if (event['type'] == 'trip:status') {
       refresh();
     } else if (event['type'] == 'chat:message') {
+      if (driverChatOpen) return;
       final value = Map<String, dynamic>.from(event['message'] as Map);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Text('Tienes un nuevo mensaje del pasajero.'),
@@ -1823,7 +1849,11 @@ class _DriverState extends State<Driver> {
     setState(() {
       active = values[0];
       available = serverAvailable;
-      if (active == null) routePoints = [];
+      if (active == null) {
+        routePoints = [];
+      } else {
+        offers = [];
+      }
     });
     if (serverAvailable || active != null) {
       try {
@@ -1887,13 +1917,20 @@ class _DriverState extends State<Driver> {
           await restore();
           return;
         }
-        if (mounted) setState(() => active = latest);
+        if (mounted) {
+          setState(() {
+            active = latest;
+            offers = [];
+          });
+        }
         realtime.subscribeTrip(latest['tripId'].toString());
         refreshDriverRoute(force: true);
       }
-      if (available) {
+      if (active == null && available) {
         final r = await api.offers(widget.s.token);
         if (mounted) setState(() => offers = r);
+      } else if (offers.isNotEmpty && mounted) {
+        setState(() => offers = []);
       }
     } catch (e) {
       if (mounted) setState(() => driverMessage = e.toString());
@@ -1999,7 +2036,6 @@ class _DriverState extends State<Driver> {
             Text('Pasajero: ${active['passengerName']}'),
             Text(
                 'Pago: ${active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
-            Text('Estado: ${estadoViaje(active['status'])}'),
             OutlinedButton.icon(
               onPressed: openDriverChat,
               icon: const Icon(Icons.chat_bubble_outline),
@@ -2033,9 +2069,18 @@ class _DriverState extends State<Driver> {
                         const SizedBox(height: 14),
                         FilledButton.icon(
                             onPressed: () async {
-                              await api.respond(widget.s.token, o['offerId']);
-                              await restore();
-                              await refresh();
+                              setState(() => offers = []);
+                              try {
+                                await api.respond(widget.s.token, o['offerId']);
+                              } catch (error) {
+                                if (mounted) {
+                                  setState(
+                                      () => driverMessage = error.toString());
+                                }
+                              } finally {
+                                await restore();
+                                await refresh();
+                              }
                             },
                             icon: const Icon(Icons.check),
                             label: const Text('Aceptar viaje'))
