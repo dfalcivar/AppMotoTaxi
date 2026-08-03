@@ -33,6 +33,23 @@ describe("API de cotización", () => {
     expect(response.headers["access-control-allow-headers"]?.toLowerCase()).toContain("authorization");
   });
 
+  it("protege el listado de mototaxis cercanas", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/drivers/nearby?latitude=-2.9&longitude=-79.0"
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: "UNAUTHORIZED" });
+  });
+
+  it("protege el historial del chat de un viaje", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/trips/00000000-0000-4000-8000-000000000000/messages"
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
   it("cotiza la promoción urbana de tres pasajeros", async () => {
     const response = await app.inject({
       method: "POST",

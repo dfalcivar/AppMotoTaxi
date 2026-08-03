@@ -129,6 +129,31 @@ Para instalarlo en un teléfono o emulador:
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
+### Mapas, GPS, tiempo real y chat
+
+- La aplicación ya no inicia con coordenadas fijas de Atacames. El origen se
+  obtiene del GPS real del teléfono y origen/destino también pueden marcarse
+  tocando el mapa.
+- Las rutas viales se consultan a OpenRouteService mediante `ORS_API_KEY`. Si
+  el servicio no está disponible, se mantienen los puntos seleccionados y una
+  línea directa como respaldo visual.
+- La API expone `wss://<host>/v1/realtime` para motos cercanas, ubicación del
+  conductor, estados del viaje y chat. La conexión requiere el mismo encabezado
+  `Authorization: Bearer <token>` que la API HTTP.
+- El chat se limita al pasajero y conductor asignados, conserva historial y usa
+  Firebase Cloud Messaging como respaldo cuando la aplicación está en segundo
+  plano.
+- En un teléfono conectado por USB puede usarse la API local sin conocer la IP
+  del computador:
+
+```bash
+adb reverse tcp:3001 tcp:3001
+flutter build apk --release --dart-define=API_BASE_URL=http://127.0.0.1:3001
+```
+
+Para pruebas sin cable debe desplegarse la API actualizada en Render y compilar
+sin `API_BASE_URL`; así se utiliza la URL pública configurada por defecto.
+
 ### Emulador recomendado para equipos modestos
 
 Crea en Android Studio un `Small Phone`, Android 11/API 30, Google APIs x86_64, 1 GB de RAM y gráficos por software. Después:

@@ -1,4 +1,5 @@
 import cors from "@fastify/cors";
+import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
@@ -7,6 +8,7 @@ import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
 import { database } from "./database.js";
 import { sendPush } from "./push.js";
+import { registerRealtimeRoutes } from "./realtime.js";
 
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -62,7 +64,9 @@ export async function buildApp() {
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
   });
-  await registerAdminRoutes(app);
+  await app.register(websocket);
+  const realtime = registerRealtimeRoutes(app);
+  await registerAdminRoutes(app, realtime);
 
   app.get("/health", async () => ({
     status: "ok",
@@ -104,7 +108,10 @@ export async function buildApp() {
       `;
       return { tripId: String(trip.tripId), passengers: Number(trip.passengers), originReference: trip.originReference as string | null, destinationReference: trip.destinationReference as string | null, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
-    if (dispatched) void Promise.all(dispatched.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${dispatched.passengers} pasajero(s): ${dispatched.originReference ?? "Origen"} → ${dispatched.destinationReference ?? "Destino"}`, { tripId: dispatched.tripId, type: "TRIP_OFFER" }))).catch(() => undefined);
+    if (dispatched) {
+      for (const driverId of dispatched.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: dispatched.tripId });
+      void Promise.all(dispatched.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${dispatched.passengers} pasajero(s): ${dispatched.originReference ?? "Origen"} → ${dispatched.destinationReference ?? "Destino"}`, { tripId: dispatched.tripId, type: "TRIP_OFFER" }))).catch(() => undefined);
+    }
     return dispatched;
   }
 
@@ -114,7 +121,9 @@ export async function buildApp() {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION_QUERY" });
     try {
       const url = new URL("https://nominatim.openstreetmap.org/search");
-      url.searchParams.set("q", `${parsed.data.q}, Atacames, Ecuador`);
+      // La búsqueda no se fija a Atacames: durante las pruebas y al viajar se
+      // prioriza el texto real ingresado por el usuario dentro de Ecuador.
+      url.searchParams.set("q", `${parsed.data.q}, Ecuador`);
       url.searchParams.set("format", "jsonv2"); url.searchParams.set("limit", "5"); url.searchParams.set("addressdetails", "1");
       const response = await fetch(url, { headers: { "User-Agent": "MototaxiAtacamesMVP/0.1 (development contact: admin@mototaxi.local)", Accept: "application/json" } });
       if (!response.ok) return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" });
@@ -132,8 +141,18 @@ export async function buildApp() {
       const { origin, destination } = parsed.data;
       const response = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", { method: "POST", headers: { Authorization: key, "Content-Type": "application/json" }, body: JSON.stringify({ coordinates: [[origin.longitude, origin.latitude], [destination.longitude, destination.latitude]] }) });
       if (!response.ok) return reply.code(502).send({ error: "ROUTING_UNAVAILABLE" });
-      const payload = await response.json() as { features?: Array<{ geometry?: { coordinates?: number[][] } }> };
-      return { points: payload.features?.[0]?.geometry?.coordinates?.map(([longitude, latitude]) => ({ latitude, longitude })) ?? [] };
+      const payload = await response.json() as {
+        features?: Array<{
+          geometry?: { coordinates?: number[][] };
+          properties?: { summary?: { distance?: number; duration?: number } };
+        }>;
+      };
+      const feature = payload.features?.[0];
+      return {
+        points: feature?.geometry?.coordinates?.map(([longitude, latitude]) => ({ latitude, longitude })) ?? [],
+        distanceMeters: feature?.properties?.summary?.distance ?? null,
+        durationSeconds: feature?.properties?.summary?.duration ?? null
+      };
     } catch { return reply.code(502).send({ error: "ROUTING_UNAVAILABLE" }); }
   });
 
@@ -251,6 +270,7 @@ export async function buildApp() {
     if (parsed.data.available && !parsed.data.location) return reply.code(400).send({ error: "LOCATION_REQUIRED" });
     await database()`update drivers set is_available=${parsed.data.available}, last_location=case when ${parsed.data.location ? true : false} then ST_SetSRID(ST_MakePoint(${parsed.data.location?.longitude ?? 0}, ${parsed.data.location?.latitude ?? 0}),4326)::geography else last_location end, last_location_at=case when ${parsed.data.location ? true : false} then now() else last_location_at end where user_id=${user.id!}`;
     if (parsed.data.available) void redispatchOldestTrip().catch(() => undefined);
+    else realtime.publishDriverUnavailable(user.id!);
     return { available: parsed.data.available };
   });
 
@@ -276,6 +296,7 @@ export async function buildApp() {
       return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
     void Promise.all(trip.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${input.destinationReference ?? "Destino"}`, { tripId: trip.id, type: "TRIP_OFFER" }))).catch(() => undefined);
+    for (const driverId of trip.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: String(trip.id) });
     return reply.code(201).send({ tripId: trip.id, status: "SEARCHING", offers: trip.offers, quotedTotalCents: total, zone });
   });
 
@@ -296,7 +317,9 @@ export async function buildApp() {
       return drivers.map(driver => String(driver.driver_id));
     });
     if (!result) return reply.code(409).send({ error: "TRIP_NOT_CANCELLABLE" });
+    for (const driverId of result) realtime.publishToUser(driverId, { type: "trip:offer:cancelled", tripId });
     void Promise.all(result.map(driverId => sendPush(driverId, "Solicitud cancelada", "El pasajero canceló la solicitud antes de ser asignada.", { tripId, type: "TRIP_CANCELLED" }))).catch(() => undefined);
+    realtime.publishTripStatus(tripId, "CANCELLED");
     return { tripId, status: "CANCELLED", cancellationReason: "PASSENGER_CANCELLED" };
   });
 
@@ -309,11 +332,14 @@ export async function buildApp() {
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
+        ST_X(live.position::geometry) as "driverLongitude", ST_Y(live.position::geometry) as "driverLatitude",
+        live.bearing as "driverBearing", live.speed_mps as "driverSpeed", live.recorded_at as "driverLocationAt",
         cancellation.reason_code as "cancellationReason"
       from trips t
       left join users d_user on d_user.id=t.driver_id
       join users p_user on p_user.id=t.passenger_id
       left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) v on true
+      left join trip_live_locations live on live.trip_id=t.id
       left join lateral (select reason_code from trip_events where trip_id=t.id and to_status='CANCELLED' order by occurred_at desc limit 1) cancellation on true
       where t.id=${tripId} and (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
     `;
@@ -329,11 +355,14 @@ export async function buildApp() {
         d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
-        ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude"
+        ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
+        ST_X(live.position::geometry) as "driverLongitude", ST_Y(live.position::geometry) as "driverLatitude",
+        live.bearing as "driverBearing", live.speed_mps as "driverSpeed", live.recorded_at as "driverLocationAt"
       from trips t
       join users p_user on p_user.id=t.passenger_id
       left join users d_user on d_user.id=t.driver_id
       left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) v on true
+      left join trip_live_locations live on live.trip_id=t.id
       where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
         and t.status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
       order by t.requested_at desc limit 1
@@ -418,6 +447,7 @@ export async function buildApp() {
     const notification = messages[result.status as string];
     if (passenger && notification) void sendPush(String(passenger.passenger_id), notification[0], notification[1], { tripId, type: result.status }).catch(() => undefined);
     if (result.status === "COMPLETED") void redispatchOldestTrip().catch(() => undefined);
+    realtime.publishTripStatus(tripId, String(result.status));
     return result;
   });
 
@@ -486,6 +516,8 @@ export async function buildApp() {
       return { status: "DRIVER_EN_ROUTE", tripId: offer.trip_id };
     });
     if ("error" in result) return reply.code(409).send(result);
+    realtime.publishDriverUnavailable(user.id!);
+    realtime.publishTripStatus(String(result.tripId), "DRIVER_EN_ROUTE");
     const [trip] = await database()`select passenger_id from trips where id=${result.tripId}`;
     if (trip) void sendPush(String(trip.passenger_id), "Viaje confirmado", "Un conductor aceptó tu solicitud y va en camino.", { tripId: result.tripId, type: "TRIP_ASSIGNED" }).catch(() => undefined);
     return result;

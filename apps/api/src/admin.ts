@@ -82,7 +82,9 @@ function requireUser(request: FastifyRequest) { const user = userFrom(request); 
 function requireAdmin(request: FastifyRequest) { const user = requireUser(request); if (user.role !== "ADMIN") throw new Error("FORBIDDEN"); return user; }
 function guardError(error: unknown, reply: any) { const message = error instanceof Error ? error.message : "ERROR"; if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message }); if (message === "FORBIDDEN") return reply.code(403).send({ error: message }); throw error; }
 
-export async function registerAdminRoutes(app: FastifyInstance) {
+export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
+  publishTripStatus(tripId: string, status: string): void;
+}) {
   app.post("/v1/admin/session", async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOGIN" });
     if (process.env.DATABASE_URL) {
@@ -292,6 +294,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     await persistAudit(user, "TRIP_CANCELLED", "TRIP", id, body.reason);
     void sendPush(String(trip.passenger_id), "Viaje cancelado por administración", body.reason, { tripId: id, type: "TRIP_CANCELLED", reason: "ADMIN_CANCELLED" }).catch(() => undefined);
     if (trip.driver_id) void sendPush(String(trip.driver_id), "Viaje cancelado por administración", body.reason, { tripId: id, type: "TRIP_CANCELLED", reason: "ADMIN_CANCELLED" }).catch(() => undefined);
+    realtime?.publishTripStatus(id, "CANCELLED");
     return { id, status: "CANCELLED", cancellationReason: "ADMIN_CANCELLED" };
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.get("/v1/admin/audit", async (request, reply) => { try {

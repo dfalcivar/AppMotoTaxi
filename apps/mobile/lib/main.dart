@@ -4,12 +4,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'chat_sheet.dart';
+import 'live_map.dart';
+import 'realtime_service.dart';
 
 const base = String.fromEnvironment('API_BASE_URL',
     defaultValue: 'https://mototaxi-atacames-api.onrender.com');
@@ -103,8 +106,8 @@ String estadoViaje(dynamic estado) =>
     'Sin estado';
 
 class Session {
-  const Session(this.token, this.role, this.name);
-  final String token, role, name;
+  const Session(this.token, this.role, this.name, this.id);
+  final String token, role, name, id;
 }
 
 class ApiException implements Exception {
@@ -175,7 +178,8 @@ class Api {
   Future<Session> login(String e, String p) async {
     final d = await call('POST', '/v1/auth/session',
         body: {'email': e, 'password': p});
-    final s = Session(d['token'], d['user']['role'], d['user']['name']);
+    final s = Session(
+        d['token'], d['user']['role'], d['user']['name'], d['user']['id']);
     unawaited(registerFcm(s.token));
     return s;
   }
@@ -205,6 +209,30 @@ class Api {
       List<dynamic>.from(await call('GET', '/v1/notifications', token: t));
   Future<dynamic> trip(String t, String id) =>
       call('GET', '/v1/trips/$id', token: t);
+  Future<Map<String, dynamic>> route(
+      String t, LatLng origin, LatLng destination) async {
+    final value = await call('POST', '/v1/routes', token: t, body: {
+      'origin': {
+        'latitude': origin.latitude,
+        'longitude': origin.longitude,
+      },
+      'destination': {
+        'latitude': destination.latitude,
+        'longitude': destination.longitude,
+      },
+    });
+    return Map<String, dynamic>.from(value);
+  }
+
+  Future<List<dynamic>> messages(String t, String tripId) async =>
+      List<dynamic>.from(
+          await call('GET', '/v1/trips/$tripId/messages', token: t));
+  Future<dynamic> sendMessage(
+          String t, String tripId, String clientMessageId, String body) =>
+      call('POST', '/v1/trips/$tripId/messages', token: t, body: {
+        'clientMessageId': clientMessageId,
+        'body': body,
+      });
   Future<dynamic> create(
           String t, int n, String o, String d, LatLng pickup, LatLng dropoff,
           {String paymentMethod = 'CASH'}) =>
@@ -712,7 +740,8 @@ class _RegisterState extends State<Register> {
       });
       if (!mounted) return;
       if (role == 'PASSENGER' && d['token'] != null) {
-        final s = Session(d['token'], d['user']['role'], d['user']['name']);
+        final s = Session(
+            d['token'], d['user']['role'], d['user']['name'], d['user']['id']);
         Navigator.pushReplacement(
             context, MaterialPageRoute(builder: (_) => Passenger(s)));
       } else {
@@ -780,88 +809,6 @@ class _RegisterState extends State<Register> {
               onPressed: busy ? null : submit,
               child: Text(busy ? 'Registrando…' : 'Crear cuenta'))
       ]));
-}
-
-class PilotMap extends StatelessWidget {
-  const PilotMap(this.origin, this.destination,
-      {this.pickup = const LatLng(0.865, -79.846),
-      this.dropoff = const LatLng(0.867, -79.844),
-      required this.driverView,
-      this.onDestinationSelected,
-      super.key});
-  final String origin, destination;
-  final LatLng pickup, dropoff;
-  final bool driverView;
-  final ValueChanged<LatLng>? onDestinationSelected;
-  @override
-  Widget build(BuildContext c) {
-    final center = LatLng((pickup.latitude + dropoff.latitude) / 2,
-        (pickup.longitude + dropoff.longitude) / 2);
-    return ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: SizedBox(
-            height: 220,
-            child: Stack(children: [
-              FlutterMap(
-                  key: ValueKey(
-                      '${pickup.latitude},${pickup.longitude}-${dropoff.latitude},${dropoff.longitude}'),
-                  options: MapOptions(
-                      initialCenter: center,
-                      initialZoom: 15,
-                      onTap: onDestinationSelected == null
-                          ? null
-                          : (_, point) => onDestinationSelected!(point)),
-                  children: [
-                    TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'ec.mototaxi.atacames'),
-                    PolylineLayer(polylines: [
-                      Polyline(
-                          points: [pickup, dropoff],
-                          color: Theme.of(c).colorScheme.primary,
-                          strokeWidth: 4)
-                    ]),
-                    MarkerLayer(markers: [
-                      Marker(
-                          point: pickup,
-                          width: 120,
-                          height: 70,
-                          child: Column(children: [
-                            const Icon(Icons.location_on,
-                                color: Colors.green, size: 32),
-                            Text(origin,
-                                maxLines: 1, overflow: TextOverflow.ellipsis)
-                          ])),
-                      Marker(
-                          point: dropoff,
-                          width: 120,
-                          height: 70,
-                          child: Column(children: [
-                            const Icon(Icons.flag, color: Colors.red, size: 30),
-                            Text(destination,
-                                maxLines: 1, overflow: TextOverflow.ellipsis)
-                          ]))
-                    ])
-                  ]),
-              if (onDestinationSelected != null)
-                Positioned(
-                    left: 12,
-                    right: 12,
-                    bottom: 10,
-                    child: IgnorePointer(
-                        child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 7),
-                            decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: .72),
-                                borderRadius: BorderRadius.circular(20)),
-                            child: const Text(
-                                'Toca el mapa para marcar el destino',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: Colors.white))))),
-            ])));
-  }
 }
 
 class Profile extends StatefulWidget {
@@ -1187,30 +1134,112 @@ Future<void> rating(
 
 class _PassengerState extends State<Passenger> {
   final api = Api();
-  final origin = TextEditingController(text: 'Malecón de Atacames');
-  final destination = TextEditingController(text: 'Playa de Atacames');
-  LatLng pickup = const LatLng(0.865, -79.846),
-      dropoff = const LatLng(0.867, -79.844);
+  final origin = TextEditingController();
+  final destination = TextEditingController();
+  late final RealtimeService realtime;
+  StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
+  LatLng? pickup;
+  LatLng? dropoff;
+  LatLng? driverPosition;
+  double driverBearing = 0;
+  final Map<String, LatLng> nearbyDrivers = {};
+  List<LatLng> routePoints = [];
+  MapPointSelection mapSelection = MapPointSelection.destination;
   dynamic active;
   int people = 1;
   String paymentMethod = 'CASH';
   String? message;
   Timer? timer;
   bool ratingPrompted = false;
+  DateTime? lastRouteAt;
+  double? routeDistanceMeters;
+  double? routeDurationSeconds;
   @override
   void initState() {
     super.initState();
+    realtime = RealtimeService(baseUrl: base, token: widget.s.token);
+    realtimeSubscription = realtime.events.listen(handleRealtime);
+    realtime.connect();
     load();
     Future.microtask(useCurrentLocation);
-    timer = Timer.periodic(const Duration(seconds: 3), (_) => load());
+    timer = Timer.periodic(const Duration(seconds: 15), (_) => load());
   }
 
   @override
   void dispose() {
     timer?.cancel();
+    realtimeSubscription?.cancel();
+    realtime.dispose();
     origin.dispose();
     destination.dispose();
     super.dispose();
+  }
+
+  void handleRealtime(Map<String, dynamic> event) {
+    if (!mounted) return;
+    final type = event['type'];
+    if (type == 'connected') {
+      final tripId = active?['tripId']?.toString();
+      if (tripId != null) {
+        realtime.subscribeTrip(tripId);
+      } else if (pickup != null) {
+        realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+      }
+      return;
+    }
+    if (type == 'nearby:snapshot') {
+      final items = List<dynamic>.from(event['drivers'] ?? const []);
+      setState(() {
+        nearbyDrivers
+          ..clear()
+          ..addEntries(items.map((item) => MapEntry(
+                item['driverId'].toString(),
+                LatLng((item['latitude'] as num).toDouble(),
+                    (item['longitude'] as num).toDouble()),
+              )));
+      });
+      return;
+    }
+    if (type == 'nearby:update') {
+      final item = Map<String, dynamic>.from(event['driver'] as Map);
+      setState(() => nearbyDrivers[item['driverId'].toString()] = LatLng(
+          (item['latitude'] as num).toDouble(),
+          (item['longitude'] as num).toDouble()));
+      return;
+    }
+    if (type == 'nearby:remove') {
+      setState(() => nearbyDrivers.remove(event['driverId']?.toString()));
+      return;
+    }
+    if (type == 'driver:location') {
+      final item = Map<String, dynamic>.from(event['location'] as Map);
+      if (item['tripId']?.toString() != active?['tripId']?.toString()) return;
+      setState(() {
+        driverPosition = LatLng((item['latitude'] as num).toDouble(),
+            (item['longitude'] as num).toDouble());
+        driverBearing = (item['bearing'] as num?)?.toDouble() ?? 0;
+      });
+      refreshRoute();
+      return;
+    }
+    if (type == 'trip:subscribed' && event['liveLocation'] != null) {
+      final item = Map<String, dynamic>.from(event['liveLocation'] as Map);
+      setState(() {
+        driverPosition = LatLng((item['latitude'] as num).toDouble(),
+            (item['longitude'] as num).toDouble());
+        driverBearing = (item['bearing'] as num?)?.toDouble() ?? 0;
+      });
+      refreshRoute(force: true);
+      return;
+    }
+    if (type == 'trip:status') {
+      load();
+      return;
+    }
+    if (type == 'chat:message') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Tienes un nuevo mensaje sobre tu viaje.')));
+    }
   }
 
   Future<void> load() async {
@@ -1226,6 +1255,8 @@ class _PassengerState extends State<Passenger> {
       if (t['status'] == 'COMPLETED') {
         setState(() {
           active = null;
+          driverPosition = null;
+          routePoints = [];
           message = 'Viaje finalizado.';
         });
         if (!ratingPrompted) {
@@ -1240,6 +1271,8 @@ class _PassengerState extends State<Passenger> {
         final administrative = t['cancellationReason'] == 'ADMIN_CANCELLED';
         setState(() {
           active = null;
+          driverPosition = null;
+          routePoints = [];
           message = administrative
               ? 'El viaje fue cancelado por administración.'
               : 'La solicitud fue cancelada.';
@@ -1254,6 +1287,12 @@ class _PassengerState extends State<Passenger> {
           dropoff = LatLng((t['destinationLatitude'] as num).toDouble(),
               (t['destinationLongitude'] as num).toDouble());
         }
+        if (t['driverLatitude'] != null) {
+          driverPosition = LatLng((t['driverLatitude'] as num).toDouble(),
+              (t['driverLongitude'] as num).toDouble());
+          driverBearing = (t['driverBearing'] as num?)?.toDouble() ?? 0;
+        }
+        nearbyDrivers.clear();
         message = {
           'SEARCHING': 'Buscando conductor cercano.',
           'ASSIGNED': '¡Viaje confirmado! ${t['driverName']} va en camino.',
@@ -1262,6 +1301,8 @@ class _PassengerState extends State<Passenger> {
           'IN_PROGRESS': 'Tu viaje está en curso.'
         }[t['status']];
       });
+      realtime.subscribeTrip(t['tripId'].toString());
+      refreshRoute(force: routePoints.isEmpty);
     } catch (_) {}
   }
 
@@ -1275,6 +1316,8 @@ class _PassengerState extends State<Passenger> {
         origin.text = 'Mi ubicación actual';
         message = 'Origen actualizado con tu ubicación GPS.';
       });
+      realtime.subscribeNearby(position.latitude, position.longitude);
+      refreshRoute(force: true);
     } catch (e) {
       if (mounted) setState(() => message = e.toString());
     }
@@ -1300,25 +1343,90 @@ class _PassengerState extends State<Passenger> {
         }
         message = 'Ubicación actualizada en el mapa.';
       });
+      if (isOrigin && pickup != null) {
+        realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+      }
+      refreshRoute(force: true);
     } catch (_) {
       setState(() => message = 'No se pudo buscar la ubicación.');
     }
   }
 
-  void selectDestination(LatLng point) {
+  void selectMapPoint(LatLng point) {
     setState(() {
-      dropoff = point;
-      destination.text =
-          'Punto marcado (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
-      message = 'Destino marcado en el mapa. Ya puedes solicitar el viaje.';
+      final label =
+          'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
+      if (mapSelection == MapPointSelection.origin) {
+        pickup = point;
+        origin.text = label;
+        message = 'Origen marcado en el mapa.';
+      } else {
+        dropoff = point;
+        destination.text = label;
+        message = 'Destino marcado en el mapa.';
+      }
     });
+    if (mapSelection == MapPointSelection.origin) {
+      realtime.subscribeNearby(point.latitude, point.longitude);
+    }
+    refreshRoute(force: true);
+  }
+
+  Future<void> refreshRoute({bool force = false}) async {
+    final now = DateTime.now();
+    if (!force &&
+        lastRouteAt != null &&
+        now.difference(lastRouteAt!) < const Duration(seconds: 45)) {
+      return;
+    }
+    LatLng? from;
+    LatLng? to;
+    final status = active?['status']?.toString();
+    if (driverPosition != null && status == 'DRIVER_EN_ROUTE') {
+      from = driverPosition;
+      to = pickup;
+    } else if (driverPosition != null && status == 'IN_PROGRESS') {
+      from = driverPosition;
+      to = dropoff;
+    } else {
+      from = pickup;
+      to = dropoff;
+    }
+    if (from == null || to == null) return;
+    lastRouteAt = now;
+    try {
+      final route = await api.route(widget.s.token, from, to);
+      final points = List<dynamic>.from(route['points'] ?? const [])
+          .map((point) => LatLng((point['latitude'] as num).toDouble(),
+              (point['longitude'] as num).toDouble()))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        routePoints = points;
+        routeDistanceMeters = (route['distanceMeters'] as num?)?.toDouble();
+        routeDurationSeconds = (route['durationSeconds'] as num?)?.toDouble();
+      });
+    } catch (_) {
+      if (mounted && force) {
+        setState(() {
+          routePoints = [from!, to!];
+          routeDistanceMeters = null;
+          routeDurationSeconds = null;
+        });
+      }
+    }
   }
 
   Future<void> create() async {
+    if (pickup == null || dropoff == null) {
+      setState(() => message =
+          'Marca el origen y el destino en el mapa antes de solicitar.');
+      return;
+    }
     try {
       ratingPrompted = false;
       final t = await api.create(widget.s.token, people, origin.text,
-          destination.text, pickup, dropoff,
+          destination.text, pickup!, dropoff!,
           paymentMethod: paymentMethod);
       setState(() => active = {'tripId': t['tripId']});
       await load();
@@ -1370,11 +1478,44 @@ class _PassengerState extends State<Passenger> {
               icon: const Icon(Icons.person_outline))
         ]),
         body: ListView(padding: const EdgeInsets.all(20), children: [
-          PilotMap(o, d,
+          if (active == null)
+            SegmentedButton<MapPointSelection>(
+              segments: const [
+                ButtonSegment(
+                    value: MapPointSelection.origin,
+                    icon: Icon(Icons.location_on_outlined),
+                    label: Text('Marcar origen')),
+                ButtonSegment(
+                    value: MapPointSelection.destination,
+                    icon: Icon(Icons.flag_outlined),
+                    label: Text('Marcar destino')),
+              ],
+              selected: {mapSelection},
+              onSelectionChanged: (value) =>
+                  setState(() => mapSelection = value.first),
+            ),
+          const SizedBox(height: 10),
+          LiveMap(
+              originLabel: o,
+              destinationLabel: d,
               pickup: pickup,
               dropoff: dropoff,
-              driverView: false,
-              onDestinationSelected: active == null ? selectDestination : null),
+              driverPosition: driverPosition,
+              driverBearing: driverBearing,
+              routePoints: routePoints,
+              nearbyDrivers:
+                  active == null ? nearbyDrivers : const <String, LatLng>{},
+              editing: active == null ? mapSelection : null,
+              onPointSelected: active == null ? selectMapPoint : null),
+          if (routeDistanceMeters != null && routeDurationSeconds != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Ruta estimada: ${(routeDistanceMeters! / 1000).toStringAsFixed(1)} km · '
+                '${(routeDurationSeconds! / 60).ceil()} min',
+                textAlign: TextAlign.center,
+              ),
+            ),
           if (active == null) ...[
             TextField(
                 controller: origin,
@@ -1423,6 +1564,24 @@ class _PassengerState extends State<Passenger> {
                 onPressed: cancel,
                 icon: const Icon(Icons.cancel_outlined),
                 label: const Text('Cancelar solicitud')),
+          if (active != null && active?['status'] != 'SEARCHING')
+            OutlinedButton.icon(
+              onPressed: () => showTripChat(
+                context: context,
+                tripId: active['tripId'].toString(),
+                userId: widget.s.id,
+                realtime: realtime,
+                loadHistory: () =>
+                    api.messages(widget.s.token, active['tripId'].toString()),
+                sendFallback: (clientId, body) => api.sendMessage(
+                    widget.s.token,
+                    active['tripId'].toString(),
+                    clientId,
+                    body),
+              ),
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text('Chat con el conductor'),
+            ),
           FilledButton(
               onPressed: active == null ? create : null,
               child: Text(active == null
@@ -1443,6 +1602,7 @@ class Driver extends StatefulWidget {
 
 class _DriverState extends State<Driver> {
   final api = Api();
+  late final RealtimeService realtime;
   dynamic active;
   List offers = [];
   bool available = false;
@@ -1450,9 +1610,17 @@ class _DriverState extends State<Driver> {
   Timer? timer;
   StreamSubscription<RemoteMessage>? messageSubscription;
   StreamSubscription<Position>? positionSubscription;
+  StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
+  LatLng? currentDriverPosition;
+  double currentDriverBearing = 0;
+  List<LatLng> routePoints = [];
+  DateTime? lastRouteAt;
   @override
   void initState() {
     super.initState();
+    realtime = RealtimeService(baseUrl: base, token: widget.s.token);
+    realtimeSubscription = realtime.events.listen(handleRealtime);
+    realtime.connect();
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((message) {
         if (message.data['type'] == 'TRIP_CANCELLED' && mounted) {
@@ -1476,15 +1644,35 @@ class _DriverState extends State<Driver> {
     timer?.cancel();
     messageSubscription?.cancel();
     positionSubscription?.cancel();
+    realtimeSubscription?.cancel();
+    realtime.dispose();
     super.dispose();
+  }
+
+  void handleRealtime(Map<String, dynamic> event) {
+    if (!mounted) return;
+    if (event['type'] == 'connected' && active?['tripId'] != null) {
+      realtime.subscribeTrip(active['tripId'].toString());
+    } else if (event['type'] == 'trip:offer' ||
+        event['type'] == 'trip:offer:cancelled') {
+      refresh();
+    } else if (event['type'] == 'trip:status') {
+      refresh();
+    } else if (event['type'] == 'chat:message') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Tienes un nuevo mensaje del pasajero.')));
+    }
   }
 
   LatLng pointFrom(Position position) =>
       LatLng(position.latitude, position.longitude);
 
-  Future<void> startGpsTracking() async {
+  Future<void> startGpsTracking({required bool markAvailable}) async {
     final position = await currentGpsPosition();
-    await api.available(widget.s.token, true, pointFrom(position));
+    if (markAvailable) {
+      await api.available(widget.s.token, true, pointFrom(position));
+    }
+    sendPosition(position);
     await positionSubscription?.cancel();
     positionSubscription = Geolocator.getPositionStream(
             locationSettings: AndroidSettings(
@@ -1496,11 +1684,32 @@ class _DriverState extends State<Driver> {
                     notificationText:
                         'Actualizando ubicación para recibir viajes cercanos.',
                     enableWakeLock: true)))
-        .listen((position) {
+        .listen(sendPosition);
+  }
+
+  void sendPosition(Position position) {
+    if (mounted) {
+      setState(() {
+        currentDriverPosition = pointFrom(position);
+        currentDriverBearing = position.heading < 0 ? 0 : position.heading;
+      });
+    }
+    final sent = realtime.sendDriverLocation(
+      tripId: active?['tripId']?.toString(),
+      latitude: position.latitude,
+      longitude: position.longitude,
+      bearing: position.heading,
+      speed: position.speed,
+      accuracy: position.accuracy,
+      recordedAt: position.timestamp,
+      sequence: position.timestamp.millisecondsSinceEpoch,
+    );
+    if (!sent && available && active == null) {
       api
           .available(widget.s.token, true, pointFrom(position))
           .catchError((_) {});
-    });
+    }
+    refreshDriverRoute();
   }
 
   Future<void> restore() async {
@@ -1512,10 +1721,14 @@ class _DriverState extends State<Driver> {
     setState(() {
       active = values[0];
       available = serverAvailable;
+      if (active == null) routePoints = [];
     });
-    if (serverAvailable) {
+    if (serverAvailable || active != null) {
       try {
-        await startGpsTracking();
+        await startGpsTracking(markAvailable: serverAvailable);
+        if (active?['tripId'] != null) {
+          realtime.subscribeTrip(active['tripId'].toString());
+        }
         if (mounted) {
           setState(() => driverMessage =
               'Ubicación GPS activa. Esperando solicitudes cercanas.');
@@ -1539,7 +1752,7 @@ class _DriverState extends State<Driver> {
   Future<void> toggle(bool v) async {
     try {
       if (v) {
-        await startGpsTracking();
+        await startGpsTracking(markAvailable: true);
       } else {
         await api.available(widget.s.token, false);
         await positionSubscription?.cancel();
@@ -1573,6 +1786,8 @@ class _DriverState extends State<Driver> {
           return;
         }
         if (mounted) setState(() => active = latest);
+        realtime.subscribeTrip(latest['tripId'].toString());
+        refreshDriverRoute(force: true);
       }
       if (available) {
         final r = await api.offers(widget.s.token);
@@ -1580,6 +1795,38 @@ class _DriverState extends State<Driver> {
       }
     } catch (e) {
       if (mounted) setState(() => driverMessage = e.toString());
+    }
+  }
+
+  Future<void> refreshDriverRoute({bool force = false}) async {
+    final current = currentDriverPosition;
+    if (active == null || current == null) return;
+    final now = DateTime.now();
+    if (!force &&
+        lastRouteAt != null &&
+        now.difference(lastRouteAt!) < const Duration(seconds: 45)) {
+      return;
+    }
+    final pickup = active['originLatitude'] == null
+        ? null
+        : LatLng((active['originLatitude'] as num).toDouble(),
+            (active['originLongitude'] as num).toDouble());
+    final dropoff = active['destinationLatitude'] == null
+        ? null
+        : LatLng((active['destinationLatitude'] as num).toDouble(),
+            (active['destinationLongitude'] as num).toDouble());
+    final target = active['status'] == 'IN_PROGRESS' ? dropoff : pickup;
+    if (target == null) return;
+    lastRouteAt = now;
+    try {
+      final route = await api.route(widget.s.token, current, target);
+      final points = List<dynamic>.from(route['points'] ?? const [])
+          .map((point) => LatLng((point['latitude'] as num).toDouble(),
+              (point['longitude'] as num).toDouble()))
+          .toList();
+      if (mounted) setState(() => routePoints = points);
+    } catch (_) {
+      if (mounted && force) setState(() => routePoints = [current, target]);
     }
   }
 
@@ -1609,14 +1856,14 @@ class _DriverState extends State<Driver> {
   @override
   Widget build(BuildContext c) {
     final a = next();
-    final pickup = active?['originLatitude'] != null
+    final LatLng? pickup = active?['originLatitude'] != null
         ? LatLng((active['originLatitude'] as num).toDouble(),
             (active['originLongitude'] as num).toDouble())
-        : const LatLng(0.865, -79.846);
-    final dropoff = active?['destinationLatitude'] != null
+        : null;
+    final LatLng? dropoff = active?['destinationLatitude'] != null
         ? LatLng((active['destinationLatitude'] as num).toDouble(),
             (active['destinationLongitude'] as num).toDouble())
-        : const LatLng(0.867, -79.844);
+        : null;
     return Scaffold(
         appBar: AppBar(title: Text('Conductor · ${widget.s.name}'), actions: [
           IconButton(
@@ -1627,7 +1874,7 @@ class _DriverState extends State<Driver> {
           SwitchListTile(
               title: const Text('Disponible para viajes'),
               value: available,
-              onChanged: toggle),
+              onChanged: active == null ? toggle : null),
           if (driverMessage != null)
             Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -1637,13 +1884,37 @@ class _DriverState extends State<Driver> {
                 padding: EdgeInsets.all(24),
                 child: Center(child: Text('Esperando viajes...'))),
           if (active != null) ...[
-            PilotMap(active['originReference'] ?? 'Origen',
-                active['destinationReference'] ?? 'Destino',
-                pickup: pickup, dropoff: dropoff, driverView: true),
+            LiveMap(
+              originLabel: active['originReference'] ?? 'Origen',
+              destinationLabel: active['destinationReference'] ?? 'Destino',
+              pickup: pickup,
+              dropoff: dropoff,
+              driverPosition: currentDriverPosition,
+              driverBearing: currentDriverBearing,
+              routePoints: routePoints,
+              height: 330,
+            ),
             Text('Pasajero: ${active['passengerName']}'),
             Text(
                 'Pago: ${active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
             Text('Estado: ${estadoViaje(active['status'])}'),
+            OutlinedButton.icon(
+              onPressed: () => showTripChat(
+                context: context,
+                tripId: active['tripId'].toString(),
+                userId: widget.s.id,
+                realtime: realtime,
+                loadHistory: () =>
+                    api.messages(widget.s.token, active['tripId'].toString()),
+                sendFallback: (clientId, body) => api.sendMessage(
+                    widget.s.token,
+                    active['tripId'].toString(),
+                    clientId,
+                    body),
+              ),
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text('Chat con el pasajero'),
+            ),
             if (a != null)
               FilledButton(
                   onPressed: () => progress(c, a), child: Text(label(a)))

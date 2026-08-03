@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",
+    "@fastify/websocket": "^11.3.0",
     "@mototaxi/domain": "workspace:*",
     "fastify": "^5.4.0",
     "firebase-admin": "^14.2.0",
