@@ -42,6 +42,14 @@ describe("API de cotización", () => {
     expect(response.json()).toMatchObject({ error: "UNAUTHORIZED" });
   });
 
+  it("protege la geocodificación inversa de puntos", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/locations/reverse?latitude=-2.9&longitude=-79.0"
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
   it("protege el historial del chat de un viaje", async () => {
     const response = await app.inject({
       method: "GET",

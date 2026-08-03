@@ -285,6 +285,14 @@ class Api {
         token: t));
   }
 
+  Future<dynamic> reverse(String t, LatLng point) => call(
+      'GET',
+      Uri(path: '/v1/locations/reverse', queryParameters: {
+        'latitude': point.latitude.toString(),
+        'longitude': point.longitude.toString()
+      }).toString(),
+      token: t);
+
   Future<dynamic> offers(String t) =>
       call('GET', '/v1/driver/offers', token: t);
   Future<dynamic> driverState(String t) =>
@@ -1453,24 +1461,49 @@ class _PassengerState extends State<Passenger> {
     }
   }
 
-  void selectMapPoint(LatLng point) {
+  Future<void> selectMapPoint(LatLng point) async {
+    final selection = mapSelection;
+    final coordinateLabel =
+        'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
     setState(() {
-      final label =
-          'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
-      if (mapSelection == MapPointSelection.origin) {
+      if (selection == MapPointSelection.origin) {
         pickup = point;
-        origin.text = label;
-        message = 'Origen marcado en el mapa.';
+        origin.text = coordinateLabel;
+        message = 'Consultando la dirección del origen...';
       } else {
         dropoff = point;
-        destination.text = label;
-        message = 'Destino marcado en el mapa.';
+        destination.text = coordinateLabel;
+        message = 'Consultando la dirección del destino...';
       }
     });
-    if (mapSelection == MapPointSelection.origin) {
+    if (selection == MapPointSelection.origin) {
       realtime.subscribeNearby(point.latitude, point.longitude);
     }
     refreshRoute(force: true);
+    try {
+      final result = await api.reverse(widget.s.token, point);
+      if (!mounted) return;
+      final selectedPoint =
+          selection == MapPointSelection.origin ? pickup : dropoff;
+      if (selectedPoint?.latitude != point.latitude ||
+          selectedPoint?.longitude != point.longitude) {
+        return;
+      }
+      setState(() {
+        if (selection == MapPointSelection.origin) {
+          origin.text = result['label'].toString();
+          message = 'Origen identificado por su dirección.';
+        } else {
+          destination.text = result['label'].toString();
+          message = 'Destino identificado por su dirección.';
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => message =
+            'El punto quedó guardado, pero no se pudo obtener su dirección.');
+      }
+    }
   }
 
   Future<void> refreshRoute({bool force = false}) async {
@@ -1579,11 +1612,10 @@ class _PassengerState extends State<Passenger> {
               icon: const Icon(Icons.person_outline))
         ]),
         body: ListView(padding: const EdgeInsets.all(20), children: [
-          if (active == null)
-            AffiliateBanners(
-                load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
-                imageUrl: (banner) =>
-                    '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}'),
+          AffiliateBanners(
+              load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
+              imageUrl: (banner) =>
+                  '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}'),
           if (active == null)
             SegmentedButton<MapPointSelection>(
               segments: const [

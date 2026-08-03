@@ -58,7 +58,7 @@ Antes de cada ronda:
 | ID | Caso | Pasos resumidos | Resultado esperado | Estado |
 |---|---|---|---|---|
 | MAP-01 | GPS real | Solicitar desde el Redmi | El origen corresponde a la posición real | ☐ |
-| MAP-02 | Punto manual | Tocar origen y destino en el mapa | Se actualizan marcadores y ruta | ☐ |
+| MAP-02 | Punto manual | Tocar origen y destino en el mapa | Se actualizan marcadores, ruta y campos con la dirección legible; las coordenadas quedan solo como respaldo si falla el geocodificador | ☐ |
 | MAP-03 | Dirección escrita | Buscar una calle | Presenta resultados cercanos para seleccionar | ☐ |
 | MAP-04 | Intersección | Buscar `Tarqui y Bolívar` en Cuenca | Marca la intersección correcta | ☐ |
 | MAP-05 | Ubicación antigua | Detener actualizaciones del conductor | Deja de mostrarse como conductor cercano | ☐ |
@@ -97,6 +97,7 @@ Especificación inicial: banner horizontal `1200 × 400 px` (relación 3:1), JPG
 | ADS-04 | Desactivar | Desactivar desde panel | Desaparece al siguiente refresco | ☐ |
 | ADS-05 | Imagen inválida | Cargar formato/tamaño no permitido | Panel explica el requisito y no guarda | ☐ |
 | ADS-06 | Sin campañas | Desactivar todos los banners | Pasajero ve `Tu publicidad aquí`; conductor no muestra publicidad | ☐ |
+| ADS-07 | Viaje activo | Solicitar, aceptar e iniciar un viaje | El banner continúa visible en la parte superior durante la búsqueda, asignación y viaje en curso | ☐ |
 
 ## Evidencia por incidencia
 

@@ -12,6 +12,10 @@ interface NominatimItem {
   geojson?: { type?: string; coordinates?: unknown };
 }
 
+interface NominatimReverseItem extends NominatimItem {
+  address?: Record<string, string | undefined>;
+}
+
 export interface LocationResult {
   label: string;
   latitude: number;
@@ -119,4 +123,32 @@ export async function searchLocations(query: string, focus?: FocusPoint): Promis
     latitude: Number(item.lat),
     longitude: Number(item.lon)
   }));
+}
+
+function reverseLabel(item: NominatimReverseItem): string {
+  const address = item.address ?? {};
+  const street = address.road ?? address.pedestrian ?? address.footway ?? address.neighbourhood ?? address.suburb;
+  const streetAndNumber = [street, address.house_number].filter(Boolean).join(" ");
+  const locality = address.city ?? address.town ?? address.village ?? address.municipality ?? address.county;
+  const parts = [streetAndNumber, address.neighbourhood, address.suburb, locality, address.state]
+    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
+  return (parts.length ? parts.join(", ") : item.display_name).slice(0, 200);
+}
+
+export async function reverseLocation(point: FocusPoint): Promise<LocationResult> {
+  const url = new URL("https://nominatim.openstreetmap.org/reverse");
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("addressdetails", "1");
+  url.searchParams.set("zoom", "18");
+  url.searchParams.set("lat", String(point.latitude));
+  url.searchParams.set("lon", String(point.longitude));
+  const response = await fetch(url, { headers });
+  if (!response.ok) throw new Error("GEOCODER_UNAVAILABLE");
+  const item = await response.json() as NominatimReverseItem;
+  if (!item.display_name) throw new Error("LOCATION_NOT_FOUND");
+  return {
+    label: reverseLabel(item),
+    latitude: Number(item.lat ?? point.latitude),
+    longitude: Number(item.lon ?? point.longitude)
+  };
 }

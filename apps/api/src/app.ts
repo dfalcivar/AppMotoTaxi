@@ -9,7 +9,7 @@ import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./adm
 import { database } from "./database.js";
 import { sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
-import { searchLocations } from "./geocoding.js";
+import { reverseLocation, searchLocations } from "./geocoding.js";
 
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -43,6 +43,10 @@ const locationSearchSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90).optional(),
   longitude: z.coerce.number().min(-180).max(180).optional()
 }).refine(value => (value.latitude == null) === (value.longitude == null));
+const reverseLocationSchema = z.object({
+  latitude: z.coerce.number().min(-90).max(90),
+  longitude: z.coerce.number().min(-180).max(180)
+});
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
 const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
 const bannerPlacementSchema = z.object({ placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]).default("PASSENGER_HOME") });
@@ -528,6 +532,15 @@ export async function buildApp() {
         and o.expires_at > now() and t.status='SEARCHING'
       order by o.offered_at
     `;
+  });
+
+  app.get("/v1/locations/reverse", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const parsed = reverseLocationSchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION_QUERY" });
+    try {
+      return await reverseLocation(parsed.data);
+    } catch { return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" }); }
   });
 
   app.get("/v1/driver/state", async (request, reply) => {
