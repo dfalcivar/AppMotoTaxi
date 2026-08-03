@@ -134,7 +134,13 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
     event.preventDefault(); setError(""); setSuccess("");
     if (!editingId && !form.imageBase64) { setError("Selecciona el banner de 1200×400 px."); return; }
     if (new Date(form.endsAt) <= new Date(form.startsAt)) { setError("La fecha final debe ser posterior a la fecha de inicio."); return; }
-    const payload = { ...form, startsAt: new Date(form.startsAt).toISOString(), endsAt: new Date(form.endsAt).toISOString() };
+    const { imageBase64, imageMime, ...fields } = form;
+    const payload = {
+      ...fields,
+      startsAt: new Date(form.startsAt).toISOString(),
+      endsAt: new Date(form.endsAt).toISOString(),
+      ...(imageBase64 ? { imageBase64, imageMime } : {})
+    };
     setBusy(true);
     try {
       await apiFetch(editingId ? `/v1/admin/banners/${editingId}` : "/v1/admin/banners", token, { method: editingId ? "PATCH" : "POST", body: JSON.stringify(payload) });
@@ -148,11 +154,14 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
       <Header eyebrow="COMERCIOS AFILIADOS" title="Banners publicados" action={`${data.filter(item => item.active).length} activos`} />
       <Notice error={error} success={success} />
       <p className="note">Las campañas aparecen al pasajero durante su vigencia y se retiran automáticamente al llegar la fecha final. Cuando no hay campañas se muestra permanentemente la pieza fija «Tu publicidad aquí».</p>
-      {data.length ? <div className="banner-grid">{data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}>
+      <div className="banner-grid">
+        <article className="banner-placeholder-card permanent"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Tu publicidad aquí · pieza fija</strong><p>Respaldo permanente de la app. Se muestra automáticamente cuando no existen campañas vigentes.</p></div></article>
+        {data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}>
         <img src={apiUrl(`/v1/banners/${item.id}/image?v=${encodeURIComponent(item.updatedAt)}`)} alt={item.title} />
         <div><strong>{item.title}</strong><small>Inicio del pasajero · orden {item.sortOrder}</small><small>{new Date(item.startsAt).toLocaleString()} — {item.endsAt ? new Date(item.endsAt).toLocaleString() : "sin fecha final"}</small></div>
         {admin && <div className="banner-actions"><button className="secondary" onClick={() => edit(item)}>Editar</button><button className="secondary" onClick={() => toggle(item)}>{item.active ? "Desactivar" : "Activar"}</button></div>}
-      </article>)}</div> : <article className="banner-placeholder-card"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Vista previa en la app del pasajero</strong><p>Este banner demostrativo ocupa el espacio hasta que publiques la primera campaña.</p></div></article>}
+        </article>)}
+      </div>
     </section>
     {admin && <form className="card form-card advertising-form" onSubmit={save}>
       <Header eyebrow={editingId ? "EDITAR BANNER" : "NUEVO BANNER"} title={editingId ? "Modificar publicidad" : "Publicar anuncio"} />

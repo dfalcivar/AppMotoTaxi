@@ -21,6 +21,7 @@
 .placement-note { display: grid; gap: 4px; padding: 12px; border-radius: 12px; background: #e8f5f6; color: #24545d; }
 .placement-note span { font-size: .8rem; color: #587178; }
 .banner-placeholder-card { display: grid; gap: 14px; padding: 14px; border: 1px dashed #83afb5; border-radius: 14px; background: #f8fbfb; }
+.banner-placeholder-card.permanent { border-style: solid; border-color: #58a8b4; background: #eefafb; }
 .banner-placeholder-card img { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: cover; border-radius: 10px; }
 .banner-placeholder-card p { margin: 5px 0 0; color: #627b81; }
 
