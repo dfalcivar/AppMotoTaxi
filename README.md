@@ -92,6 +92,8 @@ El administrador puede publicar y editar banners desde el módulo **Publicidad**
 
 Al tocar el mapa para elegir origen o destino, la API realiza geocodificación inversa y reemplaza las coordenadas por una dirección legible. Si el servicio geográfico no responde, el punto continúa siendo válido y las coordenadas quedan visibles como respaldo.
 
+Durante un viaje, el pasajero dispone de un panel de progreso que refleja en tiempo real si el conductor va en camino, llegó o inició la carrera. La sincronización utiliza WebSocket, notificaciones FCM y una actualización al regresar a la aplicación. Android utiliza un canal de alertas de alta prioridad para viajes y mensajes.
+
 Los datos visibles de la consola son datos piloto en memoria para desarrollo. Las migraciones crean el modelo persistente; el siguiente paso de producción es implementar el repositorio PostgreSQL para sustituir el almacén piloto sin cambiar las rutas HTTP.
 
 ## PostgreSQL/PostGIS

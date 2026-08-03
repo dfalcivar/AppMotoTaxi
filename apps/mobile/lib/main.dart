@@ -134,6 +134,62 @@ String estadoViaje(dynamic estado) =>
     }[estado] ??
     'Sin estado';
 
+class TripStatusPanel extends StatelessWidget {
+  const TripStatusPanel(
+      {super.key, required this.status, required this.driverName});
+
+  final String status;
+  final String? driverName;
+
+  @override
+  Widget build(BuildContext context) {
+    const stages = [
+      ('DRIVER_EN_ROUTE', 'Conductor en camino'),
+      ('DRIVER_ARRIVED', 'Conductor llegó'),
+      ('IN_PROGRESS', 'Viaje en curso'),
+    ];
+    final current = switch (status) {
+      'DRIVER_ARRIVED' => 1,
+      'IN_PROGRESS' || 'COMPLETED' => 2,
+      _ => 0,
+    };
+    final detail = switch (status) {
+      'DRIVER_ARRIVED' => 'Tu conductor está en el punto de encuentro.',
+      'IN_PROGRESS' => 'Ya estás avanzando hacia tu destino.',
+      _ => '${driverName ?? 'Tu conductor'} se dirige hacia ti.',
+    };
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(estadoViaje(status),
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(detail),
+          const SizedBox(height: 14),
+          ...List.generate(stages.length, (index) {
+            final completed = index <= current;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(children: [
+                Icon(completed ? Icons.check_circle : Icons.circle_outlined,
+                    size: 20,
+                    color: completed
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.outline),
+                const SizedBox(width: 9),
+                Text(stages[index].$2,
+                    style: TextStyle(
+                        fontWeight: index == current ? FontWeight.w700 : null)),
+              ]),
+            );
+          }),
+        ]),
+      ),
+    );
+  }
+}
+
 class Session {
   const Session(this.token, this.role, this.name, this.id);
   final String token, role, name, id;
@@ -1182,12 +1238,13 @@ Future<void> rating(
   );
 }
 
-class _PassengerState extends State<Passenger> {
+class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   final api = Api();
   final origin = TextEditingController();
   final destination = TextEditingController();
   late final RealtimeService realtime;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
+  StreamSubscription<RemoteMessage>? messageSubscription;
   StreamSubscription<RemoteMessage>? openedMessageSubscription;
   LatLng? pickup;
   LatLng? dropoff;
@@ -1209,14 +1266,30 @@ class _PassengerState extends State<Passenger> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
     if (firebaseReady) {
+      messageSubscription = FirebaseMessaging.onMessage.listen((push) {
+        final type = push.data['type'];
+        if (const {
+          'DRIVER_EN_ROUTE',
+          'DRIVER_ARRIVED',
+          'IN_PROGRESS',
+          'COMPLETED',
+          'TRIP_CANCELLED'
+        }.contains(type)) {
+          reflectTripStatus(type, push.data['tripId']);
+          load();
+        }
+      });
       openedMessageSubscription =
           FirebaseMessaging.onMessageOpenedApp.listen((message) {
         if (message.data['type'] == 'CHAT_MESSAGE') {
           openPassengerChat(message.data['tripId']);
+        } else {
+          load();
         }
       });
     }
@@ -1227,13 +1300,40 @@ class _PassengerState extends State<Passenger> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     timer?.cancel();
     realtimeSubscription?.cancel();
+    messageSubscription?.cancel();
     openedMessageSubscription?.cancel();
     realtime.dispose();
     origin.dispose();
     destination.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      realtime.connect();
+      load();
+    }
+  }
+
+  void reflectTripStatus(dynamic statusValue, dynamic tripIdValue) {
+    final status = statusValue?.toString();
+    final tripId = tripIdValue?.toString();
+    if (status == null || active == null) return;
+    if (tripId != null && active['tripId']?.toString() != tripId) return;
+    if (status == 'COMPLETED' || status == 'TRIP_CANCELLED') return;
+    setState(() {
+      active = {...Map<String, dynamic>.from(active as Map), 'status': status};
+      message = {
+        'DRIVER_EN_ROUTE':
+            '${active['driverName'] ?? 'Tu conductor'} va en camino.',
+        'DRIVER_ARRIVED': 'El conductor ya llegó.',
+        'IN_PROGRESS': 'Tu viaje está en curso.'
+      }[status];
+    });
   }
 
   Future<void> openPassengerChat([String? requestedTripId]) async {
@@ -1318,6 +1418,7 @@ class _PassengerState extends State<Passenger> {
       return;
     }
     if (type == 'trip:status') {
+      reflectTripStatus(event['status'], event['tripId']);
       load();
       return;
     }
@@ -1666,11 +1767,9 @@ class _PassengerState extends State<Passenger> {
               ),
             ),
           if (active != null)
-            Card(
-                child: ListTile(
-                    leading: const Icon(Icons.route_outlined),
-                    title: const Text('Estado del viaje'),
-                    subtitle: Text(estadoViaje(active['status'])))),
+            TripStatusPanel(
+                status: active['status'].toString(),
+                driverName: active['driverName']?.toString()),
           if (active == null) ...[
             TextField(
                 controller: origin,

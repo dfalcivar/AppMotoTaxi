@@ -74,6 +74,8 @@ Antes de cada ronda:
 | CHA-04 | Reconexión | Cortar red, escribir y recuperarla | No duplica mensajes y confirma el envío | ☐ |
 | NOT-01 | Nueva solicitud | Conductor en segundo plano | Llega push del viaje cercano | ☐ |
 | NOT-02 | Cancelación | Pasajero o administrador cancela | Ambos ven el motivo correcto | ☐ |
+| NOT-03 | Alerta emergente | Minimizar la app y cambiar el estado del viaje | Android muestra una alerta de alta prioridad con sonido/vibración según la configuración del teléfono | ☐ |
+| NOT-04 | Progreso del pasajero | Marcar `Ya llegué` e `Iniciar viaje` desde el conductor | El panel de progreso del pasajero cambia inmediatamente; también se sincroniza al volver a abrir la app | ☐ |
 
 ## P1 — Pagos y administración
 
