@@ -35,7 +35,7 @@ const registrationSchema = z.object({
 });
 const pointSchema = z.object({ longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) });
 const availabilitySchema = z.object({ available: z.boolean(), location: pointSchema.optional() });
-const tripRequestSchema = z.object({ origin: pointSchema, destination: pointSchema, passengers: z.number().int().min(1).max(3), paymentMethod: z.enum(['CASH','DEUNA']).default('CASH'), originReference: z.string().max(200).optional(), destinationReference: z.string().max(200).optional() });
+const tripRequestSchema = z.object({ origin: pointSchema, destination: pointSchema, passengers: z.number().int().min(1).max(4), paymentMethod: z.enum(['CASH','DEUNA']).default('CASH'), originReference: z.string().max(200).optional(), destinationReference: z.string().max(200).optional(), notes: z.string().trim().max(300).optional() });
 const tripActionSchema = z.object({ action: z.enum(["EN_ROUTE", "ARRIVED", "START", "COMPLETE"]) });
 const ratingSchema = z.object({ score: z.number().int().min(1).max(5), comment: z.string().trim().max(500).optional(), tags: z.array(z.string().trim().min(1).max(50)).max(5).optional() });
 const locationSearchSchema = z.object({
@@ -230,7 +230,7 @@ export async function buildApp() {
         `;
         if (input.role === "DRIVER") {
           await tx`insert into drivers (user_id, is_available) values (${user!.id}, false)`;
-          await tx`insert into vehicles (driver_id, identifier, maximum_passengers, status) values (${user!.id}, ${input.vehicleIdentifier!}, 3, 'PENDING')`;
+          await tx`insert into vehicles (driver_id, identifier, maximum_passengers, status) values (${user!.id}, ${input.vehicleIdentifier!}, 4, 'PENDING')`;
         }
         return user!;
       });
@@ -320,7 +320,7 @@ export async function buildApp() {
     const isNight = Number(hour) >= 20 || Number(hour) < 6;
     const total = isNight ? Number(price.night_cents_per_passenger) * input.passengers : zone === "EXTENDED" ? Number(price.extended_cents_per_passenger) * input.passengers : Boolean(price.group_promotion_enabled) && input.passengers === Number(price.group_promotion_passengers) ? Number(price.group_promotion_total_cents) : Number(price.urban_day_cents_per_passenger) * input.passengers;
     const trip = await sql.begin(async tx => {
-      const [created] = await tx`insert into trips (passenger_id, passengers, payment_method, origin, destination, origin_reference, destination_reference, service_zone, pricing_version, pricing_snapshot, quoted_total_cents) values (${user.id!}, ${input.passengers}, ${input.paymentMethod}, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography, ${input.originReference ?? null}, ${input.destinationReference ?? null}, ${zone}, ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total })}::jsonb, ${total}) returning id`;
+      const [created] = await tx`insert into trips (passenger_id, passengers, payment_method, origin, destination, origin_reference, destination_reference, passenger_notes, service_zone, pricing_version, pricing_snapshot, quoted_total_cents) values (${user.id!}, ${input.passengers}, ${input.paymentMethod}, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography, ${input.originReference ?? null}, ${input.destinationReference ?? null}, ${input.notes || null}, ${zone}, ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total })}::jsonb, ${total}) returning id`;
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, '{}'::jsonb)`;
       const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ${searchRadius}) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
       for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
@@ -359,8 +359,9 @@ export async function buildApp() {
     const tripId = (request.params as { tripId: string }).tripId;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
-        d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
-        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
+        p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone", v.identifier as vehicle,
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
         ST_X(live.position::geometry) as "driverLongitude", ST_Y(live.position::geometry) as "driverLatitude",
@@ -383,8 +384,9 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
-        d_user.full_name as "driverName", p_user.full_name as "passengerName", v.identifier as vehicle,
-        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
+        p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone", v.identifier as vehicle,
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
         ST_X(live.position::geometry) as "driverLongitude", ST_Y(live.position::geometry) as "driverLatitude",
@@ -524,7 +526,7 @@ export async function buildApp() {
         t.payment_method as "paymentMethod", t.service_zone as zone,
         t.quoted_total_cents as "quotedTotalCents",
         t.origin_reference as "originReference",
-        t.destination_reference as "destinationReference",
+        t.destination_reference as "destinationReference", t.passenger_notes as notes,
         o.expires_at as "expiresAt"
       from driver_offers o
       join trips t on t.id=o.trip_id

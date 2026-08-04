@@ -10,6 +10,7 @@ describe("motor tarifario inicial de Atacames", () => {
     ["20:00", "URBAN", 3, 300, "NIGHT_PER_PASSENGER"],
     ["05:59", "URBAN", 2, 200, "NIGHT_PER_PASSENGER"],
     ["06:00", "URBAN", 3, 100, "URBAN_DAY_GROUP_PROMOTION"],
+    ["12:00", "URBAN", 4, 200, "URBAN_DAY_PER_PASSENGER"],
     ["12:00", "EXTENDED", 3, 300, "EXTENDED_PER_PASSENGER"]
   ] as const)(
     "%s, %s, %i pasajero(s)",
@@ -33,7 +34,7 @@ describe("motor tarifario inicial de Atacames", () => {
 
   it("rechaza pasajeros por encima de la capacidad", () => {
     expect(() =>
-      calculateQuote({ localTime: "08:00", zone: "URBAN", passengers: 4 })
+      calculateQuote({ localTime: "08:00", zone: "URBAN", passengers: 5 })
     ).toThrow("capacidad máxima");
   });
 });

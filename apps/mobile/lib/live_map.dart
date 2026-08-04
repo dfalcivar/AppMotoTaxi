@@ -19,6 +19,7 @@ class LiveMap extends StatefulWidget {
     this.nearbyDrivers = const {},
     this.editing,
     this.onPointSelected,
+    this.onUseCurrentLocation,
     this.height = 320,
     super.key,
   });
@@ -33,6 +34,7 @@ class LiveMap extends StatefulWidget {
   final Map<String, LatLng> nearbyDrivers;
   final MapPointSelection? editing;
   final ValueChanged<LatLng>? onPointSelected;
+  final VoidCallback? onUseCurrentLocation;
   final double height;
 
   @override
@@ -41,9 +43,11 @@ class LiveMap extends StatefulWidget {
 
 class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   late final AnimationController _movement;
+  final MapController _mapController = MapController();
   LatLng? _displayedDriver;
   LatLng? _movementStart;
   LatLng? _movementEnd;
+  LatLng? _selectionCenter;
 
   @override
   void initState() {
@@ -82,6 +86,11 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       _movementStart = _displayedDriver;
       _movementEnd = next;
       _movement.forward(from: 0);
+    }
+    if (oldWidget.editing != widget.editing && widget.editing != null) {
+      _selectionCenter = widget.editing == MapPointSelection.origin
+          ? widget.pickup ?? _center
+          : widget.dropoff ?? _center;
     }
   }
 
@@ -166,12 +175,21 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         height: widget.height,
         child: Stack(children: [
           FlutterMap(
+            mapController: _mapController,
             options: MapOptions(
               initialCenter: center,
               initialZoom: 16,
+              onPositionChanged: (camera, hasGesture) {
+                if (widget.editing != null && hasGesture) {
+                  _selectionCenter = camera.center;
+                }
+              },
               onTap: widget.onPointSelected == null
                   ? null
-                  : (_, point) => widget.onPointSelected!(point),
+                  : (_, point) {
+                      _selectionCenter = point;
+                      _mapController.move(point, _mapController.camera.zoom);
+                    },
             ),
             children: [
               TileLayer(
@@ -210,8 +228,8 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                         const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                     child: Text(
                       widget.editing == MapPointSelection.origin
-                          ? 'Toca el mapa para marcar el origen'
-                          : 'Toca el mapa para marcar el destino',
+                          ? 'Mueve el mapa para ajustar el punto de encuentro'
+                          : 'Mueve el mapa para ajustar el destino',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white),
                     ),
@@ -219,6 +237,44 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                 ),
               ),
             ),
+          if (widget.editing != null) ...[
+            const Center(
+              child: IgnorePointer(
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: 34),
+                  child: Icon(Icons.location_pin,
+                      size: 54,
+                      color: Color(0xffef4338),
+                      shadows: [Shadow(color: Colors.black38, blurRadius: 5)]),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 12,
+              bottom: 72,
+              child: FloatingActionButton.small(
+                heroTag: null,
+                tooltip: 'Volver a mi ubicaciÃ³n',
+                onPressed: widget.onUseCurrentLocation,
+                child: const Icon(Icons.my_location),
+              ),
+            ),
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: FilledButton.icon(
+                onPressed: widget.onPointSelected == null
+                    ? null
+                    : () => widget.onPointSelected!(
+                        _selectionCenter ?? _mapController.camera.center),
+                icon: const Icon(Icons.check),
+                label: Text(widget.editing == MapPointSelection.origin
+                    ? 'Usar este punto como origen'
+                    : 'Usar este punto como destino'),
+              ),
+            ),
+          ],
         ]),
       ),
     );
@@ -230,15 +286,15 @@ class _MotoMarker extends StatelessWidget {
   final Color color;
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 5)],
-        ),
-        child:
-            const Icon(Icons.electric_rickshaw, color: Colors.white, size: 24),
+  Widget build(BuildContext context) => Stack(
+        alignment: Alignment.center,
+        children: [
+          const Icon(Icons.electric_rickshaw,
+              color: Colors.white,
+              size: 36,
+              shadows: [Shadow(color: Colors.black54, blurRadius: 6)]),
+          Icon(Icons.electric_rickshaw, color: color, size: 31),
+        ],
       );
 }
 

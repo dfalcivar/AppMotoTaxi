@@ -3,7 +3,7 @@
 Versión del plan: 1.0  
 Objetivo: validar el piloto antes de incorporar funciones comerciales adicionales.  
 Ambiente: API y panel en Render, Redmi 8 y emuladores Android.
-Versión móvil de esta ronda: `0.3.0+3`.
+Versión móvil de esta ronda: `0.4.1+8`.
 
 ## Datos y dispositivos
 
@@ -63,6 +63,21 @@ Antes de cada ronda:
 | MAP-04 | Intersección | Buscar `Tarqui y Bolívar` en Cuenca | Marca la intersección correcta | ☐ |
 | MAP-05 | Ubicación antigua | Detener actualizaciones del conductor | Deja de mostrarse como conductor cercano | ☐ |
 | MAP-06 | Permiso rechazado | Denegar ubicación | Explica cómo habilitarla sin bloquear la app | ☐ |
+| MAP-07 | Ajuste fino del origen | Seleccionar origen y arrastrar el mapa bajo el cursor central | El punto de encuentro queda donde se confirme y se obtiene su dirección legible | ☐ |
+| MAP-08 | Limpiar campos | Pulsar `X` en origen y destino | Borra texto, marcador y ruta del punto correspondiente | ☐ |
+| MAP-09 | Varios conductores | Activar al menos tres conductores próximos | Cada conductor aparece una sola vez con un ícono de mototaxi y se actualiza al moverse | ☐ |
+
+## P1 — Registro y solicitud
+
+| ID | Caso | Pasos resumidos | Resultado esperado | Estado |
+|---|---|---|---|---|
+| UX-01 | Registro incompleto | Omitir nombre, teléfono o contraseña | No envía el formulario, explica el dato y enfoca el primer campo faltante | ☐ |
+| UX-02 | Conductor sin placa | Crear conductor sin identificador | Indica que la placa es obligatoria y posiciona el cursor en ese campo | ☐ |
+| UX-03 | Referencia | Añadir `Casa azul, junto a la farmacia` | El conductor ve la referencia en la oferta y en el viaje aceptado | ☐ |
+| UX-04 | Cuatro pasajeros | Seleccionar cuatro y solicitar | API acepta la solicitud y el conductor ve `4 pasajeros` | ☐ |
+| UX-05 | Búsqueda real | Solicitar sin aceptación inmediata | Aparece modal de búsqueda; no se muestra conductor ni `va en camino` hasta que alguien acepte | ☐ |
+| UX-06 | Datos aceptados | Conductor acepta | Ambos ven el nombre de la contraparte en tamaño destacado | ☐ |
+| UX-07 | Llamada | Pulsar llamar después de aceptar | Android abre el marcador con el teléfono registrado, sin iniciar la llamada automáticamente | ☐ |
 
 ## P1 — Chat y notificaciones
 

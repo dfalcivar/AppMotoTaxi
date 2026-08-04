@@ -52,7 +52,7 @@ export const initialPricingConfig: PricingConfig = {
     passengers: 3,
     totalCents: 100
   },
-  maximumPassengers: 3,
+  maximumPassengers: 4,
   version: 1
 };
 

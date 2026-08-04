@@ -17,5 +17,7 @@ void main() {
     expect(mensajeApi('DRIVER_PENDING_APPROVAL'),
         'Tu perfil de conductor está pendiente de aprobación.');
     expect(mensajeApi('SESSION_REPLACED'), contains('otro dispositivo'));
+    expect(mensajeApi('INVALID_REGISTRATION'), contains('campos obligatorios'));
+    expect(mensajeApi('VEHICLE_REQUIRED'), contains('placa'));
   });
 }
