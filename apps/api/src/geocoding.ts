@@ -3,6 +3,17 @@ interface FocusPoint {
   longitude: number;
 }
 
+interface GooglePlace {
+  displayName?: { text?: string };
+  formattedAddress?: string;
+  location?: { latitude?: number; longitude?: number };
+}
+
+interface GoogleGeocodeResult {
+  formatted_address?: string;
+  geometry?: { location?: { lat?: number; lng?: number } };
+}
+
 type Coordinate = [number, number];
 
 interface NominatimItem {
@@ -26,6 +37,84 @@ const headers = {
   "User-Agent": "MototaxiAtacamesMVP/0.2 (development contact: admin@mototaxi.local)",
   Accept: "application/json"
 };
+
+function googleMapsKey(): string | undefined {
+  return process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim() || undefined;
+}
+
+async function searchGooglePlaces(
+  query: string,
+  focus?: FocusPoint
+): Promise<LocationResult[]> {
+  const key = googleMapsKey();
+  if (!key) return [];
+  const body: Record<string, unknown> = {
+    textQuery: query,
+    languageCode: "es",
+    regionCode: "EC",
+    pageSize: 8
+  };
+  if (focus) {
+    body.locationBias = {
+      circle: {
+        center: { latitude: focus.latitude, longitude: focus.longitude },
+        radius: 50_000
+      }
+    };
+  }
+  const response = await fetch(
+    "https://places.googleapis.com/v1/places:searchText",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask":
+          "places.displayName,places.formattedAddress,places.location"
+      },
+      body: JSON.stringify(body)
+    }
+  );
+  if (!response.ok) throw new Error("GOOGLE_PLACES_UNAVAILABLE");
+  const payload = (await response.json()) as { places?: GooglePlace[] };
+  return (payload.places ?? []).flatMap(place => {
+    const latitude = place.location?.latitude;
+    const longitude = place.location?.longitude;
+    if (latitude == null || longitude == null) return [];
+    const name = place.displayName?.text?.trim();
+    const address = place.formattedAddress?.trim();
+    return [{
+      label: [name, address].filter(Boolean).join(" · ").slice(0, 200),
+      latitude,
+      longitude
+    }];
+  });
+}
+
+async function reverseGoogleLocation(point: FocusPoint): Promise<LocationResult> {
+  const key = googleMapsKey();
+  if (!key) throw new Error("GOOGLE_GEOCODING_NOT_CONFIGURED");
+  const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+  url.searchParams.set("latlng", `${point.latitude},${point.longitude}`);
+  url.searchParams.set("language", "es");
+  url.searchParams.set("region", "ec");
+  url.searchParams.set("key", key);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("GOOGLE_GEOCODING_UNAVAILABLE");
+  const payload = (await response.json()) as {
+    status?: string;
+    results?: GoogleGeocodeResult[];
+  };
+  const result = payload.results?.[0];
+  if (payload.status !== "OK" || !result?.formatted_address) {
+    throw new Error("LOCATION_NOT_FOUND");
+  }
+  return {
+    label: result.formatted_address.slice(0, 200),
+    latitude: result.geometry?.location?.lat ?? point.latitude,
+    longitude: result.geometry?.location?.lng ?? point.longitude
+  };
+}
 
 function addViewbox(url: URL, focus?: FocusPoint, bounded = false): void {
   if (!focus) return;
@@ -109,6 +198,14 @@ async function findIntersection(query: string, focus?: FocusPoint): Promise<Loca
 }
 
 export async function searchLocations(query: string, focus?: FocusPoint): Promise<LocationResult[]> {
+  if (googleMapsKey()) {
+    try {
+      const places = await searchGooglePlaces(query, focus);
+      if (places.length) return places;
+    } catch {
+      // Mantiene Nominatim como respaldo durante la transición a Google.
+    }
+  }
   const matchedIntersection = await findIntersection(query, focus);
   if (matchedIntersection) return [matchedIntersection];
   const url = baseUrl();
@@ -136,6 +233,13 @@ function reverseLabel(item: NominatimReverseItem): string {
 }
 
 export async function reverseLocation(point: FocusPoint): Promise<LocationResult> {
+  if (googleMapsKey()) {
+    try {
+      return await reverseGoogleLocation(point);
+    } catch {
+      // Mantiene Nominatim como respaldo durante la transición a Google.
+    }
+  }
   const url = new URL("https://nominatim.openstreetmap.org/reverse");
   url.searchParams.set("format", "jsonv2");
   url.searchParams.set("addressdetails", "1");

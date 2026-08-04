@@ -18,6 +18,7 @@ Este Blueprint crea tres recursos:
    - `SUPPORT_EMAIL`
    - `SUPPORT_PASSWORD`
    - `ORS_API_KEY`
+   - `GOOGLE_MAPS_SERVER_API_KEY` (Places, Geocoding y Routes; reemplaza ORS cuando se configure)
    - `FIREBASE_SERVICE_ACCOUNT_BASE64`
 
 Para obtener el último valor en PowerShell:
@@ -50,6 +51,16 @@ versión instalable ejecuta desde `apps/mobile`:
 ```powershell
 flutter build apk --release
 ```
+
+Para activar Google Maps en la APK, usa una clave Android restringida distinta
+de la clave del servidor:
+
+```powershell
+$env:GOOGLE_MAPS_ANDROID_API_KEY='CLAVE_ANDROID_RESTRINGIDA'
+flutter build apk --release --dart-define=MAP_PROVIDER=google
+```
+
+Sin `MAP_PROVIDER=google`, la APK conserva OpenStreetMap como respaldo.
 
 Para desarrollo contra una API local en el emulador utiliza explícitamente:
 

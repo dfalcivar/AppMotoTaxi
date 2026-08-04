@@ -3,9 +3,13 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart';
 
 enum MapPointSelection { origin, destination }
+
+const configuredMapProvider =
+    String.fromEnvironment('MAP_PROVIDER', defaultValue: 'osm');
 
 class LiveMap extends StatefulWidget {
   const LiveMap({
@@ -44,6 +48,7 @@ class LiveMap extends StatefulWidget {
 class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   late final AnimationController _movement;
   final MapController _mapController = MapController();
+  gmaps.GoogleMapController? _googleMapController;
   LatLng? _displayedDriver;
   LatLng? _movementStart;
   LatLng? _movementEnd;
@@ -76,13 +81,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
     final next = widget.driverPosition;
     if (next == null) {
       _displayedDriver = null;
-      return;
-    }
-    if (_displayedDriver == null) {
+    } else if (_displayedDriver == null) {
       _displayedDriver = next;
-      return;
-    }
-    if (oldWidget.driverPosition != next) {
+    } else if (oldWidget.driverPosition != next) {
       _movementStart = _displayedDriver;
       _movementEnd = next;
       _movement.forward(from: 0);
@@ -92,12 +93,37 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           ? widget.pickup ?? _center
           : widget.dropoff ?? _center;
     }
+    final selectedPoint = widget.editing == MapPointSelection.origin
+        ? widget.pickup
+        : widget.dropoff;
+    final oldSelectedPoint = widget.editing == MapPointSelection.origin
+        ? oldWidget.pickup
+        : oldWidget.dropoff;
+    if (widget.editing != null &&
+        selectedPoint != null &&
+        selectedPoint != oldSelectedPoint) {
+      _selectionCenter = selectedPoint;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _moveCamera(selectedPoint, 17);
+      });
+    }
   }
 
   @override
   void dispose() {
     _movement.dispose();
+    _googleMapController?.dispose();
     super.dispose();
+  }
+
+  void _moveCamera(LatLng point, double zoom) {
+    if (configuredMapProvider == 'google') {
+      _googleMapController?.animateCamera(gmaps.CameraUpdate.newLatLngZoom(
+          gmaps.LatLng(point.latitude, point.longitude), zoom));
+      return;
+    }
+    _mapController.move(point, zoom);
   }
 
   LatLng? get _center =>
@@ -153,28 +179,105 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         Marker(
           key: ValueKey(entry.key),
           point: entry.value,
-          width: 38,
-          height: 38,
+          width: 30,
+          height: 30,
           child: const _MotoMarker(color: Color(0xff007f8b)),
         ),
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
-          width: 48,
-          height: 48,
+          width: 36,
+          height: 36,
           child: Transform.rotate(
             angle: widget.driverBearing * math.pi / 180,
             child: const _MotoMarker(color: Colors.orange),
           ),
         ),
     ];
+    final googleMarkers = <gmaps.Marker>{
+      if (widget.pickup != null)
+        gmaps.Marker(
+          markerId: const gmaps.MarkerId('pickup'),
+          position:
+              gmaps.LatLng(widget.pickup!.latitude, widget.pickup!.longitude),
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+              gmaps.BitmapDescriptor.hueGreen),
+          infoWindow: gmaps.InfoWindow(title: widget.originLabel),
+        ),
+      if (widget.dropoff != null)
+        gmaps.Marker(
+          markerId: const gmaps.MarkerId('dropoff'),
+          position:
+              gmaps.LatLng(widget.dropoff!.latitude, widget.dropoff!.longitude),
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+              gmaps.BitmapDescriptor.hueRed),
+          infoWindow: gmaps.InfoWindow(title: widget.destinationLabel),
+        ),
+      for (final entry in widget.nearbyDrivers.entries)
+        gmaps.AdvancedMarker(
+          markerId: gmaps.MarkerId('nearby-${entry.key}'),
+          position: gmaps.LatLng(entry.value.latitude, entry.value.longitude),
+          icon: gmaps.BitmapDescriptor.pinConfig(
+            backgroundColor: const Color(0xff007f8b),
+            borderColor: Colors.white,
+            glyph: const gmaps.TextGlyph(text: '🛺', textColor: Colors.white),
+          ),
+          anchor: const Offset(.5, .5),
+        ),
+      if (_displayedDriver != null)
+        gmaps.AdvancedMarker(
+          markerId: const gmaps.MarkerId('active-driver'),
+          position: gmaps.LatLng(
+              _displayedDriver!.latitude, _displayedDriver!.longitude),
+          rotation: widget.driverBearing,
+          flat: true,
+          icon: gmaps.BitmapDescriptor.pinConfig(
+            backgroundColor: Colors.orange,
+            borderColor: Colors.white,
+            glyph: const gmaps.TextGlyph(text: '🛺', textColor: Colors.white),
+          ),
+          anchor: const Offset(.5, .5),
+        ),
+    };
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: SizedBox(
-        height: widget.height,
-        child: Stack(children: [
-          FlutterMap(
+    final mapSurface = configuredMapProvider == 'google'
+        ? gmaps.GoogleMap(
+            initialCameraPosition: gmaps.CameraPosition(
+              target: gmaps.LatLng(center.latitude, center.longitude),
+              zoom: 16,
+            ),
+            onMapCreated: (controller) => _googleMapController = controller,
+            mapToolbarEnabled: false,
+            compassEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            markers: googleMarkers,
+            polylines: widget.routePoints.length > 1
+                ? {
+                    gmaps.Polyline(
+                      polylineId: const gmaps.PolylineId('route'),
+                      points: widget.routePoints
+                          .map((point) =>
+                              gmaps.LatLng(point.latitude, point.longitude))
+                          .toList(),
+                      color: Theme.of(context).colorScheme.primary,
+                      width: 6,
+                    )
+                  }
+                : const {},
+            onCameraMove: widget.editing == null
+                ? null
+                : (position) => _selectionCenter =
+                    LatLng(position.target.latitude, position.target.longitude),
+            onTap: widget.onPointSelected == null
+                ? null
+                : (point) {
+                    final selected = LatLng(point.latitude, point.longitude);
+                    _selectionCenter = selected;
+                    _moveCamera(selected, 17);
+                  },
+          )
+        : FlutterMap(
             mapController: _mapController,
             options: MapOptions(
               initialCenter: center,
@@ -188,7 +291,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                   ? null
                   : (_, point) {
                       _selectionCenter = point;
-                      _mapController.move(point, _mapController.camera.zoom);
+                      _moveCamera(point, _mapController.camera.zoom);
                     },
             ),
             children: [
@@ -211,7 +314,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                 TextSourceAttribution('OpenStreetMap contributors'),
               ]),
             ],
-          ),
+          );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: SizedBox(
+        height: widget.height,
+        child: Stack(children: [
+          mapSurface,
           if (widget.editing != null)
             Positioned(
               left: 12,
@@ -241,9 +351,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
             const Center(
               child: IgnorePointer(
                 child: Padding(
-                  padding: EdgeInsets.only(bottom: 34),
+                  padding: EdgeInsets.only(bottom: 25),
                   child: Icon(Icons.location_pin,
-                      size: 54,
+                      size: 38,
                       color: Color(0xffef4338),
                       shadows: [Shadow(color: Colors.black38, blurRadius: 5)]),
                 ),
@@ -255,7 +365,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               child: FloatingActionButton.small(
                 heroTag: null,
                 tooltip: 'Volver a mi ubicaciÃ³n',
-                onPressed: widget.onUseCurrentLocation,
+                onPressed: widget.onUseCurrentLocation == null
+                    ? null
+                    : () {
+                        final currentPoint = widget.pickup ?? center;
+                        _selectionCenter = currentPoint;
+                        _moveCamera(currentPoint, 17);
+                        widget.onUseCurrentLocation!();
+                      },
                 child: const Icon(Icons.my_location),
               ),
             ),
@@ -266,8 +383,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               child: FilledButton.icon(
                 onPressed: widget.onPointSelected == null
                     ? null
-                    : () => widget.onPointSelected!(
-                        _selectionCenter ?? _mapController.camera.center),
+                    : () => widget.onPointSelected!(_selectionCenter ?? center),
                 icon: const Icon(Icons.check),
                 label: Text(widget.editing == MapPointSelection.origin
                     ? 'Usar este punto como origen'
@@ -291,9 +407,9 @@ class _MotoMarker extends StatelessWidget {
         children: [
           const Icon(Icons.electric_rickshaw,
               color: Colors.white,
-              size: 36,
+              size: 29,
               shadows: [Shadow(color: Colors.black54, blurRadius: 6)]),
-          Icon(Icons.electric_rickshaw, color: color, size: 31),
+          Icon(Icons.electric_rickshaw, color: color, size: 25),
         ],
       );
 }
@@ -307,7 +423,7 @@ class _MapLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(children: [
-        Icon(icon, color: color, size: 31),
+        Icon(icon, color: color, size: 25),
         DecoratedBox(
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface.withValues(alpha: .9),

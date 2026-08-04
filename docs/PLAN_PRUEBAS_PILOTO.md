@@ -3,7 +3,7 @@
 Versión del plan: 1.0  
 Objetivo: validar el piloto antes de incorporar funciones comerciales adicionales.  
 Ambiente: API y panel en Render, Redmi 8 y emuladores Android.
-Versión móvil de esta ronda: `0.4.1+8`.
+Versión móvil de esta ronda: `0.5.0+9`.
 
 ## Datos y dispositivos
 
@@ -66,6 +66,9 @@ Antes de cada ronda:
 | MAP-07 | Ajuste fino del origen | Seleccionar origen y arrastrar el mapa bajo el cursor central | El punto de encuentro queda donde se confirme y se obtiene su dirección legible | ☐ |
 | MAP-08 | Limpiar campos | Pulsar `X` en origen y destino | Borra texto, marcador y ruta del punto correspondiente | ☐ |
 | MAP-09 | Varios conductores | Activar al menos tres conductores próximos | Cada conductor aparece una sola vez con un ícono de mototaxi y se actualiza al moverse | ☐ |
+| MAP-10 | Recentrar GPS | Mover el mapa y pulsar el botón de ubicación | La cámara regresa a la posición GPS y el cursor queda centrado allí | ☐ |
+| MAP-11 | Proveedor Google | Compilar con `MAP_PROVIDER=google` y claves restringidas | Muestra Google Maps y busca comercios mediante Places sin alterar el flujo del viaje | ☐ |
+| MAP-12 | Respaldo cartográfico | Retirar temporalmente la clave del servidor | La API conserva búsqueda y rutas con Nominatim/ORS | ☐ |
 
 ## P1 — Registro y solicitud
 

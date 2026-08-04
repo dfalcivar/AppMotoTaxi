@@ -29,6 +29,8 @@ services:
         generateValue: true
       - key: ORS_API_KEY
         sync: false
+      - key: GOOGLE_MAPS_SERVER_API_KEY
+        sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_BASE64
         sync: false
 

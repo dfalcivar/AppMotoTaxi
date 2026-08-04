@@ -4,6 +4,10 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val googleMapsApiKey = providers.gradleProperty("GOOGLE_MAPS_ANDROID_API_KEY")
+    .orElse(providers.environmentVariable("GOOGLE_MAPS_ANDROID_API_KEY"))
+    .orElse("")
+
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
@@ -27,6 +31,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["googleMapsApiKey"] = googleMapsApiKey.get()
     }
 
     buildTypes {

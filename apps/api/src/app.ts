@@ -10,6 +10,7 @@ import { database } from "./database.js";
 import { sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { reverseLocation, searchLocations } from "./geocoding.js";
+import { computeRoute } from "./routing.js";
 
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -166,25 +167,18 @@ export async function buildApp() {
   app.post("/v1/routes", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = routeSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_ROUTE" });
-    const key = process.env.ORS_API_KEY;
-    if (!key) return reply.code(503).send({ error: "ROUTING_NOT_CONFIGURED", message: "Configura ORS_API_KEY para mostrar rutas navegables." });
     try {
       const { origin, destination } = parsed.data;
-      const response = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", { method: "POST", headers: { Authorization: key, "Content-Type": "application/json" }, body: JSON.stringify({ coordinates: [[origin.longitude, origin.latitude], [destination.longitude, destination.latitude]] }) });
-      if (!response.ok) return reply.code(502).send({ error: "ROUTING_UNAVAILABLE" });
-      const payload = await response.json() as {
-        features?: Array<{
-          geometry?: { coordinates?: number[][] };
-          properties?: { summary?: { distance?: number; duration?: number } };
-        }>;
-      };
-      const feature = payload.features?.[0];
-      return {
-        points: feature?.geometry?.coordinates?.map(([longitude, latitude]) => ({ latitude, longitude })) ?? [],
-        distanceMeters: feature?.properties?.summary?.distance ?? null,
-        durationSeconds: feature?.properties?.summary?.duration ?? null
-      };
-    } catch { return reply.code(502).send({ error: "ROUTING_UNAVAILABLE" }); }
+      return await computeRoute(origin, destination);
+    } catch (error) {
+      if ((error as Error).message === "ROUTING_NOT_CONFIGURED") {
+        return reply.code(503).send({
+          error: "ROUTING_NOT_CONFIGURED",
+          message: "Configura GOOGLE_MAPS_SERVER_API_KEY u ORS_API_KEY."
+        });
+      }
+      return reply.code(502).send({ error: "ROUTING_UNAVAILABLE" });
+    }
   });
 
   app.post("/v1/auth/session", async (request, reply) => {
