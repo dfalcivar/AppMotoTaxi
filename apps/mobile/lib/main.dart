@@ -81,14 +81,37 @@ class BiometricSessionStore {
     }
   }
 
-  static Future<bool> supported() async =>
-      await _auth.canCheckBiometrics &&
-      (await _auth.getAvailableBiometrics()).isNotEmpty;
+  static Future<bool> authenticate() async {
+    if (Platform.isAndroid) {
+      try {
+        final authenticated = await nativeActions
+            .invokeMethod<bool>('authenticateFingerprintLegacy');
+        if (authenticated != null) return authenticated;
+      } on PlatformException catch (error) {
+        if (error.code != 'USE_LOCAL_AUTH') rethrow;
+      } on MissingPluginException {
+        // Mantiene compatibilidad con compilaciones anteriores y otros entornos.
+      }
+    }
+    return _auth.authenticate(
+        localizedReason: 'Confirma tu identidad para ingresar a AtacamesGo',
+        biometricOnly: true,
+        persistAcrossBackgrounding: true);
+  }
 
-  static Future<bool> authenticate() => _auth.authenticate(
-      localizedReason: 'Confirma tu identidad para ingresar a AtacamesGo',
-      biometricOnly: true,
-      persistAcrossBackgrounding: true);
+  static String errorMessage(Object error) {
+    if (error is PlatformException) {
+      switch (error.code) {
+        case 'NO_HARDWARE':
+          return 'Este teléfono no dispone de lector de huellas.';
+        case 'NOT_ENROLLED':
+          return 'Primero registra una huella en los ajustes del teléfono.';
+        case 'AUTH_ERROR':
+          return error.message ?? 'No se pudo validar la huella.';
+      }
+    }
+    return 'No se pudo habilitar el acceso biométrico. Inténtalo nuevamente.';
+  }
 }
 
 Future<void> dialPhone(BuildContext context, dynamic phoneValue) async {
@@ -1532,11 +1555,8 @@ class _ProfileState extends State<Profile> {
   Future<void> toggleBiometric(bool enabled) async {
     try {
       if (enabled) {
-        if (!await BiometricSessionStore.supported()) {
-          throw const ApiException(
-              'Configura una huella o reconocimiento facial en el teléfono.');
-        }
-        if (!await BiometricSessionStore.authenticate()) return;
+        final ok = await BiometricSessionStore.authenticate();
+        if (!ok) return;
         await BiometricSessionStore.enable(widget.s);
       } else {
         await BiometricSessionStore.clear();
@@ -1544,8 +1564,8 @@ class _ProfileState extends State<Profile> {
       if (mounted) setState(() => biometricEnabled = enabled);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(BiometricSessionStore.errorMessage(error))));
       }
     }
   }

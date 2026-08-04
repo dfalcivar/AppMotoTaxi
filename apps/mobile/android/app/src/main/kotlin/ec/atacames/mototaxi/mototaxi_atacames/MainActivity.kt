@@ -2,13 +2,18 @@ package ec.atacames.mototaxi.mototaxi_atacames
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
+import android.hardware.fingerprint.FingerprintManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : FlutterFragmentActivity() {
     private val nativeChannel = "ec.atacames.mototaxi/native"
@@ -40,9 +45,71 @@ class MainActivity : FlutterFragmentActivity() {
                         startActivity(Intent.createChooser(intent, "Compartir viaje"))
                         result.success(null)
                     }
+                    "authenticateFingerprintLegacy" -> authenticateFingerprintLegacy(result)
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun authenticateFingerprintLegacy(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            result.error("USE_LOCAL_AUTH", "Usar autenticación biométrica moderna", null)
+            return
+        }
+
+        val manager = getSystemService(Context.FINGERPRINT_SERVICE) as? FingerprintManager
+        if (manager == null || !manager.isHardwareDetected) {
+            result.error("NO_HARDWARE", "Este dispositivo no dispone de lector de huellas.", null)
+            return
+        }
+        if (!manager.hasEnrolledFingerprints()) {
+            result.error("NOT_ENROLLED", "No hay una huella registrada en el teléfono.", null)
+            return
+        }
+
+        val cancellation = CancellationSignal()
+        val completed = AtomicBoolean(false)
+        var dialog: AlertDialog? = null
+
+        fun finish(value: Boolean) {
+            if (!completed.compareAndSet(false, true)) return
+            cancellation.cancel()
+            dialog?.takeIf { it.isShowing }?.dismiss()
+            result.success(value)
+        }
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("Confirmar huella")
+            .setMessage("Coloca tu dedo en el lector del teléfono para habilitar el acceso biométrico.")
+            .setNegativeButton("Cancelar") { _, _ -> finish(false) }
+            .setOnCancelListener { finish(false) }
+            .create()
+
+        dialog?.show()
+        manager.authenticate(
+            null,
+            cancellation,
+            0,
+            object : FingerprintManager.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(
+                    authenticationResult: FingerprintManager.AuthenticationResult?
+                ) = finish(true)
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                    if (errorCode == FingerprintManager.FINGERPRINT_ERROR_CANCELED) return
+                    if (!completed.compareAndSet(false, true)) return
+                    dialog?.takeIf { it.isShowing }?.dismiss()
+                    result.error("AUTH_ERROR", errString?.toString() ?: "No se pudo validar la huella.", null)
+                }
+
+                override fun onAuthenticationFailed() {
+                    dialog?.takeIf { it.isShowing }
+                        ?.setMessage("Huella no reconocida. Inténtalo nuevamente.")
+                }
+            },
+            null
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
