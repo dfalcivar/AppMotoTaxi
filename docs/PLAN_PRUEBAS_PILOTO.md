@@ -3,7 +3,7 @@
 Versión del plan: 1.0  
 Objetivo: validar el piloto antes de incorporar funciones comerciales adicionales.  
 Ambiente: API y panel en Render, Redmi 8 y emuladores Android.
-Versión móvil de esta ronda: `0.5.1+10`.
+Versión móvil de esta ronda: `0.5.2+11`.
 
 ## Datos y dispositivos
 
@@ -71,6 +71,8 @@ Antes de cada ronda:
 | MAP-12 | Respaldo cartográfico | Retirar temporalmente la clave del servidor | La API conserva búsqueda y rutas con Nominatim/ORS | ☐ |
 | MAP-13 | Selección expandida | Tocar origen o destino, desplazar el mapa y confirmar | El mapa se expande, el cursor permanece fijo, guarda la coordenada central y vuelve al tamaño normal | ☐ |
 | MAP-14 | Respaldo de conductores | Activar un conductor cercano y reconectar el WebSocket del pasajero | El marcador personalizado aparece por tiempo real o por la consulta HTTP de respaldo, sin duplicarse | ☐ |
+| MAP-15 | Punto arrastrable | Pulsar ajustar origen/destino y arrastrar directamente el marcador | El mapa puede desplazarse por separado y el punto conserva la ubicación donde se soltó | ☐ |
+| MAP-16 | Contador tras finalizar | Finalizar un viaje con dos conductores libres dentro del radio | El pasajero actualiza inmediatamente el contador y muestra ambos conductores disponibles | ☐ |
 
 ## P1 — Registro y solicitud
 

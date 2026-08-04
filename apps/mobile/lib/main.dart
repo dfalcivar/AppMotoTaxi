@@ -1364,12 +1364,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   final origin = TextEditingController();
   final destination = TextEditingController();
   final notes = TextEditingController();
+  final mapSectionKey = GlobalKey();
   late final RealtimeService realtime;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   StreamSubscription<RemoteMessage>? messageSubscription;
   StreamSubscription<RemoteMessage>? openedMessageSubscription;
   LatLng? pickup;
   LatLng? dropoff;
+  LatLng? currentLocation;
   LatLng? driverPosition;
   double driverBearing = 0;
   final Map<String, LatLng> nearbyDrivers = {};
@@ -1582,6 +1584,36 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> resetAfterCompletedTrip() async {
+    var point = currentLocation ?? dropoff ?? pickup;
+    try {
+      final position = await currentGpsPosition();
+      point = LatLng(position.latitude, position.longitude);
+    } catch (_) {
+      // Si el GPS falla, el destino del viaje es el mejor punto disponible.
+    }
+    if (!mounted || active != null || point == null) return;
+    setState(() {
+      currentLocation = point;
+      pickup = point;
+      dropoff = null;
+      origin.text = 'Mi ubicación actual';
+      destination.clear();
+      routePoints = [];
+      routeDistanceMeters = null;
+      routeDurationSeconds = null;
+      mapSelection = null;
+    });
+    realtime.subscribeNearby(point.latitude, point.longitude);
+    unawaited(refreshNearbyDrivers(point));
+    try {
+      final result = await api.reverse(widget.s.token, point);
+      if (!mounted || active != null || pickup != point) return;
+      setState(() =>
+          origin.text = result['label']?.toString() ?? 'Mi ubicación actual');
+    } catch (_) {}
+  }
+
   Future<void> load() async {
     try {
       final t = active == null
@@ -1590,7 +1622,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (!mounted) return;
       if (t == null) {
         closeSearchingDialog();
-        if (active != null) setState(() => active = null);
+        if (active != null) {
+          setState(() => active = null);
+          if (pickup != null) {
+            realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+            unawaited(refreshNearbyDrivers());
+          }
+        }
         return;
       }
       if (t['status'] == 'COMPLETED') {
@@ -1601,6 +1639,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           routePoints = [];
           message = 'Viaje finalizado.';
         });
+        unawaited(resetAfterCompletedTrip());
         if (!ratingPrompted) {
           ratingPrompted = true;
           if (!mounted) return;
@@ -1620,6 +1659,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               ? 'El viaje fue cancelado por administración.'
               : 'La solicitud fue cancelada.';
         });
+        if (pickup != null) {
+          realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+          unawaited(refreshNearbyDrivers());
+        }
         return;
       }
       setState(() {
@@ -1709,6 +1752,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       final point = LatLng(position.latitude, position.longitude);
       setState(() {
         mapSelection = MapPointSelection.origin;
+        currentLocation = point;
         pickup = point;
         origin.text = 'Mi ubicación actual';
         message = 'Consultando la dirección de tu ubicación…';
@@ -1753,6 +1797,31 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       message = isOrigin
           ? 'Mueve el mapa para elegir un nuevo origen.'
           : 'Mueve el mapa para elegir un nuevo destino.';
+    });
+    _showMapEditor();
+  }
+
+  void beginMapSelection(MapPointSelection selection) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      mapSelection = selection;
+      message = selection == MapPointSelection.origin
+          ? 'Arrastra el punto verde para ajustar el origen.'
+          : 'Arrastra el punto rojo para ajustar el destino.';
+    });
+    _showMapEditor();
+  }
+
+  void _showMapEditor() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final mapContext = mapSectionKey.currentContext;
+      if (!mounted || mapContext == null) return;
+      Scrollable.ensureVisible(
+        mapContext,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeInOut,
+        alignment: .05,
+      );
     });
   }
 
@@ -1978,6 +2047,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}'),
           const SizedBox(height: 10),
           AnimatedSize(
+            key: mapSectionKey,
             duration: const Duration(milliseconds: 280),
             curve: Curves.easeInOut,
             child: LiveMap(
@@ -1985,6 +2055,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 destinationLabel: d,
                 pickup: pickup,
                 dropoff: dropoff,
+                currentLocation: currentLocation,
                 driverPosition: driverPosition,
                 driverBearing: driverBearing,
                 routePoints: routePoints,
@@ -1994,9 +2065,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 onPointSelected: active == null && mapSelection != null
                     ? selectMapPoint
                     : null,
-                onUseCurrentLocation: active == null && mapSelection != null
-                    ? useCurrentLocation
-                    : null,
+                onUseCurrentLocation:
+                    active == null ? useCurrentLocation : null,
                 height: active != null
                     ? 370
                     : mapSelection == null
@@ -2063,8 +2133,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             TextField(
                 controller: origin,
                 onChanged: (_) => setState(() {}),
-                onTap: () =>
-                    setState(() => mapSelection = MapPointSelection.origin),
                 decoration: InputDecoration(
                     labelText: 'Origen',
                     hintText: 'Escribe una dirección o mueve el mapa',
@@ -2075,6 +2143,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                             icon: const Icon(Icons.close),
                             onPressed: () => clearPoint(true)),
                       IconButton(
+                          tooltip: 'Ajustar origen en el mapa',
+                          icon: const Icon(Icons.edit_location_alt_outlined),
+                          onPressed: () =>
+                              beginMapSelection(MapPointSelection.origin)),
+                      IconButton(
                           tooltip: 'Buscar dirección',
                           icon: const Icon(Icons.search),
                           onPressed: () => locate(true))
@@ -2083,8 +2156,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             TextField(
                 controller: destination,
                 onChanged: (_) => setState(() {}),
-                onTap: () => setState(
-                    () => mapSelection = MapPointSelection.destination),
                 decoration: InputDecoration(
                     labelText: 'Destino',
                     hintText: 'Escribe una dirección o mueve el mapa',
@@ -2094,6 +2165,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                             tooltip: 'Borrar destino',
                             icon: const Icon(Icons.close),
                             onPressed: () => clearPoint(false)),
+                      IconButton(
+                          tooltip: 'Ajustar destino en el mapa',
+                          icon: const Icon(Icons.edit_location_alt_outlined),
+                          onPressed: () =>
+                              beginMapSelection(MapPointSelection.destination)),
                       IconButton(
                           tooltip: 'Buscar dirección',
                           icon: const Icon(Icons.search),

@@ -8,6 +8,56 @@ import 'package:latlong2/latlong.dart';
 
 enum MapPointSelection { origin, destination }
 
+void _paintMotoTaxi(Canvas canvas, Size size, Color color) {
+  final outline = Paint()
+    ..color = const Color(0xff17333a)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.6
+    ..strokeJoin = StrokeJoin.round;
+  final body = Paint()..color = color;
+  final glass = Paint()..color = const Color(0xffc9f3fb);
+  final dark = Paint()..color = const Color(0xff17252a);
+
+  final vehicleBody = RRect.fromRectAndRadius(
+    Rect.fromLTWH(size.width * .08, size.height * .43, size.width * .78,
+        size.height * .34),
+    const Radius.circular(4),
+  );
+  canvas.drawRRect(vehicleBody, body);
+  canvas.drawRRect(vehicleBody, outline);
+
+  final cabin = ui.Path()
+    ..moveTo(size.width * .23, size.height * .44)
+    ..lineTo(size.width * .34, size.height * .14)
+    ..lineTo(size.width * .68, size.height * .14)
+    ..lineTo(size.width * .79, size.height * .44)
+    ..close();
+  canvas.drawPath(cabin, body);
+  canvas.drawPath(cabin, outline);
+
+  final windshield = ui.Path()
+    ..moveTo(size.width * .49, size.height * .2)
+    ..lineTo(size.width * .65, size.height * .2)
+    ..lineTo(size.width * .73, size.height * .42)
+    ..lineTo(size.width * .49, size.height * .42)
+    ..close();
+  canvas.drawPath(windshield, glass);
+  canvas.drawPath(windshield, outline);
+  canvas.drawLine(Offset(size.width * .45, size.height * .17),
+      Offset(size.width * .45, size.height * .7), outline);
+
+  canvas.drawCircle(
+      Offset(size.width * .23, size.height * .79), size.height * .14, dark);
+  canvas.drawCircle(
+      Offset(size.width * .23, size.height * .79), size.height * .06, glass);
+  canvas.drawCircle(
+      Offset(size.width * .76, size.height * .79), size.height * .14, dark);
+  canvas.drawCircle(
+      Offset(size.width * .76, size.height * .79), size.height * .06, glass);
+  canvas.drawCircle(
+      Offset(size.width * .9, size.height * .59), size.height * .055, glass);
+}
+
 const configuredMapProvider =
     String.fromEnvironment('MAP_PROVIDER', defaultValue: 'osm');
 
@@ -24,6 +74,7 @@ class LiveMap extends StatefulWidget {
     this.editing,
     this.onPointSelected,
     this.onUseCurrentLocation,
+    this.currentLocation,
     this.height = 320,
     super.key,
   });
@@ -39,6 +90,7 @@ class LiveMap extends StatefulWidget {
   final MapPointSelection? editing;
   final ValueChanged<LatLng>? onPointSelected;
   final VoidCallback? onUseCurrentLocation;
+  final LatLng? currentLocation;
   final double height;
 
   @override
@@ -81,35 +133,15 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   }
 
   Future<gmaps.BitmapDescriptor> _createMotoIcon(Color color) async {
-    const logicalSize = 32.0;
+    const logicalWidth = 44.0;
+    const logicalHeight = 30.0;
     const pixelRatio = 3.0;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder)..scale(pixelRatio);
-    const center = Offset(logicalSize / 2, logicalSize / 2);
-    canvas.drawCircle(
-        center, logicalSize / 2 - 1, Paint()..color = Colors.white);
-    canvas.drawCircle(center, logicalSize / 2 - 2.5, Paint()..color = color);
-    const icon = Icons.electric_rickshaw;
-    final painter = TextPainter(
-      text: TextSpan(
-        text: String.fromCharCode(icon.codePoint),
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 20,
-          fontFamily: icon.fontFamily,
-          package: icon.fontPackage,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    painter.paint(
-      canvas,
-      Offset((logicalSize - painter.width) / 2,
-          (logicalSize - painter.height) / 2),
-    );
+    _paintMotoTaxi(canvas, const Size(logicalWidth, logicalHeight), color);
     final image = await recorder.endRecording().toImage(
-          (logicalSize * pixelRatio).round(),
-          (logicalSize * pixelRatio).round(),
+          (logicalWidth * pixelRatio).round(),
+          (logicalHeight * pixelRatio).round(),
         );
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     return gmaps.BitmapDescriptor.bytes(
@@ -252,6 +284,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       );
     }
 
+    final selectionPoint = widget.editing == null
+        ? null
+        : _selectionCenter ??
+            (widget.editing == MapPointSelection.origin
+                ? widget.pickup
+                : widget.dropoff) ??
+            center;
+
     final markers = <Marker>[
       if (widget.pickup != null && widget.editing != MapPointSelection.origin)
         Marker(
@@ -280,15 +320,15 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         Marker(
           key: ValueKey(entry.key),
           point: entry.value,
-          width: 30,
+          width: 44,
           height: 30,
           child: const _MotoMarker(color: Color(0xff007f8b)),
         ),
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
-          width: 36,
-          height: 36,
+          width: 48,
+          height: 34,
           child: Transform.rotate(
             angle: widget.driverBearing * math.pi / 180,
             child: const _MotoMarker(color: Colors.orange),
@@ -314,6 +354,26 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
               gmaps.BitmapDescriptor.hueRed),
           infoWindow: gmaps.InfoWindow(title: widget.destinationLabel),
+        ),
+      if (selectionPoint != null)
+        gmaps.Marker(
+          markerId: const gmaps.MarkerId('selection-point'),
+          position:
+              gmaps.LatLng(selectionPoint.latitude, selectionPoint.longitude),
+          draggable: true,
+          consumeTapEvents: true,
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+            widget.editing == MapPointSelection.origin
+                ? gmaps.BitmapDescriptor.hueGreen
+                : gmaps.BitmapDescriptor.hueRed,
+          ),
+          infoWindow: gmaps.InfoWindow(
+            title: widget.editing == MapPointSelection.origin
+                ? 'Arrastra para ajustar el origen'
+                : 'Arrastra para ajustar el destino',
+          ),
+          onDragEnd: (point) => setState(
+              () => _selectionCenter = LatLng(point.latitude, point.longitude)),
         ),
       for (final entry in widget.nearbyDrivers.entries)
         gmaps.Marker(
@@ -365,15 +425,11 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                     )
                   }
                 : const {},
-            onCameraMove: widget.editing == null
-                ? null
-                : (position) => _selectionCenter =
-                    LatLng(position.target.latitude, position.target.longitude),
             onTap: widget.onPointSelected == null
                 ? null
                 : (point) {
                     final selected = LatLng(point.latitude, point.longitude);
-                    _selectionCenter = selected;
+                    setState(() => _selectionCenter = selected);
                     _moveCamera(selected, 17);
                   },
           )
@@ -437,9 +493,13 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                     child: Text(
-                      widget.editing == MapPointSelection.origin
-                          ? 'Mueve el mapa para ajustar el punto de encuentro'
-                          : 'Mueve el mapa para ajustar el destino',
+                      configuredMapProvider == 'google'
+                          ? (widget.editing == MapPointSelection.origin
+                              ? 'Arrastra el punto verde para ajustar el origen'
+                              : 'Arrastra el punto rojo para ajustar el destino')
+                          : (widget.editing == MapPointSelection.origin
+                              ? 'Mueve el mapa para ajustar el punto de encuentro'
+                              : 'Mueve el mapa para ajustar el destino'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white),
                     ),
@@ -447,22 +507,43 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                 ),
               ),
             ),
-          if (widget.editing != null) ...[
-            Center(
-              child: IgnorePointer(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 20),
-                  child: Icon(Icons.location_pin,
-                      size: 34,
-                      color: widget.editing == MapPointSelection.origin
-                          ? const Color(0xff20a55b)
-                          : const Color(0xffef4338),
-                      shadows: const [
-                        Shadow(color: Colors.black38, blurRadius: 5)
-                      ]),
-                ),
+          if (widget.editing == null &&
+              (widget.currentLocation != null ||
+                  widget.onUseCurrentLocation != null))
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: FloatingActionButton.small(
+                heroTag: null,
+                tooltip: 'Volver a mi ubicación',
+                onPressed: () {
+                  final currentPoint =
+                      widget.currentLocation ?? widget.pickup ?? center;
+                  _moveCamera(currentPoint, 17);
+                  if (widget.currentLocation == null) {
+                    widget.onUseCurrentLocation?.call();
+                  }
+                },
+                child: const Icon(Icons.my_location),
               ),
             ),
+          if (widget.editing != null) ...[
+            if (configuredMapProvider != 'google')
+              Center(
+                child: IgnorePointer(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: Icon(Icons.location_pin,
+                        size: 34,
+                        color: widget.editing == MapPointSelection.origin
+                            ? const Color(0xff20a55b)
+                            : const Color(0xffef4338),
+                        shadows: const [
+                          Shadow(color: Colors.black38, blurRadius: 5)
+                        ]),
+                  ),
+                ),
+              ),
             Positioned(
               right: 12,
               bottom: 64,
@@ -472,7 +553,8 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                 onPressed: widget.onUseCurrentLocation == null
                     ? null
                     : () {
-                        final currentPoint = widget.pickup ?? center;
+                        final currentPoint =
+                            widget.currentLocation ?? widget.pickup ?? center;
                         _selectionCenter = currentPoint;
                         _moveCamera(currentPoint, 17);
                         widget.onUseCurrentLocation!();
@@ -519,16 +601,22 @@ class _MotoMarker extends StatelessWidget {
   final Color color;
 
   @override
-  Widget build(BuildContext context) => Stack(
-        alignment: Alignment.center,
-        children: [
-          const Icon(Icons.electric_rickshaw,
-              color: Colors.white,
-              size: 29,
-              shadows: [Shadow(color: Colors.black54, blurRadius: 6)]),
-          Icon(Icons.electric_rickshaw, color: color, size: 25),
-        ],
+  Widget build(BuildContext context) => CustomPaint(
+        size: const Size(44, 30),
+        painter: _MotoTaxiPainter(color),
       );
+}
+
+class _MotoTaxiPainter extends CustomPainter {
+  const _MotoTaxiPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) => _paintMotoTaxi(canvas, size, color);
+
+  @override
+  bool shouldRepaint(covariant _MotoTaxiPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _MapLabel extends StatelessWidget {
