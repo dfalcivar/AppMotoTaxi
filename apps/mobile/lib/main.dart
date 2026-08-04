@@ -383,6 +383,18 @@ class Api {
       }).toString(),
       token: t);
 
+  Future<List<dynamic>> nearbyDrivers(String t, LatLng point) async {
+    final result = await call(
+      'GET',
+      Uri(path: '/v1/drivers/nearby', queryParameters: {
+        'latitude': point.latitude.toString(),
+        'longitude': point.longitude.toString(),
+      }).toString(),
+      token: t,
+    );
+    return List<dynamic>.from(result['drivers'] ?? const []);
+  }
+
   Future<dynamic> offers(String t) =>
       call('GET', '/v1/driver/offers', token: t);
   Future<dynamic> driverState(String t) =>
@@ -1362,7 +1374,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   double driverBearing = 0;
   final Map<String, LatLng> nearbyDrivers = {};
   List<LatLng> routePoints = [];
-  MapPointSelection mapSelection = MapPointSelection.destination;
+  MapPointSelection? mapSelection;
   dynamic active;
   int people = 1;
   String paymentMethod = 'CASH';
@@ -1406,7 +1418,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     load();
     Future.microtask(useCurrentLocation);
-    timer = Timer.periodic(const Duration(seconds: 15), (_) => load());
+    timer = Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(load());
+      unawaited(refreshNearbyDrivers());
+    });
   }
 
   @override
@@ -1481,6 +1496,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         realtime.subscribeTrip(tripId);
       } else if (pickup != null) {
         realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+        unawaited(refreshNearbyDrivers());
       }
       return;
     }
@@ -1543,6 +1559,26 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               label: 'Abrir',
               onPressed: () =>
                   openPassengerChat(value['tripId']?.toString()))));
+    }
+  }
+
+  Future<void> refreshNearbyDrivers([LatLng? focus]) async {
+    final point = focus ?? pickup;
+    if (point == null || active != null) return;
+    try {
+      final items = await api.nearbyDrivers(widget.s.token, point);
+      if (!mounted || active != null || pickup != point) return;
+      setState(() {
+        nearbyDrivers
+          ..clear()
+          ..addEntries(items.map((item) => MapEntry(
+                item['driverId'].toString(),
+                LatLng((item['latitude'] as num).toDouble(),
+                    (item['longitude'] as num).toDouble()),
+              )));
+      });
+    } catch (_) {
+      // El WebSocket sigue siendo la fuente principal si falla este respaldo.
     }
   }
 
@@ -1678,11 +1714,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         message = 'Consultando la dirección de tu ubicación…';
       });
       realtime.subscribeNearby(position.latitude, position.longitude);
+      unawaited(refreshNearbyDrivers(point));
       refreshRoute(force: true);
       try {
         final result = await api.reverse(widget.s.token, point);
         if (!mounted || pickup != point || active != null) return;
         setState(() {
+          mapSelection = null;
           origin.text = result['label']?.toString() ?? 'Mi ubicación actual';
           message = 'Origen actualizado con tu ubicación GPS.';
         });
@@ -1757,6 +1795,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         return;
       }
       setState(() {
+        mapSelection = null;
         field.text = r['label'];
         if (isOrigin) {
           pickup = LatLng((r['latitude'] as num).toDouble(),
@@ -1769,6 +1808,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       });
       if (isOrigin && pickup != null) {
         realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+        unawaited(refreshNearbyDrivers(pickup));
       }
       refreshRoute(force: true);
     } catch (_) {
@@ -1778,9 +1818,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<void> selectMapPoint(LatLng point) async {
     final selection = mapSelection;
+    if (selection == null) return;
     final coordinateLabel =
         'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
     setState(() {
+      mapSelection = null;
       if (selection == MapPointSelection.origin) {
         pickup = point;
         origin.text = coordinateLabel;
@@ -1793,6 +1835,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
     if (selection == MapPointSelection.origin) {
       realtime.subscribeNearby(point.latitude, point.longitude);
+      unawaited(refreshNearbyDrivers(point));
     }
     refreshRoute(force: true);
     try {
@@ -1934,20 +1977,52 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               imageUrl: (banner) =>
                   '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}'),
           const SizedBox(height: 10),
-          LiveMap(
-              originLabel: o,
-              destinationLabel: d,
-              pickup: pickup,
-              dropoff: dropoff,
-              driverPosition: driverPosition,
-              driverBearing: driverBearing,
-              routePoints: routePoints,
-              nearbyDrivers:
-                  active == null ? nearbyDrivers : const <String, LatLng>{},
-              editing: active == null ? mapSelection : null,
-              onPointSelected: active == null ? selectMapPoint : null,
-              onUseCurrentLocation: active == null ? useCurrentLocation : null,
-              height: active == null ? 430 : 370),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeInOut,
+            child: LiveMap(
+                originLabel: o,
+                destinationLabel: d,
+                pickup: pickup,
+                dropoff: dropoff,
+                driverPosition: driverPosition,
+                driverBearing: driverBearing,
+                routePoints: routePoints,
+                nearbyDrivers:
+                    active == null ? nearbyDrivers : const <String, LatLng>{},
+                editing: active == null ? mapSelection : null,
+                onPointSelected: active == null && mapSelection != null
+                    ? selectMapPoint
+                    : null,
+                onUseCurrentLocation: active == null && mapSelection != null
+                    ? useCurrentLocation
+                    : null,
+                height: active != null
+                    ? 370
+                    : mapSelection == null
+                        ? 360
+                        : 520),
+          ),
+          if (active == null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.electric_rickshaw,
+                      size: 18, color: Theme.of(c).colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      nearbyDrivers.isEmpty
+                          ? 'No hay mototaxis disponibles cerca ahora'
+                          : '${nearbyDrivers.length} mototaxi(s) disponible(s) cerca',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (routeDistanceMeters != null && routeDurationSeconds != null)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),

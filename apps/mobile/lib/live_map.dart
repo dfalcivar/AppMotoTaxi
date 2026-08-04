@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import 'dart:ui' show lerpDouble;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -53,6 +53,8 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   LatLng? _movementStart;
   LatLng? _movementEnd;
   LatLng? _selectionCenter;
+  gmaps.BitmapDescriptor? _nearbyMotoIcon;
+  gmaps.BitmapDescriptor? _activeMotoIcon;
 
   @override
   void initState() {
@@ -68,11 +70,62 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         final curve = Curves.easeInOut.transform(_movement.value);
         setState(() {
           _displayedDriver = LatLng(
-            lerpDouble(start.latitude, end.latitude, curve)!,
-            lerpDouble(start.longitude, end.longitude, curve)!,
+            ui.lerpDouble(start.latitude, end.latitude, curve)!,
+            ui.lerpDouble(start.longitude, end.longitude, curve)!,
           );
         });
       });
+    if (configuredMapProvider == 'google') {
+      _prepareGoogleMarkerIcons();
+    }
+  }
+
+  Future<gmaps.BitmapDescriptor> _createMotoIcon(Color color) async {
+    const logicalSize = 32.0;
+    const pixelRatio = 3.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder)..scale(pixelRatio);
+    const center = Offset(logicalSize / 2, logicalSize / 2);
+    canvas.drawCircle(
+        center, logicalSize / 2 - 1, Paint()..color = Colors.white);
+    canvas.drawCircle(center, logicalSize / 2 - 2.5, Paint()..color = color);
+    const icon = Icons.electric_rickshaw;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(
+      canvas,
+      Offset((logicalSize - painter.width) / 2,
+          (logicalSize - painter.height) / 2),
+    );
+    final image = await recorder.endRecording().toImage(
+          (logicalSize * pixelRatio).round(),
+          (logicalSize * pixelRatio).round(),
+        );
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    return gmaps.BitmapDescriptor.bytes(
+      data!.buffer.asUint8List(),
+      imagePixelRatio: pixelRatio,
+    );
+  }
+
+  Future<void> _prepareGoogleMarkerIcons() async {
+    final nearby = await _createMotoIcon(const Color(0xff007f8b));
+    final active = await _createMotoIcon(Colors.orange);
+    if (!mounted) return;
+    setState(() {
+      _nearbyMotoIcon = nearby;
+      _activeMotoIcon = active;
+    });
   }
 
   @override
@@ -92,6 +145,12 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       _selectionCenter = widget.editing == MapPointSelection.origin
           ? widget.pickup ?? _center
           : widget.dropoff ?? _center;
+      final selectionCenter = _selectionCenter;
+      if (selectionCenter != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _moveCamera(selectionCenter, 17);
+        });
+      }
     }
     final selectedPoint = widget.editing == MapPointSelection.origin
         ? widget.pickup
@@ -106,6 +165,13 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _moveCamera(selectedPoint, 17);
+      });
+    }
+    if (widget.editing == null &&
+        widget.routePoints.length > 1 &&
+        oldWidget.routePoints != widget.routePoints) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _fitRoute();
       });
     }
   }
@@ -124,6 +190,40 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       return;
     }
     _mapController.move(point, zoom);
+  }
+
+  void _fitRoute() {
+    final points = widget.routePoints;
+    if (points.length < 2) return;
+    if (configuredMapProvider == 'google') {
+      final minLatitude =
+          points.map((point) => point.latitude).reduce(math.min);
+      final maxLatitude =
+          points.map((point) => point.latitude).reduce(math.max);
+      final minLongitude =
+          points.map((point) => point.longitude).reduce(math.min);
+      final maxLongitude =
+          points.map((point) => point.longitude).reduce(math.max);
+      if ((maxLatitude - minLatitude).abs() < .00001 &&
+          (maxLongitude - minLongitude).abs() < .00001) {
+        _moveCamera(points.first, 17);
+        return;
+      }
+      _googleMapController?.animateCamera(
+        gmaps.CameraUpdate.newLatLngBounds(
+          gmaps.LatLngBounds(
+            southwest: gmaps.LatLng(minLatitude, minLongitude),
+            northeast: gmaps.LatLng(maxLatitude, maxLongitude),
+          ),
+          48,
+        ),
+      );
+      return;
+    }
+    _mapController.fitCamera(CameraFit.coordinates(
+      coordinates: points,
+      padding: const EdgeInsets.all(48),
+    ));
   }
 
   LatLng? get _center =>
@@ -153,7 +253,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
     }
 
     final markers = <Marker>[
-      if (widget.pickup != null)
+      if (widget.pickup != null && widget.editing != MapPointSelection.origin)
         Marker(
           point: widget.pickup!,
           width: 130,
@@ -164,7 +264,8 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
             text: widget.originLabel,
           ),
         ),
-      if (widget.dropoff != null)
+      if (widget.dropoff != null &&
+          widget.editing != MapPointSelection.destination)
         Marker(
           point: widget.dropoff!,
           width: 130,
@@ -195,7 +296,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         ),
     ];
     final googleMarkers = <gmaps.Marker>{
-      if (widget.pickup != null)
+      if (widget.pickup != null && widget.editing != MapPointSelection.origin)
         gmaps.Marker(
           markerId: const gmaps.MarkerId('pickup'),
           position:
@@ -204,7 +305,8 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               gmaps.BitmapDescriptor.hueGreen),
           infoWindow: gmaps.InfoWindow(title: widget.originLabel),
         ),
-      if (widget.dropoff != null)
+      if (widget.dropoff != null &&
+          widget.editing != MapPointSelection.destination)
         gmaps.Marker(
           markerId: const gmaps.MarkerId('dropoff'),
           position:
@@ -214,28 +316,26 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           infoWindow: gmaps.InfoWindow(title: widget.destinationLabel),
         ),
       for (final entry in widget.nearbyDrivers.entries)
-        gmaps.AdvancedMarker(
+        gmaps.Marker(
           markerId: gmaps.MarkerId('nearby-${entry.key}'),
           position: gmaps.LatLng(entry.value.latitude, entry.value.longitude),
-          icon: gmaps.BitmapDescriptor.pinConfig(
-            backgroundColor: const Color(0xff007f8b),
-            borderColor: Colors.white,
-            glyph: const gmaps.TextGlyph(text: '🛺', textColor: Colors.white),
-          ),
+          icon: _nearbyMotoIcon ??
+              gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                  gmaps.BitmapDescriptor.hueCyan),
+          flat: true,
+          infoWindow: const gmaps.InfoWindow(title: 'Mototaxi disponible'),
           anchor: const Offset(.5, .5),
         ),
       if (_displayedDriver != null)
-        gmaps.AdvancedMarker(
+        gmaps.Marker(
           markerId: const gmaps.MarkerId('active-driver'),
           position: gmaps.LatLng(
               _displayedDriver!.latitude, _displayedDriver!.longitude),
           rotation: widget.driverBearing,
           flat: true,
-          icon: gmaps.BitmapDescriptor.pinConfig(
-            backgroundColor: Colors.orange,
-            borderColor: Colors.white,
-            glyph: const gmaps.TextGlyph(text: '🛺', textColor: Colors.white),
-          ),
+          icon: _activeMotoIcon ??
+              gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                  gmaps.BitmapDescriptor.hueOrange),
           anchor: const Offset(.5, .5),
         ),
     };
@@ -348,20 +448,24 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               ),
             ),
           if (widget.editing != null) ...[
-            const Center(
+            Center(
               child: IgnorePointer(
                 child: Padding(
-                  padding: EdgeInsets.only(bottom: 25),
+                  padding: const EdgeInsets.only(bottom: 20),
                   child: Icon(Icons.location_pin,
-                      size: 38,
-                      color: Color(0xffef4338),
-                      shadows: [Shadow(color: Colors.black38, blurRadius: 5)]),
+                      size: 34,
+                      color: widget.editing == MapPointSelection.origin
+                          ? const Color(0xff20a55b)
+                          : const Color(0xffef4338),
+                      shadows: const [
+                        Shadow(color: Colors.black38, blurRadius: 5)
+                      ]),
                 ),
               ),
             ),
             Positioned(
               right: 12,
-              bottom: 72,
+              bottom: 64,
               child: FloatingActionButton.small(
                 heroTag: null,
                 tooltip: 'Volver a mi ubicaciÃ³n',
@@ -377,17 +481,30 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               ),
             ),
             Positioned(
-              left: 12,
-              right: 12,
+              left: 0,
+              right: 0,
               bottom: 12,
-              child: FilledButton.icon(
-                onPressed: widget.onPointSelected == null
-                    ? null
-                    : () => widget.onPointSelected!(_selectionCenter ?? center),
-                icon: const Icon(Icons.check),
-                label: Text(widget.editing == MapPointSelection.origin
-                    ? 'Usar este punto como origen'
-                    : 'Usar este punto como destino'),
+              child: Center(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: .82),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                    minimumSize: Size.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: widget.onPointSelected == null
+                      ? null
+                      : () =>
+                          widget.onPointSelected!(_selectionCenter ?? center),
+                  icon: const Icon(Icons.check, size: 18),
+                  label: Text(widget.editing == MapPointSelection.origin
+                      ? 'Confirmar origen'
+                      : 'Confirmar destino'),
+                ),
               ),
             ),
           ],
