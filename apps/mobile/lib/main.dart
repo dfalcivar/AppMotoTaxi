@@ -1394,7 +1394,18 @@ class AboutAtacamesGo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Acerca de')),
+        backgroundColor: const Color(0xff031a3a),
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          toolbarHeight: 42,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          titleSpacing: 0,
+          title: const Text('Acerca de',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+        ),
         body: SingleChildScrollView(
           child: Image.asset(
             'assets/images/atacamesgo-about-v3.png',
