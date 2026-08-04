@@ -12,8 +12,8 @@ void main() {
   });
 
   test('presenta errores de sesión en español', () {
-    expect(mensajeApi('INVALID_CREDENTIALS'),
-        'Correo o contraseña incorrectos.');
+    expect(
+        mensajeApi('INVALID_CREDENTIALS'), 'Correo o contraseña incorrectos.');
     expect(mensajeApi('DRIVER_PENDING_APPROVAL'),
         'Tu perfil de conductor está pendiente de aprobación.');
     expect(mensajeApi('SESSION_REPLACED'), contains('otro dispositivo'));

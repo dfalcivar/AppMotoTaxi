@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
@@ -48,6 +50,7 @@ class LiveMap extends StatefulWidget {
 }
 
 class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
+  static const _nearbyClusterId = gmaps.ClusterManagerId('nearby-mototaxis');
   late final AnimationController _movement;
   final MapController _mapController = MapController();
   gmaps.GoogleMapController? _googleMapController;
@@ -83,11 +86,12 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   }
 
   Future<void> _prepareGoogleMarkerIcons() async {
-    const configuration = ImageConfiguration(size: Size(48, 48));
+    const nearbyConfiguration = ImageConfiguration(size: Size(32, 32));
+    const activeConfiguration = ImageConfiguration(size: Size(38, 38));
     final nearby = await gmaps.BitmapDescriptor.asset(
-        configuration, 'assets/images/mototaxi-map-marker.png');
+        nearbyConfiguration, 'assets/images/mototaxi-map-marker.png');
     final active = await gmaps.BitmapDescriptor.asset(
-        configuration, 'assets/images/mototaxi-map-marker.png');
+        activeConfiguration, 'assets/images/mototaxi-map-marker.png');
     if (!mounted) return;
     setState(() {
       _nearbyMotoIcon = nearby;
@@ -264,15 +268,15 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         Marker(
           key: ValueKey(entry.key),
           point: entry.value,
-          width: 48,
-          height: 48,
+          width: 34,
+          height: 34,
           child: const _MotoMarker(),
         ),
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
-          width: 52,
-          height: 52,
+          width: 40,
+          height: 40,
           child: Transform.rotate(
             angle: widget.driverBearing * math.pi / 180,
             child: const _MotoMarker(),
@@ -329,6 +333,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           flat: true,
           infoWindow: const gmaps.InfoWindow(title: 'Mototaxi disponible'),
           anchor: const Offset(.5, .5),
+          clusterManagerId: _nearbyClusterId,
         ),
       if (_displayedDriver != null)
         gmaps.Marker(
@@ -355,6 +360,12 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
             compassEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
+            gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+              Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer()),
+            },
+            clusterManagers: {
+              const gmaps.ClusterManager(clusterManagerId: _nearbyClusterId),
+            },
             markers: googleMarkers,
             polylines: widget.routePoints.length > 1
                 ? {

@@ -19,14 +19,16 @@ async function prepareAccounts(): Promise<void> {
       values (${e2ePassengerId}, '+593990002201', 'Pasajero E2E', 'PASSENGER', 'ACTIVE',
         'e2e.pasajero@mototaxi.local', crypt('E2ePasajero2026!', gen_salt('bf')), now(), now())
       on conflict (id) do update set status='ACTIVE', email=excluded.email,
-        password_hash=excluded.password_hash, active_session_id=null
+        password_hash=excluded.password_hash, active_session_id=null,
+        must_change_password=false
     `;
     await tx`
       insert into users (id, phone_e164, full_name, role, status, email, password_hash, phone_verified_at, terms_accepted_at)
       values (${e2eDriverId}, '+593990002202', 'Conductor E2E', 'DRIVER', 'ACTIVE',
         'e2e.conductor@mototaxi.local', crypt('E2eConductor2026!', gen_salt('bf')), now(), now())
       on conflict (id) do update set status='ACTIVE', email=excluded.email,
-        password_hash=excluded.password_hash, active_session_id=null
+        password_hash=excluded.password_hash, active_session_id=null,
+        must_change_password=false
     `;
     await tx`
       insert into drivers (user_id, approval_note, approved_at, is_available)

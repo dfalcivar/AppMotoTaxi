@@ -66,6 +66,23 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("protege los lugares favoritos del pasajero", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/favorite-places"
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("protege el cambio de contraseña temporal", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/change-password",
+      payload: { password: "NuevaClave2026!" }
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
   it("protege la administración de banners", async () => {
     const response = await app.inject({
       method: "GET",

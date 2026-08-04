@@ -17,17 +17,31 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, nativeChannel)
             .setMethodCallHandler { call, result ->
-                if (call.method != "dial") {
-                    result.notImplemented()
-                    return@setMethodCallHandler
+                when (call.method) {
+                    "dial" -> {
+                        val phone = call.argument<String>("phone")?.trim().orEmpty()
+                        if (phone.isBlank()) {
+                            result.error("INVALID_PHONE", "El teléfono está vacío", null)
+                            return@setMethodCallHandler
+                        }
+                        startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(phone)}")))
+                        result.success(null)
+                    }
+                    "share" -> {
+                        val text = call.argument<String>("text")?.trim().orEmpty()
+                        if (text.isBlank()) {
+                            result.error("INVALID_TEXT", "No hay información para compartir", null)
+                            return@setMethodCallHandler
+                        }
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, text)
+                        }
+                        startActivity(Intent.createChooser(intent, "Compartir viaje"))
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
                 }
-                val phone = call.argument<String>("phone")?.trim().orEmpty()
-                if (phone.isBlank()) {
-                    result.error("INVALID_PHONE", "El teléfono está vacío", null)
-                    return@setMethodCallHandler
-                }
-                startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(phone)}")))
-                result.success(null)
             }
     }
 

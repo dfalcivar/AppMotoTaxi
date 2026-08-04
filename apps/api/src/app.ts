@@ -26,6 +26,7 @@ const mobileLoginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8)
 });
+const changePasswordSchema = z.object({ password: z.string().min(8).max(100) });
 const registrationSchema = z.object({
   fullName: z.string().trim().min(3).max(120),
   email: z.string().email(),
@@ -51,20 +52,29 @@ const reverseLocationSchema = z.object({
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
 const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
 const bannerPlacementSchema = z.object({ placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]).default("PASSENGER_HOME") });
+const favoritePlaceSchema = z.object({
+  label: z.string().trim().min(2).max(50),
+  address: z.string().trim().min(3).max(200),
+  location: pointSchema
+});
 
 async function configuredSearchRadius(): Promise<number> {
   const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
   return Number(settings?.search_radius_meters ?? 3000);
 }
 
-async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
+async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, options: { allowPasswordChange?: boolean } = {}) {
   const user = userFrom(request as never);
   if (!user?.id || !user.sessionId) { reply.code(401).send({ error: "UNAUTHORIZED" }); return; }
   const active = await database()`
-    select 1 from users
+    select must_change_password as "mustChangePassword" from users
     where id=${user.id} and active_session_id=${user.sessionId}::uuid
   `;
   if (!active.length) { reply.code(401).send({ error: "SESSION_REPLACED" }); return; }
+  if (active[0]?.mustChangePassword && !options.allowPasswordChange) {
+    reply.code(428).send({ error: "PASSWORD_CHANGE_REQUIRED" });
+    return;
+  }
   return user;
 }
 
@@ -189,13 +199,13 @@ export async function buildApp() {
     }
 
     const rows = await database()`
-      select id, email, full_name, role, status
+      select id, email, full_name, role, status, must_change_password as "mustChangePassword"
       from users
       where lower(email) = lower(${parsed.data.email})
         and password_hash = crypt(${parsed.data.password}, password_hash)
         and role in ('PASSENGER', 'DRIVER')
     `;
-    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string } | undefined;
+    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string; mustChangePassword: boolean } | undefined;
     if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
     if (account.status === "PENDING" && account.role === "DRIVER") return reply.code(403).send({ error: "DRIVER_PENDING_APPROVAL" });
     if (account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
@@ -205,8 +215,25 @@ export async function buildApp() {
       await tx`update users set active_session_id=${sessionId} where id=${account.id}`;
       await tx`delete from device_tokens where user_id=${account.id}`;
     });
-    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId };
+    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: account.mustChangePassword };
     return { token: tokenFor(user), user };
+  });
+
+  app.post("/v1/auth/change-password", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true }); if (!user) return;
+    const parsed = changePasswordSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PASSWORD" });
+    const [updated] = await database()`
+      update users
+      set password_hash=crypt(${parsed.data.password}, gen_salt('bf')),
+          must_change_password=false,
+          updated_at=now()
+      where id=${user.id!}
+        and password_hash <> crypt(${parsed.data.password}, password_hash)
+      returning id::text
+    `;
+    if (!updated) return reply.code(409).send({ error: "PASSWORD_REUSED" });
+    return { changed: true };
   });
 
   app.post("/v1/auth/register", async (request, reply) => {
@@ -231,7 +258,7 @@ export async function buildApp() {
       if (account.role === "DRIVER") return reply.code(201).send({ status: "PENDING_APPROVAL", message: "Registro recibido. Un administrador debe aprobar tu perfil de conductor." });
       const sessionId = randomUUID();
       await database()`update users set active_session_id=${sessionId} where id=${account.id}`;
-      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: "PASSENGER", sessionId };
+      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: "PASSENGER", sessionId, mustChangePassword: false };
       return reply.code(201).send({ status: "ACTIVE", token: tokenFor(user), user });
     } catch (error) {
       const code = (error as { code?: string }).code;
@@ -241,7 +268,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/auth/logout", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true }); if (!user) return;
     await database().begin(async tx => {
       await tx`update users set active_session_id=null where id=${user.id!} and active_session_id=${user.sessionId!}::uuid`;
       await tx`delete from device_tokens where user_id=${user.id!}`;
@@ -286,6 +313,49 @@ export async function buildApp() {
       where r.recipient_id=${user.id!} order by r.created_at desc limit 10
     `;
     return { ...profile, reviews };
+  });
+
+  app.get("/v1/favorite-places", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    return database()`
+      select id::text, label, address,
+        ST_Y(location::geometry) as latitude,
+        ST_X(location::geometry) as longitude,
+        created_at as "createdAt"
+      from favorite_places
+      where user_id=${user.id!}
+      order by label
+    `;
+  });
+
+  app.post("/v1/favorite-places", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = favoritePlaceSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_FAVORITE_PLACE" });
+    const input = parsed.data;
+    const [place] = await database()`
+      insert into favorite_places (user_id, label, address, location)
+      values (${user.id!}, ${input.label}, ${input.address},
+        ST_SetSRID(ST_MakePoint(${input.location.longitude}, ${input.location.latitude}),4326)::geography)
+      on conflict (user_id, label) do update set
+        address=excluded.address, location=excluded.location, updated_at=now()
+      returning id::text, label, address,
+        ST_Y(location::geometry) as latitude,
+        ST_X(location::geometry) as longitude,
+        created_at as "createdAt"
+    `;
+    return reply.code(201).send(place);
+  });
+
+  app.delete("/v1/favorite-places/:id", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const id = (request.params as { id: string }).id;
+    const deleted = await database()`delete from favorite_places where id=${id} and user_id=${user.id!} returning id`;
+    if (!deleted.length) return reply.code(404).send({ error: "NOT_FOUND" });
+    return reply.code(204).send();
   });
 
   app.put("/v1/driver/availability", async (request, reply) => {

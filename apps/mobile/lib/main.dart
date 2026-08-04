@@ -64,6 +64,67 @@ Future<void> dialPhone(BuildContext context, dynamic phoneValue) async {
   }
 }
 
+Future<void> shareText(BuildContext context, String text) async {
+  try {
+    await nativeActions.invokeMethod<void>('share', {'text': text});
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo abrir el menú para compartir.')));
+    }
+  }
+}
+
+Future<void> showTripSafety({
+  required BuildContext context,
+  required dynamic trip,
+  required String counterpart,
+  LatLng? location,
+}) async {
+  final tripId = trip?['tripId']?.toString() ?? '';
+  final origin = trip?['originReference']?.toString() ?? 'Origen';
+  final destination = trip?['destinationReference']?.toString() ?? 'Destino';
+  final mapLink = location == null
+      ? ''
+      : '\nUbicación actual: https://maps.google.com/?q=${location.latitude},${location.longitude}';
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const ListTile(
+            leading: Icon(Icons.shield_outlined),
+            title: Text('Seguridad del viaje'),
+            subtitle:
+                Text('Comparte los datos del recorrido o solicita ayuda.'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.share_outlined),
+            title: const Text('Compartir viaje'),
+            subtitle: Text('$origin → $destination'),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              shareText(context,
+                  'Estoy realizando un viaje en AtacamesGo con $counterpart.\nRuta: $origin → $destination\nViaje: $tripId$mapLink');
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.emergency_outlined, color: Colors.red),
+            title: const Text('Llamar al ECU 911'),
+            subtitle: const Text('Solo para una emergencia real'),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              dialPhone(context, '911');
+            },
+          ),
+        ]),
+      ),
+    ),
+  );
+}
+
 Future<void> warmApi() async {
   try {
     await apiHttpClient
@@ -210,8 +271,10 @@ class TripStatusPanel extends StatelessWidget {
 }
 
 class Session {
-  const Session(this.token, this.role, this.name, this.id);
+  const Session(this.token, this.role, this.name, this.id,
+      {this.mustChangePassword = false});
   final String token, role, name, id;
+  final bool mustChangePassword;
 }
 
 class ApiException implements Exception {
@@ -244,6 +307,13 @@ String mensajeApi(dynamic code) =>
           'La solicitud ya fue asignada y no puede cancelarse desde aquí.',
       'INVALID_TRIP_STATE':
           'Esta acción ya no está disponible para el estado actual del viaje.',
+      'PASSWORD_CHANGE_REQUIRED':
+          'Debes cambiar la contraseña temporal para continuar.',
+      'PASSWORD_REUSED':
+          'La nueva contraseña debe ser diferente a la temporal.',
+      'INVALID_PASSWORD': 'La contraseña debe tener al menos 8 caracteres.',
+      'INVALID_FAVORITE_PLACE':
+          'Revisa el nombre y la dirección del lugar favorito.',
     }[code] ??
     'No se pudo completar la operación.';
 
@@ -286,7 +356,8 @@ class Api {
     final d = await call('POST', '/v1/auth/session',
         body: {'email': e, 'password': p});
     final s = Session(
-        d['token'], d['user']['role'], d['user']['name'], d['user']['id']);
+        d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
+        mustChangePassword: d['user']['mustChangePassword'] == true);
     unawaited(registerFcm(s.token));
     return s;
   }
@@ -304,6 +375,10 @@ class Api {
 
   Future<void> logout(String token) =>
       call('POST', '/v1/auth/logout', token: token);
+
+  Future<void> changePassword(String token, String password) =>
+      call('POST', '/v1/auth/change-password',
+          token: token, body: {'password': password});
 
   Future<dynamic> register(Map<String, dynamic> body) =>
       call('POST', '/v1/auth/register', body: body);
@@ -362,6 +437,20 @@ class Api {
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
+  Future<List<dynamic>> favoritePlaces(String t) async =>
+      List<dynamic>.from(await call('GET', '/v1/favorite-places', token: t));
+  Future<dynamic> saveFavoritePlace(
+          String t, String label, String address, LatLng point) =>
+      call('POST', '/v1/favorite-places', token: t, body: {
+        'label': label,
+        'address': address,
+        'location': {
+          'latitude': point.latitude,
+          'longitude': point.longitude,
+        }
+      });
+  Future<void> deleteFavoritePlace(String t, String id) =>
+      call('DELETE', '/v1/favorite-places/$id', token: t);
   Future<List<dynamic>> search(String t, String query, [LatLng? focus]) async {
     final parameters = <String, String>{'q': query};
     if (focus != null) {
@@ -512,8 +601,7 @@ class Welcome extends StatelessWidget {
               top: 4, right: 8, child: ThemeSelector(onPhoto: true)),
           Center(
               child: SingleChildScrollView(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 72),
                   child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 340),
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -575,15 +663,23 @@ class Welcome extends StatelessWidget {
                                 color: Colors.white),
                             label: const Text('Recuperar contraseña',
                                 style: TextStyle(color: Colors.white))),
-                        const SizedBox(height: 18),
-                        const Text('Powered by DFAR System',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                                letterSpacing: .3))
-                      ]))))
+                      ])))),
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 7,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('Powered by',
+                  style: TextStyle(color: Colors.white70, fontSize: 9)),
+              SizedBox(height: 1),
+              Text('DFAR SYSTEM',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.5)),
+            ]),
+          ),
         ]))
       ]));
   void open(BuildContext c, String r) =>
@@ -631,7 +727,11 @@ class _LoginState extends State<Login> {
         Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-                builder: (_) => s.role == 'DRIVER' ? Driver(s) : Passenger(s)));
+                builder: (_) => s.mustChangePassword
+                    ? ChangeTemporaryPassword(s)
+                    : s.role == 'DRIVER'
+                        ? Driver(s)
+                        : Passenger(s)));
       }
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
@@ -859,6 +959,128 @@ class Recovery extends StatelessWidget {
                 'En esta versión piloto la recuperación se gestiona por soporte. Indica tu correo registrado y el equipo administrativo podrá restablecer tu acceso.'),
             SizedBox(height: 20),
             Text('Próximo paso: envío de enlace seguro al correo registrado.')
+          ])));
+}
+
+class ChangeTemporaryPassword extends StatefulWidget {
+  const ChangeTemporaryPassword(this.session, {super.key});
+  final Session session;
+
+  @override
+  State<ChangeTemporaryPassword> createState() =>
+      _ChangeTemporaryPasswordState();
+}
+
+class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
+  final password = TextEditingController();
+  final confirmation = TextEditingController();
+  bool busy = false;
+  bool showPassword = false;
+  String? error;
+
+  @override
+  void dispose() {
+    password.dispose();
+    confirmation.dispose();
+    super.dispose();
+  }
+
+  Future<void> save() async {
+    FocusScope.of(context).unfocus();
+    if (password.text.length < 8) {
+      setState(() =>
+          error = 'La nueva contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (password.text != confirmation.text) {
+      setState(() => error = 'Las contraseñas no coinciden.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await Api().changePassword(widget.session.token, password.text);
+      if (!mounted) return;
+      final session = Session(widget.session.token, widget.session.role,
+          widget.session.name, widget.session.id);
+      Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+              builder: (_) => session.role == 'DRIVER'
+                  ? Driver(session)
+                  : Passenger(session)),
+          (_) => false);
+    } catch (reason) {
+      if (mounted) setState(() => error = reason.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> logout() async {
+    try {
+      await Api().logout(widget.session.token);
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(context,
+        MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+      canPop: false,
+      child: Scaffold(
+          appBar: AppBar(title: const Text('Protege tu cuenta')),
+          body: ListView(padding: const EdgeInsets.all(24), children: [
+            const Icon(Icons.password_outlined, size: 64),
+            const SizedBox(height: 16),
+            Text('Cambia tu contraseña temporal',
+                textAlign: TextAlign.center,
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            const Text(
+                'El administrador restableció tu acceso. Crea una contraseña personal antes de continuar.',
+                textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            TextField(
+                controller: password,
+                obscureText: !showPassword,
+                decoration: InputDecoration(
+                    labelText: 'Nueva contraseña',
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    suffixIcon: IconButton(
+                        onPressed: () =>
+                            setState(() => showPassword = !showPassword),
+                        icon: Icon(showPassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined)))),
+            const SizedBox(height: 14),
+            TextField(
+                controller: confirmation,
+                obscureText: !showPassword,
+                onSubmitted: (_) => busy ? null : save(),
+                decoration: const InputDecoration(
+                    labelText: 'Confirmar contraseña',
+                    prefixIcon: Icon(Icons.lock_reset_outlined))),
+            if (error != null)
+              Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error))),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+                onPressed: busy ? null : save,
+                icon: const Icon(Icons.check_circle_outline),
+                label: Text(busy ? 'Guardando…' : 'Guardar y continuar')),
+            TextButton(
+                onPressed: busy ? null : logout,
+                child: const Text('Cerrar sesión')),
           ])));
 }
 
@@ -1146,10 +1368,9 @@ class _AccountHubState extends State<AccountHub> {
                 c, MaterialPageRoute(builder: (_) => ActivityPanel(widget.s)))),
         ListTile(
             leading: const Icon(Icons.info_outline),
-            title: const Text('Acerca de ATACAMESGO'),
-            subtitle: const Text('Conoce nuestra propuesta de movilidad local'),
-            onTap: () => Navigator.push(c,
-                MaterialPageRoute(builder: (_) => const AboutAtacamesGo()))),
+            title: const Text('Acerca de'),
+            onTap: () => Navigator.push(
+                c, MaterialPageRoute(builder: (_) => const AboutAtacamesGo()))),
         if (pending != null)
           Card(
               child: ListTile(
@@ -1177,27 +1398,41 @@ class AboutAtacamesGo extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Acerca de')),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(24),
             child: AspectRatio(
-              aspectRatio: 3 / 4,
-              child: Image.asset('assets/images/atacamesgo-about.png',
+              aspectRatio: 4 / 5,
+              child: Image.asset('assets/images/atacamesgo-about-v2.png',
                   fit: BoxFit.cover),
             ),
           ),
-          const SizedBox(height: 22),
-          Text('ATACAMESGO',
+          const SizedBox(height: 18),
+          Text('AtacamesGo',
               textAlign: TextAlign.center,
               style: theme.textTheme.headlineMedium
                   ?.copyWith(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text('Movilidad local, segura y cercana',
               textAlign: TextAlign.center,
               style: theme.textTheme.titleMedium?.copyWith(
                   color: theme.colorScheme.primary,
                   fontWeight: FontWeight.w700)),
+          const SizedBox(height: 16),
+          const Row(children: [
+            Expanded(
+                child: _AboutBenefit(
+                    icon: Icons.shield_outlined, label: 'Seguro')),
+            SizedBox(width: 8),
+            Expanded(
+                child:
+                    _AboutBenefit(icon: Icons.speed_outlined, label: 'Rápido')),
+            SizedBox(width: 8),
+            Expanded(
+                child: _AboutBenefit(
+                    icon: Icons.verified_user_outlined, label: 'Confiable')),
+          ]),
           const SizedBox(height: 18),
           const Text(
             'Conectamos a pasajeros y conductores de mototaxi para facilitar '
@@ -1205,29 +1440,58 @@ class AboutAtacamesGo extends StatelessWidget {
             'al comercio local y a una movilidad que conozca de verdad nuestra comunidad.',
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Row(children: [
-                Icon(Icons.shield_outlined,
+                Icon(Icons.phone_android_outlined,
                     color: theme.colorScheme.primary, size: 30),
                 const SizedBox(width: 14),
                 const Expanded(
                     child: Text(
-                        'Proyecto piloto en evolución. Tus comentarios nos ayudan a mejorar cada viaje.')),
+                        'Movilidad inteligente que conecta a la comunidad y simplifica tu forma de moverte.')),
               ]),
             ),
           ),
           const SizedBox(height: 22),
-          Text('Powered by DFAR System',
+          const Text('Desarrollado por', textAlign: TextAlign.center),
+          const SizedBox(height: 3),
+          Text('DFAR SYSTEM',
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              style: theme.textTheme.titleMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.8)),
         ],
       ),
     );
   }
+}
+
+class _AboutBenefit extends StatelessWidget {
+  const _AboutBenefit({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+          child: Column(children: [
+            Icon(icon, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(height: 6),
+            Text(label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      );
 }
 
 class TripsPanel extends StatefulWidget {
@@ -1451,6 +1715,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   LatLng? driverPosition;
   double driverBearing = 0;
   final Map<String, LatLng> nearbyDrivers = {};
+  List<dynamic> favoritePlaces = [];
   List<LatLng> routePoints = [];
   MapPointSelection? mapSelection;
   dynamic active;
@@ -1495,6 +1760,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       });
     }
     load();
+    loadFavoritePlaces();
     Future.microtask(useCurrentLocation);
     timer = Timer.periodic(const Duration(seconds: 15), (_) {
       unawaited(load());
@@ -1888,6 +2154,162 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     _showMapEditor();
   }
 
+  Future<void> loadFavoritePlaces() async {
+    try {
+      final places = await api.favoritePlaces(widget.s.token);
+      if (mounted) setState(() => favoritePlaces = places);
+    } catch (_) {
+      // Los favoritos no bloquean la solicitud de un viaje.
+    }
+  }
+
+  Future<void> saveCurrentPlace(bool isOrigin) async {
+    final point = isOrigin ? pickup : dropoff;
+    final address = (isOrigin ? origin.text : destination.text).trim();
+    if (point == null || address.isEmpty) {
+      setState(() =>
+          message = 'Primero selecciona la ubicación que deseas guardar.');
+      return;
+    }
+    final controller = TextEditingController(
+        text: isOrigin && favoritePlaces.isEmpty ? 'Casa' : '');
+    final label = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Guardar lugar favorito'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 50,
+          decoration: const InputDecoration(
+              labelText: 'Nombre', hintText: 'Casa, Trabajo, Hotel…'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('Guardar')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (label == null || label.length < 2) return;
+    try {
+      await api.saveFavoritePlace(widget.s.token, label, address, point);
+      await loadFavoritePlaces();
+      if (mounted) setState(() => message = 'Lugar favorito guardado.');
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    }
+  }
+
+  Future<void> useFavorite(dynamic place, bool isOrigin) async {
+    final point = LatLng((place['latitude'] as num).toDouble(),
+        (place['longitude'] as num).toDouble());
+    setState(() {
+      mapSelection = null;
+      if (isOrigin) {
+        pickup = point;
+        origin.text = place['address'].toString();
+      } else {
+        dropoff = point;
+        destination.text = place['address'].toString();
+      }
+      message =
+          '${place['label']} seleccionado como ${isOrigin ? 'origen' : 'destino'}.';
+    });
+    if (isOrigin) {
+      realtime.subscribeNearby(point.latitude, point.longitude);
+      unawaited(refreshNearbyDrivers(point));
+    }
+    await refreshRoute(force: true);
+  }
+
+  Future<void> showFavoritePlaces() async {
+    await loadFavoritePlaces();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const ListTile(
+              leading: Icon(Icons.star_outline),
+              title: Text('Lugares favoritos'),
+              subtitle: Text('Úsalos rápidamente como origen o destino.'),
+            ),
+            if (favoritePlaces.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(18),
+                child: Text('Todavía no tienes lugares guardados.'),
+              ),
+            ...favoritePlaces.map((place) => ListTile(
+                  leading: const Icon(Icons.place_outlined),
+                  title: Text(place['label'].toString()),
+                  subtitle: Text(place['address'].toString(),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (value) async {
+                      if (value == 'delete') {
+                        await api.deleteFavoritePlace(
+                            widget.s.token, place['id'].toString());
+                        await loadFavoritePlaces();
+                        if (sheetContext.mounted) Navigator.pop(sheetContext);
+                      } else {
+                        Navigator.pop(sheetContext);
+                        await useFavorite(place, value == 'origin');
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                          value: 'origin', child: Text('Usar como origen')),
+                      PopupMenuItem(
+                          value: 'destination',
+                          child: Text('Usar como destino')),
+                      PopupMenuDivider(),
+                      PopupMenuItem(value: 'delete', child: Text('Eliminar')),
+                    ],
+                  ),
+                )),
+            const Divider(),
+            Row(children: [
+              Expanded(
+                child: TextButton.icon(
+                  onPressed: pickup == null
+                      ? null
+                      : () {
+                          Navigator.pop(sheetContext);
+                          saveCurrentPlace(true);
+                        },
+                  icon: const Icon(Icons.home_outlined),
+                  label: const Text('Guardar origen'),
+                ),
+              ),
+              Expanded(
+                child: TextButton.icon(
+                  onPressed: dropoff == null
+                      ? null
+                      : () {
+                          Navigator.pop(sheetContext);
+                          saveCurrentPlace(false);
+                        },
+                  icon: const Icon(Icons.flag_outlined),
+                  label: const Text('Guardar destino'),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+
   void _showMapEditor() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final mapContext = mapSectionKey.currentContext;
@@ -2169,6 +2591,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 ],
               ),
             ),
+          if (active == null)
+            Align(
+              alignment: Alignment.center,
+              child: TextButton.icon(
+                onPressed: showFavoritePlaces,
+                icon: const Icon(Icons.star_outline),
+                label: Text(favoritePlaces.isEmpty
+                    ? 'Guardar lugares favoritos'
+                    : 'Lugares favoritos (${favoritePlaces.length})'),
+              ),
+            ),
           if (routeDistanceMeters != null && routeDurationSeconds != null)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -2299,6 +2732,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               onPressed: openPassengerChat,
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text('Chat con el conductor'),
+            ),
+          if (active != null && active?['status'] != 'SEARCHING')
+            OutlinedButton.icon(
+              onPressed: () => showTripSafety(
+                context: c,
+                trip: active,
+                counterpart:
+                    active?['driverName']?.toString() ?? 'mi conductor',
+                location: currentLocation,
+              ),
+              icon: const Icon(Icons.shield_outlined),
+              label: const Text('Seguridad y compartir viaje'),
             ),
           FilledButton(
               onPressed: active == null ? create : null,
@@ -2741,6 +3186,17 @@ class _DriverState extends State<Driver> {
               onPressed: openDriverChat,
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text('Chat con el pasajero'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => showTripSafety(
+                context: c,
+                trip: active,
+                counterpart:
+                    active?['passengerName']?.toString() ?? 'mi pasajero',
+                location: currentDriverPosition,
+              ),
+              icon: const Icon(Icons.shield_outlined),
+              label: const Text('Seguridad y compartir viaje'),
             ),
             if (a != null)
               FilledButton(

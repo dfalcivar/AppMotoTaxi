@@ -93,7 +93,7 @@ async function authenticated(request: FastifyRequest, reply?: FastifyReply): Pro
     if (reply) reply.code(401).send({ error: "UNAUTHORIZED" });
     return;
   }
-  const active = await database()`select 1 from users where id=${user.id} and active_session_id=${user.sessionId}::uuid`;
+  const active = await database()`select 1 from users where id=${user.id} and active_session_id=${user.sessionId}::uuid and must_change_password=false`;
   if (!active.length) {
     if (reply) reply.code(401).send({ error: "SESSION_REPLACED" });
     return;

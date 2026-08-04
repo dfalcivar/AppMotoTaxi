@@ -9,7 +9,7 @@ export type SessionRole = "PASSENGER" | "DRIVER" | AdminRole;
 type DriverStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "REJECTED";
 type IncidentStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
 
-export interface SessionUser { id?: string; email: string; name: string; role: SessionRole; sessionId?: string }
+export interface SessionUser { id?: string; email: string; name: string; role: SessionRole; sessionId?: string; mustChangePassword?: boolean }
 interface Driver { id: string; name: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
 interface Passenger { id: string; name: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
 interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; status: "ACTIVE" | "SCHEDULED" }
@@ -191,6 +191,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       update users
       set password_hash=crypt(${body.password}, gen_salt('bf')),
           active_session_id=null,
+          must_change_password=true,
           updated_at=now()
       where id=${id} and role in ('PASSENGER','DRIVER')
       returning id::text, role
