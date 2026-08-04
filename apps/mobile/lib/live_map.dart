@@ -8,56 +8,6 @@ import 'package:latlong2/latlong.dart';
 
 enum MapPointSelection { origin, destination }
 
-void _paintMotoTaxi(Canvas canvas, Size size, Color color) {
-  final outline = Paint()
-    ..color = const Color(0xff17333a)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.6
-    ..strokeJoin = StrokeJoin.round;
-  final body = Paint()..color = color;
-  final glass = Paint()..color = const Color(0xffc9f3fb);
-  final dark = Paint()..color = const Color(0xff17252a);
-
-  final vehicleBody = RRect.fromRectAndRadius(
-    Rect.fromLTWH(size.width * .08, size.height * .43, size.width * .78,
-        size.height * .34),
-    const Radius.circular(4),
-  );
-  canvas.drawRRect(vehicleBody, body);
-  canvas.drawRRect(vehicleBody, outline);
-
-  final cabin = ui.Path()
-    ..moveTo(size.width * .23, size.height * .44)
-    ..lineTo(size.width * .34, size.height * .14)
-    ..lineTo(size.width * .68, size.height * .14)
-    ..lineTo(size.width * .79, size.height * .44)
-    ..close();
-  canvas.drawPath(cabin, body);
-  canvas.drawPath(cabin, outline);
-
-  final windshield = ui.Path()
-    ..moveTo(size.width * .49, size.height * .2)
-    ..lineTo(size.width * .65, size.height * .2)
-    ..lineTo(size.width * .73, size.height * .42)
-    ..lineTo(size.width * .49, size.height * .42)
-    ..close();
-  canvas.drawPath(windshield, glass);
-  canvas.drawPath(windshield, outline);
-  canvas.drawLine(Offset(size.width * .45, size.height * .17),
-      Offset(size.width * .45, size.height * .7), outline);
-
-  canvas.drawCircle(
-      Offset(size.width * .23, size.height * .79), size.height * .14, dark);
-  canvas.drawCircle(
-      Offset(size.width * .23, size.height * .79), size.height * .06, glass);
-  canvas.drawCircle(
-      Offset(size.width * .76, size.height * .79), size.height * .14, dark);
-  canvas.drawCircle(
-      Offset(size.width * .76, size.height * .79), size.height * .06, glass);
-  canvas.drawCircle(
-      Offset(size.width * .9, size.height * .59), size.height * .055, glass);
-}
-
 const configuredMapProvider =
     String.fromEnvironment('MAP_PROVIDER', defaultValue: 'osm');
 
@@ -132,27 +82,12 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
     }
   }
 
-  Future<gmaps.BitmapDescriptor> _createMotoIcon(Color color) async {
-    const logicalWidth = 44.0;
-    const logicalHeight = 30.0;
-    const pixelRatio = 3.0;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder)..scale(pixelRatio);
-    _paintMotoTaxi(canvas, const Size(logicalWidth, logicalHeight), color);
-    final image = await recorder.endRecording().toImage(
-          (logicalWidth * pixelRatio).round(),
-          (logicalHeight * pixelRatio).round(),
-        );
-    final data = await image.toByteData(format: ui.ImageByteFormat.png);
-    return gmaps.BitmapDescriptor.bytes(
-      data!.buffer.asUint8List(),
-      imagePixelRatio: pixelRatio,
-    );
-  }
-
   Future<void> _prepareGoogleMarkerIcons() async {
-    final nearby = await _createMotoIcon(const Color(0xff007f8b));
-    final active = await _createMotoIcon(Colors.orange);
+    const configuration = ImageConfiguration(size: Size(48, 48));
+    final nearby = await gmaps.BitmapDescriptor.asset(
+        configuration, 'assets/images/mototaxi-map-marker.png');
+    final active = await gmaps.BitmapDescriptor.asset(
+        configuration, 'assets/images/mototaxi-map-marker.png');
     if (!mounted) return;
     setState(() {
       _nearbyMotoIcon = nearby;
@@ -204,6 +139,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         oldWidget.routePoints != widget.routePoints) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _fitRoute();
+      });
+    }
+    if (oldWidget.currentLocation == null &&
+        widget.currentLocation != null &&
+        widget.pickup == null &&
+        _displayedDriver == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _moveCamera(widget.currentLocation!, 17);
       });
     }
   }
@@ -261,6 +204,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   LatLng? get _center =>
       _displayedDriver ??
       widget.pickup ??
+      widget.currentLocation ??
       widget.dropoff ??
       (widget.nearbyDrivers.isEmpty ? null : widget.nearbyDrivers.values.first);
 
@@ -320,18 +264,18 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         Marker(
           key: ValueKey(entry.key),
           point: entry.value,
-          width: 44,
-          height: 30,
-          child: const _MotoMarker(color: Color(0xff007f8b)),
+          width: 48,
+          height: 48,
+          child: const _MotoMarker(),
         ),
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
-          width: 48,
-          height: 34,
+          width: 52,
+          height: 52,
           child: Transform.rotate(
             angle: widget.driverBearing * math.pi / 180,
-            child: const _MotoMarker(color: Colors.orange),
+            child: const _MotoMarker(),
           ),
         ),
     ];
@@ -597,26 +541,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
 }
 
 class _MotoMarker extends StatelessWidget {
-  const _MotoMarker({required this.color});
-  final Color color;
+  const _MotoMarker();
 
   @override
-  Widget build(BuildContext context) => CustomPaint(
-        size: const Size(44, 30),
-        painter: _MotoTaxiPainter(color),
+  Widget build(BuildContext context) => Image.asset(
+        'assets/images/mototaxi-map-marker.png',
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
       );
-}
-
-class _MotoTaxiPainter extends CustomPainter {
-  const _MotoTaxiPainter(this.color);
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) => _paintMotoTaxi(canvas, size, color);
-
-  @override
-  bool shouldRepaint(covariant _MotoTaxiPainter oldDelegate) =>
-      oldDelegate.color != color;
 }
 
 class _MapLabel extends StatelessWidget {

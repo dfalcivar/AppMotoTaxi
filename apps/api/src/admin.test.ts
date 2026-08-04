@@ -42,6 +42,36 @@ describe("consola administrativa", () => {
     expect(response.statusCode).toBe(403);
   });
 
+  it("solo permite al administrador restablecer contraseñas", async () => {
+    const denied = await app.inject({
+      method: "POST",
+      url: "/v1/admin/users/DRV-002/reset-password",
+      headers: { authorization: `Bearer ${supportToken}` },
+      payload: { password: "Temporal2026!" }
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const updated = await app.inject({
+      method: "POST",
+      url: "/v1/admin/users/DRV-002/reset-password",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { password: "Temporal2026!" }
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toEqual({ ok: true, sessionsRevoked: true });
+  });
+
+  it("valida la longitud de la nueva contraseña", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/admin/users/DRV-002/reset-password",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { password: "corta" }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("INVALID_PASSWORD");
+  });
+
   it("permite al administrador aprobar y audita el cambio", async () => {
     const updated = await app.inject({ method: "PATCH", url: "/v1/admin/drivers/DRV-001", headers: { authorization: `Bearer ${adminToken}` }, payload: { status: "ACTIVE", reason: "Documentación completa" } });
     expect(updated.statusCode).toBe(200);

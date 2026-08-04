@@ -574,7 +574,15 @@ class Welcome extends StatelessWidget {
                             icon: const Icon(Icons.key_outlined,
                                 color: Colors.white),
                             label: const Text('Recuperar contraseña',
-                                style: TextStyle(color: Colors.white)))
+                                style: TextStyle(color: Colors.white))),
+                        const SizedBox(height: 18),
+                        const Text('Powered by DFAR System',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: .3))
                       ]))))
         ]))
       ]));
@@ -1136,6 +1144,12 @@ class _AccountHubState extends State<AccountHub> {
             subtitle: const Text('Actualizaciones de tus viajes'),
             onTap: () => Navigator.push(
                 c, MaterialPageRoute(builder: (_) => ActivityPanel(widget.s)))),
+        ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Acerca de ATACAMESGO'),
+            subtitle: const Text('Conoce nuestra propuesta de movilidad local'),
+            onTap: () => Navigator.push(c,
+                MaterialPageRoute(builder: (_) => const AboutAtacamesGo()))),
         if (pending != null)
           Card(
               child: ListTile(
@@ -1152,6 +1166,68 @@ class _AccountHubState extends State<AccountHub> {
             title: const Text('Cerrar sesión'),
             onTap: () => logout(c))
       ]));
+}
+
+class AboutAtacamesGo extends StatelessWidget {
+  const AboutAtacamesGo({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Acerca de')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: AspectRatio(
+              aspectRatio: 3 / 4,
+              child: Image.asset('assets/images/atacamesgo-about.png',
+                  fit: BoxFit.cover),
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text('ATACAMESGO',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.headlineMedium
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Text('Movilidad local, segura y cercana',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 18),
+          const Text(
+            'Conectamos a pasajeros y conductores de mototaxi para facilitar '
+            'viajes confiables dentro de Atacames. Queremos aportar al turismo, '
+            'al comercio local y a una movilidad que conozca de verdad nuestra comunidad.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(children: [
+                Icon(Icons.shield_outlined,
+                    color: theme.colorScheme.primary, size: 30),
+                const SizedBox(width: 14),
+                const Expanded(
+                    child: Text(
+                        'Proyecto piloto en evolución. Tus comentarios nos ayudan a mejorar cada viaje.')),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text('Powered by DFAR System',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
 }
 
 class TripsPanel extends StatefulWidget {

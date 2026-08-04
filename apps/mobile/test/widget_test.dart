@@ -7,6 +7,7 @@ void main() {
 
     expect(find.text('Ingresar como pasajero'), findsOneWidget);
     expect(find.text('Ingresar como conductor'), findsOneWidget);
+    expect(find.text('Powered by DFAR System'), findsOneWidget);
     expect(find.text('Crear una cuenta'), findsOneWidget);
   });
 }

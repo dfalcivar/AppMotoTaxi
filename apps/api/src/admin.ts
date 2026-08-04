@@ -43,6 +43,7 @@ const audits: AuditEntry[] = [];
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
 const driverSchema = z.object({ status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REJECTED"]), reason: z.string().min(3), deunaEnabled: z.boolean().optional(), deunaQrImageUrl: z.string().url().optional().or(z.literal("")) });
 const passengerSchema = z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().min(3) });
+const passwordResetSchema = z.object({ password: z.string().min(8).max(100) });
 const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
 const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
 const incidentSchema = z.object({ status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]), assignedTo: z.string().min(2) });
@@ -176,6 +177,31 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   });
 
   app.get("/v1/admin/me", async (request, reply) => { try { return requireUser(request); } catch (e) { return guardError(e, reply); } });
+  app.post("/v1/admin/users/:id/reset-password", async (request, reply) => { try {
+    const user = requireAdmin(request);
+    const body = passwordResetSchema.parse(request.body);
+    const id = (request.params as { id: string }).id;
+    if (!process.env.DATABASE_URL) {
+      const account = drivers.find(item => item.id === id) ?? passengers.find(item => item.id === id);
+      if (!account) return reply.code(404).send({ error: "NOT_FOUND" });
+      await persistAudit(user, "USER_PASSWORD_RESET", "USER", id, "Contraseña restablecida y sesiones cerradas");
+      return { ok: true, sessionsRevoked: true };
+    }
+    const [account] = await database()`
+      update users
+      set password_hash=crypt(${body.password}, gen_salt('bf')),
+          active_session_id=null,
+          updated_at=now()
+      where id=${id} and role in ('PASSENGER','DRIVER')
+      returning id::text, role
+    `;
+    if (!account) return reply.code(404).send({ error: "NOT_FOUND" });
+    await persistAudit(user, "USER_PASSWORD_RESET", "USER", id, "Contraseña restablecida y sesiones cerradas");
+    return { ok: true, sessionsRevoked: true };
+  } catch(e) {
+    if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_PASSWORD", message: "La contraseña debe tener entre 8 y 100 caracteres." });
+    return guardError(e, reply);
+  } });
   app.get("/v1/admin/dashboard", async (request, reply) => { try { requireUser(request); return { metrics: { activeTrips: 6, availableDrivers: drivers.filter(d => d.status === "ACTIVE").length, pendingDrivers: drivers.filter(d => d.status === "PENDING").length, openIncidents: incidents.filter(i => i.status !== "RESOLVED").length }, activeTrips: [
     { id: "TRIP-1048", passenger: "María Z.", driver: "José Q.", status: "IN_PROGRESS", zone: "URBAN", total: "$1,00", requestedAt: "19:42" },
     { id: "TRIP-1047", passenger: "Ana C.", driver: "Luis V.", status: "DRIVER_EN_ROUTE", zone: "EXTENDED", total: "$2,00", requestedAt: "19:38" },

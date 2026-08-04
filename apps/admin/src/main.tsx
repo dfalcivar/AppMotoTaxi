@@ -4,6 +4,7 @@ import { apiFetch, apiUrl, login, type Session } from "./api.js";
 import "./styles.css";
 import "./settings.css";
 import "./advertising.css";
+import "./password-reset.css";
 
 type Module = "dashboard" | "trips" | "drivers" | "passengers" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "audit" | "database";
 
@@ -69,12 +70,27 @@ function Trips({ token, admin }: { token: string; admin: boolean }) {
   return <section className="card"><Header eyebrow="OPERACIÓN" title="Viajes y asignaciones" action={`${data.filter(t => !["COMPLETED", "CANCELLED", "NO_DRIVER"].includes(t.status)).length} activos`} /><Notice error={error} />{data.length ? <Table headers={["Hora", "Pasajero", "Conductor", "Ruta", "Estado", "Total", "Acción"]} rows={data.map(t => [new Date(t.requestedAt).toLocaleString(), t.passenger, t.driver, `${t.originReference ?? "Origen"} → ${t.destinationReference ?? "Destino"}`, <Badge value={t.status} />, money(t.quotedTotalCents), admin && !["COMPLETED", "CANCELLED", "NO_DRIVER"].includes(t.status) ? <button className="link" onClick={() => cancel(t.id)}>Cancelar</button> : "—"])} /> : <Empty text="Todavía no hay viajes registrados." />}</section>;
 }
 
+function PasswordReset({ token, userId, userName }: { token: string; userId: string; userName: string }) {
+  const [open, setOpen] = useState(false); const [password, setPassword] = useState(""); const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [success, setSuccess] = useState(false);
+  function close() { if (!busy) { setOpen(false); setPassword(""); setConfirmation(""); setError(""); } }
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setError(""); setSuccess(false);
+    if (password.length < 8) { setError("La contraseña debe tener al menos 8 caracteres."); return; }
+    if (password !== confirmation) { setError("Las contraseñas no coinciden."); return; }
+    setBusy(true);
+    try { await apiFetch(`/v1/admin/users/${userId}/reset-password`, token, { method: "POST", body: JSON.stringify({ password }) }); setSuccess(true); setOpen(false); setPassword(""); setConfirmation(""); }
+    catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
+  }
+  return <><button className="link" type="button" onClick={() => { setSuccess(false); setOpen(true); }}>Restablecer clave</button>{success && <small className="inline-success">Clave actualizada</small>}{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><form className="modal-card" role="dialog" aria-modal="true" aria-label={`Restablecer contraseña de ${userName}`} onSubmit={submit}><Header eyebrow="SEGURIDAD" title="Restablecer contraseña" /><p>Define una clave temporal para <strong>{userName}</strong>. Al guardarla se cerrará cualquier sesión activa de su cuenta.</p><label>Nueva contraseña<input autoFocus autoComplete="new-password" type="password" minLength={8} maxLength={100} required value={password} onChange={event => setPassword(event.target.value)} /></label><label>Confirmar contraseña<input autoComplete="new-password" type="password" minLength={8} maxLength={100} required value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label><Notice error={error} /><div className="modal-actions"><button className="secondary" type="button" disabled={busy} onClick={close}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Guardando…" : "Restablecer y cerrar sesiones"}</button></div></form></div>}</>;
+}
+
 function Drivers({ token, admin }: { token: string; admin: boolean }) {
   const [data, setData] = useState<any[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState<string>();
   const load = () => apiFetch<any[]>("/v1/admin/drivers", token).then(setData).catch(reason => setError(errorText(reason)));
   useEffect(() => { void load(); }, [token]);
   async function update(driver: any, status = driver.status, deunaEnabled = Boolean(driver.deunaEnabled)) { setBusy(driver.id); setError(""); try { await apiFetch(`/v1/admin/drivers/${driver.id}`, token, { method: "PATCH", body: JSON.stringify({ status, deunaEnabled, reason: status === "ACTIVE" ? "Conductor aprobado desde el panel" : "Estado actualizado desde el panel" }) }); await load(); } catch (reason) { setError(errorText(reason)); } finally { setBusy(undefined); } }
-  return <section className="card"><Header eyebrow="VALIDACIÓN" title="Conductores" action={`${data.filter(d => d.status === "PENDING").length} pendientes`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Teléfono", "Vehículo", "Documentos", "Estado", "De Una", "Acción"]} rows={data.map(driver => [driver.name, driver.phone, driver.vehicle, driver.documents, <Badge value={driver.status} />, admin ? <input aria-label={`De Una para ${driver.name}`} type="checkbox" checked={Boolean(driver.deunaEnabled)} disabled={busy === driver.id} onChange={e => update(driver, driver.status, e.target.checked)} /> : "—", admin ? <select aria-label={`Estado de ${driver.name}`} value={driver.status} disabled={busy === driver.id} onChange={e => update(driver, e.target.value)}><option value="PENDING">Pendiente</option><option value="ACTIVE">Aprobar / activar</option><option value="SUSPENDED">Suspender</option><option value="REJECTED">Rechazar</option></select> : "Solo lectura"])} /> : <Empty text="No hay conductores registrados." />}</section>;
+  return <section className="card"><Header eyebrow="VALIDACIÓN" title="Conductores" action={`${data.filter(d => d.status === "PENDING").length} pendientes`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Teléfono", "Vehículo", "Documentos", "Estado", "De Una", "Acción"]} rows={data.map(driver => [driver.name, driver.phone, driver.vehicle, driver.documents, <Badge value={driver.status} />, admin ? <input aria-label={`De Una para ${driver.name}`} type="checkbox" checked={Boolean(driver.deunaEnabled)} disabled={busy === driver.id} onChange={e => update(driver, driver.status, e.target.checked)} /> : "—", admin ? <div className="row-actions"><select aria-label={`Estado de ${driver.name}`} value={driver.status} disabled={busy === driver.id} onChange={e => update(driver, e.target.value)}><option value="PENDING">Pendiente</option><option value="ACTIVE">Aprobar / activar</option><option value="SUSPENDED">Suspender</option><option value="REJECTED">Rechazar</option></select><PasswordReset token={token} userId={driver.id} userName={driver.name} /></div> : "Solo lectura"])} /> : <Empty text="No hay conductores registrados." />}</section>;
 }
 
 function Passengers({ token, admin }: { token: string; admin: boolean }) {
@@ -82,7 +98,7 @@ function Passengers({ token, admin }: { token: string; admin: boolean }) {
   const load = () => apiFetch<any[]>("/v1/admin/passengers", token).then(setData).catch(reason => setError(errorText(reason)));
   useEffect(() => { void load(); }, [token]);
   async function update(passenger: any) { try { await apiFetch(`/v1/admin/passengers/${passenger.id}`, token, { method: "PATCH", body: JSON.stringify({ status: passenger.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE", reason: "Actualización desde el panel administrativo" }) }); await load(); } catch (reason) { setError(errorText(reason)); } }
-  return <section className="card"><Header eyebrow="USUARIOS" title="Pasajeros" action={`${data.length} registrados`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Teléfono", "Viajes", "Último viaje", "Estado", "Acción"]} rows={data.map(passenger => [passenger.name, passenger.phone, passenger.trips, passenger.lastTrip ? new Date(passenger.lastTrip).toLocaleString() : "Sin viajes", <Badge value={passenger.status} />, admin ? <button className="link" onClick={() => update(passenger)}>{passenger.status === "ACTIVE" ? "Suspender" : "Reactivar"}</button> : "Solo lectura"])} /> : <Empty text="No hay pasajeros registrados." />}</section>;
+  return <section className="card"><Header eyebrow="USUARIOS" title="Pasajeros" action={`${data.length} registrados`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Teléfono", "Viajes", "Último viaje", "Estado", "Acción"]} rows={data.map(passenger => [passenger.name, passenger.phone, passenger.trips, passenger.lastTrip ? new Date(passenger.lastTrip).toLocaleString() : "Sin viajes", <Badge value={passenger.status} />, admin ? <div className="row-actions"><button className="link" onClick={() => update(passenger)}>{passenger.status === "ACTIVE" ? "Suspender" : "Reactivar"}</button><PasswordReset token={token} userId={passenger.id} userName={passenger.name} /></div> : "Solo lectura"])} /> : <Empty text="No hay pasajeros registrados." />}</section>;
 }
 
 function Pricing({ token, admin }: { token: string; admin: boolean }) {
