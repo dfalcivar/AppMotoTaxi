@@ -26,7 +26,10 @@ const mobileLoginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8)
 });
-const changePasswordSchema = z.object({ password: z.string().min(8).max(100) });
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(8).max(100).optional(),
+  password: z.string().min(8).max(100)
+});
 const registrationSchema = z.object({
   fullName: z.string().trim().min(3).max(120),
   email: z.string().email(),
@@ -57,6 +60,12 @@ const favoritePlaceSchema = z.object({
   address: z.string().trim().min(3).max(200),
   location: pointSchema
 });
+const driverDocumentSchema = z.object({
+  documentType: z.enum(["PROFILE_PHOTO", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
+  fileBase64: z.string().min(100).max(3_500_000),
+  fileMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  expiresAt: z.string().date().optional().or(z.literal(""))
+});
 
 async function configuredSearchRadius(): Promise<number> {
   const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
@@ -79,7 +88,7 @@ async function authenticatedUser(request: { headers: Record<string, string | str
 }
 
 export async function buildApp() {
-  const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({ logger: true, bodyLimit: 4 * 1024 * 1024 });
   await app.register(cors, {
     origin: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -89,9 +98,21 @@ export async function buildApp() {
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
 
+  app.addHook("onResponse", async (request, reply) => {
+    if (reply.elapsedTime >= 1500) {
+      request.log.warn({
+        method: request.method,
+        url: request.url,
+        statusCode: reply.statusCode,
+        elapsedMs: Math.round(reply.elapsedTime)
+      }, "slow_request");
+    }
+  });
+
   app.get("/health", async () => ({
     status: "ok",
-    service: "mototaxi-atacames-api"
+    service: "mototaxi-atacames-api",
+    uptimeSeconds: Math.round(process.uptime())
   }));
 
   app.get("/v1/pricing/config", async () => initialPricingConfig);
@@ -229,10 +250,15 @@ export async function buildApp() {
           must_change_password=false,
           updated_at=now()
       where id=${user.id!}
+        and (must_change_password=true or (${parsed.data.currentPassword ?? ""} <> ''
+          and password_hash=crypt(${parsed.data.currentPassword ?? ""}, password_hash)))
         and password_hash <> crypt(${parsed.data.password}, password_hash)
       returning id::text
     `;
-    if (!updated) return reply.code(409).send({ error: "PASSWORD_REUSED" });
+    if (!updated) {
+      const [samePassword] = await database()`select 1 from users where id=${user.id!} and password_hash=crypt(${parsed.data.password}, password_hash)`;
+      return reply.code(samePassword ? 409 : 401).send({ error: samePassword ? "PASSWORD_REUSED" : "INVALID_CURRENT_PASSWORD" });
+    }
     return { changed: true };
   });
 
@@ -298,13 +324,16 @@ export async function buildApp() {
   app.get("/v1/profile", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const [profile] = await database()`
-      select u.id::text, u.full_name as name, u.role, u.phone_e164 as phone,
+      select u.id::text, u.full_name as name, u.email, u.role, u.phone_e164 as phone,
         coalesce(d.rating, (select avg(score)::numeric(3,2) from ratings where recipient_id=u.id), 0)::float8 as rating,
         (select count(*)::int from ratings where recipient_id=u.id) as "ratingCount",
-        v.identifier as vehicle
+        v.identifier as vehicle,
+        encode(photo.file_data, 'base64') as "photoBase64",
+        photo.file_mime as "photoMime"
       from users u
       left join drivers d on d.user_id=u.id
       left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true
+      left join lateral (select file_data, file_mime from driver_documents where driver_id=u.id and document_type='PROFILE_PHOTO' limit 1) photo on true
       where u.id=${user.id!}
     `;
     const reviews = await database()`
@@ -313,6 +342,39 @@ export async function buildApp() {
       where r.recipient_id=${user.id!} order by r.created_at desc limit 10
     `;
     return { ...profile, reviews };
+  });
+
+  app.get("/v1/driver/documents", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    return database()`
+      select id::text, document_type as "documentType", file_mime as "fileMime",
+        status, expires_at as "expiresAt", review_note as "reviewNote",
+        created_at as "createdAt"
+      from driver_documents where driver_id=${user.id!} order by document_type
+    `;
+  });
+
+  app.post("/v1/driver/documents", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = driverDocumentSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" });
+    const input = parsed.data;
+    const data = Buffer.from(input.fileBase64, "base64");
+    if (data.length < 50 || data.length > 2_500_000) return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" });
+    const [document] = await database()`
+      insert into driver_documents
+        (driver_id, document_type, file_url, file_data, file_mime, expires_at, status)
+      values (${user.id!}, ${input.documentType}, 'database', ${data}, ${input.fileMime},
+        ${input.expiresAt || null}, 'PENDING')
+      on conflict (driver_id, document_type) do update set
+        file_data=excluded.file_data, file_mime=excluded.file_mime,
+        expires_at=excluded.expires_at, status='PENDING', reviewed_by=null,
+        reviewed_at=null, review_note=null, created_at=now()
+      returning id::text, document_type as "documentType", status
+    `;
+    return reply.code(201).send(document);
   });
 
   app.get("/v1/favorite-places", async (request, reply) => {

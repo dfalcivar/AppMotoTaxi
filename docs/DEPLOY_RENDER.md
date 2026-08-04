@@ -60,6 +60,20 @@ $env:GOOGLE_MAPS_ANDROID_API_KEY='CLAVE_ANDROID_RESTRINGIDA'
 flutter build apk --release --dart-define=MAP_PROVIDER=google
 ```
 
+Para habilitar el monitoreo de errores y rendimiento del piloto, crea un
+proyecto Flutter en Sentry y agrega su DSN solamente durante la compilacion:
+
+```powershell
+flutter build apk --release `
+  --dart-define=MAP_PROVIDER=google `
+  --dart-define=SENTRY_DSN=https://DSN_DEL_PROYECTO@sentry.io/ID `
+  --dart-define=APP_ENV=pilot
+```
+
+Sin `SENTRY_DSN` la aplicacion funciona normalmente y no envia telemetria. La
+API registra solicitudes, tiempos de respuesta y operaciones lentas en los logs
+estructurados de Render. No guardes el DSN ni configuraciones de proxy en Git.
+
 Sin `MAP_PROVIDER=google`, la APK conserva OpenStreetMap como respaldo.
 
 Para desarrollo contra una API local en el emulador utiliza explícitamente:

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'package:latlong2/latlong.dart';
@@ -10,6 +12,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 import 'affiliate_banners.dart';
 import 'chat_sheet.dart';
@@ -19,6 +24,7 @@ import 'realtime_service.dart';
 const base = String.fromEnvironment('API_BASE_URL',
     defaultValue: 'https://mototaxi-atacames-api.onrender.com');
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
+const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
 class AppHttpOverrides extends HttpOverrides {
   AppHttpOverrides(this.proxy);
@@ -46,6 +52,44 @@ http.Client buildHttpClient() {
 final apiHttpClient = buildHttpClient();
 bool firebaseReady = false;
 const nativeActions = MethodChannel('ec.atacames.mototaxi/native');
+const secureStorage = FlutterSecureStorage();
+
+class BiometricSessionStore {
+  static const _key = 'atacamesgo_biometric_session';
+  static final _auth = LocalAuthentication();
+
+  static Future<void> enable(Session session) => secureStorage.write(
+      key: _key,
+      value: jsonEncode({
+        'token': session.token,
+        'role': session.role,
+        'name': session.name,
+        'id': session.id,
+      }));
+
+  static Future<void> clear() => secureStorage.delete(key: _key);
+
+  static Future<Session?> saved() async {
+    final value = await secureStorage.read(key: _key);
+    if (value == null) return null;
+    try {
+      final data = jsonDecode(value) as Map<String, dynamic>;
+      return Session(data['token'], data['role'], data['name'], data['id']);
+    } catch (_) {
+      await clear();
+      return null;
+    }
+  }
+
+  static Future<bool> supported() async =>
+      await _auth.canCheckBiometrics &&
+      (await _auth.getAvailableBiometrics()).isNotEmpty;
+
+  static Future<bool> authenticate() => _auth.authenticate(
+      localizedReason: 'Confirma tu identidad para ingresar a AtacamesGo',
+      biometricOnly: true,
+      persistAcrossBackgrounding: true);
+}
 
 Future<void> dialPhone(BuildContext context, dynamic phoneValue) async {
   final phone = phoneValue?.toString().trim() ?? '';
@@ -175,7 +219,19 @@ Future<void> main() async {
     // La mensajería push es opcional en instalaciones piloto sin credenciales.
   }
   await appTheme.load();
-  runApp(const MototaxiApp());
+  if (sentryDsn.isNotEmpty) {
+    await SentryFlutter.init(
+      (options) {
+        options.dsn = sentryDsn;
+        options.tracesSampleRate = .2;
+        options.environment =
+            const String.fromEnvironment('APP_ENV', defaultValue: 'pilot');
+      },
+      appRunner: () => runApp(SentryWidget(child: const MototaxiApp())),
+    );
+  } else {
+    runApp(const MototaxiApp());
+  }
 }
 
 final appTheme = AppThemeController();
@@ -312,6 +368,9 @@ String mensajeApi(dynamic code) =>
       'PASSWORD_REUSED':
           'La nueva contraseña debe ser diferente a la temporal.',
       'INVALID_PASSWORD': 'La contraseña debe tener al menos 8 caracteres.',
+      'INVALID_CURRENT_PASSWORD': 'La contraseña actual no es correcta.',
+      'INVALID_DRIVER_DOCUMENT':
+          'La imagen no es válida o supera el tamaño permitido.',
       'INVALID_FAVORITE_PLACE':
           'Revisa el nombre y la dirección del lugar favorito.',
     }[code] ??
@@ -320,36 +379,61 @@ String mensajeApi(dynamic code) =>
 class Api {
   Future<dynamic> call(String method, String path,
       {String? token, Object? body}) async {
-    try {
-      final request = http.Request(method, Uri.parse('$base$path'));
-      request.headers.addAll({
-        'content-type': 'application/json',
-        if (token != null) 'authorization': 'Bearer $token'
-      });
-      request.body = jsonEncode(body ?? {});
-      final streamed = await apiHttpClient
-          .send(request)
-          .timeout(const Duration(seconds: 40));
-      final response = await http.Response.fromStream(streamed);
-      final data = response.body == 'null' || response.body.isEmpty
-          ? null
-          : jsonDecode(response.body);
-      if (response.statusCode >= 400) {
-        throw ApiException(mensajeApi(data?['error']));
+    final safeToRetry = method == 'GET' || method == 'HEAD';
+    final attempts = safeToRetry ? 3 : 1;
+    Object? lastError;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        final request = http.Request(method, Uri.parse('$base$path'));
+        request.headers.addAll({
+          'content-type': 'application/json',
+          if (token != null) 'authorization': 'Bearer $token'
+        });
+        request.body = jsonEncode(body ?? {});
+        final streamed = await apiHttpClient
+            .send(request)
+            .timeout(const Duration(seconds: 35));
+        final response = await http.Response.fromStream(streamed);
+        final data = response.body == 'null' || response.body.isEmpty
+            ? null
+            : jsonDecode(response.body);
+        if (response.statusCode >= 500 && attempt + 1 < attempts) {
+          await Future<void>.delayed(
+              Duration(milliseconds: 650 * (attempt + 1)));
+          continue;
+        }
+        if (response.statusCode >= 400) {
+          throw ApiException(mensajeApi(data?['error']));
+        }
+        return data;
+      } on ApiException {
+        rethrow;
+      } on TimeoutException catch (error, stack) {
+        lastError = error;
+        if (attempt + 1 == attempts && sentryDsn.isNotEmpty) {
+          unawaited(Sentry.captureException(error, stackTrace: stack));
+        }
+      } on SocketException catch (error, stack) {
+        lastError = error;
+        if (attempt + 1 == attempts && sentryDsn.isNotEmpty) {
+          unawaited(Sentry.captureException(error, stackTrace: stack));
+        }
+      } on http.ClientException catch (error, stack) {
+        lastError = error;
+        if (attempt + 1 == attempts && sentryDsn.isNotEmpty) {
+          unawaited(Sentry.captureException(error, stackTrace: stack));
+        }
       }
-      return data;
-    } on ApiException {
-      rethrow;
-    } on TimeoutException {
-      throw const ApiException(
-          'La API de Render tardó demasiado. Intenta nuevamente.');
-    } on SocketException {
-      throw const ApiException(
-          'No se pudo conectar con la API. Revisa tu conexión a Internet.');
-    } on http.ClientException {
-      throw const ApiException(
-          'No se pudo conectar con la API. Revisa tu conexión a Internet.');
+      if (attempt + 1 < attempts) {
+        await Future<void>.delayed(Duration(milliseconds: 650 * (attempt + 1)));
+      }
     }
+    if (lastError is TimeoutException) {
+      throw const ApiException(
+          'La conexión está lenta. Reintentamos sin éxito; inténtalo nuevamente.');
+    }
+    throw const ApiException(
+        'No se pudo conectar. Revisa Internet e intenta nuevamente.');
   }
 
   Future<Session> login(String e, String p) async {
@@ -376,9 +460,12 @@ class Api {
   Future<void> logout(String token) =>
       call('POST', '/v1/auth/logout', token: token);
 
-  Future<void> changePassword(String token, String password) =>
-      call('POST', '/v1/auth/change-password',
-          token: token, body: {'password': password});
+  Future<void> changePassword(String token, String password,
+          {String? currentPassword}) =>
+      call('POST', '/v1/auth/change-password', token: token, body: {
+        'password': password,
+        if (currentPassword != null) 'currentPassword': currentPassword
+      });
 
   Future<dynamic> register(Map<String, dynamic> body) =>
       call('POST', '/v1/auth/register', body: body);
@@ -437,6 +524,16 @@ class Api {
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
+  Future<List<dynamic>> driverDocuments(String t) async =>
+      List<dynamic>.from(await call('GET', '/v1/driver/documents', token: t));
+  Future<dynamic> uploadDriverDocument(String t, String documentType,
+          String fileBase64, String fileMime, String expiresAt) =>
+      call('POST', '/v1/driver/documents', token: t, body: {
+        'documentType': documentType,
+        'fileBase64': fileBase64,
+        'fileMime': fileMime,
+        if (expiresAt.isNotEmpty) 'expiresAt': expiresAt,
+      });
   Future<List<dynamic>> favoritePlaces(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/favorite-places', token: t));
   Future<dynamic> saveFavoritePlace(
@@ -514,10 +611,14 @@ class MototaxiApp extends StatelessWidget {
   Widget build(BuildContext c) => ValueListenableBuilder<ThemeMode>(
       valueListenable: appTheme,
       builder: (context, mode, child) => MaterialApp(
+          title: 'AtacamesGo',
           debugShowCheckedModeBanner: false,
           themeMode: mode,
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),
+          navigatorObservers:
+              sentryDsn.isEmpty ? const [] : [SentryNavigatorObserver()],
+          builder: (context, child) => NetworkStatus(child: child!),
           home: const Welcome()));
 
   ThemeData _theme(Brightness brightness) {
@@ -529,6 +630,30 @@ class MototaxiApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor:
             brightness == Brightness.light ? const Color(0xfff4fafb) : null,
+        appBarTheme: AppBarTheme(
+            centerTitle: false,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            backgroundColor: brightness == Brightness.light
+                ? const Color(0xfff4fafb)
+                : scheme.surface,
+            titleTextStyle: TextStyle(
+                color: scheme.onSurface,
+                fontSize: 20,
+                fontWeight: FontWeight.w800)),
+        cardTheme: CardThemeData(
+            elevation: 0,
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            color: scheme.surface,
+            shape: RoundedRectangleBorder(
+                side: BorderSide(
+                    color: scheme.outlineVariant.withValues(alpha: .65)),
+                borderRadius: BorderRadius.circular(20))),
+        listTileTheme: ListTileThemeData(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16))),
         inputDecorationTheme: InputDecorationTheme(
             filled: true,
             fillColor: scheme.surfaceContainerHighest.withValues(alpha: .45),
@@ -544,6 +669,69 @@ class MototaxiApp extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(18)))));
   }
+}
+
+class NetworkStatus extends StatefulWidget {
+  const NetworkStatus({required this.child, super.key});
+  final Widget child;
+
+  @override
+  State<NetworkStatus> createState() => _NetworkStatusState();
+}
+
+class _NetworkStatusState extends State<NetworkStatus> {
+  StreamSubscription<List<ConnectivityResult>>? subscription;
+  bool offline = false;
+
+  @override
+  void initState() {
+    super.initState();
+    subscription = Connectivity().onConnectivityChanged.listen((results) {
+      if (mounted) {
+        setState(() => offline = results.isEmpty ||
+            results.every((value) => value == ConnectivityResult.none));
+      }
+    });
+    Connectivity().checkConnectivity().then((results) {
+      if (mounted) {
+        setState(() => offline = results.isEmpty ||
+            results.every((value) => value == ConnectivityResult.none));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Stack(children: [
+        widget.child,
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 250),
+          left: 12,
+          right: 12,
+          top: offline ? MediaQuery.paddingOf(context).top + 6 : -80,
+          child: Material(
+            color: const Color(0xff8a3b22),
+            borderRadius: BorderRadius.circular(14),
+            elevation: 8,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(children: [
+                Icon(Icons.cloud_off_outlined, color: Colors.white, size: 20),
+                SizedBox(width: 10),
+                Expanded(
+                    child: Text(
+                        'Sin conexión. Conservaremos la pantalla y reintentaremos al volver Internet.',
+                        style: TextStyle(color: Colors.white, fontSize: 12))),
+              ]),
+            ),
+          ),
+        ),
+      ]);
 }
 
 class ThemeSelector extends StatelessWidget {
@@ -698,14 +886,17 @@ class _LoginState extends State<Login> {
   String? error;
   bool busy = false;
   bool showPassword = false;
+  Session? biometricSession;
   @override
   void initState() {
     super.initState();
-    final d = widget.role == 'DRIVER';
-    email = TextEditingController(
-        text: d ? 'conductor@mototaxi.local' : 'pasajera@mototaxi.local');
-    password =
-        TextEditingController(text: d ? 'Conductor2026!' : 'Pasajera2026!');
+    email = TextEditingController();
+    password = TextEditingController();
+    BiometricSessionStore.saved().then((session) {
+      if (mounted && session?.role == widget.role) {
+        setState(() => biometricSession = session);
+      }
+    });
   }
 
   @override
@@ -723,6 +914,10 @@ class _LoginState extends State<Login> {
     });
     try {
       final s = await Api().login(email.text, password.text);
+      if (sentryDsn.isNotEmpty) {
+        await Sentry.configureScope((scope) => scope.setUser(
+            SentryUser(id: s.id, username: s.name, data: {'role': s.role})));
+      }
       if (mounted) {
         Navigator.pushReplacement(
             context,
@@ -735,6 +930,38 @@ class _LoginState extends State<Login> {
       }
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> biometricLogin() async {
+    final session = biometricSession;
+    if (session == null) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      if (!await BiometricSessionStore.authenticate()) return;
+      await Api().profile(session.token);
+      if (!mounted) return;
+      Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+              builder: (_) => session.role == 'DRIVER'
+                  ? Driver(session)
+                  : Passenger(session)));
+    } catch (reason) {
+      await BiometricSessionStore.clear();
+      if (mounted) {
+        setState(() {
+          biometricSession = null;
+          error = reason is ApiException
+              ? 'La sesión guardada venció. Ingresa con tu contraseña y activa nuevamente la biometría.'
+              : 'No se pudo validar la huella o el reconocimiento facial.';
+        });
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -917,6 +1144,19 @@ class _LoginState extends State<Login> {
                                                       label: Text(busy
                                                           ? 'Ingresando…'
                                                           : 'Ingresar')),
+                                                  if (biometricSession !=
+                                                      null) ...[
+                                                    const SizedBox(height: 10),
+                                                    OutlinedButton.icon(
+                                                      onPressed: busy
+                                                          ? null
+                                                          : biometricLogin,
+                                                      icon: const Icon(
+                                                          Icons.fingerprint),
+                                                      label: const Text(
+                                                          'Ingresar con biometría'),
+                                                    ),
+                                                  ],
                                                   const SizedBox(height: 10),
                                                   TextButton.icon(
                                                       onPressed: () =>
@@ -1277,12 +1517,37 @@ class Profile extends StatefulWidget {
 
 class _ProfileState extends State<Profile> {
   dynamic p;
+  bool biometricEnabled = false;
   @override
   void initState() {
     super.initState();
     Api().profile(widget.s.token).then((v) {
       if (mounted) setState(() => p = v);
     });
+    BiometricSessionStore.saved().then((value) {
+      if (mounted) setState(() => biometricEnabled = value?.id == widget.s.id);
+    });
+  }
+
+  Future<void> toggleBiometric(bool enabled) async {
+    try {
+      if (enabled) {
+        if (!await BiometricSessionStore.supported()) {
+          throw const ApiException(
+              'Configura una huella o reconocimiento facial en el teléfono.');
+        }
+        if (!await BiometricSessionStore.authenticate()) return;
+        await BiometricSessionStore.enable(widget.s);
+      } else {
+        await BiometricSessionStore.clear();
+      }
+      if (mounted) setState(() => biometricEnabled = enabled);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
   }
 
   @override
@@ -1291,22 +1556,110 @@ class _ProfileState extends State<Profile> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final rs = p['reviews'] as List;
+    final photo = p['photoBase64']?.toString();
     return Scaffold(
         appBar: AppBar(title: const Text('Mi perfil')),
-        body: ListView(padding: const EdgeInsets.all(20), children: [
-          CircleAvatar(radius: 35, child: Text(p['name'].substring(0, 1))),
-          Text(p['name'],
-              textAlign: TextAlign.center,
-              style: Theme.of(c).textTheme.headlineSmall),
-          Text(p['role'] == 'DRIVER' ? 'Conductor' : 'Pasajero',
-              textAlign: TextAlign.center),
+        body: ListView(padding: const EdgeInsets.all(16), children: [
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xff006f7c), Color(0xff0498a7)]),
+              borderRadius: BorderRadius.circular(26),
+            ),
+            child: Column(children: [
+              CircleAvatar(
+                radius: 46,
+                foregroundImage: photo?.isNotEmpty == true
+                    ? MemoryImage(base64Decode(photo!))
+                    : null,
+                child: photo?.isNotEmpty == true
+                    ? null
+                    : Text(p['name'].substring(0, 1),
+                        style: const TextStyle(fontSize: 30)),
+              ),
+              const SizedBox(height: 12),
+              Text(p['name'],
+                  textAlign: TextAlign.center,
+                  style: Theme.of(c).textTheme.headlineSmall?.copyWith(
+                      color: Colors.white, fontWeight: FontWeight.w800)),
+              Text(p['role'] == 'DRIVER' ? 'Conductor verificado' : 'Pasajero',
+                  style: const TextStyle(color: Colors.white70)),
+            ]),
+          ),
+          const SizedBox(height: 14),
+          Card(
+            child: Column(children: [
+              ListTile(
+                  leading: const Icon(Icons.alternate_email),
+                  title: const Text('Correo electrónico'),
+                  subtitle: Text(p['email'] ?? 'Sin correo registrado')),
+              const Divider(height: 1),
+              ListTile(
+                  leading: const Icon(Icons.phone_outlined),
+                  title: const Text('Teléfono'),
+                  subtitle: Text(p['phone'] ?? 'Sin teléfono registrado')),
+              if (p['vehicle'] != null) ...[
+                const Divider(height: 1),
+                ListTile(
+                    leading: const Icon(Icons.electric_rickshaw_outlined),
+                    title: const Text('Mototaxi'),
+                    subtitle: Text(p['vehicle'])),
+              ],
+            ]),
+          ),
           Card(
               child: ListTile(
                   leading: const Icon(Icons.star, color: Colors.amber),
                   title:
                       Text('${(p['rating'] as num).toStringAsFixed(1)} de 5'),
                   subtitle: Text('${p['ratingCount']} calificaciones'))),
-          const Text('Comentarios recibidos'),
+          Card(
+            child: Column(children: [
+              SwitchListTile(
+                secondary: const Icon(Icons.fingerprint),
+                title: const Text('Ingreso biométrico'),
+                subtitle: const Text('Usar huella o reconocimiento facial'),
+                value: biometricEnabled,
+                onChanged: toggleBiometric,
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.password_outlined),
+                title: const Text('Cambiar contraseña'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                    c,
+                    MaterialPageRoute(
+                        builder: (_) => ChangePassword(widget.s))),
+              ),
+              if (widget.s.role == 'DRIVER') ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.badge_outlined),
+                  title: const Text('Documentos habilitantes'),
+                  subtitle: const Text('Foto, licencia, matrícula y permiso'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    await Navigator.push(
+                        c,
+                        MaterialPageRoute(
+                            builder: (_) => DriverDocumentsScreen(widget.s)));
+                    final value = await Api().profile(widget.s.token);
+                    if (mounted) setState(() => p = value);
+                  },
+                ),
+              ],
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
+            child: Text('Comentarios recibidos',
+                style: Theme.of(c)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w800)),
+          ),
           ...rs.map((r) => Card(
               child: ListTile(
                   title: Text(r['comment']?.toString().isNotEmpty == true
@@ -1317,6 +1670,247 @@ class _ProfileState extends State<Profile> {
                   trailing: Text('★ ${r['score']}'))))
         ]));
   }
+}
+
+class ChangePassword extends StatefulWidget {
+  const ChangePassword(this.session, {super.key});
+  final Session session;
+  @override
+  State<ChangePassword> createState() => _ChangePasswordState();
+}
+
+class _ChangePasswordState extends State<ChangePassword> {
+  final current = TextEditingController();
+  final password = TextEditingController();
+  final confirmation = TextEditingController();
+  bool busy = false;
+  bool hidden = true;
+  String? message;
+
+  @override
+  void dispose() {
+    current.dispose();
+    password.dispose();
+    confirmation.dispose();
+    super.dispose();
+  }
+
+  Future<void> save() async {
+    if (password.text.length < 8) {
+      setState(() =>
+          message = 'La nueva contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (password.text != confirmation.text) {
+      setState(() => message = 'Las contraseñas nuevas no coinciden.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await Api().changePassword(widget.session.token, password.text,
+          currentPassword: current.text);
+      await BiometricSessionStore.clear();
+      if (!mounted) return;
+      await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+                icon: const Icon(Icons.check_circle_outline),
+                title: const Text('Contraseña actualizada'),
+                content: const Text(
+                    'Por seguridad, vuelve a activar el ingreso biométrico desde tu perfil.'),
+                actions: [
+                  FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('Entendido'))
+                ],
+              ));
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Cambiar contraseña')),
+        body: ListView(padding: const EdgeInsets.all(20), children: [
+          const Icon(Icons.lock_reset_outlined, size: 62),
+          const SizedBox(height: 14),
+          TextField(
+              controller: current,
+              obscureText: hidden,
+              decoration: const InputDecoration(
+                  labelText: 'Contraseña actual',
+                  prefixIcon: Icon(Icons.lock_outline))),
+          const SizedBox(height: 14),
+          TextField(
+              controller: password,
+              obscureText: hidden,
+              decoration: const InputDecoration(
+                  labelText: 'Nueva contraseña',
+                  prefixIcon: Icon(Icons.password_outlined))),
+          const SizedBox(height: 14),
+          TextField(
+              controller: confirmation,
+              obscureText: hidden,
+              decoration: InputDecoration(
+                  labelText: 'Confirmar nueva contraseña',
+                  prefixIcon: const Icon(Icons.password_outlined),
+                  suffixIcon: IconButton(
+                      onPressed: () => setState(() => hidden = !hidden),
+                      icon: Icon(hidden
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined)))),
+          if (message != null)
+            Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(message!,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error))),
+          FilledButton.icon(
+              onPressed: busy ? null : save,
+              icon: const Icon(Icons.save_outlined),
+              label: Text(busy ? 'Guardando…' : 'Actualizar contraseña')),
+        ]),
+      );
+}
+
+class DriverDocumentsScreen extends StatefulWidget {
+  const DriverDocumentsScreen(this.session, {super.key});
+  final Session session;
+  @override
+  State<DriverDocumentsScreen> createState() => _DriverDocumentsScreenState();
+}
+
+class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
+  final picker = ImagePicker();
+  List<dynamic>? documents;
+  String? busyType;
+  String? message;
+  static const labels = {
+    'PROFILE_PHOTO': ('Foto del conductor', Icons.account_circle_outlined),
+    'LICENSE': ('Licencia de conducir', Icons.badge_outlined),
+    'REGISTRATION': ('Matrícula de la mototaxi', Icons.description_outlined),
+    'OPERATING_PERMIT': ('Permiso de operación', Icons.verified_outlined),
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    try {
+      final value = await Api().driverDocuments(widget.session.token);
+      if (mounted) setState(() => documents = value);
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    }
+  }
+
+  Future<void> upload(String type) async {
+    final source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(
+                  leading: const Icon(Icons.camera_alt_outlined),
+                  title: const Text('Tomar fotografía'),
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
+              ListTile(
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Elegir de galería'),
+                  onTap: () =>
+                      Navigator.pop(sheetContext, ImageSource.gallery)),
+            ])));
+    if (source == null) return;
+    final file = await picker.pickImage(
+        source: source, imageQuality: 72, maxWidth: 1400, maxHeight: 1400);
+    if (file == null) return;
+    setState(() {
+      busyType = type;
+      message = null;
+    });
+    try {
+      final bytes = await file.readAsBytes();
+      final extension = file.name.toLowerCase();
+      final mime = extension.endsWith('.png')
+          ? 'image/png'
+          : extension.endsWith('.webp')
+              ? 'image/webp'
+              : 'image/jpeg';
+      await Api().uploadDriverDocument(
+          widget.session.token, type, base64Encode(bytes), mime, '');
+      await load();
+      if (mounted) setState(() => message = 'Imagen enviada para revisión.');
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => busyType = null);
+    }
+  }
+
+  dynamic document(String type) => documents
+      ?.cast<dynamic>()
+      .where((item) => item['documentType'] == type)
+      .firstOrNull;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Documentos habilitantes')),
+        body: documents == null
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(padding: const EdgeInsets.all(16), children: [
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(children: [
+                          Icon(Icons.privacy_tip_outlined,
+                              color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                              child: Text(
+                                  'Toma fotografías claras, completas y sin reflejos. Cada actualización vuelve a revisión administrativa.')),
+                        ]))),
+                ...labels.entries.map((entry) {
+                  final item = document(entry.key);
+                  final status = item?['status']?.toString();
+                  return Card(
+                      child: ListTile(
+                    leading: CircleAvatar(child: Icon(entry.value.$2)),
+                    title: Text(entry.value.$1),
+                    subtitle: Text(status == null
+                        ? 'Pendiente de cargar'
+                        : status == 'ACTIVE'
+                            ? 'Aprobado'
+                            : status == 'REJECTED'
+                                ? 'Rechazado: ${item['reviewNote'] ?? ''}'
+                                : 'En revisión'),
+                    trailing: busyType == entry.key
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : IconButton(
+                            onPressed: () => upload(entry.key),
+                            icon: Icon(item == null
+                                ? Icons.add_a_photo_outlined
+                                : Icons.refresh)),
+                  ));
+                }),
+                if (message != null)
+                  Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(message!, textAlign: TextAlign.center)),
+              ]),
+      );
 }
 
 class AccountHub extends StatefulWidget {
@@ -1340,6 +1934,10 @@ class _AccountHubState extends State<AccountHub> {
     try {
       await Api().logout(widget.s.token);
     } catch (_) {}
+    await BiometricSessionStore.clear();
+    if (sentryDsn.isNotEmpty) {
+      await Sentry.configureScope((scope) => scope.setUser(null));
+    }
     if (!c.mounted) return;
     Navigator.of(c).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
@@ -1349,6 +1947,44 @@ class _AccountHubState extends State<AccountHub> {
   Widget build(BuildContext c) => Scaffold(
       appBar: AppBar(title: const Text('Mi cuenta')),
       body: ListView(padding: const EdgeInsets.all(20), children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+                colors: [Color(0xff006f7c), Color(0xff00a2b2)]),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Row(children: [
+            const CircleAvatar(
+                radius: 28,
+                backgroundColor: Colors.white24,
+                child:
+                    Icon(Icons.person_outline, color: Colors.white, size: 30)),
+            const SizedBox(width: 14),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(widget.s.name,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800)),
+                  Text(
+                      widget.s.role == 'DRIVER'
+                          ? 'Conductor AtacamesGo'
+                          : 'Pasajero AtacamesGo',
+                      style: const TextStyle(color: Colors.white70)),
+                ])),
+          ]),
+        ),
+        const SizedBox(height: 18),
+        Text('Gestiona tu cuenta',
+            style: Theme.of(c)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
         ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('Mi perfil'),

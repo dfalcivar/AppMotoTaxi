@@ -86,8 +86,8 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   }
 
   Future<void> _prepareGoogleMarkerIcons() async {
-    const nearbyConfiguration = ImageConfiguration(size: Size(32, 32));
-    const activeConfiguration = ImageConfiguration(size: Size(38, 38));
+    const nearbyConfiguration = ImageConfiguration(size: Size(24, 24));
+    const activeConfiguration = ImageConfiguration(size: Size(30, 30));
     final nearby = await gmaps.BitmapDescriptor.asset(
         nearbyConfiguration, 'assets/images/mototaxi-map-marker.png');
     final active = await gmaps.BitmapDescriptor.asset(
@@ -268,15 +268,15 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         Marker(
           key: ValueKey(entry.key),
           point: entry.value,
-          width: 34,
-          height: 34,
+          width: 26,
+          height: 26,
           child: const _MotoMarker(),
         ),
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
-          width: 40,
-          height: 40,
+          width: 32,
+          height: 32,
           child: Transform.rotate(
             angle: widget.driverBearing * math.pi / 180,
             child: const _MotoMarker(),

@@ -74,6 +74,14 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("protege los documentos habilitantes del conductor", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/driver/documents"
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
   it("protege el cambio de contraseña temporal", async () => {
     const response = await app.inject({
       method: "POST",

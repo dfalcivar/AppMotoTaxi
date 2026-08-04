@@ -10,8 +10,8 @@ type DriverStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "REJECTED";
 type IncidentStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
 
 export interface SessionUser { id?: string; email: string; name: string; role: SessionRole; sessionId?: string; mustChangePassword?: boolean }
-interface Driver { id: string; name: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
-interface Passenger { id: string; name: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
+interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
+interface Passenger { id: string; name: string; email?: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
 interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; status: "ACTIVE" | "SCHEDULED" }
 interface Zone { id: string; name: string; type: "URBAN" | "EXTENDED"; points: Array<{ x: number; y: number }>; active: boolean; version: number }
 interface Incident { id: string; trip: string; category: string; description: string; status: IncidentStatus; assignedTo: string; createdAt: string }
@@ -44,6 +44,10 @@ const loginSchema = z.object({ email: z.string().email(), password: z.string().m
 const driverSchema = z.object({ status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REJECTED"]), reason: z.string().min(3), deunaEnabled: z.boolean().optional(), deunaQrImageUrl: z.string().url().optional().or(z.literal("")) });
 const passengerSchema = z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().min(3) });
 const passwordResetSchema = z.object({ password: z.string().min(8).max(100) });
+const documentReviewSchema = z.object({
+  status: z.enum(["ACTIVE", "REJECTED"]),
+  note: z.string().trim().min(3).max(300)
+});
 const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
 const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
 const incidentSchema = z.object({ status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]), assignedTo: z.string().min(2) });
@@ -212,8 +216,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     requireUser(request);
     if (!process.env.DATABASE_URL) return drivers;
     return await database()`
-      select u.id, u.full_name as name, u.phone_e164 as phone, coalesce(v.identifier, 'Sin vehículo') as vehicle,
-        u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/' || count(*)::text || ' documentos' from driver_documents dd where dd.driver_id = d.user_id), '0/0 documentos') as documents,
+      select u.id, u.full_name as name, u.email, u.phone_e164 as phone, coalesce(v.identifier, 'Sin vehículo') as vehicle,
+        u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/4 documentos' from driver_documents dd where dd.driver_id = d.user_id), '0/4 documentos') as documents,
         coalesce(d.rating, 0)::float8 as rating
       from drivers d
       join users u on u.id = d.user_id
@@ -221,6 +225,32 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       order by u.created_at
     `;
   } catch(e) { return guardError(e, reply); } });
+  app.get("/v1/admin/drivers/:id/documents", async (request, reply) => { try {
+    requireUser(request);
+    if (!process.env.DATABASE_URL) return [];
+    const id=(request.params as { id: string }).id;
+    return database()`
+      select dd.id::text, dd.document_type as "documentType", dd.file_mime as "fileMime",
+        encode(dd.file_data, 'base64') as "fileBase64", dd.status,
+        dd.expires_at as "expiresAt", dd.review_note as "reviewNote",
+        dd.created_at as "createdAt"
+      from driver_documents dd where dd.driver_id=${id} order by dd.document_type
+    `;
+  } catch(e) { return guardError(e, reply); } });
+  app.patch("/v1/admin/drivers/:driverId/documents/:documentId", async (request, reply) => { try {
+    const user=requireAdmin(request); const body=documentReviewSchema.parse(request.body);
+    if (!process.env.DATABASE_URL) return { ok: true };
+    const { driverId, documentId }=request.params as { driverId: string; documentId: string };
+    const [document]=await database()`
+      update driver_documents set status=${body.status}, review_note=${body.note},
+        reviewed_by=${user.id!}, reviewed_at=now()
+      where id=${documentId} and driver_id=${driverId}
+      returning id::text, status
+    `;
+    if (!document) return reply.code(404).send({ error: "NOT_FOUND" });
+    await persistAudit(user, "DRIVER_DOCUMENT_REVIEW", "DRIVER_DOCUMENT", documentId, body.note);
+    return document;
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e, reply); } });
   app.patch("/v1/admin/drivers/:id", async (request, reply) => { try {
     const user=requireAdmin(request); const body=driverSchema.parse(request.body);
     if (!process.env.DATABASE_URL) { const item=drivers.find(d=>d.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"DRIVER_STATUS",item.id,body.reason); return item; }
@@ -249,7 +279,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     requireUser(request);
     if (!process.env.DATABASE_URL) return passengers;
     return await database()`
-      select u.id, u.full_name as name, u.phone_e164 as phone, u.status,
+      select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,
         count(t.id)::int as trips, max(t.requested_at)::text as "lastTrip"
       from users u left join trips t on t.passenger_id = u.id
       where u.role='PASSENGER'
