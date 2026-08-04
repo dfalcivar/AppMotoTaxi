@@ -1393,103 +1393,16 @@ class AboutAtacamesGo extends StatelessWidget {
   const AboutAtacamesGo({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Acerca de')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: AspectRatio(
-              aspectRatio: 4 / 5,
-              child: Image.asset('assets/images/atacamesgo-about-v2.png',
-                  fit: BoxFit.cover),
-            ),
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Acerca de')),
+        body: SingleChildScrollView(
+          child: Image.asset(
+            'assets/images/atacamesgo-about-v3.png',
+            width: double.infinity,
+            fit: BoxFit.fitWidth,
+            semanticLabel:
+                'Presentación de AtacamesGo, movilidad segura, rápida y confiable',
           ),
-          const SizedBox(height: 18),
-          Text('AtacamesGo',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.headlineMedium
-                  ?.copyWith(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-          Text('Movilidad local, segura y cercana',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleMedium?.copyWith(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.w700)),
-          const SizedBox(height: 16),
-          const Row(children: [
-            Expanded(
-                child: _AboutBenefit(
-                    icon: Icons.shield_outlined, label: 'Seguro')),
-            SizedBox(width: 8),
-            Expanded(
-                child:
-                    _AboutBenefit(icon: Icons.speed_outlined, label: 'Rápido')),
-            SizedBox(width: 8),
-            Expanded(
-                child: _AboutBenefit(
-                    icon: Icons.verified_user_outlined, label: 'Confiable')),
-          ]),
-          const SizedBox(height: 18),
-          const Text(
-            'Conectamos a pasajeros y conductores de mototaxi para facilitar '
-            'viajes confiables dentro de Atacames. Queremos aportar al turismo, '
-            'al comercio local y a una movilidad que conozca de verdad nuestra comunidad.',
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 18),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(children: [
-                Icon(Icons.phone_android_outlined,
-                    color: theme.colorScheme.primary, size: 30),
-                const SizedBox(width: 14),
-                const Expanded(
-                    child: Text(
-                        'Movilidad inteligente que conecta a la comunidad y simplifica tu forma de moverte.')),
-              ]),
-            ),
-          ),
-          const SizedBox(height: 22),
-          const Text('Desarrollado por', textAlign: TextAlign.center),
-          const SizedBox(height: 3),
-          Text('DFAR SYSTEM',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleMedium?.copyWith(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.8)),
-        ],
-      ),
-    );
-  }
-}
-
-class _AboutBenefit extends StatelessWidget {
-  const _AboutBenefit({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primaryContainer,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
-          child: Column(children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 6),
-            Text(label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.w700)),
-          ]),
         ),
       );
 }
