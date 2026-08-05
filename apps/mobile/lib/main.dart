@@ -3979,7 +3979,7 @@ class _DriverState extends State<Driver> {
     }
   }
 
-  Future<void> restore() async {
+  Future<void> restore({bool adjustSheet = true}) async {
     await api.registerFcm(widget.s.token);
     final values = await Future.wait(
         [api.active(widget.s.token), api.driverState(widget.s.token)]);
@@ -3995,7 +3995,7 @@ class _DriverState extends State<Driver> {
         offers = [];
       }
     });
-    _moveDriverSheet(active == null ? .30 : .50);
+    if (adjustSheet) _moveDriverSheet(active == null ? .30 : .50);
     if (active != null) unawaited(resolveOriginAddress(active));
     if (serverAvailable || active != null) {
       try {
@@ -4152,7 +4152,7 @@ class _DriverState extends State<Driver> {
       if (!c.mounted) return;
       await rating(c, widget.s, tripId, () => {});
     }
-    await restore();
+    await restore(adjustSheet: false);
     await refresh();
   }
 
@@ -4245,7 +4245,7 @@ class _DriverState extends State<Driver> {
               const Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.location_on, color: Colors.blue, size: 18),
                 SizedBox(width: 4),
-                Text('Mi ubicaciÃ³n'),
+                Text('Mi ubicacion'),
               ]),
               Row(mainAxisSize: MainAxisSize.min, children: [
                 const Icon(Icons.electric_rickshaw_outlined, size: 18),

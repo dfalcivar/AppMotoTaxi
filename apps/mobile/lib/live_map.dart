@@ -178,6 +178,17 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         if (mounted) _fitRoute();
       });
     }
+    final tripMapWasCleared = widget.editing == null &&
+        widget.currentLocation != null &&
+        ((oldWidget.routePoints.length > 1 && widget.routePoints.length <= 1) ||
+            ((oldWidget.pickup != null || oldWidget.dropoff != null) &&
+                widget.pickup == null &&
+                widget.dropoff == null));
+    if (tripMapWasCleared) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _moveCamera(widget.currentLocation!, 16);
+      });
+    }
     if (oldWidget.currentLocation == null &&
         widget.currentLocation != null &&
         widget.pickup == null &&
@@ -388,7 +399,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               widget.selfDriverPosition!.longitude),
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
               gmaps.BitmapDescriptor.hueAzure),
-          infoWindow: const gmaps.InfoWindow(title: 'Mi ubicaciÃ³n'),
+          infoWindow: const gmaps.InfoWindow(title: 'Mi ubicacion'),
           zIndexInt: 20,
         ),
       if (_displayedDriver != null)
