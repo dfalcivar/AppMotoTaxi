@@ -371,8 +371,8 @@ export async function buildApp() {
         coalesce(d.rating, (select avg(score)::numeric(3,2) from ratings where recipient_id=u.id), 0)::float8 as rating,
         (select count(*)::int from ratings where recipient_id=u.id) as "ratingCount",
         v.identifier as vehicle,
-        encode(coalesce(u.profile_photo_data, photo.file_data), 'base64') as "photoBase64",
-        coalesce(u.profile_photo_mime, photo.file_mime) as "photoMime"
+        (coalesce(u.profile_photo_data, photo.file_data) is not null) as "hasPhoto",
+        u.profile_photo_updated_at as "photoUpdatedAt"
       from users u
       left join drivers d on d.user_id=u.id
       left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true

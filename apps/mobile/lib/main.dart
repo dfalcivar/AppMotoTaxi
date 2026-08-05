@@ -54,6 +54,28 @@ bool firebaseReady = false;
 const nativeActions = MethodChannel('ec.atacames.mototaxi/native');
 const secureStorage = FlutterSecureStorage();
 
+String? supportedImageMime(Uint8List bytes) {
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[2] == 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47) {
+    return 'image/png';
+  }
+  if (bytes.length >= 12 &&
+      ascii.decode(bytes.sublist(0, 4), allowInvalid: true) == 'RIFF' &&
+      ascii.decode(bytes.sublist(8, 12), allowInvalid: true) == 'WEBP') {
+    return 'image/webp';
+  }
+  return null;
+}
+
 class BiometricSessionStore {
   static const _key = 'atacamesgo_biometric_session';
   static final _auth = LocalAuthentication();
@@ -409,6 +431,8 @@ String mensajeApi(dynamic code) =>
       'INVALID_CURRENT_PASSWORD': 'La contraseña actual no es correcta.',
       'INVALID_DRIVER_DOCUMENT':
           'La imagen no es válida o supera el tamaño permitido.',
+      'INVALID_PROFILE_PHOTO':
+          'La fotografía no es válida o supera el tamaño permitido.',
       'INVALID_FAVORITE_PLACE':
           'Revisa el nombre y la dirección del lugar favorito.',
     }[code] ??
@@ -1419,30 +1443,29 @@ class _RegisterState extends State<Register> {
   bool busy = false, submitted = false;
   XFile? profilePhoto;
   Uint8List? profilePhotoBytes;
+  String? profilePhotoMime;
 
   Future<void> chooseProfilePhoto() async {
     final file = await ImagePicker().pickImage(
         source: ImageSource.gallery,
-        imageQuality: 82,
-        maxWidth: 1600,
-        maxHeight: 1600);
+        imageQuality: 68,
+        maxWidth: 1024,
+        maxHeight: 1024);
     if (file == null) return;
     final bytes = await file.readAsBytes();
-    if (bytes.length > 2500000) {
-      setState(() => message = 'La fotografÃ­a no puede superar 2,5 MB.');
+    if (bytes.length > 1200000) {
+      setState(() => message = 'La foto no puede superar 1,2 MB.');
       return;
     }
-    final extension = file.name.toLowerCase();
-    if (!extension.endsWith('.jpg') &&
-        !extension.endsWith('.jpeg') &&
-        !extension.endsWith('.png') &&
-        !extension.endsWith('.webp')) {
+    final mime = supportedImageMime(bytes);
+    if (mime == null) {
       setState(() => message = 'Usa una fotografÃ­a JPG, JPEG, PNG o WEBP.');
       return;
     }
     setState(() {
       profilePhoto = file;
       profilePhotoBytes = bytes;
+      profilePhotoMime = mime;
       message = '';
     });
   }
@@ -1498,12 +1521,8 @@ class _RegisterState extends State<Register> {
         if (role == 'DRIVER') 'vehicleIdentifier': vehicle.text.trim(),
         if (role == 'DRIVER' && profilePhotoBytes != null)
           'profilePhotoBase64': base64Encode(profilePhotoBytes!),
-        if (role == 'DRIVER' && profilePhoto != null)
-          'profilePhotoMime': profilePhoto!.name.toLowerCase().endsWith('.png')
-              ? 'image/png'
-              : profilePhoto!.name.toLowerCase().endsWith('.webp')
-                  ? 'image/webp'
-                  : 'image/jpeg'
+        if (role == 'DRIVER' && profilePhotoMime != null)
+          'profilePhotoMime': profilePhotoMime
       });
       if (!mounted) return;
       if (role == 'PASSENGER' && d['token'] != null) {
@@ -1661,17 +1680,26 @@ class Profile extends StatefulWidget {
 
 class _ProfileState extends State<Profile> {
   dynamic p;
+  String? profileError;
   bool biometricEnabled = false;
   bool photoBusy = false;
   @override
   void initState() {
     super.initState();
-    Api().profile(widget.s.token).then((v) {
-      if (mounted) setState(() => p = v);
-    });
+    loadProfile();
     BiometricSessionStore.saved().then((value) {
       if (mounted) setState(() => biometricEnabled = value?.id == widget.s.id);
     });
+  }
+
+  Future<void> loadProfile() async {
+    if (mounted) setState(() => profileError = null);
+    try {
+      final value = await Api().profile(widget.s.token);
+      if (mounted) setState(() => p = value);
+    } catch (error) {
+      if (mounted) setState(() => profileError = error.toString());
+    }
   }
 
   Future<void> toggleBiometric(bool enabled) async {
@@ -1695,33 +1723,31 @@ class _ProfileState extends State<Profile> {
   Future<void> changePhoto() async {
     final file = await ImagePicker().pickImage(
         source: ImageSource.gallery,
-        imageQuality: 82,
-        maxWidth: 1600,
-        maxHeight: 1600);
+        imageQuality: 68,
+        maxWidth: 1024,
+        maxHeight: 1024);
     if (file == null) return;
     final bytes = await file.readAsBytes();
-    final extension = file.name.toLowerCase();
-    if (bytes.length > 2500000 ||
-        (!extension.endsWith('.jpg') &&
-            !extension.endsWith('.jpeg') &&
-            !extension.endsWith('.png') &&
-            !extension.endsWith('.webp'))) {
+    final mime = supportedImageMime(bytes);
+    if (bytes.length > 1200000 || mime == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Usa JPG, JPEG, PNG o WEBP de mÃ¡ximo 2,5 MB.')));
+            content: Text('Usa JPG, JPEG, PNG o WEBP de maximo 1,2 MB.')));
       }
       return;
     }
-    final mime = extension.endsWith('.png')
-        ? 'image/png'
-        : extension.endsWith('.webp')
-            ? 'image/webp'
-            : 'image/jpeg';
     setState(() => photoBusy = true);
     try {
       await Api().updateProfilePhoto(widget.s.token, base64Encode(bytes), mime);
-      final value = await Api().profile(widget.s.token);
-      if (mounted) setState(() => p = value);
+      if (mounted) {
+        setState(() {
+          p = Map<String, dynamic>.from(p as Map)
+            ..['hasPhoto'] = true
+            ..['photoUpdatedAt'] = DateTime.now().toUtc().toIso8601String();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Fotografia actualizada.')));
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -1735,10 +1761,33 @@ class _ProfileState extends State<Profile> {
   @override
   Widget build(BuildContext c) {
     if (p == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(title: const Text('Mi perfil')),
+        body: Center(
+          child: profileError == null
+              ? const CircularProgressIndicator()
+              : Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.cloud_off_outlined, size: 52),
+                    const SizedBox(height: 12),
+                    Text(profileError!, textAlign: TextAlign.center),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: loadProfile,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Reintentar'),
+                    ),
+                  ]),
+                ),
+        ),
+      );
     }
     final rs = p['reviews'] as List;
-    final photo = p['photoBase64']?.toString();
+    final hasPhoto = p['hasPhoto'] == true;
+    final photoVersion = p['photoUpdatedAt']?.toString() ?? 'profile';
+    final photoUrl =
+        '$base/v1/users/${widget.s.id}/profile-photo?v=${Uri.encodeQueryComponent(photoVersion)}';
     return Scaffold(
         appBar: AppBar(title: const Text('Mi perfil')),
         body: ListView(padding: const EdgeInsets.all(16), children: [
@@ -1751,15 +1800,27 @@ class _ProfileState extends State<Profile> {
             ),
             child: Column(children: [
               Stack(alignment: Alignment.bottomRight, children: [
-                CircleAvatar(
-                  radius: 46,
-                  foregroundImage: photo?.isNotEmpty == true
-                      ? MemoryImage(base64Decode(photo!))
-                      : null,
-                  child: photo?.isNotEmpty == true
-                      ? null
-                      : Text(p['name'].substring(0, 1),
-                          style: const TextStyle(fontSize: 30)),
+                ClipOval(
+                  child: SizedBox(
+                    width: 92,
+                    height: 92,
+                    child: hasPhoto
+                        ? Image.network(
+                            photoUrl,
+                            headers: {
+                              'Authorization': 'Bearer ${widget.s.token}'
+                            },
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Center(
+                              child: Text(p['name'].substring(0, 1),
+                                  style: const TextStyle(fontSize: 30)),
+                            ),
+                          )
+                        : Center(
+                            child: Text(p['name'].substring(0, 1),
+                                style: const TextStyle(fontSize: 30)),
+                          ),
+                  ),
                 ),
                 Material(
                   color: Colors.white,
