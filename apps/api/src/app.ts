@@ -303,6 +303,15 @@ export async function buildApp() {
     return { closed: true };
   });
 
+  app.post("/v1/auth/lock", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true }); if (!user) return;
+    await database().begin(async tx => {
+      await tx`delete from device_tokens where user_id=${user.id!}`;
+      if (user.role === "DRIVER") await tx`update drivers set is_available=false where user_id=${user.id!}`;
+    });
+    return { locked: true, biometricSessionPreserved: true };
+  });
+
   app.put("/v1/devices/fcm-token", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = deviceTokenSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_DEVICE_TOKEN" });

@@ -357,8 +357,10 @@ class Session {
 }
 
 class ApiException implements Exception {
-  const ApiException(this.message);
+  const ApiException(this.message, {this.code, this.statusCode});
   final String message;
+  final String? code;
+  final int? statusCode;
   @override
   String toString() => message;
 }
@@ -426,7 +428,9 @@ class Api {
           continue;
         }
         if (response.statusCode >= 400) {
-          throw ApiException(mensajeApi(data?['error']));
+          final code = data?['error']?.toString();
+          throw ApiException(mensajeApi(code),
+              code: code, statusCode: response.statusCode);
         }
         return data;
       } on ApiException {
@@ -482,6 +486,9 @@ class Api {
 
   Future<void> logout(String token) =>
       call('POST', '/v1/auth/logout', token: token);
+
+  Future<void> lock(String token) =>
+      call('POST', '/v1/auth/lock', token: token);
 
   Future<void> changePassword(String token, String password,
           {String? currentPassword}) =>
@@ -966,8 +973,26 @@ class _LoginState extends State<Login> {
       error = null;
     });
     try {
-      if (!await BiometricSessionStore.authenticate()) return;
+      final authenticated = await BiometricSessionStore.authenticate();
+      if (!authenticated) {
+        if (mounted) {
+          setState(() => error =
+              'No se reconoció la biometría. Puedes intentarlo nuevamente.');
+        }
+        return;
+      }
+    } catch (reason) {
+      if (mounted) {
+        setState(() {
+          error = BiometricSessionStore.errorMessage(reason);
+        });
+      }
+      return;
+    }
+
+    try {
       await Api().profile(session.token);
+      unawaited(Api().registerFcm(session.token));
       if (!mounted) return;
       Navigator.pushReplacement(
           context,
@@ -976,13 +1001,17 @@ class _LoginState extends State<Login> {
                   ? Driver(session)
                   : Passenger(session)));
     } catch (reason) {
-      await BiometricSessionStore.clear();
+      final revoked = reason is ApiException &&
+          (reason.code == 'UNAUTHORIZED' ||
+              reason.code == 'SESSION_REPLACED' ||
+              reason.statusCode == 401);
+      if (revoked) await BiometricSessionStore.clear();
       if (mounted) {
         setState(() {
-          biometricSession = null;
-          error = reason is ApiException
-              ? 'La sesión guardada venció. Ingresa con tu contraseña y activa nuevamente la biometría.'
-              : 'No se pudo validar la huella o el reconocimiento facial.';
+          if (revoked) biometricSession = null;
+          error = revoked
+              ? 'La sesión biométrica fue revocada. Ingresa con tu contraseña y actívala nuevamente.'
+              : reason.toString();
         });
       }
     } finally {
@@ -1942,19 +1971,42 @@ class AccountHub extends StatefulWidget {
 
 class _AccountHubState extends State<AccountHub> {
   dynamic pending;
+  bool biometricEnabled = false;
+
   @override
   void initState() {
     super.initState();
     Api().pendingRating(widget.s.token).then((v) {
       if (mounted) setState(() => pending = v);
     });
+    loadBiometricState();
+  }
+
+  Future<void> loadBiometricState() async {
+    final saved = await BiometricSessionStore.saved();
+    if (mounted) {
+      setState(() => biometricEnabled = saved?.id == widget.s.id);
+    }
   }
 
   Future<void> logout(BuildContext c) async {
+    final biometric = await BiometricSessionStore.saved();
+    final keepBiometric = biometric?.id == widget.s.id;
     try {
-      await Api().logout(widget.s.token);
+      if (keepBiometric) {
+        try {
+          await Api().lock(widget.s.token);
+        } catch (_) {
+          // Compatibilidad mientras el servidor incorpora /v1/auth/lock.
+          if (widget.s.role == 'DRIVER') {
+            await Api().available(widget.s.token, false);
+          }
+        }
+      } else {
+        await Api().logout(widget.s.token);
+      }
     } catch (_) {}
-    await BiometricSessionStore.clear();
+    if (!keepBiometric) await BiometricSessionStore.clear();
     if (sentryDsn.isNotEmpty) {
       await Sentry.configureScope((scope) => scope.setUser(null));
     }
@@ -2008,8 +2060,11 @@ class _AccountHubState extends State<AccountHub> {
         ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('Mi perfil'),
-            onTap: () => Navigator.push(
-                c, MaterialPageRoute(builder: (_) => Profile(widget.s)))),
+            onTap: () async {
+              await Navigator.push(
+                  c, MaterialPageRoute(builder: (_) => Profile(widget.s)));
+              await loadBiometricState();
+            }),
         ListTile(
             leading: const Icon(Icons.directions_bike),
             title: const Text('Mis viajes'),
@@ -2041,6 +2096,9 @@ class _AccountHubState extends State<AccountHub> {
         ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
             title: const Text('Cerrar sesión'),
+            subtitle: biometricEnabled
+                ? const Text('Podrás volver a ingresar con biometría')
+                : null,
             onTap: () => logout(c))
       ]));
 }
