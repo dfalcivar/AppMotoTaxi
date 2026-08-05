@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -12,6 +13,22 @@ enum MapPointSelection { origin, destination }
 
 const configuredMapProvider =
     String.fromEnvironment('MAP_PROVIDER', defaultValue: 'osm');
+
+const _googleDarkMapStyle = '''[
+  {"elementType":"geometry","stylers":[{"color":"#17242b"}]},
+  {"elementType":"labels.icon","stylers":[{"visibility":"off"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#d5e4e8"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#17242b"}]},
+  {"featureType":"administrative","elementType":"geometry.stroke","stylers":[{"color":"#4c6770"}]},
+  {"featureType":"poi","elementType":"geometry","stylers":[{"color":"#20343b"}]},
+  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#1d4439"}]},
+  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#33474f"}]},
+  {"featureType":"road","elementType":"geometry.stroke","stylers":[{"color":"#152126"}]},
+  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#42606a"}]},
+  {"featureType":"transit","elementType":"geometry","stylers":[{"color":"#294048"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#0b3647"}]},
+  {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#78b8cc"}]}
+]''';
 
 class LiveMap extends StatefulWidget {
   const LiveMap({
@@ -28,6 +45,9 @@ class LiveMap extends StatefulWidget {
     this.onUseCurrentLocation,
     this.currentLocation,
     this.height = 320,
+    this.fillAvailable = false,
+    this.viewportPadding = EdgeInsets.zero,
+    this.borderRadius = 20,
     super.key,
   });
 
@@ -44,6 +64,9 @@ class LiveMap extends StatefulWidget {
   final VoidCallback? onUseCurrentLocation;
   final LatLng? currentLocation;
   final double height;
+  final bool fillAvailable;
+  final EdgeInsets viewportPadding;
+  final double borderRadius;
 
   @override
   State<LiveMap> createState() => _LiveMapState();
@@ -60,6 +83,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   LatLng? _selectionCenter;
   gmaps.BitmapDescriptor? _nearbyMotoIcon;
   gmaps.BitmapDescriptor? _activeMotoIcon;
+  Timer? _fitDebounce;
 
   @override
   void initState() {
@@ -144,6 +168,13 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _fitRoute();
       });
+    } else if (widget.editing == null &&
+        widget.routePoints.length > 1 &&
+        oldWidget.viewportPadding != widget.viewportPadding) {
+      _fitDebounce?.cancel();
+      _fitDebounce = Timer(const Duration(milliseconds: 250), () {
+        if (mounted) _fitRoute();
+      });
     }
     if (oldWidget.currentLocation == null &&
         widget.currentLocation != null &&
@@ -157,6 +188,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
 
   @override
   void dispose() {
+    _fitDebounce?.cancel();
     _movement.dispose();
     _googleMapController?.dispose();
     super.dispose();
@@ -201,7 +233,12 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
     }
     _mapController.fitCamera(CameraFit.coordinates(
       coordinates: points,
-      padding: const EdgeInsets.all(48),
+      padding: EdgeInsets.fromLTRB(
+        widget.viewportPadding.left + 48,
+        widget.viewportPadding.top + 48,
+        widget.viewportPadding.right + 48,
+        widget.viewportPadding.bottom + 48,
+      ),
     ));
   }
 
@@ -216,11 +253,10 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     final center = _center;
     if (center == null) {
-      return Container(
-        height: widget.height,
+      final placeholder = Container(
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(widget.borderRadius),
         ),
         child: const Center(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -230,6 +266,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           ]),
         ),
       );
+      return widget.fillAvailable
+          ? SizedBox.expand(child: placeholder)
+          : SizedBox(height: widget.height, child: placeholder);
     }
 
     final selectionPoint = widget.editing == null
@@ -277,10 +316,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           point: _displayedDriver!,
           width: 32,
           height: 32,
-          child: Transform.rotate(
-            angle: widget.driverBearing * math.pi / 180,
-            child: const _MotoMarker(),
-          ),
+          child: const _MotoMarker(),
         ),
     ];
     final googleMarkers = <gmaps.Marker>{
@@ -340,17 +376,19 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           markerId: const gmaps.MarkerId('active-driver'),
           position: gmaps.LatLng(
               _displayedDriver!.latitude, _displayedDriver!.longitude),
-          rotation: widget.driverBearing,
           flat: true,
           icon: _activeMotoIcon ??
               gmaps.BitmapDescriptor.defaultMarkerWithHue(
                   gmaps.BitmapDescriptor.hueOrange),
-          anchor: const Offset(.5, .5),
+          anchor: const Offset(.5, .55),
         ),
     };
 
     final mapSurface = configuredMapProvider == 'google'
         ? gmaps.GoogleMap(
+            style: Theme.of(context).brightness == Brightness.dark
+                ? _googleDarkMapStyle
+                : null,
             initialCameraPosition: gmaps.CameraPosition(
               target: gmaps.LatLng(center.latitude, center.longitude),
               zoom: 16,
@@ -360,6 +398,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
             compassEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
+            padding: widget.viewportPadding,
             gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
               Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer()),
             },
@@ -427,126 +466,125 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
             ],
           );
 
+    final mapContent = Stack(children: [
+      mapSurface,
+      if (widget.editing != null)
+        Positioned(
+          left: 12,
+          right: 12,
+          top: widget.viewportPadding.top + 10,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: .74),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                child: Text(
+                  configuredMapProvider == 'google'
+                      ? (widget.editing == MapPointSelection.origin
+                          ? 'Arrastra el punto verde para ajustar el origen'
+                          : 'Arrastra el punto rojo para ajustar el destino')
+                      : (widget.editing == MapPointSelection.origin
+                          ? 'Mueve el mapa para ajustar el punto de encuentro'
+                          : 'Mueve el mapa para ajustar el destino'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ),
+      if (widget.editing == null &&
+          (widget.currentLocation != null ||
+              widget.onUseCurrentLocation != null))
+        Positioned(
+          right: 12,
+          bottom: widget.viewportPadding.bottom + 12,
+          child: FloatingActionButton.small(
+            heroTag: null,
+            tooltip: 'Volver a mi ubicación',
+            onPressed: () {
+              final currentPoint =
+                  widget.currentLocation ?? widget.pickup ?? center;
+              _moveCamera(currentPoint, 17);
+              if (widget.currentLocation == null) {
+                widget.onUseCurrentLocation?.call();
+              }
+            },
+            child: const Icon(Icons.my_location),
+          ),
+        ),
+      if (widget.editing != null) ...[
+        if (configuredMapProvider != 'google')
+          Center(
+            child: IgnorePointer(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 20),
+                child: Icon(Icons.location_pin,
+                    size: 34,
+                    color: widget.editing == MapPointSelection.origin
+                        ? const Color(0xff20a55b)
+                        : const Color(0xffef4338),
+                    shadows: const [
+                      Shadow(color: Colors.black38, blurRadius: 5)
+                    ]),
+              ),
+            ),
+          ),
+        Positioned(
+          right: 12,
+          bottom: widget.viewportPadding.bottom + 64,
+          child: FloatingActionButton.small(
+            heroTag: null,
+            tooltip: 'Volver a mi ubicaciÃ³n',
+            onPressed: widget.onUseCurrentLocation == null
+                ? null
+                : () {
+                    final currentPoint =
+                        widget.currentLocation ?? widget.pickup ?? center;
+                    _selectionCenter = currentPoint;
+                    _moveCamera(currentPoint, 17);
+                    widget.onUseCurrentLocation!();
+                  },
+            child: const Icon(Icons.my_location),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: widget.viewportPadding.bottom + 12,
+          child: Center(
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: .82),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                minimumSize: Size.zero,
+                visualDensity: VisualDensity.compact,
+              ),
+              onPressed: widget.onPointSelected == null
+                  ? null
+                  : () => widget.onPointSelected!(_selectionCenter ?? center),
+              icon: const Icon(Icons.check, size: 18),
+              label: Text(widget.editing == MapPointSelection.origin
+                  ? 'Confirmar origen'
+                  : 'Confirmar destino'),
+            ),
+          ),
+        ),
+      ],
+    ]);
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: SizedBox(
-        height: widget.height,
-        child: Stack(children: [
-          mapSurface,
-          if (widget.editing != null)
-            Positioned(
-              left: 12,
-              right: 12,
-              top: 10,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: .74),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                    child: Text(
-                      configuredMapProvider == 'google'
-                          ? (widget.editing == MapPointSelection.origin
-                              ? 'Arrastra el punto verde para ajustar el origen'
-                              : 'Arrastra el punto rojo para ajustar el destino')
-                          : (widget.editing == MapPointSelection.origin
-                              ? 'Mueve el mapa para ajustar el punto de encuentro'
-                              : 'Mueve el mapa para ajustar el destino'),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          if (widget.editing == null &&
-              (widget.currentLocation != null ||
-                  widget.onUseCurrentLocation != null))
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child: FloatingActionButton.small(
-                heroTag: null,
-                tooltip: 'Volver a mi ubicación',
-                onPressed: () {
-                  final currentPoint =
-                      widget.currentLocation ?? widget.pickup ?? center;
-                  _moveCamera(currentPoint, 17);
-                  if (widget.currentLocation == null) {
-                    widget.onUseCurrentLocation?.call();
-                  }
-                },
-                child: const Icon(Icons.my_location),
-              ),
-            ),
-          if (widget.editing != null) ...[
-            if (configuredMapProvider != 'google')
-              Center(
-                child: IgnorePointer(
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 20),
-                    child: Icon(Icons.location_pin,
-                        size: 34,
-                        color: widget.editing == MapPointSelection.origin
-                            ? const Color(0xff20a55b)
-                            : const Color(0xffef4338),
-                        shadows: const [
-                          Shadow(color: Colors.black38, blurRadius: 5)
-                        ]),
-                  ),
-                ),
-              ),
-            Positioned(
-              right: 12,
-              bottom: 64,
-              child: FloatingActionButton.small(
-                heroTag: null,
-                tooltip: 'Volver a mi ubicaciÃ³n',
-                onPressed: widget.onUseCurrentLocation == null
-                    ? null
-                    : () {
-                        final currentPoint =
-                            widget.currentLocation ?? widget.pickup ?? center;
-                        _selectionCenter = currentPoint;
-                        _moveCamera(currentPoint, 17);
-                        widget.onUseCurrentLocation!();
-                      },
-                child: const Icon(Icons.my_location),
-              ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 12,
-              child: Center(
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context)
-                        .colorScheme
-                        .primary
-                        .withValues(alpha: .82),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                    minimumSize: Size.zero,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  onPressed: widget.onPointSelected == null
-                      ? null
-                      : () =>
-                          widget.onPointSelected!(_selectionCenter ?? center),
-                  icon: const Icon(Icons.check, size: 18),
-                  label: Text(widget.editing == MapPointSelection.origin
-                      ? 'Confirmar origen'
-                      : 'Confirmar destino'),
-                ),
-              ),
-            ),
-          ],
-        ]),
-      ),
+      borderRadius: BorderRadius.circular(widget.borderRadius),
+      child: widget.fillAvailable
+          ? SizedBox.expand(child: mapContent)
+          : SizedBox(height: widget.height, child: mapContent),
     );
   }
 }

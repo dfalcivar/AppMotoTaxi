@@ -293,6 +293,19 @@ String estadoViaje(dynamic estado) =>
     }[estado] ??
     'Sin estado';
 
+final _leadingPlusCode = RegExp(
+  r'^\s*[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}(?:\s*[,·-]\s*|\s+)',
+  caseSensitive: false,
+);
+
+String cleanAddressLabel(dynamic value, {String fallback = ''}) {
+  final cleaned = (value?.toString() ?? '')
+      .replaceFirst(_leadingPlusCode, '')
+      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .trim();
+  return cleaned.isEmpty ? fallback : cleaned;
+}
+
 class TripStatusPanel extends StatelessWidget {
   const TripStatusPanel(
       {super.key, required this.status, required this.driverName});
@@ -2342,7 +2355,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   final origin = TextEditingController();
   final destination = TextEditingController();
   final notes = TextEditingController();
-  final mapSectionKey = GlobalKey();
+  final passengerSheetController = DraggableScrollableController();
   late final RealtimeService realtime;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   StreamSubscription<RemoteMessage>? messageSubscription;
@@ -2363,7 +2376,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Timer? timer;
   bool ratingPrompted = false;
   bool passengerChatOpen = false;
-  BuildContext? searchingDialogContext;
+  double sheetExtent = .35;
   DateTime? lastRouteAt;
   double? routeDistanceMeters;
   double? routeDurationSeconds;
@@ -2417,7 +2430,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     origin.dispose();
     destination.dispose();
     notes.dispose();
+    passengerSheetController.dispose();
     super.dispose();
+  }
+
+  void _movePassengerSheet(double size) {
+    sheetExtent = size;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !passengerSheetController.isAttached) return;
+      passengerSheetController.animateTo(
+        size.clamp(.18, .92),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   @override
@@ -2589,8 +2615,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     try {
       final result = await api.reverse(widget.s.token, point);
       if (!mounted || active != null || pickup != point) return;
-      setState(() =>
-          origin.text = result['label']?.toString() ?? 'Mi ubicación actual');
+      setState(() => origin.text =
+          cleanAddressLabel(result['label'], fallback: 'Mi ubicación actual'));
     } catch (_) {}
   }
 
@@ -2601,9 +2627,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           : await api.trip(widget.s.token, active['tripId']);
       if (!mounted) return;
       if (t == null) {
-        closeSearchingDialog();
         if (active != null) {
-          setState(() => active = null);
+          setState(() {
+            active = null;
+            sheetExtent = .35;
+          });
+          _movePassengerSheet(.35);
           if (pickup != null) {
             realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
             unawaited(refreshNearbyDrivers());
@@ -2612,13 +2641,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         return;
       }
       if (t['status'] == 'COMPLETED') {
-        closeSearchingDialog();
         setState(() {
           active = null;
+          sheetExtent = .35;
           driverPosition = null;
           routePoints = [];
           message = 'Viaje finalizado.';
         });
+        _movePassengerSheet(.35);
         unawaited(resetAfterCompletedTrip());
         if (!ratingPrompted) {
           ratingPrompted = true;
@@ -2629,24 +2659,29 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         return;
       }
       if (t['status'] == 'CANCELLED') {
-        closeSearchingDialog();
         final administrative = t['cancellationReason'] == 'ADMIN_CANCELLED';
         setState(() {
           active = null;
+          sheetExtent = .35;
           driverPosition = null;
           routePoints = [];
           message = administrative
               ? 'El viaje fue cancelado por administración.'
               : 'La solicitud fue cancelada.';
         });
+        _movePassengerSheet(.35);
         if (pickup != null) {
           realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
           unawaited(refreshNearbyDrivers());
         }
         return;
       }
+      final previousStatus = active?['status']?.toString();
       setState(() {
         active = t;
+        if (previousStatus != t['status']?.toString()) {
+          sheetExtent = t['status'] == 'SEARCHING' ? .46 : .35;
+        }
         if (t['originLatitude'] != null) {
           pickup = LatLng((t['originLatitude'] as num).toDouble(),
               (t['originLongitude'] as num).toDouble());
@@ -2667,61 +2702,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           'IN_PROGRESS': 'Tu viaje está en curso.'
         }[t['status']];
       });
-      if (t['status'] == 'SEARCHING') {
-        showSearchingDialog();
-      } else {
-        closeSearchingDialog();
+      if (previousStatus != t['status']?.toString()) {
+        _movePassengerSheet(t['status'] == 'SEARCHING' ? .50 : .52);
       }
       realtime.subscribeTrip(t['tripId'].toString());
       refreshRoute(force: routePoints.isEmpty);
     } catch (_) {}
-  }
-
-  void closeSearchingDialog() {
-    final dialogContext = searchingDialogContext;
-    if (dialogContext == null) return;
-    searchingDialogContext = null;
-    if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-  }
-
-  void showSearchingDialog() {
-    if (!mounted || searchingDialogContext != null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          searchingDialogContext != null ||
-          active?['status'] != 'SEARCHING') {
-        return;
-      }
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          searchingDialogContext = dialogContext;
-          return AlertDialog(
-            icon: const Icon(Icons.manage_search, size: 54),
-            title: const Text('Buscando un conductor cercano'),
-            content: const Column(mainAxisSize: MainAxisSize.min, children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 18),
-              Text('Avisaremos cuando un conductor acepte tu solicitud.',
-                  textAlign: TextAlign.center),
-            ]),
-            actionsAlignment: MainAxisAlignment.center,
-            actions: [
-              TextButton.icon(
-                onPressed: () {
-                  searchingDialogContext = null;
-                  Navigator.pop(dialogContext);
-                  cancel();
-                },
-                icon: const Icon(Icons.close),
-                label: const Text('Cancelar solicitud'),
-              ),
-            ],
-          );
-        },
-      ).whenComplete(() => searchingDialogContext = null);
-    });
   }
 
   Future<void> useCurrentLocation() async {
@@ -2745,7 +2731,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         if (!mounted || pickup != point || active != null) return;
         setState(() {
           mapSelection = null;
-          origin.text = result['label']?.toString() ?? 'Mi ubicación actual';
+          origin.text = cleanAddressLabel(result['label'],
+              fallback: 'Mi ubicación actual');
           message = 'Origen actualizado con tu ubicación GPS.';
         });
       } catch (_) {
@@ -2763,6 +2750,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     setState(() {
       mapSelection =
           isOrigin ? MapPointSelection.origin : MapPointSelection.destination;
+      sheetExtent = .24;
       if (isOrigin) {
         origin.clear();
         pickup = null;
@@ -2778,18 +2766,19 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           ? 'Mueve el mapa para elegir un nuevo origen.'
           : 'Mueve el mapa para elegir un nuevo destino.';
     });
-    _showMapEditor();
+    _movePassengerSheet(.24);
   }
 
   void beginMapSelection(MapPointSelection selection) {
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       mapSelection = selection;
+      sheetExtent = .24;
       message = selection == MapPointSelection.origin
           ? 'Arrastra el punto verde para ajustar el origen.'
           : 'Arrastra el punto rojo para ajustar el destino.';
     });
-    _showMapEditor();
+    _movePassengerSheet(.24);
   }
 
   Future<void> loadFavoritePlaces() async {
@@ -2849,16 +2838,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         (place['longitude'] as num).toDouble());
     setState(() {
       mapSelection = null;
+      sheetExtent = .35;
       if (isOrigin) {
         pickup = point;
-        origin.text = place['address'].toString();
+        origin.text = cleanAddressLabel(place['address']);
       } else {
         dropoff = point;
-        destination.text = place['address'].toString();
+        destination.text = cleanAddressLabel(place['address']);
       }
       message =
           '${place['label']} seleccionado como ${isOrigin ? 'origen' : 'destino'}.';
     });
+    _movePassengerSheet(.35);
     if (isOrigin) {
       realtime.subscribeNearby(point.latitude, point.longitude);
       unawaited(refreshNearbyDrivers(point));
@@ -2890,7 +2881,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             ...favoritePlaces.map((place) => ListTile(
                   leading: const Icon(Icons.place_outlined),
                   title: Text(place['label'].toString()),
-                  subtitle: Text(place['address'].toString(),
+                  subtitle: Text(cleanAddressLabel(place['address']),
                       maxLines: 2, overflow: TextOverflow.ellipsis),
                   trailing: PopupMenuButton<String>(
                     onSelected: (value) async {
@@ -2948,19 +2939,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     );
   }
 
-  void _showMapEditor() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final mapContext = mapSectionKey.currentContext;
-      if (!mounted || mapContext == null) return;
-      Scrollable.ensureVisible(
-        mapContext,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeInOut,
-        alignment: .05,
-      );
-    });
-  }
-
   Future<void> locate(bool isOrigin) async {
     final field = isOrigin ? origin : destination;
     if (field.text.trim().length < 3) {
@@ -2989,7 +2967,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                             Text('Resultados cercanos a tu posición actual')),
                     ...results.map((result) => ListTile(
                           leading: const Icon(Icons.location_on_outlined),
-                          title: Text(result['label'].toString()),
+                          title: Text(cleanAddressLabel(result['label'])),
                           onTap: () => Navigator.pop(sheetContext, result),
                         ))
                   ],
@@ -3001,7 +2979,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       }
       setState(() {
         mapSelection = null;
-        field.text = r['label'];
+        field.text = cleanAddressLabel(r['label']);
         if (isOrigin) {
           pickup = LatLng((r['latitude'] as num).toDouble(),
               (r['longitude'] as num).toDouble());
@@ -3028,6 +3006,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
     setState(() {
       mapSelection = null;
+      sheetExtent = .35;
       if (selection == MapPointSelection.origin) {
         pickup = point;
         origin.text = coordinateLabel;
@@ -3038,6 +3017,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         message = 'Consultando la dirección del destino...';
       }
     });
+    _movePassengerSheet(.35);
     if (selection == MapPointSelection.origin) {
       realtime.subscribeNearby(point.latitude, point.longitude);
       unawaited(refreshNearbyDrivers(point));
@@ -3054,10 +3034,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       }
       setState(() {
         if (selection == MapPointSelection.origin) {
-          origin.text = result['label'].toString();
+          origin.text =
+              cleanAddressLabel(result['label'], fallback: coordinateLabel);
           message = 'Origen identificado por su dirección.';
         } else {
-          destination.text = result['label'].toString();
+          destination.text =
+              cleanAddressLabel(result['label'], fallback: coordinateLabel);
           message = 'Destino identificado por su dirección.';
         }
       });
@@ -3125,8 +3107,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       final t = await api.create(widget.s.token, people, origin.text,
           destination.text, pickup!, dropoff!,
           paymentMethod: paymentMethod, notes: notes.text);
-      setState(() => active = {'tripId': t['tripId'], 'status': 'SEARCHING'});
-      showSearchingDialog();
+      setState(() {
+        active = {'tripId': t['tripId'], 'status': 'SEARCHING'};
+        sheetExtent = .46;
+      });
+      _movePassengerSheet(.50);
       await load();
     } catch (e) {
       setState(() => message = e.toString());
@@ -3155,242 +3140,370 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     try {
       await api.cancelTrip(widget.s.token, tripId);
       if (!mounted) return;
-      closeSearchingDialog();
       setState(() {
         active = null;
+        sheetExtent = .35;
         message = 'Solicitud cancelada correctamente.';
       });
+      _movePassengerSheet(.35);
     } catch (e) {
       if (mounted) setState(() => message = e.toString());
       await load();
     }
   }
 
-  @override
-  Widget build(BuildContext c) {
-    final o = active?['originReference'] ?? origin.text;
-    final d = active?['destinationReference'] ?? destination.text;
-    return Scaffold(
-        appBar: AppBar(title: Text('Hola, ${widget.s.name}'), actions: [
-          IconButton(
-              onPressed: () => profile(c, widget.s),
-              icon: const Icon(Icons.person_outline))
-        ]),
-        body: ListView(padding: const EdgeInsets.all(20), children: [
-          AffiliateBanners(
-              load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
-              imageUrl: (banner) =>
-                  '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}'),
-          const SizedBox(height: 10),
-          AnimatedSize(
-            key: mapSectionKey,
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeInOut,
-            child: LiveMap(
-                originLabel: o,
-                destinationLabel: d,
-                pickup: pickup,
-                dropoff: dropoff,
-                currentLocation: currentLocation,
-                driverPosition: driverPosition,
-                driverBearing: driverBearing,
-                routePoints: routePoints,
-                nearbyDrivers:
-                    active == null ? nearbyDrivers : const <String, LatLng>{},
-                editing: active == null ? mapSelection : null,
-                onPointSelected: active == null && mapSelection != null
-                    ? selectMapPoint
-                    : null,
-                onUseCurrentLocation:
-                    active == null ? useCurrentLocation : null,
-                height: active != null
-                    ? 370
-                    : mapSelection == null
-                        ? 360
-                        : 520),
-          ),
-          if (active == null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+  String _bannerImageUrl(Map<String, dynamic> banner) =>
+      '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}';
+
+  Future<void> _openBanner(Map<String, dynamic> banner) async {
+    final uri = Uri.tryParse(banner['targetUrl']?.toString() ?? '');
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return;
+    try {
+      await nativeActions.invokeMethod('openUrl', {'url': uri.toString()});
+    } on PlatformException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No se pudo abrir la promoción.')));
+      }
+    }
+  }
+
+  Widget _routeSummary(BuildContext context) {
+    if (routeDistanceMeters == null || routeDurationSeconds == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Text(
+        'Ruta estimada: ${(routeDistanceMeters! / 1000).toStringAsFixed(1)} km · '
+        '${(routeDurationSeconds! / 60).ceil()} min',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.titleSmall,
+      ),
+    );
+  }
+
+  List<Widget> _searchingContent(BuildContext context) => [
+        const Center(child: CircularProgressIndicator()),
+        const SizedBox(height: 16),
+        Text('Buscando un conductor cercano',
+            textAlign: TextAlign.center,
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        Text(message ?? 'Enviaremos tu solicitud a mototaxis disponibles.',
+            textAlign: TextAlign.center),
+        const SizedBox(height: 14),
+        _routeSummary(context),
+        AffiliateBanners(
+          key: const ValueKey('searching-ad'),
+          variant: AffiliateBannerVariant.expanded,
+          load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
+          imageUrl: _bannerImageUrl,
+          onTap: _openBanner,
+        ),
+        const SizedBox(height: 14),
+        OutlinedButton.icon(
+          onPressed: cancel,
+          icon: const Icon(Icons.cancel_outlined),
+          label: const Text('Cancelar búsqueda'),
+        ),
+      ];
+
+  List<Widget> _activeTripContent(BuildContext context) => [
+        Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(Icons.electric_rickshaw,
-                      size: 18, color: Theme.of(c).colorScheme.primary),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      nearbyDrivers.isEmpty
-                          ? 'No hay mototaxis disponibles cerca ahora'
-                          : '${nearbyDrivers.length} mototaxi(s) disponible(s) cerca',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ],
-              ),
+                  Text(active?['driverName']?.toString() ?? 'Tu conductor',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  if (active?['vehicle'] != null)
+                    Text('Mototaxi: ${active['vehicle']}'),
+                ]),
+          ),
+        ),
+        const SizedBox(height: 10),
+        TripStatusPanel(
+            status: active['status'].toString(),
+            driverName: active['driverName']?.toString()),
+        AffiliateBanners(
+          key: const ValueKey('active-trip-ad'),
+          variant: AffiliateBannerVariant.expanded,
+          load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
+          imageUrl: _bannerImageUrl,
+          onTap: _openBanner,
+        ),
+        const SizedBox(height: 12),
+        _routeSummary(context),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => dialPhone(context, active?['driverPhone']),
+              icon: const Icon(Icons.call_outlined),
+              label: const Text('Llamar'),
             ),
-          if (active == null)
-            Align(
-              alignment: Alignment.center,
-              child: TextButton.icon(
-                onPressed: showFavoritePlaces,
-                icon: const Icon(Icons.star_outline),
-                label: Text(favoritePlaces.isEmpty
-                    ? 'Guardar lugares favoritos'
-                    : 'Lugares favoritos (${favoritePlaces.length})'),
-              ),
-            ),
-          if (routeDistanceMeters != null && routeDurationSeconds != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                'Ruta estimada: ${(routeDistanceMeters! / 1000).toStringAsFixed(1)} km · '
-                '${(routeDurationSeconds! / 60).ceil()} min',
-                textAlign: TextAlign.center,
-              ),
-            ),
-          if (active != null && active?['status'] != 'SEARCHING')
-            TripStatusPanel(
-                status: active['status'].toString(),
-                driverName: active['driverName']?.toString()),
-          if (active != null && active?['status'] != 'SEARCHING')
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(active?['driverName']?.toString() ?? 'Tu conductor',
-                          style: Theme.of(c)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w700)),
-                      if (active?['vehicle'] != null)
-                        Text('Mototaxi: ${active['vehicle']}'),
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: () => dialPhone(c, active?['driverPhone']),
-                        icon: const Icon(Icons.call_outlined),
-                        label: const Text('Llamar al conductor'),
-                      ),
-                    ]),
-              ),
-            ),
-          if (active == null) ...[
-            TextField(
-                controller: origin,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                    labelText: 'Origen',
-                    hintText: 'Escribe una dirección o mueve el mapa',
-                    suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (origin.text.isNotEmpty)
-                        IconButton(
-                            tooltip: 'Borrar origen',
-                            icon: const Icon(Icons.close),
-                            onPressed: () => clearPoint(true)),
-                      IconButton(
-                          tooltip: 'Ajustar origen en el mapa',
-                          icon: const Icon(Icons.edit_location_alt_outlined),
-                          onPressed: () =>
-                              beginMapSelection(MapPointSelection.origin)),
-                      IconButton(
-                          tooltip: 'Buscar dirección',
-                          icon: const Icon(Icons.search),
-                          onPressed: () => locate(true))
-                    ]))),
-            const SizedBox(height: 12),
-            TextField(
-                controller: destination,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                    labelText: 'Destino',
-                    hintText: 'Escribe una dirección o mueve el mapa',
-                    suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (destination.text.isNotEmpty)
-                        IconButton(
-                            tooltip: 'Borrar destino',
-                            icon: const Icon(Icons.close),
-                            onPressed: () => clearPoint(false)),
-                      IconButton(
-                          tooltip: 'Ajustar destino en el mapa',
-                          icon: const Icon(Icons.edit_location_alt_outlined),
-                          onPressed: () =>
-                              beginMapSelection(MapPointSelection.destination)),
-                      IconButton(
-                          tooltip: 'Buscar dirección',
-                          icon: const Icon(Icons.search),
-                          onPressed: () => locate(false))
-                    ]))),
-            const SizedBox(height: 12),
-            TextField(
-              controller: notes,
-              maxLength: 300,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Referencia para encontrarte (opcional)',
-                hintText: 'Ej.: casa azul, junto a la farmacia, puerta lateral',
-                prefixIcon: Icon(Icons.info_outline),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text('Número de pasajeros (máximo 4)',
-                style: Theme.of(c).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            SegmentedButton<int>(segments: const [
-              ButtonSegment(value: 1, label: Text('1')),
-              ButtonSegment(value: 2, label: Text('2')),
-              ButtonSegment(value: 3, label: Text('3')),
-              ButtonSegment(value: 4, label: Text('4'))
-            ], selected: {
-              people
-            }, onSelectionChanged: (v) => setState(() => people = v.first)),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-                initialValue: paymentMethod,
-                decoration: const InputDecoration(labelText: 'Método de pago'),
-                items: const [
-                  DropdownMenuItem(
-                      value: 'CASH', child: Text('Pago en efectivo')),
-                  DropdownMenuItem(
-                      value: 'DEUNA', child: Text('Pago con De Una'))
-                ],
-                onChanged: (v) => setState(() => paymentMethod = v!))
-          ],
-          if (message != null &&
-              (active == null || active?['status'] == 'SEARCHING'))
-            Padding(padding: const EdgeInsets.all(12), child: Text(message!)),
-          if (active?['status'] == 'SEARCHING')
-            OutlinedButton.icon(
-                onPressed: cancel,
-                icon: const Icon(Icons.cancel_outlined),
-                label: const Text('Cancelar solicitud')),
-          if (active != null && active?['status'] != 'SEARCHING')
-            OutlinedButton.icon(
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: OutlinedButton.icon(
               onPressed: openPassengerChat,
               icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('Chat con el conductor'),
+              label: const Text('Mensaje'),
             ),
-          if (active != null && active?['status'] != 'SEARCHING')
-            OutlinedButton.icon(
-              onPressed: () => showTripSafety(
-                context: c,
-                trip: active,
-                counterpart:
-                    active?['driverName']?.toString() ?? 'mi conductor',
-                location: currentLocation,
+          ),
+        ]),
+        const SizedBox(height: 4),
+        OutlinedButton.icon(
+          onPressed: () => showTripSafety(
+            context: context,
+            trip: active,
+            counterpart: active?['driverName']?.toString() ?? 'mi conductor',
+            location: currentLocation,
+          ),
+          icon: const Icon(Icons.shield_outlined),
+          label: const Text('Seguridad y compartir viaje'),
+        ),
+      ];
+
+  List<Widget> _requestContent(BuildContext context) => [
+        Row(children: [
+          Icon(Icons.electric_rickshaw,
+              size: 18, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(nearbyDrivers.isEmpty
+                ? 'No hay mototaxis disponibles cerca ahora'
+                : '${nearbyDrivers.length} mototaxi(s) disponible(s) cerca'),
+          ),
+          IconButton(
+              tooltip: 'Lugares favoritos',
+              onPressed: showFavoritePlaces,
+              icon: const Icon(Icons.star_outline)),
+        ]),
+        TextField(
+          controller: origin,
+          onTap: () => _movePassengerSheet(.72),
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: 'Origen',
+            hintText: 'Escribe una dirección o mueve el mapa',
+            suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (origin.text.isNotEmpty)
+                IconButton(
+                    tooltip: 'Borrar origen',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => clearPoint(true)),
+              IconButton(
+                  tooltip: 'Ajustar origen en el mapa',
+                  icon: const Icon(Icons.edit_location_alt_outlined),
+                  onPressed: () => beginMapSelection(MapPointSelection.origin)),
+              IconButton(
+                  tooltip: 'Buscar dirección',
+                  icon: const Icon(Icons.search),
+                  onPressed: () => locate(true)),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: destination,
+          onTap: () => _movePassengerSheet(.72),
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: 'Destino',
+            hintText: 'Escribe una dirección o mueve el mapa',
+            suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (destination.text.isNotEmpty)
+                IconButton(
+                    tooltip: 'Borrar destino',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => clearPoint(false)),
+              IconButton(
+                  tooltip: 'Ajustar destino en el mapa',
+                  icon: const Icon(Icons.edit_location_alt_outlined),
+                  onPressed: () =>
+                      beginMapSelection(MapPointSelection.destination)),
+              IconButton(
+                  tooltip: 'Buscar dirección',
+                  icon: const Icon(Icons.search),
+                  onPressed: () => locate(false)),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: notes,
+          onTap: () => _movePassengerSheet(.72),
+          maxLength: 300,
+          maxLines: 2,
+          decoration: const InputDecoration(
+            labelText: 'Referencia para encontrarte (opcional)',
+            hintText: 'Ej.: casa azul, junto a la farmacia, puerta lateral',
+            prefixIcon: Icon(Icons.info_outline),
+          ),
+        ),
+        Text('Número de pasajeros (máximo 4)',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SegmentedButton<int>(
+          segments: const [
+            ButtonSegment(value: 1, label: Text('1')),
+            ButtonSegment(value: 2, label: Text('2')),
+            ButtonSegment(value: 3, label: Text('3')),
+            ButtonSegment(value: 4, label: Text('4')),
+          ],
+          selected: {people},
+          onSelectionChanged: (value) => setState(() => people = value.first),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          initialValue: paymentMethod,
+          decoration: const InputDecoration(labelText: 'Método de pago'),
+          items: const [
+            DropdownMenuItem(value: 'CASH', child: Text('Pago en efectivo')),
+            DropdownMenuItem(value: 'DEUNA', child: Text('Pago con De Una')),
+          ],
+          onChanged: (value) => setState(() => paymentMethod = value!),
+        ),
+        if (message != null)
+          Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Text(message!)),
+        _routeSummary(context),
+        FilledButton(
+            onPressed: create, child: const Text('Solicitar mototaxi')),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final originLabel = cleanAddressLabel(
+        active?['originReference'] ?? origin.text,
+        fallback: 'Origen');
+    final destinationLabel = cleanAddressLabel(
+        active?['destinationReference'] ?? destination.text,
+        fallback: 'Destino');
+    final status = active?['status']?.toString();
+    final searching = status == 'SEARCHING';
+    final editing = active == null && mapSelection != null;
+
+    return Scaffold(
+      body: LayoutBuilder(builder: (context, constraints) {
+        final safeTop = MediaQuery.paddingOf(context).top;
+        return Stack(children: [
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: passengerSheetController,
+              builder: (context, _) {
+                final extent = passengerSheetController.isAttached
+                    ? passengerSheetController.size
+                    : sheetExtent;
+                return LiveMap(
+                  originLabel: originLabel,
+                  destinationLabel: destinationLabel,
+                  pickup: pickup,
+                  dropoff: dropoff,
+                  currentLocation: currentLocation,
+                  driverPosition: driverPosition,
+                  driverBearing: driverBearing,
+                  routePoints: routePoints,
+                  nearbyDrivers:
+                      active == null ? nearbyDrivers : const <String, LatLng>{},
+                  editing: active == null ? mapSelection : null,
+                  onPointSelected: editing ? selectMapPoint : null,
+                  onUseCurrentLocation:
+                      active == null ? useCurrentLocation : null,
+                  fillAvailable: true,
+                  borderRadius: 0,
+                  viewportPadding: EdgeInsets.fromLTRB(12, safeTop + 72, 12,
+                      constraints.maxHeight * extent + 16),
+                );
+              },
+            ),
+          ),
+          Positioned(
+            top: safeTop + 8,
+            left: 12,
+            right: 12,
+            child: Row(children: [
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                elevation: 3,
+                shape: const CircleBorder(),
+                child: IconButton(
+                    tooltip: 'Mi perfil',
+                    onPressed: () => profile(context, widget.s),
+                    icon: const Icon(Icons.person_outline)),
               ),
-              icon: const Icon(Icons.shield_outlined),
-              label: const Text('Seguridad y compartir viaje'),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  elevation: 3,
+                  borderRadius: BorderRadius.circular(22),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 11),
+                    child: Text('Hola, ${widget.s.name}',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+          DraggableScrollableSheet(
+            controller: passengerSheetController,
+            initialChildSize: .35,
+            minChildSize: .18,
+            maxChildSize: .92,
+            snap: true,
+            snapSizes: const [.28, .52, .9],
+            builder: (context, scrollController) => Material(
+              color: Theme.of(context).colorScheme.surface,
+              elevation: 16,
+              shadowColor: Colors.black45,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(28)),
+              clipBehavior: Clip.antiAlias,
+              child: ListView(
+                controller: scrollController,
+                padding: EdgeInsets.fromLTRB(
+                    20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant
+                            .withValues(alpha: .35),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (searching)
+                    ..._searchingContent(context)
+                  else if (active != null)
+                    ..._activeTripContent(context)
+                  else
+                    ..._requestContent(context),
+                ],
+              ),
             ),
-          FilledButton(
-              onPressed: active == null ? create : null,
-              child: Text(active == null
-                  ? 'Solicitar mototaxi'
-                  : active?['status'] == 'SEARCHING'
-                      ? 'Buscando conductor...'
-                      : 'Viaje en curso'))
-        ]));
+          ),
+        ]);
+      }),
+    );
   }
 }
 
@@ -3403,6 +3516,7 @@ class Driver extends StatefulWidget {
 
 class _DriverState extends State<Driver> {
   final api = Api();
+  final driverSheetController = DraggableScrollableController();
   late final RealtimeService realtime;
   dynamic active;
   List offers = [];
@@ -3458,7 +3572,19 @@ class _DriverState extends State<Driver> {
     positionSubscription?.cancel();
     realtimeSubscription?.cancel();
     realtime.dispose();
+    driverSheetController.dispose();
     super.dispose();
+  }
+
+  void _moveDriverSheet(double size) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !driverSheetController.isAttached) return;
+      driverSheetController.animateTo(
+        size.clamp(.18, .92),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   Future<void> openDriverChat([String? requestedTripId]) async {
@@ -3568,6 +3694,7 @@ class _DriverState extends State<Driver> {
         offers = [];
       }
     });
+    _moveDriverSheet(active == null ? .30 : .50);
     if (active != null) unawaited(resolveOriginAddress(active));
     if (serverAvailable || active != null) {
       try {
@@ -3643,7 +3770,11 @@ class _DriverState extends State<Driver> {
       }
       if (active == null && available) {
         final r = await api.offers(widget.s.token);
-        if (mounted) setState(() => offers = r);
+        if (mounted) {
+          final hadOffers = offers.isNotEmpty;
+          setState(() => offers = r);
+          if (!hadOffers && r.isNotEmpty) _moveDriverSheet(.48);
+        }
       } else if (offers.isNotEmpty && mounted) {
         setState(() => offers = []);
       }
@@ -3735,164 +3866,304 @@ class _DriverState extends State<Driver> {
         'START': 'Iniciar viaje',
         'COMPLETE': 'Finalizar viaje'
       }[a]!;
-  @override
-  Widget build(BuildContext c) {
-    final a = next();
-    final LatLng? pickup = active?['originLatitude'] != null
-        ? LatLng((active['originLatitude'] as num).toDouble(),
-            (active['originLongitude'] as num).toDouble())
-        : null;
-    final LatLng? dropoff = active?['destinationLatitude'] != null
-        ? LatLng((active['destinationLatitude'] as num).toDouble(),
-            (active['destinationLongitude'] as num).toDouble())
-        : null;
-    return Scaffold(
-        appBar: AppBar(title: Text('Conductor · ${widget.s.name}'), actions: [
-          IconButton(
-              onPressed: () => profile(c, widget.s),
-              icon: const Icon(Icons.person_outline))
-        ]),
-        body: ListView(padding: const EdgeInsets.all(20), children: [
-          SwitchListTile(
-              title: const Text('Disponible para viajes'),
-              value: available,
-              onChanged: active == null ? toggle : null),
-          if (driverMessage != null)
-            Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(driverMessage!)),
-          if (active == null && available)
-            const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: Text('Esperando viajes...'))),
-          if (active != null) ...[
-            LiveMap(
-              originLabel:
-                  resolvedDriverOrigin ?? active['originReference'] ?? 'Origen',
-              destinationLabel: active['destinationReference'] ?? 'Destino',
-              pickup: pickup,
-              dropoff: dropoff,
-              driverPosition: currentDriverPosition,
-              driverBearing: currentDriverBearing,
-              routePoints: routePoints,
-              height: 330,
+  List<Widget> _driverSheetContent(BuildContext context, String? action) => [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Disponible para viajes'),
+          value: available,
+          onChanged: active == null ? toggle : null,
+        ),
+        if (driverMessage != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(driverMessage!),
+          ),
+        if (active == null && available && offers.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(child: Text('Esperando viajes...')),
+          ),
+        if (active != null) ...[
+          Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(estadoViaje(active['status']),
+                      style: Theme.of(context).textTheme.labelLarge),
+                  const SizedBox(height: 4),
+                  const Text('Pasajero'),
+                  Text(active['passengerName']?.toString() ?? 'Pasajero',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 14),
+                  Text('Origen', style: Theme.of(context).textTheme.labelLarge),
+                  Text(
+                    cleanAddressLabel(
+                      resolvedDriverOrigin ?? active['originReference'],
+                      fallback: 'Origen seleccionado',
+                    ),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 10),
+                  Text('Destino',
+                      style: Theme.of(context).textTheme.labelLarge),
+                  Text(
+                    cleanAddressLabel(active['destinationReference'],
+                        fallback: 'Destino seleccionado'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (active['notes']?.toString().trim().isNotEmpty ==
+                      true) ...[
+                    const SizedBox(height: 10),
+                    Text('Referencia: ${active['notes']}'),
+                  ],
+                  const SizedBox(height: 10),
+                  Text(
+                    'Pago: ${active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ],
+              ),
             ),
-            Card(
+          ),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => dialPhone(context, active['passengerPhone']),
+                icon: const Icon(Icons.call_outlined),
+                label: const Text('Llamar'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: openDriverChat,
+                icon: const Icon(Icons.chat_bubble_outline),
+                label: const Text('Mensaje'),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          OutlinedButton.icon(
+            onPressed: () => showTripSafety(
+              context: context,
+              trip: active,
+              counterpart:
+                  active?['passengerName']?.toString() ?? 'mi pasajero',
+              location: currentDriverPosition,
+            ),
+            icon: const Icon(Icons.shield_outlined),
+            label: const Text('Seguridad y compartir viaje'),
+          ),
+          if (action != null)
+            FilledButton(
+              onPressed: () => progress(context, action),
+              child: Text(label(action)),
+            ),
+        ],
+        ...offers.map((offer) => Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Text('Pasajero'),
-                      Text(active['passengerName']?.toString() ?? 'Pasajero',
-                          style: Theme.of(c)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w700)),
+                      Row(children: [
+                        const Icon(Icons.notifications_active_outlined),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Nuevo viaje · ${offer['passengers']} pasajero(s)',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                      ]),
                       const SizedBox(height: 12),
-                      Text('Origen', style: Theme.of(c).textTheme.labelLarge),
+                      Text('Origen',
+                          style: Theme.of(context).textTheme.labelLarge),
                       Text(
-                          resolvedDriverOrigin ??
-                              active['originReference'] ??
-                              'Origen seleccionado',
-                          style: Theme.of(c).textTheme.titleMedium),
-                      const SizedBox(height: 10),
-                      Text('Destino', style: Theme.of(c).textTheme.labelLarge),
-                      Text(
-                          active['destinationReference'] ??
-                              'Destino seleccionado',
-                          style: Theme.of(c).textTheme.titleMedium),
-                      if (active['notes']?.toString().isNotEmpty == true) ...[
-                        const SizedBox(height: 10),
-                        Text('Referencia: ${active['notes']}'),
-                      ],
-                      const SizedBox(height: 10),
-                      Text(
-                        'Pago: ${active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}',
-                        style: Theme.of(c).textTheme.titleSmall,
+                        cleanAddressLabel(offer['originReference'],
+                            fallback: 'Origen seleccionado'),
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: () => dialPhone(c, active['passengerPhone']),
-                        icon: const Icon(Icons.call_outlined),
-                        label: const Text('Llamar al pasajero'),
+                      Text('Destino',
+                          style: Theme.of(context).textTheme.labelLarge),
+                      Text(
+                        cleanAddressLabel(offer['destinationReference'],
+                            fallback: 'Destino seleccionado'),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      if (offer['notes']?.toString().trim().isNotEmpty ==
+                          true) ...[
+                        const SizedBox(height: 10),
+                        Text('Referencia: ${offer['notes']}'),
+                      ],
+                      const SizedBox(height: 8),
+                      Text(
+                          'Pago: ${offer['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        onPressed: () async {
+                          setState(() => offers = []);
+                          try {
+                            await api.respond(widget.s.token, offer['offerId']);
+                          } catch (error) {
+                            if (mounted) {
+                              setState(() => driverMessage = error.toString());
+                            }
+                          } finally {
+                            await restore();
+                            await refresh();
+                          }
+                        },
+                        icon: const Icon(Icons.check),
+                        label: const Text('Aceptar viaje'),
                       ),
                     ]),
               ),
+            )),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final action = next();
+    final mapTrip = active ?? (offers.isEmpty ? null : offers.first);
+    final pickup = mapTrip?['originLatitude'] == null
+        ? null
+        : LatLng((mapTrip['originLatitude'] as num).toDouble(),
+            (mapTrip['originLongitude'] as num).toDouble());
+    final dropoff = mapTrip?['destinationLatitude'] == null
+        ? null
+        : LatLng((mapTrip['destinationLatitude'] as num).toDouble(),
+            (mapTrip['destinationLongitude'] as num).toDouble());
+
+    return Scaffold(
+      body: LayoutBuilder(builder: (context, constraints) {
+        final safeTop = MediaQuery.paddingOf(context).top;
+        return Stack(children: [
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: driverSheetController,
+              builder: (context, _) {
+                final extent = driverSheetController.isAttached
+                    ? driverSheetController.size
+                    : (active == null ? .30 : .50);
+                return LiveMap(
+                  originLabel: cleanAddressLabel(
+                    resolvedDriverOrigin ?? mapTrip?['originReference'],
+                    fallback: 'Origen',
+                  ),
+                  destinationLabel: cleanAddressLabel(
+                    mapTrip?['destinationReference'],
+                    fallback: 'Destino',
+                  ),
+                  pickup: pickup,
+                  dropoff: dropoff,
+                  currentLocation: currentDriverPosition,
+                  driverPosition: active == null ? null : currentDriverPosition,
+                  driverBearing: currentDriverBearing,
+                  routePoints: routePoints,
+                  fillAvailable: true,
+                  borderRadius: 0,
+                  viewportPadding: EdgeInsets.fromLTRB(
+                    12,
+                    safeTop + 72,
+                    12,
+                    constraints.maxHeight * extent + 16,
+                  ),
+                );
+              },
             ),
-            OutlinedButton.icon(
-              onPressed: openDriverChat,
-              icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('Chat con el pasajero'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => showTripSafety(
-                context: c,
-                trip: active,
-                counterpart:
-                    active?['passengerName']?.toString() ?? 'mi pasajero',
-                location: currentDriverPosition,
+          ),
+          Positioned(
+            top: safeTop + 8,
+            left: 12,
+            right: 12,
+            child: Row(children: [
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                elevation: 3,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Volver',
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.arrow_back),
+                ),
               ),
-              icon: const Icon(Icons.shield_outlined),
-              label: const Text('Seguridad y compartir viaje'),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  elevation: 3,
+                  borderRadius: BorderRadius.circular(22),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 11),
+                    child: Text('Conductor · ${widget.s.name}',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                elevation: 3,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Mi perfil',
+                  onPressed: () => profile(context, widget.s),
+                  icon: const Icon(Icons.person_outline),
+                ),
+              ),
+            ]),
+          ),
+          DraggableScrollableSheet(
+            controller: driverSheetController,
+            initialChildSize: active == null ? .30 : .50,
+            minChildSize: .18,
+            maxChildSize: .92,
+            snap: true,
+            snapSizes: const [.28, .52, .9],
+            builder: (context, scrollController) => Material(
+              color: Theme.of(context).colorScheme.surface,
+              elevation: 16,
+              shadowColor: Colors.black45,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(28)),
+              clipBehavior: Clip.antiAlias,
+              child: ListView(
+                controller: scrollController,
+                padding: EdgeInsets.fromLTRB(
+                    20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant
+                            .withValues(alpha: .35),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ..._driverSheetContent(context, action),
+                ],
+              ),
             ),
-            if (a != null)
-              FilledButton(
-                  onPressed: () => progress(c, a), child: Text(label(a)))
-          ],
-          ...offers.map((o) => Card(
-              child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(children: [
-                          const Icon(Icons.notifications_active_outlined),
-                          const SizedBox(width: 10),
-                          Expanded(
-                              child: Text(
-                                  'Nuevo viaje · ${o['passengers']} pasajero(s)',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium))
-                        ]),
-                        const SizedBox(height: 12),
-                        Text('Origen',
-                            style: Theme.of(context).textTheme.labelLarge),
-                        Text(o['originReference'] ?? 'Origen seleccionado',
-                            style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 10),
-                        Text('Destino',
-                            style: Theme.of(context).textTheme.labelLarge),
-                        Text(
-                            o['destinationReference'] ?? 'Destino seleccionado',
-                            style: Theme.of(context).textTheme.titleMedium),
-                        if (o['notes']?.toString().isNotEmpty == true) ...[
-                          const SizedBox(height: 10),
-                          Text('Referencia: ${o['notes']}'),
-                        ],
-                        const SizedBox(height: 8),
-                        Text(
-                            'Pago: ${o['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
-                        const SizedBox(height: 14),
-                        FilledButton.icon(
-                            onPressed: () async {
-                              setState(() => offers = []);
-                              try {
-                                await api.respond(widget.s.token, o['offerId']);
-                              } catch (error) {
-                                if (mounted) {
-                                  setState(
-                                      () => driverMessage = error.toString());
-                                }
-                              } finally {
-                                await restore();
-                                await refresh();
-                              }
-                            },
-                            icon: const Icon(Icons.check),
-                            label: const Text('Aceptar viaje'))
-                      ]))))
-        ]));
+          ),
+        ]);
+      }),
+    );
   }
 }
 

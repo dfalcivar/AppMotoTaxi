@@ -662,6 +662,8 @@ export async function buildApp() {
         t.quoted_total_cents as "quotedTotalCents",
         t.origin_reference as "originReference",
         t.destination_reference as "destinationReference", t.passenger_notes as notes,
+        ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
+        ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
         o.expires_at as "expiresAt"
       from driver_offers o
       join trips t on t.id=o.trip_id

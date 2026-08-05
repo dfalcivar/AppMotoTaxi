@@ -45,6 +45,16 @@ class MainActivity : FlutterFragmentActivity() {
                         startActivity(Intent.createChooser(intent, "Compartir viaje"))
                         result.success(null)
                     }
+                    "openUrl" -> {
+                        val value = call.argument<String>("url")?.trim().orEmpty()
+                        val uri = runCatching { Uri.parse(value) }.getOrNull()
+                        if (uri == null || uri.scheme != "https" || uri.host.isNullOrBlank()) {
+                            result.error("INVALID_URL", "El enlace de la campaña no es seguro", null)
+                            return@setMethodCallHandler
+                        }
+                        startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        result.success(null)
+                    }
                     "authenticateFingerprintLegacy" -> authenticateFingerprintLegacy(result)
                     else -> result.notImplemented()
                 }

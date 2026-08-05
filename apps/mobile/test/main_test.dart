@@ -20,4 +20,11 @@ void main() {
     expect(mensajeApi('INVALID_REGISTRATION'), contains('campos obligatorios'));
     expect(mensajeApi('VEHICLE_REQUIRED'), contains('placa'));
   });
+
+  test('oculta Plus Codes en las direcciones visibles', () {
+    expect(cleanAddressLabel('4X2X+H56, Hermano Miguel 9-21'),
+        'Hermano Miguel 9-21');
+    expect(cleanAddressLabel('Simón Bolívar 596, Cuenca'),
+        'Simón Bolívar 596, Cuenca');
+  });
 }

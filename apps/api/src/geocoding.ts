@@ -38,6 +38,13 @@ const headers = {
   Accept: "application/json"
 };
 
+const leadingPlusCode = /^\s*[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}(?:\s*[,·-]\s*|\s+)/iu;
+
+/** Keeps provider metadata internal while returning a readable UI label. */
+export function cleanLocationLabel(value: string): string {
+  return value.replace(leadingPlusCode, "").replace(/\s{2,}/gu, " ").trim();
+}
+
 function googleMapsKey(): string | undefined {
   return process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim() || undefined;
 }
@@ -82,9 +89,11 @@ async function searchGooglePlaces(
     const longitude = place.location?.longitude;
     if (latitude == null || longitude == null) return [];
     const name = place.displayName?.text?.trim();
-    const address = place.formattedAddress?.trim();
+    const address = place.formattedAddress
+      ? cleanLocationLabel(place.formattedAddress)
+      : undefined;
     return [{
-      label: [name, address].filter(Boolean).join(" · ").slice(0, 200),
+      label: cleanLocationLabel([name, address].filter(Boolean).join(" · ")).slice(0, 200),
       latitude,
       longitude
     }];
@@ -110,7 +119,7 @@ async function reverseGoogleLocation(point: FocusPoint): Promise<LocationResult>
     throw new Error("LOCATION_NOT_FOUND");
   }
   return {
-    label: result.formatted_address.slice(0, 200),
+    label: cleanLocationLabel(result.formatted_address).slice(0, 200),
     latitude: result.geometry?.location?.lat ?? point.latitude,
     longitude: result.geometry?.location?.lng ?? point.longitude
   };
@@ -216,7 +225,7 @@ export async function searchLocations(query: string, focus?: FocusPoint): Promis
   if (!response.ok) throw new Error("GEOCODER_UNAVAILABLE");
   const items = await response.json() as NominatimItem[];
   return items.map(item => ({
-    label: item.display_name,
+    label: cleanLocationLabel(item.display_name),
     latitude: Number(item.lat),
     longitude: Number(item.lon)
   }));
@@ -229,7 +238,7 @@ function reverseLabel(item: NominatimReverseItem): string {
   const locality = address.city ?? address.town ?? address.village ?? address.municipality ?? address.county;
   const parts = [streetAndNumber, address.neighbourhood, address.suburb, locality, address.state]
     .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
-  return (parts.length ? parts.join(", ") : item.display_name).slice(0, 200);
+  return cleanLocationLabel(parts.length ? parts.join(", ") : item.display_name).slice(0, 200);
 }
 
 export async function reverseLocation(point: FocusPoint): Promise<LocationResult> {
