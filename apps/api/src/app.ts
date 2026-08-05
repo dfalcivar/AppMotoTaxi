@@ -36,7 +36,16 @@ const registrationSchema = z.object({
   password: z.string().min(8).max(100),
   phone: z.string().trim().regex(/^\+?[0-9]{8,15}$/),
   role: z.enum(["PASSENGER", "DRIVER"]),
-  vehicleIdentifier: z.string().trim().min(3).max(30).optional()
+  vehicleIdentifier: z.string().trim().min(3).max(30).optional(),
+  profilePhotoBase64: z.string().min(100).max(3_500_000).optional(),
+  profilePhotoMime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional()
+}).superRefine((value, context) => {
+  if (value.role === "DRIVER" && (!value.profilePhotoBase64 || !value.profilePhotoMime)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["profilePhotoBase64"], message: "DRIVER_PHOTO_REQUIRED" });
+  }
+  if (Boolean(value.profilePhotoBase64) !== Boolean(value.profilePhotoMime)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["profilePhotoBase64"], message: "INCOMPLETE_PROFILE_PHOTO" });
+  }
 });
 const pointSchema = z.object({ longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) });
 const availabilitySchema = z.object({ available: z.boolean(), location: pointSchema.optional() });
@@ -66,6 +75,21 @@ const driverDocumentSchema = z.object({
   fileMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
   expiresAt: z.string().date().optional().or(z.literal(""))
 });
+
+const profilePhotoSchema = z.object({
+  fileBase64: z.string().min(100).max(3_500_000),
+  fileMime: z.enum(["image/jpeg", "image/png", "image/webp"])
+});
+
+function decodeImage(fileBase64: string, fileMime: "image/jpeg" | "image/png" | "image/webp"): Buffer {
+  const data = Buffer.from(fileBase64, "base64");
+  const jpeg = data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  const png = data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const webp = data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+  const valid = fileMime === "image/jpeg" ? jpeg : fileMime === "image/png" ? png : webp;
+  if (!valid || data.length < 100 || data.length > 2_500_000) throw new Error("INVALID_IMAGE_FILE");
+  return data;
+}
 
 async function configuredSearchRadius(): Promise<number> {
   const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
@@ -267,17 +291,27 @@ export async function buildApp() {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_REGISTRATION", details: parsed.error.issues });
     const input = parsed.data;
     if (input.role === "DRIVER" && !input.vehicleIdentifier) return reply.code(400).send({ error: "VEHICLE_REQUIRED" });
+    let profilePhoto: Buffer | null = null;
+    if (input.profilePhotoBase64 && input.profilePhotoMime) {
+      try { profilePhoto = decodeImage(input.profilePhotoBase64, input.profilePhotoMime); }
+      catch { return reply.code(400).send({ error: "INVALID_PROFILE_PHOTO" }); }
+    }
     try {
       const account = await database().begin(async tx => {
         const status = input.role === "DRIVER" ? "PENDING" : "ACTIVE";
         const [user] = await tx`
-          insert into users (phone_e164, full_name, email, password_hash, role, status, phone_verified_at, terms_accepted_at)
-          values (${input.phone.startsWith("+") ? input.phone : `+${input.phone}`}, ${input.fullName}, ${input.email.toLowerCase()}, crypt(${input.password}, gen_salt('bf')), ${input.role}, ${status}, now(), now())
+          insert into users (phone_e164, full_name, email, password_hash, role, status, phone_verified_at, terms_accepted_at,
+            profile_photo_data, profile_photo_mime, profile_photo_updated_at)
+          values (${input.phone.startsWith("+") ? input.phone : `+${input.phone}`}, ${input.fullName}, ${input.email.toLowerCase()}, crypt(${input.password}, gen_salt('bf')), ${input.role}, ${status}, now(), now(),
+            ${profilePhoto}, ${input.profilePhotoMime ?? null}, ${profilePhoto ? new Date() : null})
           returning id, email, full_name, role, status
         `;
         if (input.role === "DRIVER") {
           await tx`insert into drivers (user_id, is_available) values (${user!.id}, false)`;
           await tx`insert into vehicles (driver_id, identifier, maximum_passengers, status) values (${user!.id}, ${input.vehicleIdentifier!}, 4, 'PENDING')`;
+          await tx`insert into driver_documents
+            (driver_id, document_type, file_url, file_data, file_mime, status)
+            values (${user!.id}, 'PROFILE_PHOTO', 'database', ${profilePhoto!}, ${input.profilePhotoMime!}, 'PENDING')`;
         }
         return user!;
       });
@@ -337,8 +371,8 @@ export async function buildApp() {
         coalesce(d.rating, (select avg(score)::numeric(3,2) from ratings where recipient_id=u.id), 0)::float8 as rating,
         (select count(*)::int from ratings where recipient_id=u.id) as "ratingCount",
         v.identifier as vehicle,
-        encode(photo.file_data, 'base64') as "photoBase64",
-        photo.file_mime as "photoMime"
+        encode(coalesce(u.profile_photo_data, photo.file_data), 'base64') as "photoBase64",
+        coalesce(u.profile_photo_mime, photo.file_mime) as "photoMime"
       from users u
       left join drivers d on d.user_id=u.id
       left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true
@@ -351,6 +385,49 @@ export async function buildApp() {
       where r.recipient_id=${user.id!} order by r.created_at desc limit 10
     `;
     return { ...profile, reviews };
+  });
+
+  app.put("/v1/profile/photo", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const parsed = profilePhotoSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PROFILE_PHOTO" });
+    let data: Buffer;
+    try { data = decodeImage(parsed.data.fileBase64, parsed.data.fileMime); }
+    catch { return reply.code(400).send({ error: "INVALID_PROFILE_PHOTO" }); }
+    await database().begin(async tx => {
+      await tx`update users set profile_photo_data=${data}, profile_photo_mime=${parsed.data.fileMime}, profile_photo_updated_at=now(), updated_at=now() where id=${user.id!}`;
+      if (user.role === "DRIVER") await tx`
+        insert into driver_documents (driver_id, document_type, file_url, file_data, file_mime, status)
+        values (${user.id!}, 'PROFILE_PHOTO', 'database', ${data}, ${parsed.data.fileMime}, 'PENDING')
+        on conflict (driver_id, document_type) do update set file_data=excluded.file_data,
+          file_mime=excluded.file_mime, status='PENDING', reviewed_by=null, reviewed_at=null,
+          review_note=null, created_at=now()
+      `;
+    });
+    return { updated: true };
+  });
+
+  app.delete("/v1/profile/photo", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role === "DRIVER") return reply.code(409).send({ error: "DRIVER_PHOTO_REQUIRED" });
+    await database()`update users set profile_photo_data=null, profile_photo_mime=null, profile_photo_updated_at=null, updated_at=now() where id=${user.id!}`;
+    return { deleted: true };
+  });
+
+  app.get("/v1/users/:id/profile-photo", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const id = (request.params as { id: string }).id;
+    const [photo] = await database()`
+      select target.profile_photo_data as data, target.profile_photo_mime as mime
+      from users target
+      where target.id=${id} and (target.id=${user.id!} or exists (
+        select 1 from trips t
+        where (${user.id!}=t.passenger_id and target.id=t.driver_id)
+           or (${user.id!}=t.driver_id and target.id=t.passenger_id)
+      ))
+    `;
+    if (!photo?.data) return reply.code(404).send({ error: "PHOTO_NOT_FOUND" });
+    return reply.header("Content-Type", String(photo.mime)).header("Cache-Control", "private, max-age=300").send(photo.data);
   });
 
   app.get("/v1/driver/documents", async (request, reply) => {
@@ -370,8 +447,9 @@ export async function buildApp() {
     const parsed = driverDocumentSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" });
     const input = parsed.data;
-    const data = Buffer.from(input.fileBase64, "base64");
-    if (data.length < 50 || data.length > 2_500_000) return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" });
+    let data: Buffer;
+    try { data = decodeImage(input.fileBase64, input.fileMime); }
+    catch { return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" }); }
     const [document] = await database()`
       insert into driver_documents
         (driver_id, document_type, file_url, file_data, file_mime, expires_at, status)
@@ -383,6 +461,7 @@ export async function buildApp() {
         reviewed_at=null, review_note=null, created_at=now()
       returning id::text, document_type as "documentType", status
     `;
+    if (input.documentType === "PROFILE_PHOTO") await database()`update users set profile_photo_data=${data}, profile_photo_mime=${input.fileMime}, profile_photo_updated_at=now(), updated_at=now() where id=${user.id!}`;
     return reply.code(201).send(document);
   });
 
@@ -494,7 +573,8 @@ export async function buildApp() {
     const tripId = (request.params as { tripId: string }).tripId;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
-        d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
+        t.driver_id::text as "driverId", d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
+        coalesce(d.rating, 0)::float8 as "driverRating", (d_user.profile_photo_data is not null) as "driverHasPhoto",
         p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone", v.identifier as vehicle,
         t.origin_reference as "originReference", t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
@@ -504,6 +584,7 @@ export async function buildApp() {
         cancellation.reason_code as "cancellationReason"
       from trips t
       left join users d_user on d_user.id=t.driver_id
+      left join drivers d on d.user_id=t.driver_id
       join users p_user on p_user.id=t.passenger_id
       left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) v on true
       left join trip_live_locations live on live.trip_id=t.id
@@ -519,7 +600,8 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
-        d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
+        t.driver_id::text as "driverId", d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
+        coalesce(d.rating, 0)::float8 as "driverRating", (d_user.profile_photo_data is not null) as "driverHasPhoto",
         p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone", v.identifier as vehicle,
         t.origin_reference as "originReference", t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
@@ -529,6 +611,7 @@ export async function buildApp() {
       from trips t
       join users p_user on p_user.id=t.passenger_id
       left join users d_user on d_user.id=t.driver_id
+      left join drivers d on d.user_id=t.driver_id
       left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) v on true
       left join trip_live_locations live on live.trip_id=t.id
       where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)

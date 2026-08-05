@@ -37,6 +37,7 @@ class LiveMap extends StatefulWidget {
     this.pickup,
     this.dropoff,
     this.driverPosition,
+    this.selfDriverPosition,
     this.driverBearing = 0,
     this.routePoints = const [],
     this.nearbyDrivers = const {},
@@ -56,6 +57,7 @@ class LiveMap extends StatefulWidget {
   final LatLng? pickup;
   final LatLng? dropoff;
   final LatLng? driverPosition;
+  final LatLng? selfDriverPosition;
   final double driverBearing;
   final List<LatLng> routePoints;
   final Map<String, LatLng> nearbyDrivers;
@@ -245,6 +247,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   LatLng? get _center =>
       _displayedDriver ??
       widget.pickup ??
+      widget.selfDriverPosition ??
       widget.currentLocation ??
       widget.dropoff ??
       (widget.nearbyDrivers.isEmpty ? null : widget.nearbyDrivers.values.first);
@@ -311,6 +314,13 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           height: 26,
           child: const _MotoMarker(),
         ),
+      if (widget.selfDriverPosition != null)
+        Marker(
+          point: widget.selfDriverPosition!,
+          width: 38,
+          height: 38,
+          child: const _SelfDriverMarker(),
+        ),
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
@@ -370,6 +380,16 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           infoWindow: const gmaps.InfoWindow(title: 'Mototaxi disponible'),
           anchor: const Offset(.5, .5),
           clusterManagerId: _nearbyClusterId,
+        ),
+      if (widget.selfDriverPosition != null)
+        gmaps.Marker(
+          markerId: const gmaps.MarkerId('self-driver'),
+          position: gmaps.LatLng(widget.selfDriverPosition!.latitude,
+              widget.selfDriverPosition!.longitude),
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+              gmaps.BitmapDescriptor.hueAzure),
+          infoWindow: const gmaps.InfoWindow(title: 'Mi ubicaciÃ³n'),
+          zIndexInt: 20,
         ),
       if (_displayedDriver != null)
         gmaps.Marker(
@@ -587,6 +607,21 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           : SizedBox(height: widget.height, child: mapContent),
     );
   }
+}
+
+class _SelfDriverMarker extends StatelessWidget {
+  const _SelfDriverMarker();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
+        ),
+        child: const Icon(Icons.my_location, color: Colors.white, size: 20),
+      );
 }
 
 class _MotoMarker extends StatelessWidget {

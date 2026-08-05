@@ -48,6 +48,23 @@ const documentReviewSchema = z.object({
   status: z.enum(["ACTIVE", "REJECTED"]),
   note: z.string().trim().min(3).max(300)
 });
+const adminDocumentSchema = z.object({
+  documentType: z.enum(["PROFILE_PHOTO", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
+  fileBase64: z.string().min(100).max(3_500_000),
+  fileMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  expiresAt: z.string().date().optional().or(z.literal(""))
+});
+
+function decodeAdminImage(value: z.infer<typeof adminDocumentSchema>): Buffer {
+  const data = Buffer.from(value.fileBase64, "base64");
+  const jpeg = data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  const png = data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const webp = data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+  if (data.length > 2_500_000 || !(value.fileMime === "image/jpeg" ? jpeg : value.fileMime === "image/png" ? png : webp)) {
+    throw new Error("INVALID_IMAGE_FILE");
+  }
+  return data;
+}
 const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
 const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
 const incidentSchema = z.object({ status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]), assignedTo: z.string().min(2) });
@@ -218,7 +235,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return await database()`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, coalesce(v.identifier, 'Sin vehículo') as vehicle,
         u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/4 documentos' from driver_documents dd where dd.driver_id = d.user_id), '0/4 documentos') as documents,
-        coalesce(d.rating, 0)::float8 as rating
+        coalesce(d.rating, 0)::float8 as rating, (u.profile_photo_data is not null) as "hasPhoto"
       from drivers d
       join users u on u.id = d.user_id
       left join lateral (select identifier from vehicles where driver_id = d.user_id order by created_at desc limit 1) v on true
@@ -236,6 +253,35 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         dd.created_at as "createdAt"
       from driver_documents dd where dd.driver_id=${id} order by dd.document_type
     `;
+  } catch(e) { return guardError(e, reply); } });
+  app.post("/v1/admin/drivers/:id/documents", async (request, reply) => { try {
+    const user=requireAdmin(request); const body=adminDocumentSchema.parse(request.body);
+    if (!process.env.DATABASE_URL) return reply.code(201).send({ ok: true });
+    const id=(request.params as { id: string }).id;
+    let data: Buffer;
+    try { data=decodeAdminImage(body); } catch { return reply.code(400).send({error:"INVALID_DRIVER_DOCUMENT"}); }
+    const [document]=await database()`
+      insert into driver_documents (driver_id, document_type, file_url, file_data, file_mime, expires_at, status)
+      values (${id}, ${body.documentType}, 'database', ${data}, ${body.fileMime}, ${body.expiresAt || null}, 'PENDING')
+      on conflict (driver_id, document_type) do update set file_data=excluded.file_data,
+        file_mime=excluded.file_mime, expires_at=excluded.expires_at, status='PENDING',
+        reviewed_by=null, reviewed_at=null, review_note=null, created_at=now()
+      returning id::text, document_type as "documentType", status
+    `;
+    if (body.documentType === "PROFILE_PHOTO") await database()`update users set profile_photo_data=${data}, profile_photo_mime=${body.fileMime}, profile_photo_updated_at=now(), updated_at=now() where id=${id} and role='DRIVER'`;
+    await persistAudit(user,"DRIVER_DOCUMENT_UPLOAD","DRIVER_DOCUMENT",String(document?.id ?? id),`Carga o reemplazo: ${body.documentType}`);
+    return reply.code(201).send(document);
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e, reply); } });
+  app.delete("/v1/admin/drivers/:driverId/documents/:documentId", async (request, reply) => { try {
+    const user=requireAdmin(request);
+    if (!process.env.DATABASE_URL) return { deactivated: true };
+    const { driverId, documentId }=request.params as { driverId: string; documentId: string };
+    const [existing]=await database()`select document_type from driver_documents where id=${documentId} and driver_id=${driverId}`;
+    if (existing?.document_type === "PROFILE_PHOTO") return reply.code(409).send({error:"PROFILE_PHOTO_MUST_BE_REPLACED"});
+    const [document]=await database()`update driver_documents set status='SUSPENDED', reviewed_by=${user.id!}, reviewed_at=now(), review_note='Desactivado desde administracion' where id=${documentId} and driver_id=${driverId} returning id::text, document_type as "documentType"`;
+    if (!document) return reply.code(404).send({error:"NOT_FOUND"});
+    await persistAudit(user,"DRIVER_DOCUMENT_DEACTIVATE","DRIVER_DOCUMENT",documentId,"Desactivado desde administracion");
+    return { deactivated: true };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/drivers/:driverId/documents/:documentId", async (request, reply) => { try {
     const user=requireAdmin(request); const body=documentReviewSchema.parse(request.body);

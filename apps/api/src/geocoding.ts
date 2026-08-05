@@ -11,6 +11,12 @@ interface GooglePlace {
 
 interface GoogleGeocodeResult {
   formatted_address?: string;
+  types?: string[];
+  address_components?: Array<{
+    long_name?: string;
+    short_name?: string;
+    types?: string[];
+  }>;
   geometry?: { location?: { lat?: number; lng?: number } };
 }
 
@@ -43,6 +49,49 @@ const leadingPlusCode = /^\s*[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]
 /** Keeps provider metadata internal while returning a readable UI label. */
 export function cleanLocationLabel(value: string): string {
   return value.replace(leadingPlusCode, "").replace(/\s{2,}/gu, " ").trim();
+}
+
+function component(result: GoogleGeocodeResult, ...types: string[]): string | undefined {
+  return result.address_components?.find(item =>
+    types.some(type => item.types?.includes(type)))?.long_name?.trim();
+}
+
+/** Selects a human street/place label while keeping provider codes out of the UI. */
+export function preciseGoogleAddress(results: GoogleGeocodeResult[]): string | undefined {
+  const usable = results.filter(result =>
+    result.formatted_address && !result.types?.includes("plus_code"));
+  const score = (result: GoogleGeocodeResult) => {
+    const types = result.types ?? [];
+    if (types.includes("street_address")) return 100;
+    if (types.includes("intersection")) return 95;
+    if (types.includes("premise") || types.includes("subpremise")) return 90;
+    if (types.includes("establishment") || types.includes("point_of_interest")) return 85;
+    if (types.includes("route")) return 75;
+    if (types.includes("neighborhood") || types.includes("sublocality")) return 40;
+    if (types.includes("locality")) return 20;
+    return 10;
+  };
+  const ranked = [...usable].sort((a, b) => score(b) - score(a));
+  const best = ranked[0];
+  if (!best) return;
+  const locality = component(best, "locality", "postal_town", "administrative_area_level_2");
+  const route = component(best, "route");
+  const number = component(best, "street_number");
+  const premise = component(best, "establishment", "point_of_interest", "premise");
+  const types = best.types ?? [];
+  if (types.includes("intersection")) {
+    return cleanLocationLabel(best.formatted_address!);
+  }
+  if (route) {
+    const street = [route, number].filter(Boolean).join(" ");
+    return cleanLocationLabel([premise && premise !== route ? premise : null, street, locality]
+      .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
+      .join(", "));
+  }
+  if (premise && score(best) >= 85) {
+    return cleanLocationLabel([premise, locality].filter(Boolean).join(", "));
+  }
+  return cleanLocationLabel(best.formatted_address!);
 }
 
 function googleMapsKey(): string | undefined {
@@ -114,14 +163,15 @@ async function reverseGoogleLocation(point: FocusPoint): Promise<LocationResult>
     status?: string;
     results?: GoogleGeocodeResult[];
   };
-  const result = payload.results?.[0];
-  if (payload.status !== "OK" || !result?.formatted_address) {
+  const label = preciseGoogleAddress(payload.results ?? []);
+  if (payload.status !== "OK" || !label) {
     throw new Error("LOCATION_NOT_FOUND");
   }
   return {
-    label: cleanLocationLabel(result.formatted_address).slice(0, 200),
-    latitude: result.geometry?.location?.lat ?? point.latitude,
-    longitude: result.geometry?.location?.lng ?? point.longitude
+    label: label.slice(0, 200),
+    // The label may be snapped to a road, but the selected point must remain exact.
+    latitude: point.latitude,
+    longitude: point.longitude
   };
 }
 
@@ -261,7 +311,7 @@ export async function reverseLocation(point: FocusPoint): Promise<LocationResult
   if (!item.display_name) throw new Error("LOCATION_NOT_FOUND");
   return {
     label: reverseLabel(item),
-    latitude: Number(item.lat ?? point.latitude),
-    longitude: Number(item.lon ?? point.longitude)
+    latitude: point.latitude,
+    longitude: point.longitude
   };
 }

@@ -111,7 +111,7 @@ async function tripForParticipant(user: SessionUser, tripId: string) {
   return trip as { tripId: string; passengerId: string; driverId: string | null; status: string; completedAt: Date | null } | undefined;
 }
 
-async function nearbyDrivers(latitude: number, longitude: number) {
+async function nearbyDrivers(latitude: number, longitude: number, excludeDriverId?: string) {
   const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
   const radius = Number(settings?.search_radius_meters ?? 3000);
   const rows = await database()`
@@ -122,6 +122,7 @@ async function nearbyDrivers(latitude: number, longitude: number) {
     from drivers d
     join users u on u.id=d.user_id
     where d.is_available=true and u.status='ACTIVE' and d.last_location is not null
+      and (${excludeDriverId ?? null}::uuid is null or d.user_id <> ${excludeDriverId ?? null}::uuid)
       and d.last_location_at > now() - interval '5 minutes'
       and not exists (
         select 1 from trips t where t.driver_id=d.user_id
@@ -325,10 +326,10 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
 
   app.get("/v1/drivers/nearby", async (request, reply) => {
     const user = await authenticated(request, reply); if (!user) return;
-    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    if (user.role !== "PASSENGER" && user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = nearbyQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION" });
-    return { drivers: await nearbyDrivers(parsed.data.latitude, parsed.data.longitude) };
+    return { drivers: await nearbyDrivers(parsed.data.latitude, parsed.data.longitude, user.role === "DRIVER" ? user.id : undefined) };
   });
 
   app.get("/v1/trips/:tripId/messages", async (request, reply) => {

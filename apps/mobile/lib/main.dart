@@ -567,6 +567,14 @@ class Api {
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
+  Future<dynamic> updateProfilePhoto(
+          String t, String fileBase64, String fileMime) =>
+      call('PUT', '/v1/profile/photo', token: t, body: {
+        'fileBase64': fileBase64,
+        'fileMime': fileMime,
+      });
+  Future<dynamic> deleteProfilePhoto(String t) =>
+      call('DELETE', '/v1/profile/photo', token: t);
   Future<List<dynamic>> driverDocuments(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/driver/documents', token: t));
   Future<dynamic> uploadDriverDocument(String t, String documentType,
@@ -1409,6 +1417,35 @@ class _RegisterState extends State<Register> {
       vehicleFocus = FocusNode();
   String role = 'PASSENGER', message = '';
   bool busy = false, submitted = false;
+  XFile? profilePhoto;
+  Uint8List? profilePhotoBytes;
+
+  Future<void> chooseProfilePhoto() async {
+    final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 82,
+        maxWidth: 1600,
+        maxHeight: 1600);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 2500000) {
+      setState(() => message = 'La fotografÃ­a no puede superar 2,5 MB.');
+      return;
+    }
+    final extension = file.name.toLowerCase();
+    if (!extension.endsWith('.jpg') &&
+        !extension.endsWith('.jpeg') &&
+        !extension.endsWith('.png') &&
+        !extension.endsWith('.webp')) {
+      setState(() => message = 'Usa una fotografÃ­a JPG, JPEG, PNG o WEBP.');
+      return;
+    }
+    setState(() {
+      profilePhoto = file;
+      profilePhotoBytes = bytes;
+      message = '';
+    });
+  }
 
   @override
   void dispose() {
@@ -1429,7 +1466,12 @@ class _RegisterState extends State<Register> {
 
   bool validateAndFocus() {
     final valid = formKey.currentState?.validate() ?? false;
-    if (valid) return true;
+    if (valid && (role != 'DRIVER' || profilePhotoBytes != null)) return true;
+    if (role == 'DRIVER' && profilePhotoBytes == null) {
+      setState(() => message =
+          'Carga una fotografÃ­a frontal y clara para completar el registro.');
+      return false;
+    }
     final fields = <(TextEditingController, FocusNode)>[
       (name, nameFocus),
       (email, emailFocus),
@@ -1453,7 +1495,15 @@ class _RegisterState extends State<Register> {
         'phone': phone.text.trim(),
         'password': password.text,
         'role': role,
-        if (role == 'DRIVER') 'vehicleIdentifier': vehicle.text.trim()
+        if (role == 'DRIVER') 'vehicleIdentifier': vehicle.text.trim(),
+        if (role == 'DRIVER' && profilePhotoBytes != null)
+          'profilePhotoBase64': base64Encode(profilePhotoBytes!),
+        if (role == 'DRIVER' && profilePhoto != null)
+          'profilePhotoMime': profilePhoto!.name.toLowerCase().endsWith('.png')
+              ? 'image/png'
+              : profilePhoto!.name.toLowerCase().endsWith('.webp')
+                  ? 'image/webp'
+                  : 'image/jpeg'
       });
       if (!mounted) return;
       if (role == 'PASSENGER' && d['token'] != null) {
@@ -1547,6 +1597,35 @@ class _RegisterState extends State<Register> {
                     const InputDecoration(labelText: 'Tipo de cuenta *')),
             if (role == 'DRIVER') ...[
               const SizedBox(height: 14),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(children: [
+                    if (profilePhotoBytes != null)
+                      ClipOval(
+                        child: Image.memory(profilePhotoBytes!,
+                            width: 104, height: 104, fit: BoxFit.cover),
+                      )
+                    else
+                      const CircleAvatar(
+                          radius: 52,
+                          child: Icon(Icons.person_outline, size: 48)),
+                    const SizedBox(height: 10),
+                    const Text(
+                        'FotografÃ­a frontal, clara y con el rostro visible *',
+                        textAlign: TextAlign.center),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: submitted ? null : chooseProfilePhoto,
+                      icon: const Icon(Icons.add_a_photo_outlined),
+                      label: Text(profilePhotoBytes == null
+                          ? 'Seleccionar fotografÃ­a'
+                          : 'Cambiar fotografÃ­a'),
+                    ),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 14),
               TextFormField(
                   controller: vehicle,
                   focusNode: vehicleFocus,
@@ -1583,6 +1662,7 @@ class Profile extends StatefulWidget {
 class _ProfileState extends State<Profile> {
   dynamic p;
   bool biometricEnabled = false;
+  bool photoBusy = false;
   @override
   void initState() {
     super.initState();
@@ -1612,6 +1692,46 @@ class _ProfileState extends State<Profile> {
     }
   }
 
+  Future<void> changePhoto() async {
+    final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 82,
+        maxWidth: 1600,
+        maxHeight: 1600);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    final extension = file.name.toLowerCase();
+    if (bytes.length > 2500000 ||
+        (!extension.endsWith('.jpg') &&
+            !extension.endsWith('.jpeg') &&
+            !extension.endsWith('.png') &&
+            !extension.endsWith('.webp'))) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Usa JPG, JPEG, PNG o WEBP de mÃ¡ximo 2,5 MB.')));
+      }
+      return;
+    }
+    final mime = extension.endsWith('.png')
+        ? 'image/png'
+        : extension.endsWith('.webp')
+            ? 'image/webp'
+            : 'image/jpeg';
+    setState(() => photoBusy = true);
+    try {
+      await Api().updateProfilePhoto(widget.s.token, base64Encode(bytes), mime);
+      final value = await Api().profile(widget.s.token);
+      if (mounted) setState(() => p = value);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => photoBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext c) {
     if (p == null) {
@@ -1630,16 +1750,33 @@ class _ProfileState extends State<Profile> {
               borderRadius: BorderRadius.circular(26),
             ),
             child: Column(children: [
-              CircleAvatar(
-                radius: 46,
-                foregroundImage: photo?.isNotEmpty == true
-                    ? MemoryImage(base64Decode(photo!))
-                    : null,
-                child: photo?.isNotEmpty == true
-                    ? null
-                    : Text(p['name'].substring(0, 1),
-                        style: const TextStyle(fontSize: 30)),
-              ),
+              Stack(alignment: Alignment.bottomRight, children: [
+                CircleAvatar(
+                  radius: 46,
+                  foregroundImage: photo?.isNotEmpty == true
+                      ? MemoryImage(base64Decode(photo!))
+                      : null,
+                  child: photo?.isNotEmpty == true
+                      ? null
+                      : Text(p['name'].substring(0, 1),
+                          style: const TextStyle(fontSize: 30)),
+                ),
+                Material(
+                  color: Colors.white,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    tooltip: 'Cambiar fotografÃ­a',
+                    onPressed: photoBusy ? null : changePhoto,
+                    icon: photoBusy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.camera_alt_outlined,
+                            color: Color(0xff006f7c)),
+                  ),
+                ),
+              ]),
               const SizedBox(height: 12),
               Text(p['name'],
                   textAlign: TextAlign.center,
@@ -3212,22 +3349,96 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ),
       ];
 
+  Widget _driverPhoto({double size = 54}) {
+    final driverId = active?['driverId']?.toString();
+    final hasPhoto = active?['driverHasPhoto'] == true && driverId != null;
+    final fallback = Container(
+      width: size,
+      height: size,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Icon(Icons.person_outline, size: size * .55),
+    );
+    return ClipOval(
+      child: hasPhoto
+          ? Image.network(
+              '$base/v1/users/$driverId/profile-photo',
+              headers: {'Authorization': 'Bearer ${widget.s.token}'},
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => fallback,
+            )
+          : fallback,
+    );
+  }
+
+  Future<void> showDriverPhoto() => showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) => Dialog(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _driverPhoto(size: 210),
+              const SizedBox(height: 16),
+              Text(active?['driverName']?.toString() ?? 'Tu conductor',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              if (active?['vehicle'] != null)
+                Text('Placa: ${active['vehicle']}'),
+              const SizedBox(height: 6),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.star, color: Colors.amber, size: 20),
+                const SizedBox(width: 4),
+                Text(((active?['driverRating'] as num?) ?? 0)
+                    .toStringAsFixed(1)),
+              ]),
+              const SizedBox(height: 14),
+              FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cerrar')),
+            ]),
+          ),
+        ),
+      );
+
   List<Widget> _activeTripContent(BuildContext context) => [
         Card(
           margin: EdgeInsets.zero,
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(active?['driverName']?.toString() ?? 'Tu conductor',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w700)),
-                  if (active?['vehicle'] != null)
-                    Text('Mototaxi: ${active['vehicle']}'),
+            child: Row(children: [
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(active?['driverName']?.toString() ?? 'Tu conductor',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w700)),
+                      if (active?['vehicle'] != null)
+                        Text('Placa: ${active['vehicle']}'),
+                    ]),
+              ),
+              const SizedBox(width: 12),
+              InkWell(
+                borderRadius: BorderRadius.circular(40),
+                onTap: showDriverPhoto,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  _driverPhoto(),
+                  const SizedBox(height: 3),
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.star, color: Colors.amber, size: 16),
+                    Text(((active?['driverRating'] as num?) ?? 0)
+                        .toStringAsFixed(1)),
+                  ]),
                 ]),
+              ),
+            ]),
           ),
         ),
         const SizedBox(height: 10),
@@ -3528,6 +3739,8 @@ class _DriverState extends State<Driver> {
   StreamSubscription<Position>? positionSubscription;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   LatLng? currentDriverPosition;
+  final Map<String, LatLng> nearbyDriverPositions = {};
+  DateTime? lastNearbyRefreshAt;
   double currentDriverBearing = 0;
   String? resolvedDriverOrigin;
   String? resolvedOriginTripId;
@@ -3676,7 +3889,33 @@ class _DriverState extends State<Driver> {
           .available(widget.s.token, true, pointFrom(position))
           .catchError((_) {});
     }
+    if (available && active == null) {
+      unawaited(refreshNearbyDriverPositions(pointFrom(position)));
+    }
     refreshDriverRoute();
+  }
+
+  Future<void> refreshNearbyDriverPositions(LatLng point) async {
+    final now = DateTime.now();
+    if (lastNearbyRefreshAt != null &&
+        now.difference(lastNearbyRefreshAt!) < const Duration(seconds: 15)) {
+      return;
+    }
+    lastNearbyRefreshAt = now;
+    try {
+      final items = await api.nearbyDrivers(widget.s.token, point);
+      if (!mounted || active != null || !available) return;
+      setState(() {
+        nearbyDriverPositions
+          ..clear()
+          ..addEntries(items.map((item) => MapEntry(
+              item['driverId'].toString(),
+              LatLng((item['latitude'] as num).toDouble(),
+                  (item['longitude'] as num).toDouble()))));
+      });
+    } catch (_) {
+      // Mantiene el ultimo snapshot visible cuando la seÃ±al es inestable.
+    }
   }
 
   Future<void> restore() async {
@@ -3691,6 +3930,7 @@ class _DriverState extends State<Driver> {
       if (active == null) {
         routePoints = [];
       } else {
+        nearbyDriverPositions.clear();
         offers = [];
       }
     });
@@ -3734,6 +3974,7 @@ class _DriverState extends State<Driver> {
       if (!mounted) return;
       setState(() {
         available = v;
+        if (!v) nearbyDriverPositions.clear();
         driverMessage = v
             ? 'Ubicación GPS activa. Esperando solicitudes cercanas.'
             : 'No recibirás nuevas solicitudes.';
@@ -3877,6 +4118,22 @@ class _DriverState extends State<Driver> {
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(driverMessage!),
+          ),
+        if (active == null && available)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Wrap(spacing: 16, runSpacing: 6, children: [
+              const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.location_on, color: Colors.blue, size: 18),
+                SizedBox(width: 4),
+                Text('Mi ubicaciÃ³n'),
+              ]),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.electric_rickshaw_outlined, size: 18),
+                const SizedBox(width: 4),
+                Text('${nearbyDriverPositions.length} mototaxis cercanas'),
+              ]),
+            ]),
           ),
         if (active == null && available && offers.isEmpty)
           const Padding(
@@ -4066,9 +4323,15 @@ class _DriverState extends State<Driver> {
                   pickup: pickup,
                   dropoff: dropoff,
                   currentLocation: currentDriverPosition,
+                  selfDriverPosition: active == null && available
+                      ? currentDriverPosition
+                      : null,
                   driverPosition: active == null ? null : currentDriverPosition,
                   driverBearing: currentDriverBearing,
                   routePoints: routePoints,
+                  nearbyDrivers: active == null
+                      ? nearbyDriverPositions
+                      : const <String, LatLng>{},
                   fillAvailable: true,
                   borderRadius: 0,
                   viewportPadding: EdgeInsets.fromLTRB(
