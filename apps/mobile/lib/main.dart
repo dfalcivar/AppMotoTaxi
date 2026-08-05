@@ -4168,6 +4168,64 @@ class _DriverState extends State<Driver> {
         'START': 'Iniciar viaje',
         'COMPLETE': 'Finalizar viaje'
       }[a]!;
+
+  Widget _passengerPhoto({double size = 54}) {
+    final passengerId = active?['passengerId']?.toString();
+    final hasPhoto =
+        active?['passengerHasPhoto'] == true && passengerId != null;
+    final fallback = Container(
+      width: size,
+      height: size,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Icon(Icons.person_outline, size: size * .55),
+    );
+    return ClipOval(
+      child: hasPhoto
+          ? Image.network(
+              '$base/v1/users/$passengerId/profile-photo',
+              headers: {'Authorization': 'Bearer ${widget.s.token}'},
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => fallback,
+            )
+          : fallback,
+    );
+  }
+
+  Future<void> showPassengerPhoto() => showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) => Dialog(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _passengerPhoto(size: 210),
+              const SizedBox(height: 16),
+              Text(active?['passengerName']?.toString() ?? 'Pasajero',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              const Text('Pasajero AtacamesGo'),
+              const SizedBox(height: 6),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.star, color: Colors.amber, size: 20),
+                const SizedBox(width: 4),
+                Text(((active?['passengerRating'] as num?) ?? 0)
+                    .toStringAsFixed(1)),
+              ]),
+              const SizedBox(height: 14),
+              FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cerrar')),
+            ]),
+          ),
+        ),
+      );
+
   List<Widget> _driverSheetContent(BuildContext context, String? action) => [
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -4209,15 +4267,38 @@ class _DriverState extends State<Driver> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(estadoViaje(active['status']),
-                      style: Theme.of(context).textTheme.labelLarge),
-                  const SizedBox(height: 4),
-                  const Text('Pasajero'),
-                  Text(active['passengerName']?.toString() ?? 'Pasajero',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Pasajero'),
+                          Text(
+                            active['passengerName']?.toString() ?? 'Pasajero',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    InkWell(
+                      onTap: showPassengerPhoto,
+                      borderRadius: BorderRadius.circular(36),
+                      child: Column(children: [
+                        _passengerPhoto(),
+                        const SizedBox(height: 4),
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.star, color: Colors.amber, size: 16),
+                          const SizedBox(width: 3),
+                          Text(((active?['passengerRating'] as num?) ?? 0)
+                              .toStringAsFixed(1)),
+                        ]),
+                      ]),
+                    ),
+                  ]),
                   const SizedBox(height: 14),
                   Text('Origen', style: Theme.of(context).textTheme.labelLarge),
                   Text(
