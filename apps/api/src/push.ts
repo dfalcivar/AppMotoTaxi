@@ -5,8 +5,6 @@ import { getMessaging } from "firebase-admin/messaging";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { database } from "./database.js";
 
-// La API se inicia desde la raíz del monorepo; la credencial siempre vive junto
-// a esta aplicación, sin depender del directorio desde el que se ejecute Node.
 const credentialPath = fileURLToPath(new URL("../secrets/firebase-service-account.json", import.meta.url));
 const firebaseProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
 
@@ -24,28 +22,52 @@ function messaging() {
   return getMessaging();
 }
 
-export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}) {
-  const client = messaging();
-  if (!client) {
-    console.warn("Push omitido: FIREBASE_SERVICE_ACCOUNT_BASE64 no está configurado.");
-    return { sent: 0, skipped: true };
+function firebaseErrorCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    return String((error as { code?: unknown }).code ?? "unknown");
   }
-  const rows = await database()`select token from device_tokens where user_id=${userId} and last_seen_at > now() - interval '90 days'`;
-  const tokens = rows.map(row => String(row.token));
-  if (!tokens.length) {
-    console.warn(`Push omitido: el usuario ${userId} no tiene un dispositivo registrado.`);
-    return { sent: 0, attempted: 0 };
-  }
-  const isChat = data.type === "CHAT_MESSAGE";
-  const notificationTag = data.tripId
-    ? `${isChat ? "chat" : "trip"}-${data.tripId}`
-    : `atacamesgo-${data.type ?? "general"}`;
-  const ttl = data.type === "TRIP_OFFER"
-    ? 120_000
-    : isChat
-      ? 86_400_000
-      : 900_000;
+  return "unknown";
+}
+
+export function pushConfigurationStatus(clientProjectId?: string) {
   try {
+    const serviceAccount = firebaseCredential() as { project_id?: string } | undefined;
+    if (!serviceAccount) return { configured: false, projectMatches: false, errorCode: "firebase/not-configured" };
+    const serverProjectId = String(serviceAccount.project_id ?? "");
+    return {
+      configured: true,
+      projectMatches: !clientProjectId || serverProjectId === clientProjectId,
+      serverProjectId,
+      ...(clientProjectId && serverProjectId !== clientProjectId
+        ? { errorCode: "firebase/project-mismatch" }
+        : {})
+    };
+  } catch (error) {
+    console.error("No se pudo leer la credencial de Firebase.", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return { configured: false, projectMatches: false, errorCode: "firebase/invalid-credential" };
+  }
+}
+
+export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}) {
+  try {
+    const client = messaging();
+    if (!client) {
+      console.warn("Push omitido: FIREBASE_SERVICE_ACCOUNT_BASE64 no está configurado.");
+      return { sent: 0, skipped: true, errorCode: "firebase/not-configured" };
+    }
+    const rows = await database()`select token from device_tokens where user_id=${userId} and last_seen_at > now() - interval '90 days'`;
+    const tokens = rows.map(row => String(row.token));
+    if (!tokens.length) {
+      console.warn(`Push omitido: el usuario ${userId} no tiene un dispositivo registrado.`);
+      return { sent: 0, attempted: 0, errorCode: "firebase/device-not-registered" };
+    }
+    const isChat = data.type === "CHAT_MESSAGE";
+    const notificationTag = data.tripId
+      ? `${isChat ? "chat" : "trip"}-${data.tripId}`
+      : `atacamesgo-${data.type ?? "general"}`;
+    const ttl = data.type === "TRIP_OFFER" ? 120_000 : isChat ? 86_400_000 : 900_000;
     const result = await client.sendEachForMulticast({
       tokens,
       notification: { title, body },
@@ -55,9 +77,7 @@ export async function sendPush(userId: string, title: string, body: string, data
         collapseKey: notificationTag,
         ttl,
         notification: {
-          channelId: isChat
-            ? "mototaxi_chat_messages_v1"
-            : "mototaxi_trip_alerts_v3",
+          channelId: isChat ? "mototaxi_chat_messages_v1" : "mototaxi_trip_alerts_v3",
           tag: notificationTag,
           notificationCount: 1,
           sound: "default",
@@ -66,16 +86,24 @@ export async function sendPush(userId: string, title: string, body: string, data
         }
       }
     });
-    const invalid = result.responses.flatMap((response, index) => !response.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(response.error?.code ?? "") ? [tokens[index]!] : []);
+    const invalid = result.responses.flatMap((response, index) =>
+      !response.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(response.error?.code ?? "")
+        ? [tokens[index]!]
+        : []
+    );
     if (invalid.length) await database()`delete from device_tokens where token = any(${invalid})`;
-    if (result.failureCount) console.warn("Firebase rechazó una o más notificaciones.", result.responses.filter(response => !response.success).map(response => response.error?.code ?? "unknown"));
-    return { sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors: result.responses.filter(response => !response.success).map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" })) };
+    const errors = result.responses
+      .filter(response => !response.success)
+      .map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" }));
+    if (result.failureCount) console.warn("Firebase rechazó una o más notificaciones.", errors.map(error => error.code));
+    return { sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors };
   } catch (error) {
     console.error("Firebase no pudo enviar la notificación.", {
       userId,
       type: data.type ?? "unknown",
+      code: firebaseErrorCode(error),
       error: error instanceof Error ? error.message : String(error)
     });
-    return { sent: 0, attempted: tokens.length, failed: tokens.length };
+    return { sent: 0, attempted: 0, failed: 0, errorCode: firebaseErrorCode(error) };
   }
 }

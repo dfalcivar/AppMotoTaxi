@@ -547,8 +547,20 @@ class Api {
         if (fcm == null || fcm.isEmpty) {
           throw StateError('Firebase no entregó un token FCM.');
         }
-        await call('PUT', '/v1/devices/fcm-token',
-            token: token, body: {'token': fcm, 'platform': 'ANDROID'});
+        final response =
+            await call('PUT', '/v1/devices/fcm-token', token: token, body: {
+          'token': fcm,
+          'platform': 'ANDROID',
+          'firebaseProjectId': Firebase.app().options.projectId,
+        });
+        final push = response?['push'];
+        if (push is Map && push['projectMatches'] == false) {
+          throw StateError(
+              'La API y la app usan proyectos Firebase diferentes.');
+        }
+        if (push is Map && push['configured'] == false) {
+          throw StateError('La credencial Firebase de la API no es valida.');
+        }
         return true;
       } catch (error, stack) {
         lastError = error;
@@ -572,6 +584,10 @@ class Api {
       if (activeFcmAuthToken == token) activeFcmAuthToken = null;
     }
   }
+
+  Future<dynamic> testPush(String token, {int delaySeconds = 8}) =>
+      call('POST', '/v1/devices/test-push',
+          token: token, body: {'delaySeconds': delaySeconds});
 
   Future<void> lock(String token) async {
     try {
@@ -1737,6 +1753,7 @@ class _ProfileState extends State<Profile> {
   String? profileError;
   bool biometricEnabled = false;
   bool photoBusy = false;
+  bool pushTestBusy = false;
   @override
   void initState() {
     super.initState();
@@ -1809,6 +1826,39 @@ class _ProfileState extends State<Profile> {
       }
     } finally {
       if (mounted) setState(() => photoBusy = false);
+    }
+  }
+
+  Future<void> testBackgroundNotification() async {
+    setState(() => pushTestBusy = true);
+    try {
+      final registered = await Api().registerFcm(widget.s.token);
+      if (!registered) {
+        throw const ApiException(
+            'La app no pudo registrar este teléfono en Firebase. Revisa que la credencial de Render pertenezca al mismo proyecto Firebase de la APK.');
+      }
+      await Api().testPush(widget.s.token, delaySeconds: 8);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Prueba programada'),
+          content: const Text(
+              'Pulsa Aceptar y deja AtacamesGo en segundo plano. La notificación debe llegar en aproximadamente 8 segundos.'),
+          actions: [
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Aceptar'))
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => pushTestBusy = false);
     }
   }
 
@@ -1946,6 +1996,19 @@ class _ProfileState extends State<Profile> {
                     c,
                     MaterialPageRoute(
                         builder: (_) => ChangePassword(widget.s))),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.notifications_active_outlined),
+                title: const Text('Probar notificaciones'),
+                subtitle: const Text('Comprueba la recepción en segundo plano'),
+                trailing: pushTestBusy
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.chevron_right),
+                onTap: pushTestBusy ? null : testBackgroundNotification,
               ),
               if (widget.s.role == 'DRIVER') ...[
                 const Divider(height: 1),

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
 import { database } from "./database.js";
-import { sendPush } from "./push.js";
+import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { reverseLocation, searchLocations } from "./geocoding.js";
 import { computeRoute } from "./routing.js";
@@ -62,7 +62,12 @@ const reverseLocationSchema = z.object({
   longitude: z.coerce.number().min(-180).max(180)
 });
 const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
-const deviceTokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.enum(["ANDROID"]).default("ANDROID") });
+const deviceTokenSchema = z.object({
+  token: z.string().min(20).max(4096),
+  platform: z.enum(["ANDROID"]).default("ANDROID"),
+  firebaseProjectId: z.string().trim().min(3).max(200).optional()
+});
+const testPushSchema = z.object({ delaySeconds: z.number().int().min(0).max(15).default(0) });
 const bannerPlacementSchema = z.object({ placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]).default("PASSENGER_HOME") });
 const favoritePlaceSchema = z.object({
   label: z.string().trim().min(2).max(50),
@@ -354,13 +359,21 @@ export async function buildApp() {
       values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now())
       on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now()
     `;
-    return { registered: true };
+    return { registered: true, push: pushConfigurationStatus(parsed.data.firebaseProjectId) };
   });
 
   // Diagnóstico temporal del piloto: permite comprobar el envío al dispositivo
   // autenticado sin depender de que exista un viaje nuevo.
   app.post("/v1/devices/test-push", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
+    const parsed = testPushSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PUSH_TEST" });
+    if (parsed.data.delaySeconds > 0) {
+      setTimeout(() => {
+        void sendPush(user.id!, "Prueba de notificación", "Este aviso confirma la recepción en segundo plano.", { type: "TEST_PUSH" });
+      }, parsed.data.delaySeconds * 1000);
+      return { scheduled: true, delaySeconds: parsed.data.delaySeconds };
+    }
     return sendPush(user.id!, "Prueba de notificación", "Este aviso confirma la recepción en segundo plano.", { type: "TEST_PUSH" });
   });
 
