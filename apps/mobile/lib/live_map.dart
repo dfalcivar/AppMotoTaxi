@@ -15,19 +15,36 @@ const configuredMapProvider =
     String.fromEnvironment('MAP_PROVIDER', defaultValue: 'osm');
 
 const _androidMapId = String.fromEnvironment('GOOGLE_MAPS_ANDROID_MAP_ID');
+const _androidLightMapId =
+    String.fromEnvironment('GOOGLE_MAPS_ANDROID_LIGHT_MAP_ID');
+const _androidDarkMapId =
+    String.fromEnvironment('GOOGLE_MAPS_ANDROID_DARK_MAP_ID');
 const _iosMapId = String.fromEnvironment('GOOGLE_MAPS_IOS_MAP_ID');
 const _webMapId = String.fromEnvironment('GOOGLE_MAPS_WEB_MAP_ID');
 
-String? get _configuredGoogleMapId {
+String? _nonEmptyMapId(String value) {
+  final normalized = value.trim();
+  return normalized.isEmpty ? null : normalized;
+}
+
+String? _configuredGoogleMapId(Brightness brightness) {
   final value = kIsWeb
       ? _webMapId
       : switch (defaultTargetPlatform) {
-          TargetPlatform.android => _androidMapId,
+          TargetPlatform.android => brightness == Brightness.dark
+              ? (_nonEmptyMapId(_androidDarkMapId) ?? _androidMapId)
+              : (_nonEmptyMapId(_androidLightMapId) ?? _androidMapId),
           TargetPlatform.iOS => _iosMapId,
           _ => '',
         };
-  return value.trim().isEmpty ? null : value.trim();
+  return _nonEmptyMapId(value);
 }
+
+bool get _usesSeparateAndroidMapIds =>
+    !kIsWeb &&
+    defaultTargetPlatform == TargetPlatform.android &&
+    _nonEmptyMapId(_androidLightMapId) != null &&
+    _nonEmptyMapId(_androidDarkMapId) != null;
 
 const _googleLightMapStyle = '''[
   {"elementType":"geometry","stylers":[{"color":"#eef4f3"}]},
@@ -463,12 +480,17 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         ),
     };
 
+    final brightness = Theme.of(context).brightness;
+    final googleMapId = _configuredGoogleMapId(brightness);
     final mapSurface = configuredMapProvider == 'google'
         ? gmaps.GoogleMap(
-            mapId: _configuredGoogleMapId,
-            colorScheme: gmaps.MapColorScheme.followSystem,
-            style: _configuredGoogleMapId == null
-                ? (Theme.of(context).brightness == Brightness.dark
+            key: ValueKey('google-map-${googleMapId ?? 'local'}'),
+            mapId: googleMapId,
+            colorScheme: _usesSeparateAndroidMapIds
+                ? null
+                : gmaps.MapColorScheme.followSystem,
+            style: googleMapId == null
+                ? (brightness == Brightness.dark
                     ? _googleDarkMapStyle
                     : _googleLightMapStyle)
                 : null,

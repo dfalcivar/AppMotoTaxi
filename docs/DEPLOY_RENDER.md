@@ -68,12 +68,27 @@ La aplicacion acepta Map ID por plataforma mediante variables de compilacion:
 - `GOOGLE_MAPS_IOS_MAP_ID`
 - `GOOGLE_MAPS_WEB_MAP_ID`
 
+Si en Google Cloud se crearon dos Map ID Android independientes, la aplicacion
+tambien acepta:
+
+- `GOOGLE_MAPS_ANDROID_LIGHT_MAP_ID`
+- `GOOGLE_MAPS_ANDROID_DARK_MAP_ID`
+
 Ejemplo Android:
 
 ```powershell
 flutter build apk --release `
   --dart-define=MAP_PROVIDER=google `
   --dart-define=GOOGLE_MAPS_ANDROID_MAP_ID=MAP_ID_ANDROID
+```
+
+Ejemplo con Map ID claro y oscuro separados:
+
+```powershell
+flutter build apk --release `
+  --dart-define=MAP_PROVIDER=google `
+  --dart-define=GOOGLE_MAPS_ANDROID_LIGHT_MAP_ID=MAP_ID_ANDROID_CLARO `
+  --dart-define=GOOGLE_MAPS_ANDROID_DARK_MAP_ID=MAP_ID_ANDROID_OSCURO
 ```
 
 Si no se proporciona un Map ID, AtacamesGo utiliza estilos JSON locales claro
