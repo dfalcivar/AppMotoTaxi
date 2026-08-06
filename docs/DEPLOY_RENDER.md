@@ -60,6 +60,40 @@ $env:GOOGLE_MAPS_ANDROID_API_KEY='CLAVE_ANDROID_RESTRINGIDA'
 flutter build apk --release --dart-define=MAP_PROVIDER=google
 ```
 
+### Estilo de mapa administrado en Google Cloud
+
+La aplicacion acepta Map ID por plataforma mediante variables de compilacion:
+
+- `GOOGLE_MAPS_ANDROID_MAP_ID`
+- `GOOGLE_MAPS_IOS_MAP_ID`
+- `GOOGLE_MAPS_WEB_MAP_ID`
+
+Ejemplo Android:
+
+```powershell
+flutter build apk --release `
+  --dart-define=MAP_PROVIDER=google `
+  --dart-define=GOOGLE_MAPS_ANDROID_MAP_ID=MAP_ID_ANDROID
+```
+
+Si no se proporciona un Map ID, AtacamesGo utiliza estilos JSON locales claro
+y oscuro. Con Map ID, Google Cloud controla el estilo y la aplicacion solicita
+automaticamente el esquema claro u oscuro del sistema.
+
+Configuracion manual en Google Cloud Console:
+
+1. En **Google Maps Platform > Administracion de mapas**, crear un Map ID de
+   tipo Android. Crear IDs separados al incorporar iOS o web.
+2. En **Estilos de mapa**, crear `AtacamesGo Claro` y `AtacamesGo Oscuro`.
+3. Reducir puntos de interes comerciales; conservar salud, transporte,
+   terminales y parques. Destacar vias principales y mantener calles locales
+   discretas.
+4. Publicar ambos estilos.
+5. Abrir el Map ID y asociar el estilo claro en **Light mode** y el oscuro en
+   **Dark mode**.
+6. Recompilar una sola vez con el Map ID. Los siguientes ajustes publicados en
+   Cloud Styling no requieren una nueva APK.
+
 Para habilitar el monitoreo de errores y rendimiento del piloto, crea un
 proyecto Flutter en Sentry y agrega su DSN solamente durante la compilacion:
 

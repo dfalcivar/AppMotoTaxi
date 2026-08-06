@@ -14,20 +14,55 @@ enum MapPointSelection { origin, destination }
 const configuredMapProvider =
     String.fromEnvironment('MAP_PROVIDER', defaultValue: 'osm');
 
-const _googleDarkMapStyle = '''[
-  {"elementType":"geometry","stylers":[{"color":"#17242b"}]},
+const _androidMapId = String.fromEnvironment('GOOGLE_MAPS_ANDROID_MAP_ID');
+const _iosMapId = String.fromEnvironment('GOOGLE_MAPS_IOS_MAP_ID');
+const _webMapId = String.fromEnvironment('GOOGLE_MAPS_WEB_MAP_ID');
+
+String? get _configuredGoogleMapId {
+  final value = kIsWeb
+      ? _webMapId
+      : switch (defaultTargetPlatform) {
+          TargetPlatform.android => _androidMapId,
+          TargetPlatform.iOS => _iosMapId,
+          _ => '',
+        };
+  return value.trim().isEmpty ? null : value.trim();
+}
+
+const _googleLightMapStyle = '''[
+  {"elementType":"geometry","stylers":[{"color":"#eef4f3"}]},
   {"elementType":"labels.icon","stylers":[{"visibility":"off"}]},
-  {"elementType":"labels.text.fill","stylers":[{"color":"#d5e4e8"}]},
-  {"elementType":"labels.text.stroke","stylers":[{"color":"#17242b"}]},
-  {"featureType":"administrative","elementType":"geometry.stroke","stylers":[{"color":"#4c6770"}]},
-  {"featureType":"poi","elementType":"geometry","stylers":[{"color":"#20343b"}]},
-  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#1d4439"}]},
-  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#33474f"}]},
-  {"featureType":"road","elementType":"geometry.stroke","stylers":[{"color":"#152126"}]},
-  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#42606a"}]},
-  {"featureType":"transit","elementType":"geometry","stylers":[{"color":"#294048"}]},
-  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#0b3647"}]},
-  {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#78b8cc"}]}
+  {"elementType":"labels.text.fill","stylers":[{"color":"#40565c"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#f7fbfa"}]},
+  {"featureType":"poi","stylers":[{"visibility":"off"}]},
+  {"featureType":"poi.medical","stylers":[{"visibility":"on"}]},
+  {"featureType":"poi.park","stylers":[{"visibility":"on"}]},
+  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#dcebdc"}]},
+  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#ffffff"}]},
+  {"featureType":"road","elementType":"geometry.stroke","stylers":[{"color":"#d5e1df"}]},
+  {"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#f7fbfa"}]},
+  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#c8dedb"}]},
+  {"featureType":"transit.station","stylers":[{"visibility":"on"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#b9dce3"}]}
+]''';
+
+const _googleDarkMapStyle = '''[
+  {"elementType":"geometry","stylers":[{"color":"#15252c"}]},
+  {"elementType":"labels.icon","stylers":[{"visibility":"off"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#c8d8dc"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#15252c"}]},
+  {"featureType":"administrative","elementType":"geometry.stroke","stylers":[{"color":"#425960"}]},
+  {"featureType":"poi","stylers":[{"visibility":"off"}]},
+  {"featureType":"poi.medical","stylers":[{"visibility":"on"}]},
+  {"featureType":"poi.park","stylers":[{"visibility":"on"}]},
+  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#1d3b35"}]},
+  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#31444b"}]},
+  {"featureType":"road","elementType":"geometry.stroke","stylers":[{"color":"#101c21"}]},
+  {"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#3b535b"}]},
+  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#54727a"}]},
+  {"featureType":"transit.station","stylers":[{"visibility":"on"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#0a3545"}]},
+  {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#81b6c5"}]}
 ]''';
 
 class LiveMap extends StatefulWidget {
@@ -43,6 +78,8 @@ class LiveMap extends StatefulWidget {
     this.nearbyDrivers = const {},
     this.editing,
     this.onPointSelected,
+    this.onSelectionSettled,
+    this.onSelectionMovementStarted,
     this.onUseCurrentLocation,
     this.currentLocation,
     this.height = 320,
@@ -63,6 +100,8 @@ class LiveMap extends StatefulWidget {
   final Map<String, LatLng> nearbyDrivers;
   final MapPointSelection? editing;
   final ValueChanged<LatLng>? onPointSelected;
+  final ValueChanged<LatLng>? onSelectionSettled;
+  final VoidCallback? onSelectionMovementStarted;
   final VoidCallback? onUseCurrentLocation;
   final LatLng? currentLocation;
   final double height;
@@ -86,6 +125,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   gmaps.BitmapDescriptor? _nearbyMotoIcon;
   gmaps.BitmapDescriptor? _activeMotoIcon;
   Timer? _fitDebounce;
+  Timer? _selectionDebounce;
+  bool _cameraAnimationRunning = false;
+  gmaps.CameraUpdate? _pendingCameraUpdate;
 
   @override
   void initState() {
@@ -133,7 +175,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       _displayedDriver = null;
     } else if (_displayedDriver == null) {
       _displayedDriver = next;
-    } else if (oldWidget.driverPosition != next) {
+    } else if (_meaningfullyDifferent(_displayedDriver!, next)) {
       _movementStart = _displayedDriver;
       _movementEnd = next;
       _movement.forward(from: 0);
@@ -202,18 +244,60 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   @override
   void dispose() {
     _fitDebounce?.cancel();
+    _selectionDebounce?.cancel();
     _movement.dispose();
     _googleMapController?.dispose();
     super.dispose();
   }
 
+  bool _meaningfullyDifferent(LatLng first, LatLng second,
+      {double meters = 2}) {
+    return const Distance().as(LengthUnit.Meter, first, second) >= meters;
+  }
+
+  Future<void> _animateGoogleCamera(gmaps.CameraUpdate update) async {
+    final controller = _googleMapController;
+    if (controller == null) return;
+    if (_cameraAnimationRunning) {
+      _pendingCameraUpdate = update;
+      return;
+    }
+    _cameraAnimationRunning = true;
+    try {
+      await controller.animateCamera(update);
+    } finally {
+      _cameraAnimationRunning = false;
+      final pending = _pendingCameraUpdate;
+      _pendingCameraUpdate = null;
+      if (pending != null && mounted) {
+        unawaited(_animateGoogleCamera(pending));
+      }
+    }
+  }
+
   void _moveCamera(LatLng point, double zoom) {
     if (configuredMapProvider == 'google') {
-      _googleMapController?.animateCamera(gmaps.CameraUpdate.newLatLngZoom(
-          gmaps.LatLng(point.latitude, point.longitude), zoom));
+      unawaited(_animateGoogleCamera(gmaps.CameraUpdate.newLatLngZoom(
+          gmaps.LatLng(point.latitude, point.longitude), zoom)));
       return;
     }
     _mapController.move(point, zoom);
+  }
+
+  void _cameraSelectionMoved(LatLng point) {
+    if (widget.editing == null) return;
+    _selectionCenter = point;
+    _selectionDebounce?.cancel();
+  }
+
+  void _scheduleSelectionSettled() {
+    if (widget.editing == null || _selectionCenter == null) return;
+    _selectionDebounce?.cancel();
+    _selectionDebounce = Timer(const Duration(milliseconds: 450), () {
+      if (mounted && widget.editing != null && _selectionCenter != null) {
+        widget.onSelectionSettled?.call(_selectionCenter!);
+      }
+    });
   }
 
   void _fitRoute() {
@@ -233,7 +317,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         _moveCamera(points.first, 17);
         return;
       }
-      _googleMapController?.animateCamera(
+      unawaited(_animateGoogleCamera(
         gmaps.CameraUpdate.newLatLngBounds(
           gmaps.LatLngBounds(
             southwest: gmaps.LatLng(minLatitude, minLongitude),
@@ -241,7 +325,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           ),
           48,
         ),
-      );
+      ));
       return;
     }
     _mapController.fitCamera(CameraFit.coordinates(
@@ -285,37 +369,23 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           : SizedBox(height: widget.height, child: placeholder);
     }
 
-    final selectionPoint = widget.editing == null
-        ? null
-        : _selectionCenter ??
-            (widget.editing == MapPointSelection.origin
-                ? widget.pickup
-                : widget.dropoff) ??
-            center;
-
     final markers = <Marker>[
       if (widget.pickup != null && widget.editing != MapPointSelection.origin)
         Marker(
           point: widget.pickup!,
-          width: 130,
-          height: 68,
-          child: _MapLabel(
-            icon: Icons.location_on,
-            color: Colors.green,
-            text: widget.originLabel,
-          ),
+          width: 30,
+          height: 38,
+          child: const _SimpleMapPin(
+              icon: Icons.person_pin_circle, color: Color(0xff008b9a)),
         ),
       if (widget.dropoff != null &&
           widget.editing != MapPointSelection.destination)
         Marker(
           point: widget.dropoff!,
-          width: 130,
-          height: 68,
-          child: _MapLabel(
-            icon: Icons.flag,
-            color: Colors.red,
-            text: widget.destinationLabel,
-          ),
+          width: 30,
+          height: 38,
+          child: const _SimpleMapPin(
+              icon: Icons.flag_rounded, color: Color(0xffef5b4d)),
         ),
       for (final entry in widget.nearbyDrivers.entries)
         Marker(
@@ -348,7 +418,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               gmaps.LatLng(widget.pickup!.latitude, widget.pickup!.longitude),
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
               gmaps.BitmapDescriptor.hueGreen),
-          infoWindow: gmaps.InfoWindow(title: widget.originLabel),
+          anchor: const Offset(.5, 1),
         ),
       if (widget.dropoff != null &&
           widget.editing != MapPointSelection.destination)
@@ -358,27 +428,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               gmaps.LatLng(widget.dropoff!.latitude, widget.dropoff!.longitude),
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
               gmaps.BitmapDescriptor.hueRed),
-          infoWindow: gmaps.InfoWindow(title: widget.destinationLabel),
-        ),
-      if (selectionPoint != null)
-        gmaps.Marker(
-          markerId: const gmaps.MarkerId('selection-point'),
-          position:
-              gmaps.LatLng(selectionPoint.latitude, selectionPoint.longitude),
-          draggable: true,
-          consumeTapEvents: true,
-          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
-            widget.editing == MapPointSelection.origin
-                ? gmaps.BitmapDescriptor.hueGreen
-                : gmaps.BitmapDescriptor.hueRed,
-          ),
-          infoWindow: gmaps.InfoWindow(
-            title: widget.editing == MapPointSelection.origin
-                ? 'Arrastra para ajustar el origen'
-                : 'Arrastra para ajustar el destino',
-          ),
-          onDragEnd: (point) => setState(
-              () => _selectionCenter = LatLng(point.latitude, point.longitude)),
+          anchor: const Offset(.5, 1),
         ),
       for (final entry in widget.nearbyDrivers.entries)
         gmaps.Marker(
@@ -388,7 +438,6 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               gmaps.BitmapDescriptor.defaultMarkerWithHue(
                   gmaps.BitmapDescriptor.hueCyan),
           flat: true,
-          infoWindow: const gmaps.InfoWindow(title: 'Mototaxi disponible'),
           anchor: const Offset(.5, .5),
           clusterManagerId: _nearbyClusterId,
         ),
@@ -399,7 +448,6 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               widget.selfDriverPosition!.longitude),
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
               gmaps.BitmapDescriptor.hueAzure),
-          infoWindow: const gmaps.InfoWindow(title: 'Mi ubicacion'),
           zIndexInt: 20,
         ),
       if (_displayedDriver != null)
@@ -417,18 +465,31 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
 
     final mapSurface = configuredMapProvider == 'google'
         ? gmaps.GoogleMap(
-            style: Theme.of(context).brightness == Brightness.dark
-                ? _googleDarkMapStyle
+            mapId: _configuredGoogleMapId,
+            colorScheme: gmaps.MapColorScheme.followSystem,
+            style: _configuredGoogleMapId == null
+                ? (Theme.of(context).brightness == Brightness.dark
+                    ? _googleDarkMapStyle
+                    : _googleLightMapStyle)
                 : null,
             initialCameraPosition: gmaps.CameraPosition(
               target: gmaps.LatLng(center.latitude, center.longitude),
               zoom: 16,
             ),
-            onMapCreated: (controller) => _googleMapController = controller,
+            onMapCreated: (controller) {
+              _googleMapController = controller;
+              if (widget.editing == null && widget.routePoints.length > 1) {
+                _fitRoute();
+              }
+            },
             mapToolbarEnabled: false,
-            compassEnabled: true,
+            compassEnabled: false,
             myLocationButtonEnabled: false,
+            myLocationEnabled: false,
             zoomControlsEnabled: false,
+            rotateGesturesEnabled: false,
+            tiltGesturesEnabled: false,
+            buildingsEnabled: false,
             padding: widget.viewportPadding,
             gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
               Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer()),
@@ -440,21 +501,50 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
             polylines: widget.routePoints.length > 1
                 ? {
                     gmaps.Polyline(
+                      polylineId: const gmaps.PolylineId('route-outline'),
+                      points: widget.routePoints
+                          .map((point) =>
+                              gmaps.LatLng(point.latitude, point.longitude))
+                          .toList(),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surface
+                          .withValues(alpha: .86),
+                      width: 9,
+                      startCap: gmaps.Cap.roundCap,
+                      endCap: gmaps.Cap.roundCap,
+                      jointType: gmaps.JointType.round,
+                      zIndex: 1,
+                    ),
+                    gmaps.Polyline(
                       polylineId: const gmaps.PolylineId('route'),
                       points: widget.routePoints
                           .map((point) =>
                               gmaps.LatLng(point.latitude, point.longitude))
                           .toList(),
-                      color: Theme.of(context).colorScheme.primary,
+                      color: const Color(0xff008b9a),
                       width: 6,
+                      startCap: gmaps.Cap.roundCap,
+                      endCap: gmaps.Cap.roundCap,
+                      jointType: gmaps.JointType.round,
+                      zIndex: 2,
                     )
                   }
                 : const {},
+            onCameraMoveStarted: widget.editing == null
+                ? null
+                : widget.onSelectionMovementStarted,
+            onCameraMove: widget.editing == null
+                ? null
+                : (position) => _cameraSelectionMoved(LatLng(
+                    position.target.latitude, position.target.longitude)),
+            onCameraIdle:
+                widget.editing == null ? null : _scheduleSelectionSettled,
             onTap: widget.onPointSelected == null
                 ? null
                 : (point) {
                     final selected = LatLng(point.latitude, point.longitude);
-                    setState(() => _selectionCenter = selected);
+                    _selectionCenter = selected;
                     _moveCamera(selected, 17);
                   },
           )
@@ -465,7 +555,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               initialZoom: 16,
               onPositionChanged: (camera, hasGesture) {
                 if (widget.editing != null && hasGesture) {
-                  _selectionCenter = camera.center;
+                  widget.onSelectionMovementStarted?.call();
+                  _cameraSelectionMoved(camera.center);
+                  _scheduleSelectionSettled();
                 }
               },
               onTap: widget.onPointSelected == null
@@ -501,30 +593,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       mapSurface,
       if (widget.editing != null)
         Positioned(
-          left: 12,
-          right: 12,
-          top: widget.viewportPadding.top + 10,
+          left: widget.viewportPadding.left,
+          right: widget.viewportPadding.right,
+          top: widget.viewportPadding.top,
+          bottom: widget.viewportPadding.bottom,
           child: IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: .74),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                child: Text(
-                  configuredMapProvider == 'google'
-                      ? (widget.editing == MapPointSelection.origin
-                          ? 'Arrastra el punto verde para ajustar el origen'
-                          : 'Arrastra el punto rojo para ajustar el destino')
-                      : (widget.editing == MapPointSelection.origin
-                          ? 'Mueve el mapa para ajustar el punto de encuentro'
-                          : 'Mueve el mapa para ajustar el destino'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white),
-                ),
-              ),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 28),
+              child: _SelectionPin(selection: widget.editing!),
             ),
           ),
         ),
@@ -549,25 +625,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           ),
         ),
       if (widget.editing != null) ...[
-        if (configuredMapProvider != 'google')
-          Center(
-            child: IgnorePointer(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 20),
-                child: Icon(Icons.location_pin,
-                    size: 34,
-                    color: widget.editing == MapPointSelection.origin
-                        ? const Color(0xff20a55b)
-                        : const Color(0xffef4338),
-                    shadows: const [
-                      Shadow(color: Colors.black38, blurRadius: 5)
-                    ]),
-              ),
-            ),
-          ),
         Positioned(
           right: 12,
-          bottom: widget.viewportPadding.bottom + 64,
+          bottom: widget.viewportPadding.bottom + 12,
           child: FloatingActionButton.small(
             heroTag: null,
             tooltip: 'Volver a mi ubicaciÃ³n',
@@ -578,35 +638,11 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                         widget.currentLocation ?? widget.pickup ?? center;
                     _selectionCenter = currentPoint;
                     _moveCamera(currentPoint, 17);
-                    widget.onUseCurrentLocation!();
+                    if (widget.currentLocation == null) {
+                      widget.onUseCurrentLocation!();
+                    }
                   },
             child: const Icon(Icons.my_location),
-          ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: widget.viewportPadding.bottom + 12,
-          child: Center(
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context)
-                    .colorScheme
-                    .primary
-                    .withValues(alpha: .82),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                minimumSize: Size.zero,
-                visualDensity: VisualDensity.compact,
-              ),
-              onPressed: widget.onPointSelected == null
-                  ? null
-                  : () => widget.onPointSelected!(_selectionCenter ?? center),
-              icon: const Icon(Icons.check, size: 18),
-              label: Text(widget.editing == MapPointSelection.origin
-                  ? 'Confirmar origen'
-                  : 'Confirmar destino'),
-            ),
           ),
         ),
       ],
@@ -617,6 +653,44 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           ? SizedBox.expand(child: mapContent)
           : SizedBox(height: widget.height, child: mapContent),
     );
+  }
+}
+
+class _SelectionPin extends StatelessWidget {
+  const _SelectionPin({required this.selection});
+
+  final MapPointSelection selection;
+
+  @override
+  Widget build(BuildContext context) {
+    final isOrigin = selection == MapPointSelection.origin;
+    final color = isOrigin ? const Color(0xff008b9a) : const Color(0xffef5b4d);
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: const [
+            BoxShadow(
+                color: Colors.black38, blurRadius: 8, offset: Offset(0, 3))
+          ],
+        ),
+        child: Icon(isOrigin ? Icons.person_pin_circle : Icons.flag_rounded,
+            color: Colors.white, size: 18),
+      ),
+      Container(width: 3, height: 13, color: color),
+      Container(
+        width: 9,
+        height: 5,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .24),
+          borderRadius: BorderRadius.circular(50),
+        ),
+      ),
+    ]);
   }
 }
 
@@ -646,28 +720,14 @@ class _MotoMarker extends StatelessWidget {
       );
 }
 
-class _MapLabel extends StatelessWidget {
-  const _MapLabel(
-      {required this.icon, required this.color, required this.text});
+class _SimpleMapPin extends StatelessWidget {
+  const _SimpleMapPin({required this.icon, required this.color});
   final IconData icon;
   final Color color;
-  final String text;
 
   @override
-  Widget build(BuildContext context) => Column(children: [
-        Icon(icon, color: color, size: 25),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface.withValues(alpha: .9),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            child: Text(text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11)),
-          ),
-        ),
-      ]);
+  Widget build(BuildContext context) => Icon(icon,
+      color: color,
+      size: 29,
+      shadows: const [Shadow(color: Colors.black38, blurRadius: 5)]);
 }

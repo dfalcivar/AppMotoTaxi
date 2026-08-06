@@ -22,6 +22,11 @@ La aplicación ya incluye los dos proveedores de mapa:
 - `MAP_PROVIDER=osm`: respaldo actual, no necesita clave de Google.
 - `MAP_PROVIDER=google`: usa el complemento oficial `google_maps_flutter`.
 
+La integracion admite Cloud-based Maps Styling mediante los Map ID de
+compilacion `GOOGLE_MAPS_ANDROID_MAP_ID`, `GOOGLE_MAPS_IOS_MAP_ID` y
+`GOOGLE_MAPS_WEB_MAP_ID`. Sin Map ID se conserva un estilo local AtacamesGo
+claro/oscuro como respaldo.
+
 La API también está preparada para utilizar Google automáticamente cuando
 exista `GOOGLE_MAPS_SERVER_API_KEY`. Si Google no está configurado o falla,
 mantiene Nominatim y OpenRouteService como respaldo.

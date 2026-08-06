@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -11,6 +12,9 @@ import 'package:latlong2/latlong.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
+import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart'
+    as maps_platform;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
@@ -259,6 +263,17 @@ Future<Position> currentGpsPosition() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    final mapsImplementation = maps_platform.GoogleMapsFlutterPlatform.instance;
+    if (mapsImplementation is GoogleMapsFlutterAndroid) {
+      try {
+        await mapsImplementation
+            .initializeWithRenderer(AndroidMapRenderer.latest);
+      } catch (error) {
+        debugPrint('No se pudo solicitar el renderizador moderno: $error');
+      }
+    }
+  }
   if (apiHttpProxy.isNotEmpty) {
     HttpOverrides.global = AppHttpOverrides(Uri.parse(apiHttpProxy));
   }
@@ -2684,6 +2699,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   List<dynamic> favoritePlaces = [];
   List<LatLng> routePoints = [];
   MapPointSelection? mapSelection;
+  LatLng? pendingMapPoint;
+  bool selectionResolving = false;
+  bool selectionMoving = false;
+  int selectionLookupGeneration = 0;
   dynamic active;
   int people = 1;
   String paymentMethod = 'CASH';
@@ -3045,7 +3064,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (!mounted || active != null) return;
       final point = LatLng(position.latitude, position.longitude);
       setState(() {
-        mapSelection = MapPointSelection.origin;
         currentLocation = point;
         pickup = point;
         origin.text = 'Mi ubicación actual';
@@ -3058,7 +3076,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         final result = await api.reverse(widget.s.token, point);
         if (!mounted || pickup != point || active != null) return;
         setState(() {
-          mapSelection = null;
           origin.text = cleanAddressLabel(result['label'],
               fallback: 'Mi ubicación actual');
           message = 'Origen actualizado con tu ubicación GPS.';
@@ -3078,6 +3095,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     setState(() {
       mapSelection =
           isOrigin ? MapPointSelection.origin : MapPointSelection.destination;
+      pendingMapPoint = currentLocation ?? pickup ?? dropoff;
+      selectionResolving = false;
+      selectionMoving = false;
       sheetExtent = .24;
       if (isOrigin) {
         origin.clear();
@@ -3101,12 +3121,69 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       mapSelection = selection;
+      pendingMapPoint = selection == MapPointSelection.origin
+          ? pickup ?? currentLocation
+          : dropoff ?? pickup ?? currentLocation;
+      selectionResolving = false;
+      selectionMoving = false;
       sheetExtent = .24;
       message = selection == MapPointSelection.origin
-          ? 'Arrastra el punto verde para ajustar el origen.'
-          : 'Arrastra el punto rojo para ajustar el destino.';
+          ? 'Mueve el mapa para ajustar el origen.'
+          : 'Mueve el mapa para ajustar el destino.';
     });
     _movePassengerSheet(.24);
+  }
+
+  void selectionMovementStarted() {
+    if (selectionMoving || !mounted) return;
+    selectionLookupGeneration++;
+    setState(() {
+      selectionMoving = true;
+      pendingMapPoint = null;
+      selectionResolving = false;
+      message = 'Mueve el mapa y detente sobre el punto exacto.';
+    });
+  }
+
+  Future<void> previewMapSelection(LatLng point) async {
+    final selection = mapSelection;
+    if (selection == null ||
+        !point.latitude.isFinite ||
+        !point.longitude.isFinite) {
+      return;
+    }
+    final generation = ++selectionLookupGeneration;
+    setState(() {
+      pendingMapPoint = point;
+      selectionMoving = false;
+      selectionResolving = true;
+      message = 'Obteniendo la dirección del punto seleccionado…';
+    });
+    try {
+      final result = await api.reverse(widget.s.token, point);
+      if (!mounted ||
+          generation != selectionLookupGeneration ||
+          mapSelection != selection) {
+        return;
+      }
+      final label =
+          cleanAddressLabel(result['label'], fallback: 'Punto seleccionado');
+      setState(() {
+        if (selection == MapPointSelection.origin) {
+          origin.text = label;
+        } else {
+          destination.text = label;
+        }
+        selectionResolving = false;
+        message = 'Dirección encontrada. Puedes confirmar el punto.';
+      });
+    } catch (_) {
+      if (!mounted || generation != selectionLookupGeneration) return;
+      setState(() {
+        selectionResolving = false;
+        message = 'Punto válido. No fue posible obtener la dirección escrita.';
+      });
+    }
   }
 
   Future<void> loadFavoritePlaces() async {
@@ -3329,19 +3406,32 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<void> selectMapPoint(LatLng point) async {
     final selection = mapSelection;
-    if (selection == null) return;
+    if (selection == null ||
+        !point.latitude.isFinite ||
+        !point.longitude.isFinite) {
+      return;
+    }
     final coordinateLabel =
         'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
+    final field = selection == MapPointSelection.origin ? origin : destination;
+    final previewIsCurrent = pendingMapPoint != null &&
+        const Distance().as(LengthUnit.Meter, pendingMapPoint!, point) < 2 &&
+        !selectionResolving &&
+        field.text.trim().isNotEmpty;
+    selectionLookupGeneration++;
     setState(() {
       mapSelection = null;
+      pendingMapPoint = null;
+      selectionResolving = false;
+      selectionMoving = false;
       sheetExtent = .35;
       if (selection == MapPointSelection.origin) {
         pickup = point;
-        origin.text = coordinateLabel;
+        if (!previewIsCurrent) origin.text = coordinateLabel;
         message = 'Consultando la dirección del origen...';
       } else {
         dropoff = point;
-        destination.text = coordinateLabel;
+        if (!previewIsCurrent) destination.text = coordinateLabel;
         message = 'Consultando la dirección del destino...';
       }
     });
@@ -3351,6 +3441,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       unawaited(refreshNearbyDrivers(point));
     }
     refreshRoute(force: true);
+    if (previewIsCurrent) {
+      if (mounted) {
+        setState(() => message = selection == MapPointSelection.origin
+            ? 'Origen confirmado.'
+            : 'Destino confirmado.');
+      }
+      return;
+    }
     try {
       final result = await api.reverse(widget.s.token, point);
       if (!mounted) return;
@@ -3675,6 +3773,65 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ),
       ];
 
+  List<Widget> _mapSelectionContent(BuildContext context) {
+    final isOrigin = mapSelection == MapPointSelection.origin;
+    final address = (isOrigin ? origin.text : destination.text).trim();
+    return [
+      Text(isOrigin ? 'Fija tu punto de partida' : 'Fija tu destino',
+          textAlign: TextAlign.center,
+          style: Theme.of(context)
+              .textTheme
+              .titleLarge
+              ?.copyWith(fontWeight: FontWeight.w800)),
+      const SizedBox(height: 4),
+      const Text('Mueve el mapa y coloca el marcador en el punto exacto.',
+          textAlign: TextAlign.center),
+      const SizedBox(height: 14),
+      Card(
+        margin: EdgeInsets.zero,
+        child: ListTile(
+          leading: Icon(
+              isOrigin ? Icons.person_pin_circle : Icons.flag_outlined,
+              color:
+                  isOrigin ? const Color(0xff008b9a) : const Color(0xffef5b4d)),
+          title: Text(address.isEmpty ? 'Ubicación seleccionada' : address,
+              maxLines: 2, overflow: TextOverflow.ellipsis),
+          subtitle: Text(selectionResolving
+              ? 'Obteniendo dirección…'
+              : 'La coordenada exacta se conservará al confirmar.'),
+          trailing: selectionResolving
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : null,
+        ),
+      ),
+      const SizedBox(height: 14),
+      FilledButton.icon(
+        onPressed: pendingMapPoint == null
+            ? null
+            : () => selectMapPoint(pendingMapPoint!),
+        icon: const Icon(Icons.check),
+        label: Text(isOrigin ? 'Confirmar origen' : 'Confirmar destino'),
+      ),
+      TextButton(
+        onPressed: () {
+          selectionLookupGeneration++;
+          setState(() {
+            mapSelection = null;
+            pendingMapPoint = null;
+            selectionResolving = false;
+            selectionMoving = false;
+            message = null;
+          });
+          _movePassengerSheet(.35);
+        },
+        child: const Text('Cancelar ajuste'),
+      ),
+    ];
+  }
+
   List<Widget> _requestContent(BuildContext context) => [
         Row(children: [
           Icon(Icons.electric_rickshaw,
@@ -3820,6 +3977,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                       active == null ? nearbyDrivers : const <String, LatLng>{},
                   editing: active == null ? mapSelection : null,
                   onPointSelected: editing ? selectMapPoint : null,
+                  onSelectionSettled: editing ? previewMapSelection : null,
+                  onSelectionMovementStarted:
+                      editing ? selectionMovementStarted : null,
                   onUseCurrentLocation:
                       active == null ? useCurrentLocation : null,
                   fillAvailable: true,
@@ -3893,7 +4053,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  if (searching)
+                  if (editing)
+                    ..._mapSelectionContent(context)
+                  else if (searching)
                     ..._searchingContent(context)
                   else if (active != null)
                     ..._activeTripContent(context)
