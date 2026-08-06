@@ -36,22 +36,46 @@ export async function sendPush(userId: string, title: string, body: string, data
     console.warn(`Push omitido: el usuario ${userId} no tiene un dispositivo registrado.`);
     return { sent: 0, attempted: 0 };
   }
-  const result = await client.sendEachForMulticast({
-    tokens,
-    notification: { title, body },
-    data,
-    android: {
-      priority: "high",
-      notification: {
-        channelId: "mototaxi_alerts_v2",
-        sound: "default",
-        defaultVibrateTimings: true,
-        visibility: "public"
+  const isChat = data.type === "CHAT_MESSAGE";
+  const notificationTag = data.tripId
+    ? `${isChat ? "chat" : "trip"}-${data.tripId}`
+    : `atacamesgo-${data.type ?? "general"}`;
+  const ttl = data.type === "TRIP_OFFER"
+    ? 120_000
+    : isChat
+      ? 86_400_000
+      : 900_000;
+  try {
+    const result = await client.sendEachForMulticast({
+      tokens,
+      notification: { title, body },
+      data,
+      android: {
+        priority: "high",
+        collapseKey: notificationTag,
+        ttl,
+        notification: {
+          channelId: isChat
+            ? "mototaxi_chat_messages_v1"
+            : "mototaxi_trip_alerts_v3",
+          tag: notificationTag,
+          notificationCount: 1,
+          sound: "default",
+          defaultVibrateTimings: true,
+          visibility: "public"
+        }
       }
-    }
-  });
-  const invalid = result.responses.flatMap((response, index) => !response.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(response.error?.code ?? "") ? [tokens[index]!] : []);
-  if (invalid.length) await database()`delete from device_tokens where token = any(${invalid})`;
-  if (result.failureCount) console.warn("Firebase rechazó una o más notificaciones.", result.responses.filter(response => !response.success).map(response => response.error?.code ?? "unknown"));
-  return { sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors: result.responses.filter(response => !response.success).map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" })) };
+    });
+    const invalid = result.responses.flatMap((response, index) => !response.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(response.error?.code ?? "") ? [tokens[index]!] : []);
+    if (invalid.length) await database()`delete from device_tokens where token = any(${invalid})`;
+    if (result.failureCount) console.warn("Firebase rechazó una o más notificaciones.", result.responses.filter(response => !response.success).map(response => response.error?.code ?? "unknown"));
+    return { sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors: result.responses.filter(response => !response.success).map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" })) };
+  } catch (error) {
+    console.error("Firebase no pudo enviar la notificación.", {
+      userId,
+      type: data.type ?? "unknown",
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return { sent: 0, attempted: tokens.length, failed: tokens.length };
+  }
 }

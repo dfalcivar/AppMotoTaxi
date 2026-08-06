@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.hardware.fingerprint.FingerprintManager
 import android.net.Uri
+import android.app.Notification
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
@@ -125,15 +126,28 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                "mototaxi_alerts_v2",
-                "Alertas de viajes y mensajes",
+            val tripChannel = NotificationChannel(
+                "mototaxi_trip_alerts_v3",
+                "Solicitudes y estados del viaje",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Cambios del viaje, solicitudes cercanas y mensajes del chat"
+                description = "Solicitudes cercanas y cambios importantes del viaje"
                 enableVibration(true)
+                setShowBadge(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            val chatChannel = NotificationChannel(
+                "mototaxi_chat_messages_v1",
+                "Mensajes del viaje",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Mensajes entre pasajero y conductor"
+                enableVibration(true)
+                setShowBadge(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            getSystemService(NotificationManager::class.java)
+                .createNotificationChannels(listOf(tripChannel, chatChannel))
         }
     }
 }

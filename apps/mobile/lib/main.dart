@@ -51,8 +51,15 @@ http.Client buildHttpClient() {
 
 final apiHttpClient = buildHttpClient();
 bool firebaseReady = false;
+String? activeFcmAuthToken;
+StreamSubscription<String>? fcmTokenRefreshSubscription;
 const nativeActions = MethodChannel('ec.atacames.mototaxi/native');
 const secureStorage = FlutterSecureStorage();
+
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
 
 String? supportedImageMime(Uint8List bytes) {
   if (bytes.length >= 3 &&
@@ -257,10 +264,29 @@ Future<void> main() async {
   }
   unawaited(warmApi());
   try {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     await Firebase.initializeApp();
-    await FirebaseMessaging.instance.requestPermission();
+    final permission = await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
     firebaseReady = true;
-  } catch (_) {
+    fcmTokenRefreshSubscription =
+        FirebaseMessaging.instance.onTokenRefresh.listen((fcmToken) {
+      final authToken = activeFcmAuthToken;
+      if (authToken != null) {
+        unawaited(Api().registerFcm(authToken, fcmToken: fcmToken));
+      }
+    });
+    if (permission.authorizationStatus == AuthorizationStatus.denied) {
+      debugPrint('El usuario desactivó las notificaciones de AtacamesGo.');
+    }
+  } catch (error, stack) {
+    debugPrint('No se pudo inicializar Firebase Messaging: $error');
+    if (sentryDsn.isNotEmpty) {
+      unawaited(Sentry.captureException(error, stackTrace: stack));
+    }
     // La mensajería push es opcional en instalaciones piloto sin credenciales.
   }
   await appTheme.load();
@@ -510,22 +536,50 @@ class Api {
     return s;
   }
 
-  Future<void> registerFcm(String token) async {
-    if (!firebaseReady) return;
-    try {
-      final fcm = await FirebaseMessaging.instance.getToken();
-      if (fcm != null) {
+  Future<bool> registerFcm(String token, {String? fcmToken}) async {
+    if (!firebaseReady) return false;
+    activeFcmAuthToken = token;
+    Object? lastError;
+    StackTrace? lastStack;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final fcm = fcmToken ?? await FirebaseMessaging.instance.getToken();
+        if (fcm == null || fcm.isEmpty) {
+          throw StateError('Firebase no entregó un token FCM.');
+        }
         await call('PUT', '/v1/devices/fcm-token',
             token: token, body: {'token': fcm, 'platform': 'ANDROID'});
+        return true;
+      } catch (error, stack) {
+        lastError = error;
+        lastStack = stack;
+        if (attempt < 2) {
+          await Future<void>.delayed(Duration(seconds: attempt + 1));
+        }
       }
-    } catch (_) {}
+    }
+    debugPrint('No se pudo registrar el token FCM: $lastError');
+    if (sentryDsn.isNotEmpty && lastError != null) {
+      unawaited(Sentry.captureException(lastError, stackTrace: lastStack));
+    }
+    return false;
   }
 
-  Future<void> logout(String token) =>
-      call('POST', '/v1/auth/logout', token: token);
+  Future<void> logout(String token) async {
+    try {
+      await call('POST', '/v1/auth/logout', token: token);
+    } finally {
+      if (activeFcmAuthToken == token) activeFcmAuthToken = null;
+    }
+  }
 
-  Future<void> lock(String token) =>
-      call('POST', '/v1/auth/lock', token: token);
+  Future<void> lock(String token) async {
+    try {
+      await call('POST', '/v1/auth/lock', token: token);
+    } finally {
+      if (activeFcmAuthToken == token) activeFcmAuthToken = null;
+    }
+  }
 
   Future<void> changePassword(String token, String password,
           {String? currentPassword}) =>
@@ -2585,6 +2639,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
+    unawaited(api.registerFcm(widget.s.token));
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((push) {
         final type = push.data['type'];
@@ -2601,12 +2656,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       });
       openedMessageSubscription =
           FirebaseMessaging.onMessageOpenedApp.listen((message) {
-        if (message.data['type'] == 'CHAT_MESSAGE') {
-          openPassengerChat(message.data['tripId']);
-        } else {
-          load();
-        }
+        handleOpenedPush(message);
       });
+      Future.microtask(restoreInitialPush);
     }
     load();
     loadFavoritePlaces();
@@ -2648,8 +2700,23 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       realtime.connect();
+      unawaited(api.registerFcm(widget.s.token));
       load();
     }
+  }
+
+  void handleOpenedPush(RemoteMessage push) {
+    if (push.data['type'] == 'CHAT_MESSAGE') {
+      unawaited(openPassengerChat(push.data['tripId']));
+    } else {
+      unawaited(load());
+    }
+  }
+
+  Future<void> restoreInitialPush() async {
+    final push = await FirebaseMessaging.instance.getInitialMessage();
+    if (!mounted || push == null) return;
+    handleOpenedPush(push);
   }
 
   void reflectTripStatus(dynamic statusValue, dynamic tripIdValue) {
@@ -3786,7 +3853,7 @@ class Driver extends StatefulWidget {
   State<Driver> createState() => _DriverState();
 }
 
-class _DriverState extends State<Driver> {
+class _DriverState extends State<Driver> with WidgetsBindingObserver {
   final api = Api();
   final driverSheetController = DraggableScrollableController();
   late final RealtimeService realtime;
@@ -3811,6 +3878,7 @@ class _DriverState extends State<Driver> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
@@ -3829,10 +3897,9 @@ class _DriverState extends State<Driver> {
       });
       openedMessageSubscription =
           FirebaseMessaging.onMessageOpenedApp.listen((message) {
-        if (message.data['type'] == 'CHAT_MESSAGE') {
-          openDriverChat(message.data['tripId']);
-        }
+        handleOpenedPush(message);
       });
+      Future.microtask(restoreInitialPush);
     }
     restore();
     timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
@@ -3840,6 +3907,7 @@ class _DriverState extends State<Driver> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     timer?.cancel();
     messageSubscription?.cancel();
     openedMessageSubscription?.cancel();
@@ -3848,6 +3916,29 @@ class _DriverState extends State<Driver> {
     realtime.dispose();
     driverSheetController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      realtime.connect();
+      unawaited(api.registerFcm(widget.s.token));
+      unawaited(refresh());
+    }
+  }
+
+  void handleOpenedPush(RemoteMessage push) {
+    if (push.data['type'] == 'CHAT_MESSAGE') {
+      unawaited(openDriverChat(push.data['tripId']));
+    } else {
+      unawaited(refresh());
+    }
+  }
+
+  Future<void> restoreInitialPush() async {
+    final push = await FirebaseMessaging.instance.getInitialMessage();
+    if (!mounted || push == null) return;
+    handleOpenedPush(push);
   }
 
   void _moveDriverSheet(double size) {
