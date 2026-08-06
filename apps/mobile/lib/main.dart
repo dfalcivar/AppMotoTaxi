@@ -3137,12 +3137,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   void selectionMovementStarted() {
     if (selectionMoving || !mounted) return;
     selectionLookupGeneration++;
-    setState(() {
-      selectionMoving = true;
-      pendingMapPoint = null;
-      selectionResolving = false;
-      message = 'Mueve el mapa y detente sobre el punto exacto.';
-    });
+    // Do not rebuild the platform map while Android is dispatching camera
+    // gesture events. The settled callback updates the UI with the final
+    // coordinate and prevents the initial location from being reused.
+    selectionMoving = true;
+    pendingMapPoint = null;
+    selectionResolving = false;
   }
 
   Future<void> previewMapSelection(LatLng point) async {

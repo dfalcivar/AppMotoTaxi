@@ -484,11 +484,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
     final googleMapId = _configuredGoogleMapId(brightness);
     final mapSurface = configuredMapProvider == 'google'
         ? gmaps.GoogleMap(
-            key: ValueKey('google-map-${googleMapId ?? 'local'}'),
+            key: ValueKey(
+                'google-map-${googleMapId ?? 'local'}-${brightness.name}'),
             mapId: googleMapId,
-            colorScheme: _usesSeparateAndroidMapIds
+            colorScheme: googleMapId == null || _usesSeparateAndroidMapIds
                 ? null
-                : gmaps.MapColorScheme.followSystem,
+                : brightness == Brightness.dark
+                    ? gmaps.MapColorScheme.dark
+                    : gmaps.MapColorScheme.light,
             style: googleMapId == null
                 ? (brightness == Brightness.dark
                     ? _googleDarkMapStyle

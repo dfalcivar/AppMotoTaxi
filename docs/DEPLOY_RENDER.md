@@ -97,8 +97,8 @@ automaticamente el esquema claro u oscuro del sistema.
 
 Configuracion manual en Google Cloud Console:
 
-1. En **Google Maps Platform > Administracion de mapas**, crear un Map ID de
-   tipo Android. Crear IDs separados al incorporar iOS o web.
+1. En **Google Maps Platform > Administracion de mapas**, crear un solo Map ID
+   de tipo Android. Crear IDs separados solamente al incorporar iOS o web.
 2. En **Estilos de mapa**, crear `AtacamesGo Claro` y `AtacamesGo Oscuro`.
 3. Reducir puntos de interes comerciales; conservar salud, transporte,
    terminales y parques. Destacar vias principales y mantener calles locales
@@ -108,6 +108,11 @@ Configuracion manual en Google Cloud Console:
    **Dark mode**.
 6. Recompilar una sola vez con el Map ID. Los siguientes ajustes publicados en
    Cloud Styling no requieren una nueva APK.
+
+Un Map ID no es un estilo y no cambia los colores por si solo. Mientras los
+estilos Cloud no esten publicados y asociados, compila sin variables Map ID:
+Google Maps seguira activo y la aplicacion utilizara sus estilos locales claro
+y oscuro segun el tema del telefono.
 
 Para habilitar el monitoreo de errores y rendimiento del piloto, crea un
 proyecto Flutter en Sentry y agrega su DSN solamente durante la compilacion:
