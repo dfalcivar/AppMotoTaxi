@@ -3903,6 +3903,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           onTap: () => _movePassengerSheet(.72),
           maxLength: 300,
           maxLines: 2,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(context).unfocus(),
           decoration: const InputDecoration(
             labelText: 'Referencia para encontrarte (opcional)',
             hintText: 'Ej.: casa azul, junto a la farmacia, puerta lateral',
