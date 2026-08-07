@@ -38,6 +38,7 @@ const registrationSchema = z.object({
   phone: z.string().trim().regex(/^\+?[0-9]{8,15}$/),
   role: z.enum(["PASSENGER", "DRIVER"]),
   vehicleIdentifier: z.string().trim().min(3).max(30).optional(),
+  cooperativeId: z.string().uuid().nullable().optional(),
   profilePhotoBase64: z.string().min(100).max(3_500_000).optional(),
   profilePhotoMime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional()
 }).superRefine((value, context) => {
@@ -171,6 +172,11 @@ export async function buildApp() {
   }));
 
   app.get("/v1/pricing/config", async () => initialPricingConfig);
+
+  app.get("/v1/cooperatives", async () => {
+    if (!process.env.DATABASE_URL) return [];
+    return database()`select id::text,name from cooperatives where status='ACTIVE' order by name`;
+  });
 
   app.get("/v1/banners", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
@@ -331,11 +337,15 @@ export async function buildApp() {
     }
     try {
       const account = await database().begin(async tx => {
+        if (input.role === "DRIVER" && input.cooperativeId) {
+          const cooperative = await tx`select id from cooperatives where id=${input.cooperativeId} and status='ACTIVE'`;
+          if (!cooperative.length) throw new Error("INVALID_COOPERATIVE");
+        }
         const status = input.role === "DRIVER" ? "PENDING" : "ACTIVE";
         const [user] = await tx`
-          insert into users (phone_e164, full_name, email, password_hash, role, status, phone_verified_at, terms_accepted_at,
+          insert into users (phone_e164, full_name, email, password_hash, role, status, cooperative_id, phone_verified_at, terms_accepted_at,
             profile_photo_data, profile_photo_mime, profile_photo_updated_at)
-          values (${input.phone.startsWith("+") ? input.phone : `+${input.phone}`}, ${input.fullName}, ${input.email.toLowerCase()}, crypt(${input.password}, gen_salt('bf')), ${input.role}, ${status}, now(), now(),
+          values (${input.phone.startsWith("+") ? input.phone : `+${input.phone}`}, ${input.fullName}, ${input.email.toLowerCase()}, crypt(${input.password}, gen_salt('bf')), ${input.role}, ${status}, ${input.role === "DRIVER" ? input.cooperativeId ?? null : null}, now(), now(),
             ${profilePhoto}, ${input.profilePhotoMime ?? null}, ${profilePhoto ? new Date() : null})
           returning id, email, full_name, role, status
         `;
@@ -353,6 +363,7 @@ export async function buildApp() {
       const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: false, driverApprovalStatus: account.role === "DRIVER" ? "PENDIENTE_DOCUMENTOS" : undefined };
       return reply.code(201).send({ status: account.role === "DRIVER" ? "PENDING_DOCUMENTS" : "ACTIVE", token: tokenFor(user), user, restricted: account.role === "DRIVER", message: account.role === "DRIVER" ? "Registro creado. Completa los documentos habilitantes para enviar tu solicitud a revisión." : undefined });
     } catch (error) {
+      if (error instanceof Error && error.message === "INVALID_COOPERATIVE") return reply.code(400).send({ error: error.message });
       const code = (error as { code?: string }).code;
       if (code === "23505") return reply.code(409).send({ error: "ACCOUNT_ALREADY_EXISTS" });
       throw error;

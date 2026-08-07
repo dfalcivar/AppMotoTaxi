@@ -33,6 +33,15 @@ describe("API de cotización", () => {
     expect(response.headers["access-control-allow-headers"]?.toLowerCase()).toContain("authorization");
   });
 
+  it("expone las cooperativas activas para el registro", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/cooperatives"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([]);
+  });
+
   it("protege el listado de mototaxis cercanas", async () => {
     const response = await app.inject({
       method: "GET",

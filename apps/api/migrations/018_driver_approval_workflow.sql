@@ -19,7 +19,9 @@ UPDATE drivers d SET approval_status = CASE
       AND dd.document_type IN ('PROFILE_PHOTO','IDENTIFICATION','LICENSE','REGISTRATION','OPERATING_PERMIT'))=5
     THEN 'PENDIENTE_REVISION'
   ELSE 'PENDIENTE_DOCUMENTOS'
-END;
+END
+FROM users u
+WHERE u.id=d.user_id;
 
 CREATE TABLE IF NOT EXISTS driver_approval_reviews (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

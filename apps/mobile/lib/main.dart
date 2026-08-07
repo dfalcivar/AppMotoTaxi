@@ -514,6 +514,8 @@ String mensajeApi(dynamic code) =>
       'INVALID_REGISTRATION':
           'Revisa los campos obligatorios e intenta nuevamente.',
       'VEHICLE_REQUIRED': 'Ingresa la placa o el identificador de la mototaxi.',
+      'INVALID_COOPERATIVE':
+          'La cooperativa seleccionada ya no está disponible. Actualiza la lista.',
       'FORBIDDEN': 'No tienes permiso para realizar esta acción.',
       'UNAUTHORIZED': 'Tu sesión no es válida. Ingresa nuevamente.',
       'SESSION_REPLACED':
@@ -684,6 +686,8 @@ class Api {
 
   Future<dynamic> register(Map<String, dynamic> body) =>
       call('POST', '/v1/auth/register', body: body);
+  Future<List<dynamic>> cooperatives() async =>
+      List<dynamic>.from(await call('GET', '/v1/cooperatives'));
   Future<dynamic> active(String t) => call('GET', '/v1/trips/active', token: t);
   Future<List<dynamic>> trips(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/trips/mine', token: t));
@@ -1592,10 +1596,38 @@ class _RegisterState extends State<Register> {
       passwordFocus = FocusNode(),
       vehicleFocus = FocusNode();
   String role = 'PASSENGER', message = '';
+  String cooperativeSelection = 'INDIVIDUAL';
+  List<dynamic> cooperatives = [];
+  bool loadingCooperatives = false;
   bool busy = false, submitted = false;
   XFile? profilePhoto;
   Uint8List? profilePhotoBytes;
   String? profilePhotoMime;
+
+  @override
+  void initState() {
+    super.initState();
+    loadCooperatives();
+  }
+
+  Future<void> loadCooperatives() async {
+    setState(() => loadingCooperatives = true);
+    try {
+      final value = await Api().cooperatives();
+      if (mounted) {
+        setState(() => cooperatives = value);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => message =
+            'No se pudieron cargar las cooperativas. Puedes registrarte como independiente.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => loadingCooperatives = false);
+      }
+    }
+  }
 
   Future<void> chooseProfilePhoto() async {
     final file = await ImagePicker().pickImage(
@@ -1671,6 +1703,10 @@ class _RegisterState extends State<Register> {
         'password': password.text,
         'role': role,
         if (role == 'DRIVER') 'vehicleIdentifier': vehicle.text.trim(),
+        if (role == 'DRIVER')
+          'cooperativeId': cooperativeSelection == 'INDIVIDUAL'
+              ? null
+              : cooperativeSelection,
         if (role == 'DRIVER' && profilePhotoBytes != null)
           'profilePhotoBase64': base64Encode(profilePhotoBytes!),
         if (role == 'DRIVER' && profilePhotoMime != null)
@@ -1773,6 +1809,29 @@ class _RegisterState extends State<Register> {
                 decoration:
                     const InputDecoration(labelText: 'Tipo de cuenta *')),
             if (role == 'DRIVER') ...[
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                  initialValue: cooperativeSelection,
+                  items: [
+                    const DropdownMenuItem<String>(
+                        value: 'INDIVIDUAL',
+                        child: Text('Conductor independiente')),
+                    ...cooperatives.map((item) => DropdownMenuItem<String>(
+                        value: item['id']?.toString(),
+                        child: Text(item['name']?.toString() ?? 'Cooperativa'))),
+                  ],
+                  onChanged: submitted || loadingCooperatives
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() => cooperativeSelection = value);
+                          }
+                        },
+                  decoration: InputDecoration(
+                      labelText: 'Cooperativa',
+                      helperText: loadingCooperatives
+                          ? 'Cargando cooperativas…'
+                          : 'Selecciona una cooperativa o continúa como independiente')),
               const SizedBox(height: 14),
               Card(
                 child: Padding(
