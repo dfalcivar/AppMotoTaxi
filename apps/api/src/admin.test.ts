@@ -31,15 +31,52 @@ describe("consola administrativa", () => {
     expect(imageDimensions(Buffer.from("no-es-imagen"), "image/png")).toBeUndefined();
   });
 
-  it("entrega métricas y viajes activos al administrador", async () => {
+  it("no inventa métricas si la base no está disponible", async () => {
     const response = await app.inject({ method: "GET", url: "/v1/admin/dashboard", headers: { authorization: `Bearer ${adminToken}` } });
-    expect(response.statusCode).toBe(200);
-    expect(response.json().metrics.activeTrips).toBeGreaterThan(0);
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toBe("DATABASE_UNAVAILABLE");
+  });
+
+  it("valida el período del dashboard antes de consultar", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/admin/dashboard?from=2024-01-01T00%3A00%3A00.000Z&to=2026-01-02T00%3A00%3A00.000Z",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("INVALID_DASHBOARD_FILTERS");
+  });
+
+  it("no inventa el perfil estadístico de un conductor sin base", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/admin/dashboard/drivers/11111111-1111-4111-8111-111111111111",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toBe("DATABASE_UNAVAILABLE");
   });
 
   it("impide que soporte apruebe conductores", async () => {
     const response = await app.inject({ method: "PATCH", url: "/v1/admin/drivers/DRV-001", headers: { authorization: `Bearer ${supportToken}` }, payload: { status: "ACTIVE", reason: "Aprobación de prueba" } });
     expect(response.statusCode).toBe(403);
+  });
+
+  it("protege la bandeja de aprobaciones con permisos de backend", async () => {
+    const denied = await app.inject({ method: "GET", url: "/v1/admin/driver-approvals", headers: { authorization: `Bearer ${supportToken}` } });
+    expect(denied.statusCode).toBe(403);
+    const allowed = await app.inject({ method: "GET", url: "/v1/admin/driver-approvals", headers: { authorization: `Bearer ${adminToken}` } });
+    expect(allowed.statusCode).toBe(200);
+  });
+
+  it("exige una observación para rechazar u observar", async () => {
+    const response = await app.inject({
+      method: "POST", url: "/v1/admin/driver-approvals/DRV-001/decision",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { decision: "REQUEST_CORRECTIONS", observation: "" }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("INVALID_APPROVAL_DECISION");
   });
 
   it("aplica permisos en backend y rechaza sesiones móviles", async () => {

@@ -482,9 +482,10 @@ class TripStatusPanel extends StatelessWidget {
 
 class Session {
   const Session(this.token, this.role, this.name, this.id,
-      {this.mustChangePassword = false});
+      {this.mustChangePassword = false, this.approvalStatus});
   final String token, role, name, id;
   final bool mustChangePassword;
+  final String? approvalStatus;
 }
 
 class ApiException implements Exception {
@@ -501,6 +502,12 @@ String mensajeApi(dynamic code) =>
       'INVALID_CREDENTIALS': 'Correo o contraseña incorrectos.',
       'DRIVER_PENDING_APPROVAL':
           'Tu perfil de conductor está pendiente de aprobación.',
+      'DRIVER_NOT_APPROVED':
+          'Completa la revisión de tu perfil antes de recibir viajes.',
+      'DRIVER_REJECTED':
+          'Tu solicitud fue rechazada. Contacta a soporte para conocer el motivo.',
+      'DRIVER_SUSPENDED':
+          'Tu cuenta de conductor está suspendida. Contacta a soporte.',
       'ACCOUNT_NOT_ACTIVE': 'Tu cuenta no está activa. Contacta a soporte.',
       'INVALID_LOGIN': 'Completa el correo y la contraseña.',
       'ACCOUNT_ALREADY_EXISTS': 'Ya existe una cuenta con estos datos.',
@@ -601,7 +608,8 @@ class Api {
         body: {'email': e, 'password': p});
     final s = Session(
         d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
-        mustChangePassword: d['user']['mustChangePassword'] == true);
+        mustChangePassword: d['user']['mustChangePassword'] == true,
+        approvalStatus: d['user']['driverApprovalStatus']);
     unawaited(registerFcm(s.token));
     return s;
   }
@@ -1139,7 +1147,9 @@ class _LoginState extends State<Login> {
                 builder: (_) => s.mustChangePassword
                     ? ChangeTemporaryPassword(s)
                     : s.role == 'DRIVER'
-                        ? Driver(s)
+                        ? (s.approvalStatus == null || s.approvalStatus == 'APROBADO'
+                            ? Driver(s)
+                            : DriverApprovalScreen(s))
                         : Passenger(s)));
       }
     } catch (e) {
@@ -1480,12 +1490,15 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
       await Api().changePassword(widget.session.token, password.text);
       if (!mounted) return;
       final session = Session(widget.session.token, widget.session.role,
-          widget.session.name, widget.session.id);
+          widget.session.name, widget.session.id,
+          approvalStatus: widget.session.approvalStatus);
       Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(
               builder: (_) => session.role == 'DRIVER'
-                  ? Driver(session)
+                  ? (session.approvalStatus == null || session.approvalStatus == 'APROBADO'
+                      ? Driver(session)
+                      : DriverApprovalScreen(session))
                   : Passenger(session)),
           (_) => false);
     } catch (reason) {
@@ -1669,6 +1682,12 @@ class _RegisterState extends State<Register> {
             d['token'], d['user']['role'], d['user']['name'], d['user']['id']);
         Navigator.pushReplacement(
             context, MaterialPageRoute(builder: (_) => Passenger(s)));
+      } else if (role == 'DRIVER' && d['token'] != null) {
+        final s = Session(
+            d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
+            approvalStatus: d['user']['driverApprovalStatus']);
+        Navigator.pushReplacement(context,
+            MaterialPageRoute(builder: (_) => DriverApprovalScreen(s)));
       } else {
         setState(() {
           message = d['message'] ??
@@ -2226,6 +2245,68 @@ class _ChangePasswordState extends State<ChangePassword> {
       );
 }
 
+class DriverApprovalScreen extends StatefulWidget {
+  const DriverApprovalScreen(this.session, {super.key});
+  final Session session;
+  @override
+  State<DriverApprovalScreen> createState() => _DriverApprovalScreenState();
+}
+
+class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
+  dynamic profile;
+  String? error;
+  bool loading = true;
+  @override
+  void initState() { super.initState(); load(); }
+  Future<void> load() async {
+    setState(() { loading = true; error = null; });
+    try {
+      final value = await Api().profile(widget.session.token);
+      if (mounted) setState(() => profile = value);
+      if (mounted && value?['approvalStatus'] == 'APROBADO') {
+        final approved = Session(widget.session.token, widget.session.role,
+            widget.session.name, widget.session.id,
+            approvalStatus: 'APROBADO');
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => Driver(approved)));
+      }
+    }
+    catch (reason) { if (mounted) setState(() => error = reason.toString()); }
+    finally { if (mounted) setState(() => loading = false); }
+  }
+  Future<void> logout() async {
+    try { await Api().logout(widget.session.token); } catch (_) {}
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
+  }
+  String statusText(String? value) => const {
+    'PENDIENTE_DOCUMENTOS': 'Completa tus documentos',
+    'PENDIENTE_REVISION': 'Documentos enviados para revisión',
+    'OBSERVADO': 'Se requieren correcciones',
+    'RECHAZADO': 'Solicitud rechazada',
+    'SUSPENDIDO': 'Cuenta suspendida',
+  }[value] ?? 'Solicitud en proceso';
+  @override
+  Widget build(BuildContext context) {
+    final status = profile?['approvalStatus']?.toString() ?? widget.session.approvalStatus;
+    return PopScope(canPop: false, child: Scaffold(
+      appBar: AppBar(title: const Text('Habilitación de conductor'), automaticallyImplyLeading: false),
+      body: loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(20), children: [
+        Icon(status == 'PENDIENTE_REVISION' ? Icons.hourglass_top : Icons.fact_check_outlined, size: 72, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(height: 16),
+        Text(statusText(status), textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 10),
+        const Text('Para proteger a pasajeros y conductores, debes cargar y aprobar todos los documentos antes de recibir viajes.', textAlign: TextAlign.center),
+        if (profile?['approvalObservation']?.toString().isNotEmpty == true) Card(color: Theme.of(context).colorScheme.errorContainer, child: Padding(padding: const EdgeInsets.all(16), child: Text(profile['approvalObservation']))),
+        if (error != null) Padding(padding: const EdgeInsets.all(12), child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+        const SizedBox(height: 20),
+        FilledButton.icon(onPressed: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => DriverDocumentsScreen(widget.session))); await load(); }, icon: const Icon(Icons.upload_file_outlined), label: const Text('Revisar documentos habilitantes')),
+        OutlinedButton.icon(onPressed: load, icon: const Icon(Icons.refresh), label: const Text('Actualizar estado')),
+        TextButton(onPressed: logout, child: const Text('Cerrar sesión')),
+      ]),
+    ));
+  }
+}
+
 class DriverDocumentsScreen extends StatefulWidget {
   const DriverDocumentsScreen(this.session, {super.key});
   final Session session;
@@ -2240,6 +2321,7 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
   String? message;
   static const labels = {
     'PROFILE_PHOTO': ('Foto del conductor', Icons.account_circle_outlined),
+    'IDENTIFICATION': ('Documento de identificación', Icons.contact_page_outlined),
     'LICENSE': ('Licencia de conducir', Icons.badge_outlined),
     'REGISTRATION': ('Matrícula de la mototaxi', Icons.description_outlined),
     'OPERATING_PERMIT': ('Permiso de operación', Icons.verified_outlined),

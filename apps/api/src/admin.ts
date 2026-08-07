@@ -14,6 +14,8 @@ import {
   type PermissionOverride
 } from "./permissions.js";
 import { sendPush } from "./push.js";
+import { dashboardFilters } from "./dashboard-filters.js";
+import { dashboardAnalytics, driverDashboardProfile } from "./dashboard-analytics.js";
 
 export type { AdminRole, Permission } from "./permissions.js";
 export type SessionRole = "PASSENGER" | "DRIVER" | AdminRole;
@@ -27,6 +29,7 @@ export interface SessionUser {
   role: SessionRole;
   sessionId?: string;
   mustChangePassword?: boolean;
+  driverApprovalStatus?: string;
   permissions?: Permission[];
   cooperativeId?: string;
   expiresAt?: number;
@@ -63,6 +66,18 @@ const audits: AuditEntry[] = [];
 
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
 const driverSchema = z.object({ status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REJECTED"]), reason: z.string().min(3), deunaEnabled: z.boolean().optional(), deunaQrImageUrl: z.string().url().optional().or(z.literal("")), cooperativeId: z.string().uuid().nullable().optional() });
+const approvalDecisionSchema = z.object({
+  decision: z.enum(["APPROVE", "REJECT", "OBSERVE", "REQUEST_CORRECTIONS", "SUSPEND"]),
+  observation: z.string().trim().max(1000).optional().default("")
+}).superRefine((value, context) => {
+  if (value.decision !== "APPROVE" && value.observation.length < 5) {
+    context.addIssue({ code: "custom", path: ["observation"], message: "OBSERVATION_REQUIRED" });
+  }
+});
+const approvalSettingsSchema = z.object({
+  adminEmails: z.array(z.string().email()).max(20),
+  emailEnabled: z.boolean(), internalEnabled: z.boolean(), pushEnabled: z.boolean()
+});
 const passengerSchema = z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().min(3) });
 const passwordResetSchema = z.object({ password: z.string().min(8).max(100) });
 const documentReviewSchema = z.object({
@@ -70,7 +85,7 @@ const documentReviewSchema = z.object({
   note: z.string().trim().min(3).max(300)
 });
 const adminDocumentSchema = z.object({
-  documentType: z.enum(["PROFILE_PHOTO", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
+  documentType: z.enum(["PROFILE_PHOTO", "IDENTIFICATION", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
   fileBase64: z.string().min(100).max(3_500_000),
   fileMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
   expiresAt: z.string().date().optional().or(z.literal(""))
@@ -454,19 +469,39 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_PASSWORD", message: "La contraseña debe tener entre 8 y 100 caracteres." });
     return guardError(e, reply);
   } });
-  app.get("/v1/admin/dashboard", async (request, reply) => { try { requirePermission(request, "dashboard:view"); return { metrics: { activeTrips: 6, availableDrivers: drivers.filter(d => d.status === "ACTIVE").length, pendingDrivers: drivers.filter(d => d.status === "PENDING").length, openIncidents: incidents.filter(i => i.status !== "RESOLVED").length }, activeTrips: [
-    { id: "TRIP-1048", passenger: "María Z.", driver: "José Q.", status: "IN_PROGRESS", zone: "URBAN", total: "$1,00", requestedAt: "19:42" },
-    { id: "TRIP-1047", passenger: "Ana C.", driver: "Luis V.", status: "DRIVER_EN_ROUTE", zone: "EXTENDED", total: "$2,00", requestedAt: "19:38" },
-    { id: "TRIP-1046", passenger: "Pedro A.", driver: "Sin asignar", status: "SEARCHING", zone: "URBAN", total: "$0,50", requestedAt: "19:36" }
-  ]}; } catch(e) { return guardError(e, reply); } });
+  app.get("/v1/admin/dashboard", async (request, reply) => { try {
+    requirePermission(request, "dashboard:view");
+    const filters = dashboardFilters(request.query);
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    return await dashboardAnalytics(filters);
+  } catch(e) {
+    if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DASHBOARD_FILTERS", details: e.issues });
+    return guardError(e, reply);
+  } });
+  app.get("/v1/admin/dashboard/drivers/:id", async (request, reply) => { try {
+    requirePermission(request, "dashboard:view");
+    const filters = dashboardFilters(request.query);
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const profile = await driverDashboardProfile(filters, (request.params as { id: string }).id);
+    if (!profile) return reply.code(404).send({ error: "DRIVER_NOT_FOUND" });
+    return profile;
+  } catch(e) {
+    if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DASHBOARD_FILTERS", details: e.issues });
+    return guardError(e, reply);
+  } });
   app.get("/v1/admin/drivers", async (request, reply) => { try {
     requirePermission(request, "drivers:view");
     if (!process.env.DATABASE_URL) return drivers;
     return await database()`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, coalesce(v.identifier, 'Sin vehículo') as vehicle,
-        u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/4 documentos' from driver_documents dd where dd.driver_id = d.user_id), '0/4 documentos') as documents,
+        u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/5 documentos' from driver_documents dd where dd.driver_id = d.user_id and dd.status<>'SUSPENDED'), '0/5 documentos') as documents,
         coalesce(d.rating, 0)::float8 as rating, (u.profile_photo_data is not null) as "hasPhoto",
-        u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName"
+        encode(u.profile_photo_data,'base64') as "profilePhotoBase64", u.profile_photo_mime as "profilePhotoMime",
+        u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName",
+        d.approval_status as "approvalStatus", d.approval_observation as "approvalObservation",
+        d.submitted_for_review_at as "submittedForReviewAt", u.created_at as "createdAt",
+        (select count(*)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status='ACTIVE') as "approvedDocuments",
+        (select count(*)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status<>'SUSPENDED') as "uploadedDocuments"
       from drivers d
       join users u on u.id = d.user_id
       left join cooperatives c on c.id=u.cooperative_id
@@ -474,6 +509,84 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       order by u.created_at
     `;
   } catch(e) { return guardError(e, reply); } });
+  app.get("/v1/admin/driver-approvals", async (request, reply) => { try {
+    requirePermission(request, "drivers:approve");
+    if (!process.env.DATABASE_URL) return [];
+    return database()`
+      select u.id::text, u.full_name name, u.email, u.phone_e164 phone,
+        encode(u.profile_photo_data,'base64') as "profilePhotoBase64", u.profile_photo_mime as "profilePhotoMime",
+        coalesce(c.name,'Sin cooperativa') cooperative, v.identifier vehicle,
+        d.approval_status as "approvalStatus", d.approval_observation as "approvalObservation",
+        d.submitted_for_review_at as "submittedForReviewAt", u.created_at as "createdAt",
+        count(dd.id)::int as "uploadedDocuments",
+        count(dd.id) filter (where dd.status='ACTIVE')::int as "approvedDocuments"
+      from drivers d join users u on u.id=d.user_id
+      left join cooperatives c on c.id=u.cooperative_id
+      left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true
+      left join driver_documents dd on dd.driver_id=u.id and dd.status<>'SUSPENDED'
+      where d.approval_status in ('PENDIENTE_DOCUMENTOS','PENDIENTE_REVISION','OBSERVADO','RECHAZADO')
+      group by u.id,c.name,v.identifier,d.approval_status,d.approval_observation,d.submitted_for_review_at,d.approval_updated_at
+      order by case d.approval_status when 'PENDIENTE_REVISION' then 0 when 'OBSERVADO' then 1 else 2 end,
+        d.approval_updated_at desc
+    `;
+  } catch(e) { return guardError(e, reply); } });
+  app.post("/v1/admin/driver-approvals/:id/decision", async (request, reply) => { try {
+    const actor=requirePermission(request,"drivers:approve"); const body=approvalDecisionSchema.parse(request.body);
+    if (!process.env.DATABASE_URL) return { ok:true };
+    const driverId=(request.params as {id:string}).id;
+    const required=["PROFILE_PHOTO","IDENTIFICATION","LICENSE","REGISTRATION","OPERATING_PERMIT"];
+    const result=await database().begin(async tx=>{
+      const [current]=await tx`select d.approval_status,u.full_name from drivers d join users u on u.id=d.user_id where d.user_id=${driverId} for update`;
+      if(!current)return undefined;
+      if(body.decision==="APPROVE") {
+        const [documents]=await tx`select count(distinct document_type)::int count from driver_documents where driver_id=${driverId} and document_type in ${tx(required)} and status='ACTIVE'`;
+        if(Number(documents?.count)!==required.length)throw new Error("DRIVER_DOCUMENTS_NOT_APPROVED");
+      }
+      const next={APPROVE:"APROBADO",REJECT:"RECHAZADO",OBSERVE:"OBSERVADO",REQUEST_CORRECTIONS:"OBSERVADO",SUSPEND:"SUSPENDIDO"}[body.decision];
+      const accountStatus={APPROVE:"ACTIVE",REJECT:"REJECTED",OBSERVE:"PENDING",REQUEST_CORRECTIONS:"PENDING",SUSPEND:"SUSPENDED"}[body.decision];
+      await tx`update drivers set approval_status=${next},approval_observation=${body.observation||null},approval_updated_at=now(),
+        approval_note=${body.observation||'Documentación completa'},approved_at=case when ${body.decision}='APPROVE' then now() else approved_at end,
+        approved_by=case when ${body.decision}='APPROVE' then ${actor.id!} else approved_by end,is_available=false where user_id=${driverId}`;
+      await tx`update users set status=${accountStatus},updated_at=now() where id=${driverId}`;
+      await tx`update vehicles set status=${accountStatus} where driver_id=${driverId}`;
+      await tx`insert into driver_approval_reviews(driver_id,reviewer_id,previous_status,next_status,decision,observation)
+        values(${driverId},${actor.id!},${current.approval_status},${next},${body.decision},${body.observation||null})`;
+      return {name:String(current.full_name),approvalStatus:next,accountStatus};
+    });
+    if(!result)return reply.code(404).send({error:"NOT_FOUND"});
+    await persistAudit(actor,"DRIVER_APPROVAL_DECISION","DRIVER",driverId,`${body.decision}: ${body.observation||'Sin observación'}`);
+    const [pushSettings]=await database()`select push_enabled from driver_approval_notification_settings where id=1`;
+    if(pushSettings?.push_enabled!==false) {
+      const messages:Record<string,[string,string]>={APPROVE:["Solicitud aprobada","Tu perfil de conductor fue aprobado. Ya puedes recibir viajes."],REJECT:["Solicitud rechazada",body.observation],OBSERVE:["Solicitud observada",body.observation],REQUEST_CORRECTIONS:["Correcciones requeridas",body.observation],SUSPEND:["Cuenta suspendida",body.observation]};
+      const message=messages[body.decision]; if(message)void sendPush(driverId,message[0],message[1],{type:"DRIVER_APPROVAL",status:result.approvalStatus}).catch(()=>undefined);
+    }
+    return result;
+  } catch(e) {
+    if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_APPROVAL_DECISION",details:e.issues});
+    if(e instanceof Error&&e.message==="DRIVER_DOCUMENTS_NOT_APPROVED")return reply.code(409).send({error:e.message});
+    return guardError(e,reply);
+  } });
+  app.get("/v1/admin/driver-approvals/:id/history", async (request, reply) => { try {
+    requirePermission(request,"drivers:approve"); if(!process.env.DATABASE_URL)return [];
+    const id=(request.params as {id:string}).id;
+    return database()`select r.id::text,r.previous_status as "previousStatus",r.next_status as "nextStatus",r.decision,r.observation,r.created_at as "createdAt",coalesce(u.full_name,u.email,'Sistema') reviewer from driver_approval_reviews r left join users u on u.id=r.reviewer_id where r.driver_id=${id} order by r.created_at desc`;
+  } catch(e){return guardError(e,reply);} });
+  app.get("/v1/admin/driver-approval-settings", async (request, reply) => { try {
+    requirePermission(request,"settings:view");
+    if(!process.env.DATABASE_URL)return {adminEmails:[],emailEnabled:false,internalEnabled:true,pushEnabled:true};
+    const [settings]=await database()`select admin_emails as "adminEmails",email_enabled as "emailEnabled",internal_enabled as "internalEnabled",push_enabled as "pushEnabled" from driver_approval_notification_settings where id=1`;
+    return settings;
+  } catch(e){return guardError(e,reply);} });
+  app.put("/v1/admin/driver-approval-settings", async (request, reply) => { try {
+    const actor=requirePermission(request,"settings:manage"); const body=approvalSettingsSchema.parse(request.body);
+    if(!process.env.DATABASE_URL)return body;
+    const [settings]=await database()`update driver_approval_notification_settings set admin_emails=${body.adminEmails},email_enabled=${body.emailEnabled},internal_enabled=${body.internalEnabled},push_enabled=${body.pushEnabled},updated_by=${actor.id!},updated_at=now() where id=1 returning admin_emails as "adminEmails",email_enabled as "emailEnabled",internal_enabled as "internalEnabled",push_enabled as "pushEnabled"`;
+    await persistAudit(actor,"DRIVER_APPROVAL_SETTINGS","SETTINGS","driver-approval","Configuración de avisos actualizada"); return settings;
+  } catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_SETTINGS"});return guardError(e,reply);} });
+  app.get("/v1/admin/notifications", async (request, reply) => { try {
+    const actor=requirePermission(request,"dashboard:view"); if(!process.env.DATABASE_URL)return [];
+    return database()`select id::text,type,title,body,entity_type as "entityType",entity_id as "entityId",not (${actor.id!}=any(read_by)) as unread,created_at as "createdAt" from admin_notifications order by created_at desc limit 100`;
+  } catch(e){return guardError(e,reply);} });
   app.get("/v1/admin/drivers/:id/documents", async (request, reply) => { try {
     requirePermission(request, "drivers:documents:view");
     if (!process.env.DATABASE_URL) return [];
@@ -534,6 +647,9 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!process.env.DATABASE_URL) { const item=drivers.find(d=>d.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"DRIVER_STATUS",item.id,body.reason); return item; }
     const id=(request.params as { id: string }).id;
     const rows=await database().begin(async tx=>{
+      const [existing]=await tx`select status from users where id=${id} and role='DRIVER' for update`;
+      if(!existing)return [];
+      if(String(existing.status)!==body.status)throw new Error("APPROVAL_WORKFLOW_REQUIRED");
       const updated=await tx`
         update users set status=${body.status},
           cooperative_id=case when ${body.cooperativeId !== undefined}
@@ -560,7 +676,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const item=rows[0]; if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,"DRIVER_STATUS","DRIVER",id,body.reason);
     return item;
-  } catch(e){ if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply);} });
+  } catch(e){ if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); if(e instanceof Error&&e.message==="APPROVAL_WORKFLOW_REQUIRED")return reply.code(409).send({error:e.message}); return guardError(e,reply);} });
   app.get("/v1/admin/passengers", async (request, reply) => { try {
     requirePermission(request, "passengers:view");
     if (!process.env.DATABASE_URL) return passengers;

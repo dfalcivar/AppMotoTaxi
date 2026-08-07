@@ -11,6 +11,7 @@ import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { reverseLocation, searchLocations } from "./geocoding.js";
 import { computeRoute } from "./routing.js";
+import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
 
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -75,7 +76,7 @@ const favoritePlaceSchema = z.object({
   location: pointSchema
 });
 const driverDocumentSchema = z.object({
-  documentType: z.enum(["PROFILE_PHOTO", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
+  documentType: z.enum(["PROFILE_PHOTO", "IDENTIFICATION", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
   fileBase64: z.string().min(100).max(3_500_000),
   fileMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
   expiresAt: z.string().date().optional().or(z.literal(""))
@@ -101,19 +102,44 @@ async function configuredSearchRadius(): Promise<number> {
   return Number(settings?.search_radius_meters ?? 3000);
 }
 
-async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, options: { allowPasswordChange?: boolean } = {}) {
+async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, options: { allowPasswordChange?: boolean; allowPendingDriver?: boolean } = {}) {
   const user = userFrom(request as never);
   if (!user?.id || !user.sessionId) { reply.code(401).send({ error: "UNAUTHORIZED" }); return; }
   const active = await database()`
-    select must_change_password as "mustChangePassword" from users
+    select must_change_password as "mustChangePassword", role, status from users
     where id=${user.id} and active_session_id=${user.sessionId}::uuid
   `;
   if (!active.length) { reply.code(401).send({ error: "SESSION_REPLACED" }); return; }
+  if (active[0]?.role === "DRIVER" && active[0]?.status !== "ACTIVE" && !options.allowPendingDriver) {
+    reply.code(403).send({ error: "DRIVER_NOT_APPROVED" });
+    return;
+  }
   if (active[0]?.mustChangePassword && !options.allowPasswordChange) {
     reply.code(428).send({ error: "PASSWORD_CHANGE_REQUIRED" });
     return;
   }
   return user;
+}
+
+const requiredDriverDocuments = ["PROFILE_PHOTO", "IDENTIFICATION", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"] as const;
+async function refreshDriverApprovalState(driverId: string, driverName: string) {
+  const sql = database();
+  const [current] = await sql`select approval_status from drivers where user_id=${driverId}`;
+  const [documents] = await sql`
+    select count(distinct document_type)::int count from driver_documents
+    where driver_id=${driverId} and status<>'SUSPENDED'
+      and document_type in ${sql(requiredDriverDocuments)}
+  `;
+  const complete = Number(documents?.count ?? 0) === requiredDriverDocuments.length;
+  const next = complete ? "PENDIENTE_REVISION" : "PENDIENTE_DOCUMENTOS";
+  if (["APROBADO", "SUSPENDIDO"].includes(String(current?.approval_status))) return String(current?.approval_status);
+  await sql`update drivers set approval_status=${next}, approval_observation=null,
+    submitted_for_review_at=case when ${complete} then coalesce(submitted_for_review_at,now()) else null end,
+    approval_updated_at=now() where user_id=${driverId}`;
+  if (complete && current?.approval_status !== "PENDIENTE_REVISION") {
+    void notifyAdministratorsDriverReady(driverId, driverName).catch(() => undefined);
+  }
+  return next;
 }
 
 export async function buildApp() {
@@ -249,28 +275,30 @@ export async function buildApp() {
     }
 
     const rows = await database()`
-      select id, email, full_name, role, status, must_change_password as "mustChangePassword"
-      from users
+      select u.id, u.email, u.full_name, u.role, u.status, u.must_change_password as "mustChangePassword",
+        d.approval_status as "approvalStatus"
+      from users u left join drivers d on d.user_id=u.id
       where lower(email) = lower(${parsed.data.email})
         and password_hash = crypt(${parsed.data.password}, password_hash)
         and role in ('PASSENGER', 'DRIVER')
     `;
-    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string; mustChangePassword: boolean } | undefined;
+    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string; mustChangePassword: boolean; approvalStatus?: string } | undefined;
     if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
-    if (account.status === "PENDING" && account.role === "DRIVER") return reply.code(403).send({ error: "DRIVER_PENDING_APPROVAL" });
-    if (account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
+    if (account.role === "DRIVER" && account.approvalStatus === "RECHAZADO") return reply.code(403).send({ error: "DRIVER_REJECTED" });
+    if (account.role === "DRIVER" && account.approvalStatus === "SUSPENDIDO") return reply.code(403).send({ error: "DRIVER_SUSPENDED" });
+    if (account.role !== "DRIVER" && account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
 
     const sessionId = randomUUID();
     await database().begin(async tx => {
       await tx`update users set active_session_id=${sessionId} where id=${account.id}`;
       await tx`delete from device_tokens where user_id=${account.id}`;
     });
-    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: account.mustChangePassword };
-    return { token: tokenFor(user), user };
+    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: account.mustChangePassword, driverApprovalStatus: account.approvalStatus };
+    return { token: tokenFor(user), user, restricted: account.role === "DRIVER" && account.status !== "ACTIVE" };
   });
 
   app.post("/v1/auth/change-password", async (request, reply) => {
-    const user = await authenticatedUser(request, reply, { allowPasswordChange: true }); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
     const parsed = changePasswordSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_PASSWORD" });
     const [updated] = await database()`
@@ -312,7 +340,7 @@ export async function buildApp() {
           returning id, email, full_name, role, status
         `;
         if (input.role === "DRIVER") {
-          await tx`insert into drivers (user_id, is_available) values (${user!.id}, false)`;
+          await tx`insert into drivers (user_id, is_available, approval_status) values (${user!.id}, false, 'PENDIENTE_DOCUMENTOS')`;
           await tx`insert into vehicles (driver_id, identifier, maximum_passengers, status) values (${user!.id}, ${input.vehicleIdentifier!}, 4, 'PENDING')`;
           await tx`insert into driver_documents
             (driver_id, document_type, file_url, file_data, file_mime, status)
@@ -320,11 +348,10 @@ export async function buildApp() {
         }
         return user!;
       });
-      if (account.role === "DRIVER") return reply.code(201).send({ status: "PENDING_APPROVAL", message: "Registro recibido. Un administrador debe aprobar tu perfil de conductor." });
       const sessionId = randomUUID();
       await database()`update users set active_session_id=${sessionId} where id=${account.id}`;
-      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: "PASSENGER", sessionId, mustChangePassword: false };
-      return reply.code(201).send({ status: "ACTIVE", token: tokenFor(user), user });
+      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: false, driverApprovalStatus: account.role === "DRIVER" ? "PENDIENTE_DOCUMENTOS" : undefined };
+      return reply.code(201).send({ status: account.role === "DRIVER" ? "PENDING_DOCUMENTS" : "ACTIVE", token: tokenFor(user), user, restricted: account.role === "DRIVER", message: account.role === "DRIVER" ? "Registro creado. Completa los documentos habilitantes para enviar tu solicitud a revisión." : undefined });
     } catch (error) {
       const code = (error as { code?: string }).code;
       if (code === "23505") return reply.code(409).send({ error: "ACCOUNT_ALREADY_EXISTS" });
@@ -333,7 +360,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/auth/logout", async (request, reply) => {
-    const user = await authenticatedUser(request, reply, { allowPasswordChange: true }); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
     await database().begin(async tx => {
       await tx`update users set active_session_id=null where id=${user.id!} and active_session_id=${user.sessionId!}::uuid`;
       await tx`delete from device_tokens where user_id=${user.id!}`;
@@ -343,7 +370,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/auth/lock", async (request, reply) => {
-    const user = await authenticatedUser(request, reply, { allowPasswordChange: true }); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
     await database().begin(async tx => {
       await tx`delete from device_tokens where user_id=${user.id!}`;
       if (user.role === "DRIVER") await tx`update drivers set is_available=false where user_id=${user.id!}`;
@@ -352,7 +379,7 @@ export async function buildApp() {
   });
 
   app.put("/v1/devices/fcm-token", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const parsed = deviceTokenSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_DEVICE_TOKEN" });
     await database()`
       insert into device_tokens (user_id, token, platform, last_seen_at)
@@ -365,7 +392,7 @@ export async function buildApp() {
   // Diagnóstico temporal del piloto: permite comprobar el envío al dispositivo
   // autenticado sin depender de que exista un viaje nuevo.
   app.post("/v1/devices/test-push", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const parsed = testPushSchema.safeParse(request.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_PUSH_TEST" });
     if (parsed.data.delaySeconds > 0) {
@@ -378,14 +405,15 @@ export async function buildApp() {
   });
 
   app.get("/v1/profile", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const [profile] = await database()`
       select u.id::text, u.full_name as name, u.email, u.role, u.phone_e164 as phone,
         coalesce(d.rating, (select avg(score)::numeric(3,2) from ratings where recipient_id=u.id), 0)::float8 as rating,
         (select count(*)::int from ratings where recipient_id=u.id) as "ratingCount",
         v.identifier as vehicle,
         (coalesce(u.profile_photo_data, photo.file_data) is not null) as "hasPhoto",
-        u.profile_photo_updated_at as "photoUpdatedAt"
+        u.profile_photo_updated_at as "photoUpdatedAt", d.approval_status as "approvalStatus",
+        d.approval_observation as "approvalObservation"
       from users u
       left join drivers d on d.user_id=u.id
       left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true
@@ -401,7 +429,7 @@ export async function buildApp() {
   });
 
   app.put("/v1/profile/photo", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const parsed = profilePhotoSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_PROFILE_PHOTO" });
     let data: Buffer;
@@ -417,18 +445,19 @@ export async function buildApp() {
           review_note=null, created_at=now()
       `;
     });
-    return { updated: true };
+    const approvalStatus = user.role === "DRIVER" ? await refreshDriverApprovalState(user.id!, user.name) : undefined;
+    return { updated: true, approvalStatus };
   });
 
   app.delete("/v1/profile/photo", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     if (user.role === "DRIVER") return reply.code(409).send({ error: "DRIVER_PHOTO_REQUIRED" });
     await database()`update users set profile_photo_data=null, profile_photo_mime=null, profile_photo_updated_at=null, updated_at=now() where id=${user.id!}`;
     return { deleted: true };
   });
 
   app.get("/v1/users/:id/profile-photo", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const id = (request.params as { id: string }).id;
     const [photo] = await database()`
       select target.profile_photo_data as data, target.profile_photo_mime as mime
@@ -444,7 +473,7 @@ export async function buildApp() {
   });
 
   app.get("/v1/driver/documents", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     return database()`
       select id::text, document_type as "documentType", file_mime as "fileMime",
@@ -455,7 +484,7 @@ export async function buildApp() {
   });
 
   app.post("/v1/driver/documents", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = driverDocumentSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" });
@@ -475,7 +504,8 @@ export async function buildApp() {
       returning id::text, document_type as "documentType", status
     `;
     if (input.documentType === "PROFILE_PHOTO") await database()`update users set profile_photo_data=${data}, profile_photo_mime=${input.fileMime}, profile_photo_updated_at=now(), updated_at=now() where id=${user.id!}`;
-    return reply.code(201).send(document);
+    const approvalStatus = await refreshDriverApprovalState(user.id!, user.name);
+    return reply.code(201).send({ ...document, approvalStatus });
   });
 
   app.get("/v1/favorite-places", async (request, reply) => {
