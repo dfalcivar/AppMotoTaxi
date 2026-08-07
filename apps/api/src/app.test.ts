@@ -108,6 +108,13 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("protege las preguntas frecuentes y solicitudes de soporte", async () => {
+    const faqs = await app.inject({ method: "GET", url: "/v1/support/faqs" });
+    const incidents = await app.inject({ method: "GET", url: "/v1/support/incidents" });
+    expect(faqs.statusCode).toBe(401);
+    expect(incidents.statusCode).toBe(401);
+  });
+
   it("cotiza la promoción urbana de tres pasajeros", async () => {
     const response = await app.inject({
       method: "POST",

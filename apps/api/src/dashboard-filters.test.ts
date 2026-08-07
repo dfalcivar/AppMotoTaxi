@@ -16,6 +16,11 @@ describe("dashboardFilters", () => {
       .toBe(forced);
   });
 
+  it("acepta identificadores UUID heredados de PostgreSQL", () => {
+    const driverId = "00000000-0000-0000-0000-000000000102";
+    expect(dashboardFilters({ driverId }).driverId).toBe(driverId);
+  });
+
   it("rechaza períodos mayores a un año", () => {
     expect(() => dashboardFilters({
       from: "2024-01-01T00:00:00.000Z",

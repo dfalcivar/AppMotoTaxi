@@ -20,7 +20,7 @@ import { dashboardAnalytics, driverDashboardProfile } from "./dashboard-analytic
 export type { AdminRole, Permission } from "./permissions.js";
 export type SessionRole = "PASSENGER" | "DRIVER" | AdminRole;
 type DriverStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "REJECTED";
-type IncidentStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
+type IncidentStatus = "NUEVO" | "ASIGNADO" | "EN_REVISION" | "ESPERANDO_USUARIO" | "RESUELTO" | "CERRADO";
 
 export interface SessionUser {
   id?: string;
@@ -59,8 +59,8 @@ const zones: Zone[] = [
   { id: "ZONE-EXT-1", name: "Cobertura extendida", type: "EXTENDED", points: [{x:8,y:10},{x:92,y:8},{x:96,y:90},{x:10,y:92}], active: true, version: 1 }
 ];
 const incidents: Incident[] = [
-  { id: "INC-001", trip: "TRIP-1042", category: "Objeto olvidado", description: "Pasajera reporta una mochila azul.", status: "OPEN", assignedTo: "Soporte", createdAt: "2026-07-29T08:10:00-05:00" },
-  { id: "INC-002", trip: "TRIP-1031", category: "Tarifa", description: "Consulta por regla nocturna.", status: "IN_REVIEW", assignedTo: "Administrador", createdAt: "2026-07-28T21:24:00-05:00" }
+  { id: "INC-001", trip: "TRIP-1042", category: "Objeto olvidado", description: "Pasajera reporta una mochila azul.", status: "NUEVO", assignedTo: "Soporte", createdAt: "2026-07-29T08:10:00-05:00" },
+  { id: "INC-002", trip: "TRIP-1031", category: "Tarifa", description: "Consulta por regla nocturna.", status: "EN_REVISION", assignedTo: "Administrador", createdAt: "2026-07-28T21:24:00-05:00" }
 ];
 const audits: AuditEntry[] = [];
 
@@ -103,7 +103,21 @@ function decodeAdminImage(value: z.infer<typeof adminDocumentSchema>): Buffer {
 }
 const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
 const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
-const incidentSchema = z.object({ status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]), assignedTo: z.string().min(2) });
+const incidentSchema = z.object({
+  status: z.enum(["NUEVO", "ASIGNADO", "EN_REVISION", "ESPERANDO_USUARIO", "RESUELTO", "CERRADO"]),
+  assignToSelf: z.boolean().default(false),
+  response: z.string().trim().max(4000).optional().default(""),
+  internalNote: z.string().trim().max(4000).optional().default(""),
+  resolutionNote: z.string().trim().max(4000).optional().default("")
+});
+const faqSchema = z.object({
+  category: z.string().trim().min(2).max(80),
+  question: z.string().trim().min(5).max(300),
+  answer: z.string().trim().min(10).max(4000),
+  audiences: z.array(z.enum(["PASSENGER", "DRIVER"])).min(1).max(2),
+  sortOrder: z.number().int().min(0).max(10000),
+  active: z.boolean()
+});
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
 const operationalSettingsSchema = z.object({ searchRadiusMeters: z.number().int().min(500).max(20000) });
 const cooperativeSchema = z.object({
@@ -729,14 +743,54 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!process.env.DATABASE_URL) return incidents;
     return await database()`
       select i.id::text, coalesce(i.trip_id::text, 'Sin viaje') as trip,
-        i.category, i.description, i.status,
+        i.category, i.subject, i.description, i.priority, i.preferred_contact as "preferredContact", i.status,
         coalesce(u.full_name, 'Sin asignar') as "assignedTo",
-        i.created_at as "createdAt"
-      from incidents i left join users u on u.id=i.assigned_to
+        reporter.full_name as reporter, reporter.role as "reporterRole", reporter.email as "reporterEmail",
+        reporter.phone_e164 as "reporterPhone", c.name as cooperative,
+        i.created_at as "createdAt", i.updated_at as "updatedAt"
+      from incidents i
+      left join users u on u.id=i.assigned_to
+      left join users reporter on reporter.id=i.reported_by
+      left join cooperatives c on c.id=i.cooperative_id
       order by i.created_at desc
     `;
   } catch(e){return guardError(e,reply);} });
-  app.patch("/v1/admin/incidents/:id", async (request, reply) => { try { const user=requirePermission(request, "incidents:manage"); const body=incidentSchema.parse(request.body); const item=incidents.find(i=>i.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); Object.assign(item,body); audit(user,"INCIDENT_UPDATED",item.id,body.status); return item;}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
+  app.get("/v1/admin/incidents/:id", async (request, reply) => { try {
+    requirePermission(request, "incidents:view");
+    const id=(request.params as {id:string}).id;
+    const [item]=await database()`
+      select i.id::text,i.trip_id::text as "tripId",i.category,i.subject,i.description,
+        i.priority,i.preferred_contact as "preferredContact",i.status,
+        i.resolution_note as "resolutionNote",i.created_at as "createdAt",i.updated_at as "updatedAt",
+        reporter.full_name reporter,reporter.role as "reporterRole",reporter.email as "reporterEmail",
+        reporter.phone_e164 as "reporterPhone",related.full_name as "relatedUser",
+        assignee.full_name as "assignedTo",c.name cooperative,
+        t.origin_reference as "originReference",t.destination_reference as "destinationReference",
+        t.requested_at as "tripDate"
+      from incidents i
+      left join users reporter on reporter.id=i.reported_by
+      left join users related on related.id=i.related_user_id
+      left join users assignee on assignee.id=i.assigned_to
+      left join cooperatives c on c.id=i.cooperative_id
+      left join trips t on t.id=i.trip_id
+      where i.id=${id}::uuid
+    `;
+    if(!item)return reply.code(404).send({error:"NOT_FOUND"});
+    const [messages,attachments]=await Promise.all([
+      database()`select m.id::text,m.body,m.visibility,m.author_role as "authorRole",m.created_at as "createdAt",coalesce(u.full_name,'Sistema') author from support_incident_messages m left join users u on u.id=m.author_id where m.incident_id=${id}::uuid order by m.created_at`,
+      database()`select id::text,file_name as "fileName",file_mime as "fileMime",file_size as "fileSize",visibility,created_at as "createdAt" from support_incident_attachments where incident_id=${id}::uuid order by created_at`
+    ]);
+    return {...item,messages,attachments};
+  }catch(e){return guardError(e,reply);} });
+  app.get("/v1/admin/incidents/:incidentId/attachments/:attachmentId", async(request,reply)=>{try{
+    requirePermission(request,"incidents:view");
+    const {incidentId,attachmentId}=request.params as {incidentId:string;attachmentId:string};
+    const [file]=await database()`select file_name,file_mime,file_data from support_incident_attachments where id=${attachmentId}::uuid and incident_id=${incidentId}::uuid`;
+    if(!file)return reply.code(404).send({error:"NOT_FOUND"});
+    const safeName=String(file.file_name).replace(/[^a-zA-Z0-9._-]/g,"_");
+    return reply.header("content-type",file.file_mime).header("content-disposition",`inline; filename="${safeName}"`).send(file.file_data);
+  }catch(e){return guardError(e,reply);} });
+  app.patch("/v1/admin/incidents/:id", async (request, reply) => { try { const user=requirePermission(request, "incidents:manage"); const body=incidentSchema.parse(request.body); const item=incidents.find(i=>i.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); Object.assign(item,{status:body.status,assignedTo:body.assignToSelf?user.name:item.assignedTo}); audit(user,"INCIDENT_UPDATED",item.id,body.status); return item;}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.post("/v1/admin/pricing/persist", async (request, reply) => { try {
     const user = requirePermission(request, "pricing:manage"); const body = pricingSchema.parse(request.body);
     const next = await database().begin(async sql => {
@@ -757,11 +811,32 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.patch("/v1/admin/incidents/:id/persist", async (request, reply) => { try {
     const user = requirePermission(request, "incidents:manage"); const body = incidentSchema.parse(request.body); const id = (request.params as { id: string }).id;
-    const [item] = await database()`update incidents set status=${body.status}, assigned_to=(select id from users where full_name=${body.assignedTo} limit 1), updated_at=now(), resolved_at=case when ${body.status}='RESOLVED' then now() else null end where id=${id} returning id::text, status`;
+    const [item] = await database()`update incidents set status=${body.status},
+      assigned_to=case when ${body.assignToSelf} then ${user.id!} else assigned_to end,
+      resolution_note=case when ${body.resolutionNote}<>'' then ${body.resolutionNote} else resolution_note end,
+      updated_at=now(),resolved_at=case when ${body.status} in ('RESUELTO','CERRADO') then now() else null end
+      where id=${id}::uuid returning id::text,status,reported_by::text as "reportedBy"`;
     if (!item) return reply.code(404).send({ error: "NOT_FOUND" });
+    if(body.response)await database()`insert into support_incident_messages(incident_id,author_id,author_role,body,visibility) values(${id}::uuid,${user.id!},${user.role},${body.response},'USER')`;
+    if(body.internalNote)await database()`insert into support_incident_messages(incident_id,author_id,author_role,body,visibility) values(${id}::uuid,${user.id!},${user.role},${body.internalNote},'INTERNAL')`;
+    if(body.response)void sendPush(item.reportedBy,"Actualización de soporte",body.response,{type:"SUPPORT_UPDATE",incidentId:id,status:body.status}).catch(()=>undefined);
     await persistAudit(user, "INCIDENT_UPDATED", "INCIDENT", id, body.status);
     return item;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
+  app.get("/v1/admin/faqs",async(request,reply)=>{try{
+    requirePermission(request,"faq:view");
+    return database()`select id::text,category,question,answer,audiences,sort_order as "sortOrder",active,updated_at as "updatedAt" from support_faqs order by sort_order,category,question`;
+  }catch(e){return guardError(e,reply);} });
+  app.post("/v1/admin/faqs",async(request,reply)=>{try{
+    const user=requirePermission(request,"faq:manage");const body=faqSchema.parse(request.body);
+    const [item]=await database()`insert into support_faqs(category,question,answer,audiences,sort_order,active,created_by,updated_by) values(${body.category},${body.question},${body.answer},${body.audiences},${body.sortOrder},${body.active},${user.id!},${user.id!}) returning id::text,category,question,answer,audiences,sort_order as "sortOrder",active`;
+    await persistAudit(user,"FAQ_CREATED","FAQ",item!.id,body.question);return reply.code(201).send(item);
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
+  app.patch("/v1/admin/faqs/:id",async(request,reply)=>{try{
+    const user=requirePermission(request,"faq:manage");const body=faqSchema.parse(request.body);const id=(request.params as {id:string}).id;
+    const [item]=await database()`update support_faqs set category=${body.category},question=${body.question},answer=${body.answer},audiences=${body.audiences},sort_order=${body.sortOrder},active=${body.active},updated_by=${user.id!},updated_at=now() where id=${id}::uuid returning id::text,category,question,answer,audiences,sort_order as "sortOrder",active`;
+    if(!item)return reply.code(404).send({error:"NOT_FOUND"});await persistAudit(user,"FAQ_UPDATED","FAQ",id,body.question);return item;
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.get("/v1/admin/trips", async (request, reply) => { try {
     requirePermission(request, "trips:view");
     if (!process.env.DATABASE_URL) return [];

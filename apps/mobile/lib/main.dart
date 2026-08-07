@@ -19,6 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'affiliate_banners.dart';
 import 'chat_sheet.dart';
@@ -695,6 +696,18 @@ class Api {
       call('GET', '/v1/trips/pending-rating', token: t);
   Future<List<dynamic>> notifications(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/notifications', token: t));
+  Future<Map<String, dynamic>> supportConfig(String t) async =>
+      Map<String, dynamic>.from(await call('GET', '/v1/support/config', token: t));
+  Future<List<dynamic>> supportFaqs(String t) async =>
+      List<dynamic>.from(await call('GET', '/v1/support/faqs', token: t));
+  Future<List<dynamic>> supportIncidents(String t) async =>
+      List<dynamic>.from(await call('GET', '/v1/support/incidents', token: t));
+  Future<dynamic> createSupportIncident(String t, Map<String, dynamic> body) =>
+      call('POST', '/v1/support/incidents', token: t, body: body);
+  Future<Map<String, dynamic>> supportIncident(String t, String id) async =>
+      Map<String, dynamic>.from(await call('GET', '/v1/support/incidents/$id', token: t));
+  Future<dynamic> sendSupportMessage(String t, String id, String body) =>
+      call('POST', '/v1/support/incidents/$id/messages', token: t, body: {'body': body});
   Future<List<dynamic>> banners(String t, String placement) async =>
       List<dynamic>.from(await call(
           'GET', '/v1/banners?placement=${Uri.encodeQueryComponent(placement)}',
@@ -2359,6 +2372,7 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
         if (error != null) Padding(padding: const EdgeInsets.all(12), child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
         const SizedBox(height: 20),
         FilledButton.icon(onPressed: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => DriverDocumentsScreen(widget.session))); await load(); }, icon: const Icon(Icons.upload_file_outlined), label: const Text('Revisar documentos habilitantes')),
+        OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SupportCenter(widget.session))), icon: const Icon(Icons.support_agent_outlined), label: const Text('Ayuda y soporte')),
         OutlinedButton.icon(onPressed: load, icon: const Icon(Icons.refresh), label: const Text('Actualizar estado')),
         TextButton(onPressed: logout, child: const Text('Cerrar sesión')),
       ]),
@@ -2616,6 +2630,13 @@ class _AccountHubState extends State<AccountHub> {
             onTap: () => Navigator.push(
                 c, MaterialPageRoute(builder: (_) => ActivityPanel(widget.s)))),
         ListTile(
+            leading: const Icon(Icons.support_agent_outlined),
+            title: const Text('Ayuda y soporte'),
+            subtitle: const Text('Preguntas frecuentes y solicitudes de ayuda'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+                c, MaterialPageRoute(builder: (_) => SupportCenter(widget.s)))),
+        ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('Acerca de'),
             onTap: () => Navigator.push(
@@ -2639,6 +2660,305 @@ class _AccountHubState extends State<AccountHub> {
                 : null,
             onTap: () => logout(c))
       ]));
+}
+
+const supportCategoryLabels = <String, String>{
+  'CONTACT': 'Contacto con conductor o pasajero',
+  'TRIP': 'Problemas con un viaje',
+  'LOST_ITEM': 'Objetos olvidados',
+  'PAYMENT': 'Problemas con el pago',
+  'SAFETY': 'Problemas de seguridad',
+  'APP': 'Problemas con la aplicación',
+  'OTHER': 'Otro motivo',
+};
+
+String supportStatusLabel(String value) => const {
+      'NUEVO': 'Nuevo',
+      'ASIGNADO': 'Asignado',
+      'EN_REVISION': 'En revisión',
+      'ESPERANDO_USUARIO': 'Esperando tu respuesta',
+      'RESUELTO': 'Resuelto',
+      'CERRADO': 'Cerrado',
+    }[value] ?? value.replaceAll('_', ' ');
+
+class SupportCenter extends StatefulWidget {
+  const SupportCenter(this.session, {super.key});
+  final Session session;
+  @override
+  State<SupportCenter> createState() => _SupportCenterState();
+}
+
+class _SupportCenterState extends State<SupportCenter> {
+  final search = TextEditingController();
+  List<dynamic>? faqs;
+  List<dynamic>? incidents;
+  String whatsapp = '';
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+    search.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    setState(() => error = null);
+    try {
+      final values = await Future.wait([
+        Api().supportFaqs(widget.session.token),
+        Api().supportIncidents(widget.session.token),
+        Api().supportConfig(widget.session.token),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        faqs = values[0] as List<dynamic>;
+        incidents = values[1] as List<dynamic>;
+        whatsapp = (values[2] as Map<String, dynamic>)['whatsapp']?.toString() ?? '';
+      });
+    } catch (reason) {
+      if (mounted) setState(() => error = reason.toString());
+    }
+  }
+
+  Future<void> openWhatsapp() async {
+    final digits = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return;
+    final uri = Uri.parse('https://wa.me/$digits?text=${Uri.encodeQueryComponent('Hola, necesito ayuda con AtacamesGo.')}');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo abrir WhatsApp.')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = search.text.trim().toLowerCase();
+    final visibleFaqs = (faqs ?? []).where((item) {
+      if (query.isEmpty) return true;
+      return '${item['question']} ${item['answer']} ${item['category']}'
+          .toLowerCase()
+          .contains(query);
+    }).toList();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Ayuda y soporte')),
+      body: RefreshIndicator(
+        onRefresh: load,
+        child: ListView(padding: const EdgeInsets.all(16), children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xff006f7c), Color(0xff00a2b2)]),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.support_agent, color: Colors.white, size: 38),
+              SizedBox(height: 10),
+              Text('¿Cómo podemos ayudarte?', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+              SizedBox(height: 4),
+              Text('Consulta respuestas o crea una solicitud para nuestro equipo.', style: TextStyle(color: Colors.white70)),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: search,
+            decoration: InputDecoration(
+              hintText: 'Buscar en preguntas frecuentes',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: search.text.isEmpty ? null : IconButton(onPressed: search.clear, icon: const Icon(Icons.close)),
+            ),
+          ),
+          if (error != null) Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          const SizedBox(height: 12),
+          Text('Preguntas frecuentes', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+          if (faqs == null) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+          else if (visibleFaqs.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No encontramos una respuesta. Puedes crear una solicitud de soporte.')))
+          else ...visibleFaqs.map((faq) => Card(child: ExpansionTile(
+            leading: const Icon(Icons.help_outline),
+            title: Text(faq['question']),
+            subtitle: Text(faq['category']),
+            children: [Padding(padding: const EdgeInsets.fromLTRB(18, 0, 18, 18), child: Align(alignment: Alignment.centerLeft, child: Text(faq['answer'])))],
+          ))),
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed: () async {
+              final created = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => CreateSupportRequest(widget.session)));
+              if (created == true) await load();
+            },
+            icon: const Icon(Icons.add_comment_outlined),
+            label: const Text('Crear solicitud de soporte'),
+          ),
+          if (whatsapp.isNotEmpty) OutlinedButton.icon(onPressed: openWhatsapp, icon: const Icon(Icons.chat_outlined), label: const Text('Contactar por WhatsApp')),
+          const SizedBox(height: 22),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('Mis solicitudes', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+            IconButton(onPressed: load, icon: const Icon(Icons.refresh)),
+          ]),
+          if (incidents == null) const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()))
+          else if (incidents!.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('Aún no has creado solicitudes de soporte.')))
+          else ...incidents!.map((item) => Card(child: ListTile(
+            leading: CircleAvatar(child: Icon(item['priority'] == 'CRITICA' ? Icons.warning_amber : Icons.support_agent_outlined)),
+            title: Text(item['subject']),
+            subtitle: Text('${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              await Navigator.push(context, MaterialPageRoute(builder: (_) => SupportIncidentDetail(widget.session, item['id'])));
+              await load();
+            },
+          ))),
+        ]),
+      ),
+    );
+  }
+}
+
+class CreateSupportRequest extends StatefulWidget {
+  const CreateSupportRequest(this.session, {super.key});
+  final Session session;
+  @override
+  State<CreateSupportRequest> createState() => _CreateSupportRequestState();
+}
+
+class _CreateSupportRequestState extends State<CreateSupportRequest> {
+  final subject = TextEditingController();
+  final description = TextEditingController();
+  String category = 'TRIP', priority = 'MEDIA', contact = 'APP', tripId = '';
+  List<dynamic>? trips;
+  XFile? attachment;
+  Uint8List? attachmentBytes;
+  String? attachmentMime, message;
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Api().trips(widget.session.token).then((value) { if (mounted) setState(() => trips = value); }).catchError((_) { if (mounted) setState(() => trips = []); });
+  }
+
+  @override
+  void dispose() {
+    subject.dispose(); description.dispose(); super.dispose();
+  }
+
+  Future<void> chooseAttachment() async {
+    final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70, maxWidth: 1600, maxHeight: 1600);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    final mime = supportedImageMime(bytes);
+    if (mime == null || bytes.length > 2500000) {
+      setState(() => message = 'La imagen debe ser JPG, PNG o WEBP y pesar máximo 2,5 MB.');
+      return;
+    }
+    setState(() { attachment = file; attachmentBytes = bytes; attachmentMime = mime; message = null; });
+  }
+
+  Future<void> submit() async {
+    if (subject.text.trim().length < 5 || description.text.trim().length < 10) {
+      setState(() => message = 'Completa el asunto y describe lo ocurrido con suficiente detalle.'); return;
+    }
+    setState(() { busy = true; message = null; });
+    try {
+      await Api().createSupportIncident(widget.session.token, {
+        'category': category,
+        'tripId': tripId.isEmpty ? null : tripId,
+        'subject': subject.text.trim(),
+        'description': description.text.trim(),
+        'priority': priority,
+        'preferredContact': contact,
+        'attachments': attachmentBytes == null ? [] : [{
+          'fileName': attachment!.name,
+          'fileMime': attachmentMime,
+          'fileBase64': base64Encode(attachmentBytes!),
+        }],
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Solicitud creada correctamente.')));
+      Navigator.pop(context, true);
+    } catch (reason) {
+      if (mounted) setState(() => message = reason.toString());
+    } finally { if (mounted) setState(() => busy = false); }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Nueva solicitud')),
+    body: ListView(padding: const EdgeInsets.all(18), children: [
+      DropdownButtonFormField<String>(initialValue: category, decoration: const InputDecoration(labelText: 'Categoría *'), items: supportCategoryLabels.entries.map((entry) => DropdownMenuItem(value: entry.key, child: Text(entry.value))).toList(), onChanged: (value) => setState(() => category = value!)),
+      const SizedBox(height: 14),
+      DropdownButtonFormField<String>(initialValue: tripId, decoration: const InputDecoration(labelText: 'Viaje relacionado', helperText: 'Opcional; facilita que soporte revise el caso'), items: [const DropdownMenuItem(value: '', child: Text('Sin viaje relacionado')), ...(trips ?? []).take(30).map((trip) => DropdownMenuItem(value: trip['id'].toString(), child: Text('${trip['originReference'] ?? 'Origen'} → ${trip['destinationReference'] ?? 'Destino'}', overflow: TextOverflow.ellipsis)))], onChanged: (value) => setState(() => tripId = value!)),
+      const SizedBox(height: 14),
+      TextField(controller: subject, maxLength: 140, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Asunto *')),
+      const SizedBox(height: 8),
+      TextField(controller: description, minLines: 4, maxLines: 8, maxLength: 4000, decoration: const InputDecoration(labelText: 'Descripción *', alignLabelWithHint: true, hintText: 'Indica qué ocurrió, cuándo y qué ayuda necesitas.')),
+      const SizedBox(height: 8),
+      Row(children: [Expanded(child: DropdownButtonFormField<String>(initialValue: priority, decoration: const InputDecoration(labelText: 'Prioridad'), items: const [DropdownMenuItem(value: 'BAJA', child: Text('Baja')), DropdownMenuItem(value: 'MEDIA', child: Text('Media')), DropdownMenuItem(value: 'ALTA', child: Text('Alta')), DropdownMenuItem(value: 'CRITICA', child: Text('Crítica'))], onChanged: (value) => setState(() => priority = value!))), const SizedBox(width: 10), Expanded(child: DropdownButtonFormField<String>(initialValue: contact, decoration: const InputDecoration(labelText: 'Contacto'), items: const [DropdownMenuItem(value: 'APP', child: Text('Aplicación')), DropdownMenuItem(value: 'TELEFONO', child: Text('Teléfono')), DropdownMenuItem(value: 'WHATSAPP', child: Text('WhatsApp')), DropdownMenuItem(value: 'CORREO', child: Text('Correo'))], onChanged: (value) => setState(() => contact = value!)))]),
+      const SizedBox(height: 14),
+      OutlinedButton.icon(onPressed: chooseAttachment, icon: const Icon(Icons.attach_file), label: Text(attachment == null ? 'Adjuntar fotografía' : attachment!.name)),
+      if (attachmentBytes != null) Padding(padding: const EdgeInsets.only(top: 10), child: ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.memory(attachmentBytes!, height: 150, fit: BoxFit.cover))),
+      if (message != null) Padding(padding: const EdgeInsets.all(12), child: Text(message!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+      const SizedBox(height: 10),
+      FilledButton.icon(onPressed: busy ? null : submit, icon: const Icon(Icons.send_outlined), label: Text(busy ? 'Enviando…' : 'Enviar solicitud')),
+    ]),
+  );
+}
+
+class SupportIncidentDetail extends StatefulWidget {
+  const SupportIncidentDetail(this.session, this.id, {super.key});
+  final Session session;
+  final String id;
+  @override
+  State<SupportIncidentDetail> createState() => _SupportIncidentDetailState();
+}
+
+class _SupportIncidentDetailState extends State<SupportIncidentDetail> {
+  final response = TextEditingController();
+  Map<String, dynamic>? incident;
+  String? error;
+  bool sending = false;
+  @override
+  void initState() { super.initState(); load(); }
+  @override
+  void dispose() { response.dispose(); super.dispose(); }
+  Future<void> load() async { try { final value = await Api().supportIncident(widget.session.token, widget.id); if (mounted) setState(() { incident = value; error = null; }); } catch (reason) { if (mounted) setState(() => error = reason.toString()); } }
+  Future<void> send() async {
+    if (response.text.trim().isEmpty) return;
+    setState(() => sending = true);
+    try { await Api().sendSupportMessage(widget.session.token, widget.id, response.text.trim()); response.clear(); await load(); }
+    catch (reason) { if (mounted) setState(() => error = reason.toString()); }
+    finally { if (mounted) setState(() => sending = false); }
+  }
+  @override
+  Widget build(BuildContext context) {
+    final item = incident;
+    final closed = item != null && ['RESUELTO', 'CERRADO'].contains(item['status']);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Detalle de soporte')),
+      body: item == null ? Center(child: error == null ? const CircularProgressIndicator() : Text(error!)) : Column(children: [
+        Expanded(child: ListView(padding: const EdgeInsets.all(16), children: [
+          Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(item['subject'], style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 6),
+            Text('${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
+            if (item['tripId'] != null) Text('Viaje: ${item['tripId']}', style: Theme.of(context).textTheme.bodySmall),
+          ]))),
+          const SizedBox(height: 10),
+          ...(item['messages'] as List<dynamic>).map((message) {
+            final mine = message['authorRole'] == widget.session.role;
+            return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(margin: const EdgeInsets.symmetric(vertical: 5), padding: const EdgeInsets.all(12), constraints: const BoxConstraints(maxWidth: 330), decoration: BoxDecoration(color: mine ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(16)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(message['body']), const SizedBox(height: 4), Text('${message['author']} · ${DateTime.parse(message['createdAt']).toLocal().toString().substring(0, 16)}', style: Theme.of(context).textTheme.bodySmall)])));
+          }),
+          if ((item['attachments'] as List).isNotEmpty) Card(child: ListTile(leading: const Icon(Icons.attach_file), title: Text('${(item['attachments'] as List).length} archivo(s) adjunto(s)'), subtitle: const Text('Los archivos fueron enviados al equipo de soporte.'))),
+        ])),
+        if (!closed) SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(12, 8, 12, 12), child: Row(children: [Expanded(child: TextField(controller: response, minLines: 1, maxLines: 4, decoration: const InputDecoration(hintText: 'Escribe una respuesta'))), const SizedBox(width: 8), IconButton.filled(onPressed: sending ? null : send, icon: sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send))]))),
+      ]),
+    );
+  }
 }
 
 class AboutAtacamesGo extends StatelessWidget {

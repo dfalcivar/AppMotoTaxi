@@ -9,6 +9,7 @@ import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./adm
 import { database } from "./database.js";
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
+import { registerSupportRoutes } from "./support.js";
 import { reverseLocation, searchLocations } from "./geocoding.js";
 import { computeRoute } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
@@ -153,6 +154,7 @@ export async function buildApp() {
   await app.register(websocket);
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
+  await registerSupportRoutes(app);
 
   app.addHook("onResponse", async (request, reply) => {
     if (reply.elapsedTime >= 1500) {

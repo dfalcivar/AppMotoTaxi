@@ -7,6 +7,7 @@ import "./advertising.css";
 import "./password-reset.css";
 import "./dashboard.css";
 import "./navigation.css";
+import { SupportAdmin } from "./support-admin.js";
 
 type Module = "dashboard" | "trips" | "drivers" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "access" | "audit" | "database";
 
@@ -20,7 +21,7 @@ const labels: Record<Module, string> = {
   zones: "Zonas",
   settings: "Radio de búsqueda",
   advertising: "Publicidad",
-  incidents: "Incidentes",
+  incidents: "Soporte e incidentes",
   access: "Usuarios y roles",
   audit: "Auditoría",
   database: "PostgreSQL"
@@ -47,7 +48,9 @@ const stateLabels: Record<string, string> = {
   ACTIVE: "Activo", SUSPENDED: "Suspendido", REJECTED: "Rechazado", OPEN: "Abierto",
   PENDIENTE_DOCUMENTOS: "Pendiente de documentos", PENDIENTE_REVISION: "Pendiente de revisión",
   OBSERVADO: "Observado", APROBADO: "Aprobado", RECHAZADO: "Rechazado", SUSPENDIDO: "Suspendido",
-  IN_REVIEW: "En revisión", RESOLVED: "Resuelto", SCHEDULED: "Programada", URBAN: "Urbana", EXTENDED: "Extendida"
+  IN_REVIEW: "En revisión", RESOLVED: "Resuelto", SCHEDULED: "Programada", URBAN: "Urbana", EXTENDED: "Extendida",
+  NUEVO: "Nuevo", ASIGNADO: "Asignado", EN_REVISION: "En revisión",
+  ESPERANDO_USUARIO: "Esperando usuario", RESUELTO: "Resuelto", CERRADO: "Cerrado"
 };
 
 function errorText(error: unknown) {
@@ -409,7 +412,7 @@ function App() {
       <div className="profile"><strong>{session.user.name}</strong><small>{session.user.role.replaceAll("_", " ")}</small><button onClick={logout}>Cerrar sesión</button></div>
     </aside>
     {sidebarOpen && <button className="sidebar-scrim" aria-label="Cerrar menú" onClick={() => setSidebarOpen(false)} />}
-    <main><header className="topbar"><button className="mobile-menu-toggle" type="button" aria-label="Abrir menú" onClick={() => setSidebarOpen(true)}>☰</button><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Render conectado</span></header>{module === "dashboard" && <Dashboard token={session.token} cooperative={cooperativeDashboard} />}{module === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}{module === "drivers" && <Drivers token={session.token} canApprove={allowed("drivers:approve")} canViewDocuments={allowed("drivers:documents:view")} canManageDocuments={allowed("drivers:documents:manage")} canResetPasswords={allowed("users:manage")} />}{module === "passengers" && <Passengers token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}{module === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}{module === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}{module === "zones" && <Zones token={session.token} admin={allowed("zones:manage")} />}{module === "settings" && <Settings token={session.token} admin={allowed("settings:manage")} />}{module === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}{module === "incidents" && <Incidents token={session.token} />}{module === "access" && <AccessManagement token={session.token} />}{module === "audit" && <Audit token={session.token} />}{module === "database" && <Database token={session.token} />}</main>
+    <main><header className="topbar"><button className="mobile-menu-toggle" type="button" aria-label="Abrir menú" onClick={() => setSidebarOpen(true)}>☰</button><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Render conectado</span></header>{module === "dashboard" && <Dashboard token={session.token} cooperative={cooperativeDashboard} />}{module === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}{module === "drivers" && <Drivers token={session.token} canApprove={allowed("drivers:approve")} canViewDocuments={allowed("drivers:documents:view")} canManageDocuments={allowed("drivers:documents:manage")} canResetPasswords={allowed("users:manage")} />}{module === "passengers" && <Passengers token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}{module === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}{module === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}{module === "zones" && <Zones token={session.token} admin={allowed("zones:manage")} />}{module === "settings" && <Settings token={session.token} admin={allowed("settings:manage")} />}{module === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}{module === "incidents" && <SupportAdmin token={session.token} />}{module === "access" && <AccessManagement token={session.token} />}{module === "audit" && <Audit token={session.token} />}{module === "database" && <Database token={session.token} />}</main>
   </div>;
 }
 

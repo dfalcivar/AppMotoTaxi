@@ -68,7 +68,7 @@ export async function dashboardAnalytics(filters: DashboardFilters) {
           and (${value.cooperativeId}::uuid is null or u.cooperative_id=${value.cooperativeId}::uuid)
           and (${value.driverId}::uuid is null or u.id=${value.driverId}::uuid)) as "pendingDrivers",
         (select count(*)::int from incidents i left join trips incident_trip on incident_trip.id=i.trip_id
-          where i.status <> 'RESOLVED' and i.created_at >= ${value.from} and i.created_at < ${value.to}
+          where i.status not in ('RESUELTO','CERRADO') and i.created_at >= ${value.from} and i.created_at < ${value.to}
             and (${value.cooperativeId}::uuid is null or incident_trip.cooperative_id=${value.cooperativeId}::uuid)) as "openIncidents",
         count(*) filter (where assigned_at-requested_at > interval '2 minutes')::int as "delayedAssignments",
         count(*) filter (where driver_id is null and (status='NO_DRIVER' or (status='SEARCHING' and requested_at < now()-interval '5 minutes')))::int as "neverAccepted"

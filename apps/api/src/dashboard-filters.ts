@@ -5,11 +5,18 @@ const tripStatuses = [
   "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_DRIVER", "INCIDENT"
 ] as const;
 
+// PostgreSQL accepts legacy UUID values seeded before RFC version bits were
+// enforced (for example 00000000-0000-0000-0000-000000000102). They are valid
+// database identifiers even though z.string().uuid() rejects their version.
+const postgresUuid = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+);
+
 const querySchema = z.object({
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
-  cooperativeId: z.string().uuid().optional(),
-  driverId: z.string().uuid().optional(),
+  cooperativeId: postgresUuid.optional(),
+  driverId: postgresUuid.optional(),
   sector: z.enum(["URBAN", "EXTENDED"]).optional(),
   status: z.enum(tripStatuses).optional(),
   tripType: z.enum(["ALL", "IMMEDIATE", "SCHEDULED"]).default("ALL")
