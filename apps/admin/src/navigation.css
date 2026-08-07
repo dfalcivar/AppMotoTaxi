@@ -14,8 +14,8 @@
 .app-shell aside nav { min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #3c6b75 transparent; padding-right: 2px; }
 .app-shell aside nav button { width: 100%; min-height: 46px; }
 .app-shell aside nav button > span:first-child { flex: 0 0 30px; width: 30px; }
-.nav-label { overflow: hidden; white-space: nowrap; opacity: 1; transition: opacity .15s ease; }
-.sidebar-collapsed .nav-label { width: 0; opacity: 0; }
+.app-shell aside nav button .nav-label { width: auto; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: 1; transition: opacity .15s ease; }
+.app-shell.sidebar-collapsed aside nav button .nav-label { width: 0; flex: 0; opacity: 0; }
 .sidebar-collapsed aside nav button { justify-content: center; padding-inline: 8px; gap: 0; }
 .sidebar-collapsed .profile { opacity: 0; pointer-events: none; }
 .sidebar-scrim { display: none; }
