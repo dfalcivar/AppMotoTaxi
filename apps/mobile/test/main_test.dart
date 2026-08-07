@@ -83,4 +83,15 @@ void main() {
     expect(cleanAddressLabel('Simón Bolívar 596, Cuenca'),
         'Simón Bolívar 596, Cuenca');
   });
+
+  test('usa tripId del historial al crear una solicitud de soporte', () {
+    expect(
+      supportTripIdentifier({
+        'tripId': '11111111-1111-4111-8111-111111111111',
+        'originReference': 'Origen',
+      }),
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(supportTripIdentifier({'id': null}), isEmpty);
+  });
 }

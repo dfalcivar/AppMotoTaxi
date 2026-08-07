@@ -143,6 +143,16 @@ String? supportedImageMime(Uint8List bytes) {
   return null;
 }
 
+String supportTripIdentifier(dynamic trip) {
+  if (trip is! Map) return '';
+  final value = (trip['tripId'] ?? trip['id'])?.toString().trim() ?? '';
+  return RegExp(
+          r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+      .hasMatch(value)
+      ? value
+      : '';
+}
+
 class BiometricSessionStore {
   static const _key = 'atacamesgo_biometric_session';
   static final _auth = LocalAuthentication();
@@ -2892,7 +2902,7 @@ class _CreateSupportRequestState extends State<CreateSupportRequest> {
     body: ListView(padding: const EdgeInsets.all(18), children: [
       DropdownButtonFormField<String>(initialValue: category, decoration: const InputDecoration(labelText: 'Categoría *'), items: supportCategoryLabels.entries.map((entry) => DropdownMenuItem(value: entry.key, child: Text(entry.value))).toList(), onChanged: (value) => setState(() => category = value!)),
       const SizedBox(height: 14),
-      DropdownButtonFormField<String>(initialValue: tripId, decoration: const InputDecoration(labelText: 'Viaje relacionado', helperText: 'Opcional; facilita que soporte revise el caso'), items: [const DropdownMenuItem(value: '', child: Text('Sin viaje relacionado')), ...(trips ?? []).take(30).map((trip) => DropdownMenuItem(value: trip['id'].toString(), child: Text('${trip['originReference'] ?? 'Origen'} → ${trip['destinationReference'] ?? 'Destino'}', overflow: TextOverflow.ellipsis)))], onChanged: (value) => setState(() => tripId = value!)),
+      DropdownButtonFormField<String>(initialValue: tripId, decoration: const InputDecoration(labelText: 'Viaje relacionado', helperText: 'Opcional; facilita que soporte revise el caso'), items: [const DropdownMenuItem(value: '', child: Text('Sin viaje relacionado')), ...(trips ?? []).take(30).where((trip) => supportTripIdentifier(trip).isNotEmpty).map((trip) => DropdownMenuItem(value: supportTripIdentifier(trip), child: Text('${trip['originReference'] ?? 'Origen'} → ${trip['destinationReference'] ?? 'Destino'}', overflow: TextOverflow.ellipsis)))], onChanged: (value) => setState(() => tripId = value!)),
       const SizedBox(height: 14),
       TextField(controller: subject, maxLength: 140, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Asunto *')),
       const SizedBox(height: 8),
