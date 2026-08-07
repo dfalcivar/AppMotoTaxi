@@ -75,17 +75,17 @@ export async function dashboardAnalytics(filters: DashboardFilters) {
       from filtered left join arrivals a on a.trip_id=filtered.id
     `,
     sql`
-      select to_char(date_trunc('day', t.requested_at at time zone 'America/Guayaquil'),'YYYY-MM-DD') day,
-        count(*)::int requested,
-        count(*) filter (where t.status='COMPLETED')::int completed,
-        count(*) filter (where t.status='CANCELLED')::int cancelled
+      select to_char(date_trunc('day', t.requested_at at time zone 'America/Guayaquil'),'YYYY-MM-DD') as "day",
+        count(*)::int as "requested",
+        count(*) filter (where t.status='COMPLETED')::int as "completed",
+        count(*) filter (where t.status='CANCELLED')::int as "cancelled"
       from trips t where ${filteredTrips()}
       group by 1 order by 1
     `,
     sql`
-      select extract(hour from t.requested_at at time zone 'America/Guayaquil')::int hour,
-        count(*)::int requested,
-        count(*) filter (where t.assigned_at is not null)::int assigned
+      select extract(hour from t.requested_at at time zone 'America/Guayaquil')::int as "hour",
+        count(*)::int as "requested",
+        count(*) filter (where t.assigned_at is not null)::int as "assigned"
       from trips t where ${filteredTrips()}
       group by 1 order by 1
     `,
@@ -246,8 +246,8 @@ export async function driverDashboardProfile(filters: DashboardFilters, driverId
       group by 1 order by value desc
     `,
     sql`
-      select extract(hour from t.requested_at at time zone 'America/Guayaquil')::int hour,
-        count(*)::int value
+      select extract(hour from t.requested_at at time zone 'America/Guayaquil')::int as "hour",
+        count(*)::int as "value"
       from trips t
       where t.driver_id=${driverId}::uuid and t.requested_at>=${value.from} and t.requested_at<${value.to}
         and (${value.cooperativeId}::uuid is null or t.cooperative_id=${value.cooperativeId}::uuid)

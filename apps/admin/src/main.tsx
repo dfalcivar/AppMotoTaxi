@@ -124,7 +124,23 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
   }
 
   const setPreset = (days: number) => { const end = new Date(); const start = new Date(end.getTime() - (days - 1) * 86400000); const next = { ...draft, from: dateValue(start), to: dateValue(end) }; setDraft(next); setFilters(next); };
-  const metricLabels: Record<string, string> = { requestedTrips: "Viajes solicitados", completedTrips: "Completados", cancelledTrips: "Cancelados", activeTrips: "Viajes activos", scheduledTrips: "Programados", withoutDriver: "Sin conductor", connectedDrivers: "Conductores conectados", activeDrivers: "Conductores activos", pendingDrivers: "Pendientes de aprobación", averageAssignmentSeconds: "Promedio de asignación", averageWaitSeconds: "Promedio de espera", averageTripSeconds: "Duración promedio", openIncidents: "Incidentes abiertos", acceptanceRate: "Aceptación", cancellationRate: "Cancelación" };
+  const metricLabels: Record<string, { label: string; icon: string; tone: string }> = {
+    requestedTrips: { label: "Viajes solicitados", icon: "↗", tone: "neutral" },
+    completedTrips: { label: "Completados", icon: "✓", tone: "positive" },
+    cancelledTrips: { label: "Cancelados", icon: "×", tone: "negative" },
+    activeTrips: { label: "Viajes activos", icon: "●", tone: "live-tone" },
+    scheduledTrips: { label: "Programados", icon: "◷", tone: "neutral" },
+    withoutDriver: { label: "Sin conductor", icon: "!", tone: "warning" },
+    connectedDrivers: { label: "Conductores conectados", icon: "⌁", tone: "positive" },
+    activeDrivers: { label: "Conductores habilitados", icon: "◉", tone: "neutral" },
+    pendingDrivers: { label: "Pendientes de aprobación", icon: "…", tone: "warning" },
+    averageAssignmentSeconds: { label: "Promedio de asignación", icon: "◷", tone: "neutral" },
+    averageWaitSeconds: { label: "Promedio de espera", icon: "⌛", tone: "neutral" },
+    averageTripSeconds: { label: "Duración promedio", icon: "↔", tone: "neutral" },
+    openIncidents: { label: "Incidentes abiertos", icon: "!", tone: "negative" },
+    acceptanceRate: { label: "Aceptación", icon: "%", tone: "positive" },
+    cancellationRate: { label: "Cancelación", icon: "%", tone: "negative" }
+  };
   const durations = new Set(["averageAssignmentSeconds", "averageWaitSeconds", "averageTripSeconds"]); const rates = new Set(["acceptanceRate", "cancellationRate"]);
   const metricValue = (key: string, value: unknown) => durations.has(key) ? `${Math.floor(Number(value) / 60)}m ${Number(value) % 60}s` : rates.has(key) ? `${value}%` : String(value ?? 0);
   const options = data?.options ?? { cooperatives: [], drivers: [], sectors: [], statuses: [] };
@@ -140,7 +156,7 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
 
     {loading && <div className="skeleton-grid">{Array.from({ length: 8 }, (_, index) => <span key={index} />)}</div>}
     {!loading && data && <>
-      <section className="dashboard-section"><Header eyebrow="1 · RESUMEN EJECUTIVO" title="Estado general de la operación" /><div className="metric-grid dashboard-metrics">{Object.entries(metricLabels).map(([key, label]) => <article className="metric" key={key}><span>{label}</span><strong>{metricValue(key, data.metrics?.[key])}</strong></article>)}</div></section>
+      <section className="dashboard-section"><Header eyebrow="1 · RESUMEN EJECUTIVO" title="Estado general de la operación" /><div className="metric-grid dashboard-metrics">{Object.entries(metricLabels).map(([key, metric]) => <article className={`metric dashboard-metric ${metric.tone}`} key={key}><div><span>{metric.label}</span><i aria-hidden="true">{metric.icon}</i></div><strong>{metricValue(key, data.metrics?.[key])}</strong><small>Según los filtros aplicados</small></article>)}</div></section>
 
       <section className="dashboard-section"><Header eyebrow="2 · DEMANDA Y ZONAS" title="Cuándo y desde dónde solicitan" /><div className="split"><article className="card"><Header eyebrow="TENDENCIA" title="Viajes por día" /><DashboardBars items={data.tripsByDay ?? []} valueKey="requested" labelKey="day" /></article><article className="card"><Header eyebrow="HORARIOS" title="Viajes por hora" /><DashboardBars items={(data.tripsByHour ?? []).map((item: any) => ({ ...item, label: `${String(item.hour).padStart(2, "0")}:00` }))} valueKey="requested" /></article></div><div className="split"><article className="card"><Header eyebrow="ORÍGENES" title="Puntos con mayor demanda" /><DashboardBars items={data.origins ?? []} /></article><article className="card"><Header eyebrow="DESTINOS" title="Destinos frecuentes" /><DashboardBars items={data.destinations ?? []} /></article></div><div className="split"><article className="card"><Header eyebrow="COORDENADAS" title="Concentración de solicitudes" /><DashboardHeatmap points={data.heatmap ?? []} /></article><article className="card"><Header eyebrow="DISTRIBUCIÓN" title="Viajes por cooperativa" /><DashboardBars items={data.tripsByCooperative ?? []} /><Header eyebrow="MODALIDAD" title="Inmediatos y programados" /><DashboardBars items={data.tripsByType ?? []} /></article></div></section>
 
