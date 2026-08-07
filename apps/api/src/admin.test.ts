@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
-import { imageDimensions } from "./admin.js";
+import { imageDimensions, tokenFor } from "./admin.js";
 
 describe("consola administrativa", () => {
   let app: FastifyInstance;
@@ -40,6 +40,34 @@ describe("consola administrativa", () => {
   it("impide que soporte apruebe conductores", async () => {
     const response = await app.inject({ method: "PATCH", url: "/v1/admin/drivers/DRV-001", headers: { authorization: `Bearer ${supportToken}` }, payload: { status: "ACTIVE", reason: "Aprobación de prueba" } });
     expect(response.statusCode).toBe(403);
+  });
+
+  it("aplica permisos en backend y rechaza sesiones móviles", async () => {
+    const supportRoles = await app.inject({
+      method: "GET",
+      url: "/v1/admin/access/roles",
+      headers: { authorization: `Bearer ${supportToken}` }
+    });
+    expect(supportRoles.statusCode).toBe(403);
+
+    const adminRoles = await app.inject({
+      method: "GET",
+      url: "/v1/admin/access/roles",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(adminRoles.statusCode).toBe(200);
+    expect(adminRoles.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "SUPER_ADMIN" }),
+      expect.objectContaining({ role: "ANALISTA_COOPERATIVA" })
+    ]));
+
+    const passengerToken = tokenFor({ email: "pasajero@test.local", name: "Pasajero", role: "PASSENGER" });
+    const mobileDenied = await app.inject({
+      method: "GET",
+      url: "/v1/admin/dashboard",
+      headers: { authorization: `Bearer ${passengerToken}` }
+    });
+    expect(mobileDenied.statusCode).toBe(403);
   });
 
   it("solo permite al administrador restablecer contraseñas", async () => {

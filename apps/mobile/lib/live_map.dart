@@ -94,7 +94,7 @@ class LiveMap extends StatefulWidget {
     this.routePoints = const [],
     this.nearbyDrivers = const {},
     this.editing,
-    this.onPointSelected,
+    this.onSelectionCenterChanged,
     this.onSelectionSettled,
     this.onSelectionMovementStarted,
     this.onUseCurrentLocation,
@@ -116,7 +116,7 @@ class LiveMap extends StatefulWidget {
   final List<LatLng> routePoints;
   final Map<String, LatLng> nearbyDrivers;
   final MapPointSelection? editing;
-  final ValueChanged<LatLng>? onPointSelected;
+  final ValueChanged<LatLng>? onSelectionCenterChanged;
   final ValueChanged<LatLng>? onSelectionSettled;
   final VoidCallback? onSelectionMovementStarted;
   final VoidCallback? onUseCurrentLocation;
@@ -142,7 +142,6 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   gmaps.BitmapDescriptor? _nearbyMotoIcon;
   gmaps.BitmapDescriptor? _activeMotoIcon;
   Timer? _fitDebounce;
-  Timer? _selectionDebounce;
   bool _cameraAnimationRunning = false;
   gmaps.CameraUpdate? _pendingCameraUpdate;
 
@@ -150,6 +149,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   void initState() {
     super.initState();
     _displayedDriver = widget.driverPosition;
+    if (widget.editing != null) {
+      _selectionCenter = widget.editing == MapPointSelection.origin
+          ? widget.pickup ?? widget.currentLocation ?? _center
+          : widget.dropoff ??
+              widget.pickup ??
+              widget.currentLocation ??
+              _center;
+    }
     _movement = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -261,7 +268,6 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   @override
   void dispose() {
     _fitDebounce?.cancel();
-    _selectionDebounce?.cancel();
     _movement.dispose();
     _googleMapController?.dispose();
     super.dispose();
@@ -301,20 +307,13 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
     _mapController.move(point, zoom);
   }
 
-  void _cameraSelectionMoved(LatLng point) {
+  void _selectGeographicPoint(LatLng point, {bool settled = true}) {
     if (widget.editing == null) return;
     _selectionCenter = point;
-    _selectionDebounce?.cancel();
-  }
-
-  void _scheduleSelectionSettled() {
-    if (widget.editing == null || _selectionCenter == null) return;
-    _selectionDebounce?.cancel();
-    _selectionDebounce = Timer(const Duration(milliseconds: 450), () {
-      if (mounted && widget.editing != null && _selectionCenter != null) {
-        widget.onSelectionSettled?.call(_selectionCenter!);
-      }
-    });
+    widget.onSelectionCenterChanged?.call(point);
+    if (!settled) return;
+    setState(() {});
+    widget.onSelectionSettled?.call(point);
   }
 
   void _fitRoute() {
@@ -387,7 +386,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
     }
 
     final markers = <Marker>[
-      if (widget.pickup != null && widget.editing != MapPointSelection.origin)
+      if (widget.editing != null && _selectionCenter != null)
+        Marker(
+          point: _selectionCenter!,
+          width: 34,
+          height: 52,
+          child: _SelectionPin(selection: widget.editing!),
+        ),
+      if (widget.pickup != null && widget.editing == null)
         Marker(
           point: widget.pickup!,
           width: 30,
@@ -395,8 +401,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           child: const _SimpleMapPin(
               icon: Icons.person_pin_circle, color: Color(0xff008b9a)),
         ),
-      if (widget.dropoff != null &&
-          widget.editing != MapPointSelection.destination)
+      if (widget.dropoff != null && widget.editing == null)
         Marker(
           point: widget.dropoff!,
           width: 30,
@@ -428,7 +433,26 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         ),
     ];
     final googleMarkers = <gmaps.Marker>{
-      if (widget.pickup != null && widget.editing != MapPointSelection.origin)
+      if (widget.editing != null && _selectionCenter != null)
+        gmaps.Marker(
+          markerId: const gmaps.MarkerId('selected-map-point'),
+          position: gmaps.LatLng(
+              _selectionCenter!.latitude, _selectionCenter!.longitude),
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+              widget.editing == MapPointSelection.origin
+                  ? gmaps.BitmapDescriptor.hueCyan
+                  : gmaps.BitmapDescriptor.hueRed),
+          anchor: const Offset(.5, 1),
+          draggable: true,
+          zIndexInt: 100,
+          onDragStart: (_) => widget.onSelectionMovementStarted?.call(),
+          onDrag: (point) => _selectGeographicPoint(
+              LatLng(point.latitude, point.longitude),
+              settled: false),
+          onDragEnd: (point) =>
+              _selectGeographicPoint(LatLng(point.latitude, point.longitude)),
+        ),
+      if (widget.pickup != null && widget.editing == null)
         gmaps.Marker(
           markerId: const gmaps.MarkerId('pickup'),
           position:
@@ -437,8 +461,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               gmaps.BitmapDescriptor.hueGreen),
           anchor: const Offset(.5, 1),
         ),
-      if (widget.dropoff != null &&
-          widget.editing != MapPointSelection.destination)
+      if (widget.dropoff != null && widget.editing == null)
         gmaps.Marker(
           markerId: const gmaps.MarkerId('dropoff'),
           position:
@@ -556,41 +579,19 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                     )
                   }
                 : const {},
-            onCameraMoveStarted: widget.editing == null
+            onTap: widget.editing == null
                 ? null
-                : widget.onSelectionMovementStarted,
-            onCameraMove: widget.editing == null
-                ? null
-                : (position) => _cameraSelectionMoved(LatLng(
-                    position.target.latitude, position.target.longitude)),
-            onCameraIdle:
-                widget.editing == null ? null : _scheduleSelectionSettled,
-            onTap: widget.onPointSelected == null
-                ? null
-                : (point) {
-                    final selected = LatLng(point.latitude, point.longitude);
-                    _selectionCenter = selected;
-                    _moveCamera(selected, 17);
-                  },
+                : (point) => _selectGeographicPoint(
+                    LatLng(point.latitude, point.longitude)),
           )
         : FlutterMap(
             mapController: _mapController,
             options: MapOptions(
               initialCenter: center,
               initialZoom: 16,
-              onPositionChanged: (camera, hasGesture) {
-                if (widget.editing != null && hasGesture) {
-                  widget.onSelectionMovementStarted?.call();
-                  _cameraSelectionMoved(camera.center);
-                  _scheduleSelectionSettled();
-                }
-              },
-              onTap: widget.onPointSelected == null
+              onTap: widget.editing == null
                   ? null
-                  : (_, point) {
-                      _selectionCenter = point;
-                      _moveCamera(point, _mapController.camera.zoom);
-                    },
+                  : (_, point) => _selectGeographicPoint(point),
             ),
             children: [
               TileLayer(
@@ -616,19 +617,6 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
 
     final mapContent = Stack(children: [
       mapSurface,
-      if (widget.editing != null)
-        Positioned(
-          left: widget.viewportPadding.left,
-          right: widget.viewportPadding.right,
-          top: widget.viewportPadding.top,
-          bottom: widget.viewportPadding.bottom,
-          child: IgnorePointer(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 28),
-              child: _SelectionPin(selection: widget.editing!),
-            ),
-          ),
-        ),
       if (widget.editing == null &&
           (widget.currentLocation != null ||
               widget.onUseCurrentLocation != null))
@@ -661,7 +649,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
                 : () {
                     final currentPoint =
                         widget.currentLocation ?? widget.pickup ?? center;
-                    _selectionCenter = currentPoint;
+                    _selectGeographicPoint(currentPoint);
                     _moveCamera(currentPoint, 17);
                     if (widget.currentLocation == null) {
                       widget.onUseCurrentLocation!();

@@ -1,6 +1,13 @@
 export type Zone = "URBAN" | "EXTENDED";
-export type AdminRole = "ADMIN" | "SUPPORT";
-export interface SessionUser { email: string; name: string; role: AdminRole }
+export type AdminRole = "ADMIN" | "SUPPORT" | "SUPER_ADMIN" | "ADMIN_OPERACIONES" | "SOPORTE" | "ANALISTA_COOPERATIVA";
+export interface SessionUser {
+  email: string;
+  name: string;
+  role: AdminRole;
+  permissions: string[];
+  cooperativeId?: string;
+  expiresAt?: number;
+}
 export interface Session { token: string; user: SessionUser }
 export interface QuoteRequest { zone: Zone; passengers: number; localTime: string }
 export interface Quote { currency: "USD"; totalCents: number; total: string; period: "DAY" | "NIGHT"; zone: Zone; passengers: number; appliedRule: string; pricingVersion: number; explanation: string }

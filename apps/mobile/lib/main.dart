@@ -30,6 +30,61 @@ const base = String.fromEnvironment('API_BASE_URL',
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
+/// Keeps asynchronous GPS results from replacing an origin explicitly chosen
+/// by the passenger.
+class OriginSelectionGuard {
+  int _revision = 0;
+  bool _manualOrigin = false;
+
+  bool get hasManualOrigin => _manualOrigin;
+
+  int startGpsRequest() => ++_revision;
+
+  bool canApplyAutomaticGps(int requestRevision, {required bool hasOrigin}) =>
+      requestRevision == _revision && !_manualOrigin && !hasOrigin;
+
+  bool canApplyExplicitGps(int requestRevision) => requestRevision == _revision;
+
+  void markManualOrigin() {
+    _manualOrigin = true;
+    _revision++;
+  }
+
+  void commitExplicitGps() {
+    _manualOrigin = false;
+  }
+
+  void resetToAutomatic() {
+    _manualOrigin = false;
+    _revision++;
+  }
+}
+
+Map<String, dynamic> buildTripRequestPayload({
+  required int passengers,
+  required String originReference,
+  required String destinationReference,
+  required LatLng selectedOrigin,
+  required LatLng selectedDestination,
+  required String paymentMethod,
+  String notes = '',
+}) =>
+    {
+      'origin': {
+        'longitude': selectedOrigin.longitude,
+        'latitude': selectedOrigin.latitude,
+      },
+      'destination': {
+        'longitude': selectedDestination.longitude,
+        'latitude': selectedDestination.latitude,
+      },
+      'passengers': passengers,
+      'paymentMethod': paymentMethod,
+      'originReference': originReference,
+      'destinationReference': destinationReference,
+      if (notes.trim().isNotEmpty) 'notes': notes.trim(),
+    };
+
 class AppHttpOverrides extends HttpOverrides {
   AppHttpOverrides(this.proxy);
 
@@ -661,18 +716,17 @@ class Api {
   Future<dynamic> create(
           String t, int n, String o, String d, LatLng pickup, LatLng dropoff,
           {String paymentMethod = 'CASH', String notes = ''}) =>
-      call('POST', '/v1/trips', token: t, body: {
-        'origin': {'longitude': pickup.longitude, 'latitude': pickup.latitude},
-        'destination': {
-          'longitude': dropoff.longitude,
-          'latitude': dropoff.latitude
-        },
-        'passengers': n,
-        'paymentMethod': paymentMethod,
-        'originReference': o,
-        'destinationReference': d,
-        if (notes.trim().isNotEmpty) 'notes': notes.trim()
-      });
+      call('POST', '/v1/trips',
+          token: t,
+          body: buildTripRequestPayload(
+            passengers: n,
+            originReference: o,
+            destinationReference: d,
+            selectedOrigin: pickup,
+            selectedDestination: dropoff,
+            paymentMethod: paymentMethod,
+            notes: notes,
+          ));
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
@@ -2703,6 +2757,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   bool selectionResolving = false;
   bool selectionMoving = false;
   int selectionLookupGeneration = 0;
+  final originSelectionGuard = OriginSelectionGuard();
+  int routeRequestGeneration = 0;
   dynamic active;
   int people = 1;
   String paymentMethod = 'CASH';
@@ -2744,7 +2800,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     load();
     loadFavoritePlaces();
-    Future.microtask(useCurrentLocation);
+    Future.microtask(() => useCurrentLocation(explicit: false));
     timer = Timer.periodic(const Duration(seconds: 15), (_) {
       unawaited(load());
       unawaited(refreshNearbyDrivers());
@@ -2949,6 +3005,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     setState(() {
       currentLocation = point;
       pickup = point;
+      originSelectionGuard.resetToAutomatic();
       dropoff = null;
       origin.text = 'Mi ubicación actual';
       destination.clear();
@@ -3057,18 +3114,26 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  Future<void> useCurrentLocation() async {
+  Future<void> useCurrentLocation({bool explicit = true}) async {
     if (active != null) return;
+    final gpsRequestRevision = originSelectionGuard.startGpsRequest();
     try {
       final position = await currentGpsPosition();
       if (!mounted || active != null) return;
       final point = LatLng(position.latitude, position.longitude);
+      final applyAsOrigin = explicit
+          ? originSelectionGuard.canApplyExplicitGps(gpsRequestRevision)
+          : originSelectionGuard.canApplyAutomaticGps(gpsRequestRevision,
+              hasOrigin: pickup != null);
       setState(() {
         currentLocation = point;
+        if (!applyAsOrigin) return;
+        if (explicit) originSelectionGuard.commitExplicitGps();
         pickup = point;
         origin.text = 'Mi ubicación actual';
         message = 'Consultando la dirección de tu ubicación…';
       });
+      if (!applyAsOrigin) return;
       realtime.subscribeNearby(position.latitude, position.longitude);
       unawaited(refreshNearbyDrivers(point));
       refreshRoute(force: true);
@@ -3092,6 +3157,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   void clearPoint(bool isOrigin) {
+    if (isOrigin) originSelectionGuard.markManualOrigin();
     setState(() {
       mapSelection =
           isOrigin ? MapPointSelection.origin : MapPointSelection.destination;
@@ -3119,6 +3185,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   void beginMapSelection(MapPointSelection selection) {
     FocusManager.instance.primaryFocus?.unfocus();
+    if (selection == MapPointSelection.origin) {
+      // A GPS lookup started during initialization must not win after the
+      // passenger enters manual origin selection.
+      originSelectionGuard.markManualOrigin();
+    }
     setState(() {
       mapSelection = selection;
       pendingMapPoint = selection == MapPointSelection.origin
@@ -3143,6 +3214,24 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     selectionMoving = true;
     pendingMapPoint = null;
     selectionResolving = false;
+  }
+
+  void selectionCenterChanged(LatLng point) {
+    if (mapSelection == null ||
+        !point.latitude.isFinite ||
+        !point.longitude.isFinite) {
+      return;
+    }
+    // This assignment intentionally avoids setState while Google Maps is
+    // dispatching a gesture. It keeps confirmation tied to the fixed center
+    // pin without rebuilding the Android platform view on every frame.
+    pendingMapPoint = point;
+  }
+
+  void confirmVisibleMapPoint() {
+    final point = pendingMapPoint;
+    if (point == null) return;
+    unawaited(selectMapPoint(point));
   }
 
   Future<void> previewMapSelection(LatLng point) async {
@@ -3245,6 +3334,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       mapSelection = null;
       sheetExtent = .35;
       if (isOrigin) {
+        originSelectionGuard.markManualOrigin();
         pickup = point;
         origin.text = cleanAddressLabel(place['address']);
       } else {
@@ -3386,6 +3476,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         mapSelection = null;
         field.text = cleanAddressLabel(r['label']);
         if (isOrigin) {
+          originSelectionGuard.markManualOrigin();
           pickup = LatLng((r['latitude'] as num).toDouble(),
               (r['longitude'] as num).toDouble());
         } else {
@@ -3426,6 +3517,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       selectionMoving = false;
       sheetExtent = .35;
       if (selection == MapPointSelection.origin) {
+        originSelectionGuard.markManualOrigin();
         pickup = point;
         if (!previewIsCurrent) origin.text = coordinateLabel;
         message = 'Consultando la dirección del origen...';
@@ -3498,23 +3590,26 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       to = dropoff;
     }
     if (from == null || to == null) return;
+    final requestGeneration = ++routeRequestGeneration;
+    final requestedFrom = from;
+    final requestedTo = to;
     lastRouteAt = now;
     try {
-      final route = await api.route(widget.s.token, from, to);
+      final route = await api.route(widget.s.token, requestedFrom, requestedTo);
       final points = List<dynamic>.from(route['points'] ?? const [])
           .map((point) => LatLng((point['latitude'] as num).toDouble(),
               (point['longitude'] as num).toDouble()))
           .toList();
-      if (!mounted) return;
+      if (!mounted || requestGeneration != routeRequestGeneration) return;
       setState(() {
         routePoints = points;
         routeDistanceMeters = (route['distanceMeters'] as num?)?.toDouble();
         routeDurationSeconds = (route['durationSeconds'] as num?)?.toDouble();
       });
     } catch (_) {
-      if (mounted && force) {
+      if (mounted && force && requestGeneration == routeRequestGeneration) {
         setState(() {
-          routePoints = [from!, to!];
+          routePoints = [requestedFrom, requestedTo];
           routeDistanceMeters = null;
           routeDurationSeconds = null;
         });
@@ -3530,8 +3625,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     try {
       ratingPrompted = false;
+      // Freeze the coordinates represented by the confirmed markers. The
+      // request body, fare/route context and driver search all use this exact
+      // origin rather than currentLocation.
+      final requestedOrigin = pickup!;
+      final requestedDestination = dropoff!;
       final t = await api.create(widget.s.token, people, origin.text,
-          destination.text, pickup!, dropoff!,
+          destination.text, requestedOrigin, requestedDestination,
           paymentMethod: paymentMethod, notes: notes.text);
       setState(() {
         active = {'tripId': t['tripId'], 'status': 'SEARCHING'};
@@ -3784,7 +3884,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               .titleLarge
               ?.copyWith(fontWeight: FontWeight.w800)),
       const SizedBox(height: 4),
-      const Text('Mueve el mapa y coloca el marcador en el punto exacto.',
+      const Text('Arrastra el marcador o toca el punto exacto en el mapa.',
           textAlign: TextAlign.center),
       const SizedBox(height: 14),
       Card(
@@ -3809,9 +3909,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       ),
       const SizedBox(height: 14),
       FilledButton.icon(
-        onPressed: pendingMapPoint == null
-            ? null
-            : () => selectMapPoint(pendingMapPoint!),
+        onPressed: pendingMapPoint == null ? null : confirmVisibleMapPoint,
         icon: const Icon(Icons.check),
         label: Text(isOrigin ? 'Confirmar origen' : 'Confirmar destino'),
       ),
@@ -3901,14 +3999,25 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         TextField(
           controller: notes,
           onTap: () => _movePassengerSheet(.72),
+          onChanged: (_) => setState(() {}),
           maxLength: 300,
           maxLines: 2,
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => FocusScope.of(context).unfocus(),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Referencia para encontrarte (opcional)',
             hintText: 'Ej.: casa azul, junto a la farmacia, puerta lateral',
-            prefixIcon: Icon(Icons.info_outline),
+            prefixIcon: const Icon(Icons.info_outline),
+            suffixIcon: notes.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Borrar referencia',
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      notes.clear();
+                      setState(() {});
+                    },
+                  ),
           ),
         ),
         Text('Número de pasajeros (máximo 4)',
@@ -3966,6 +4075,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 final extent = passengerSheetController.isAttached
                     ? passengerSheetController.size
                     : sheetExtent;
+                // While choosing a point, the selector must not move when the
+                // bottom sheet expands or collapses. The map and fixed pin use
+                // a stable viewport; after confirmation normal dynamic
+                // padding is restored for routes and trip markers.
+                final mapBottomPadding =
+                    editing ? 16.0 : constraints.maxHeight * extent + 16;
                 return LiveMap(
                   originLabel: originLabel,
                   destinationLabel: destinationLabel,
@@ -3978,7 +4093,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   nearbyDrivers:
                       active == null ? nearbyDrivers : const <String, LatLng>{},
                   editing: active == null ? mapSelection : null,
-                  onPointSelected: editing ? selectMapPoint : null,
+                  onSelectionCenterChanged:
+                      editing ? selectionCenterChanged : null,
                   onSelectionSettled: editing ? previewMapSelection : null,
                   onSelectionMovementStarted:
                       editing ? selectionMovementStarted : null,
@@ -3986,8 +4102,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                       active == null ? useCurrentLocation : null,
                   fillAvailable: true,
                   borderRadius: 0,
-                  viewportPadding: EdgeInsets.fromLTRB(12, safeTop + 72, 12,
-                      constraints.maxHeight * extent + 16),
+                  viewportPadding: EdgeInsets.fromLTRB(
+                      12, safeTop + 72, 12, mapBottomPadding),
                 );
               },
             ),

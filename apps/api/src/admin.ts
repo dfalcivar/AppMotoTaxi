@@ -2,14 +2,35 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
+import {
+  adminRoles,
+  allPermissions,
+  hasPermission,
+  isAdminRole,
+  permissionsForRole,
+  rolePermissions,
+  type AdminRole,
+  type Permission,
+  type PermissionOverride
+} from "./permissions.js";
 import { sendPush } from "./push.js";
 
-export type AdminRole = "ADMIN" | "SUPPORT";
+export type { AdminRole, Permission } from "./permissions.js";
 export type SessionRole = "PASSENGER" | "DRIVER" | AdminRole;
 type DriverStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "REJECTED";
 type IncidentStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
 
-export interface SessionUser { id?: string; email: string; name: string; role: SessionRole; sessionId?: string; mustChangePassword?: boolean }
+export interface SessionUser {
+  id?: string;
+  email: string;
+  name: string;
+  role: SessionRole;
+  sessionId?: string;
+  mustChangePassword?: boolean;
+  permissions?: Permission[];
+  cooperativeId?: string;
+  expiresAt?: number;
+}
 interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
 interface Passenger { id: string; name: string; email?: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
 interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; status: "ACTIVE" | "SCHEDULED" }
@@ -41,7 +62,7 @@ const incidents: Incident[] = [
 const audits: AuditEntry[] = [];
 
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
-const driverSchema = z.object({ status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REJECTED"]), reason: z.string().min(3), deunaEnabled: z.boolean().optional(), deunaQrImageUrl: z.string().url().optional().or(z.literal("")) });
+const driverSchema = z.object({ status: z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REJECTED"]), reason: z.string().min(3), deunaEnabled: z.boolean().optional(), deunaQrImageUrl: z.string().url().optional().or(z.literal("")), cooperativeId: z.string().uuid().nullable().optional() });
 const passengerSchema = z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().min(3) });
 const passwordResetSchema = z.object({ password: z.string().min(8).max(100) });
 const documentReviewSchema = z.object({
@@ -70,6 +91,35 @@ const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "E
 const incidentSchema = z.object({ status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]), assignedTo: z.string().min(2) });
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
 const operationalSettingsSchema = z.object({ searchRadiusMeters: z.number().int().min(500).max(20000) });
+const cooperativeSchema = z.object({
+  name: z.string().trim().min(3).max(120),
+  legalName: z.string().trim().max(160).optional().or(z.literal("")),
+  registrationNumber: z.string().trim().max(60).optional().or(z.literal("")),
+  email: z.string().email().optional().or(z.literal("")),
+  phone: z.string().trim().max(24).optional().or(z.literal("")),
+  status: z.enum(["ACTIVE", "SUSPENDED", "INACTIVE"]).default("ACTIVE")
+});
+const cooperativeUpdateSchema = cooperativeSchema.partial();
+const adminAccessSchema = z.object({
+  role: z.enum(adminRoles),
+  cooperativeId: z.string().uuid().nullable().optional(),
+  overrides: z.array(z.object({
+    permission: z.enum(allPermissions),
+    allowed: z.boolean()
+  })).max(allPermissions.length).default([])
+}).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
+  message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
+});
+const adminUserCreateSchema = z.object({
+  fullName: z.string().trim().min(3).max(120),
+  email: z.string().email(),
+  phone: z.string().trim().min(8).max(24),
+  password: z.string().min(8).max(100),
+  role: z.enum(["SUPER_ADMIN", "ADMIN_OPERACIONES", "SOPORTE", "ANALISTA_COOPERATIVA"]),
+  cooperativeId: z.string().uuid().nullable().optional()
+}).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
+  message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
+});
 const bannerSchema = z.object({
   title: z.string().trim().min(3).max(120),
   placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]),
@@ -148,7 +198,11 @@ export function userFrom(request: FastifyRequest): SessionUser | undefined {
   if (!payload || !signature) return;
   const expected = sign(payload);
   if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return;
-  try { return JSON.parse(Buffer.from(payload, "base64url").toString()) as SessionUser; } catch { return; }
+  try {
+    const user = JSON.parse(Buffer.from(payload, "base64url").toString()) as SessionUser;
+    if (user.expiresAt && user.expiresAt <= Date.now()) return;
+    return user;
+  } catch { return; }
 }
 function audit(user: SessionUser, action: string, entity: string, detail: string) {
   audits.unshift({ id: `AUD-${Date.now()}`, actor: user.email, action, entity, detail, createdAt: new Date().toISOString() });
@@ -162,8 +216,20 @@ async function persistAudit(user: SessionUser, action: string, entityType: strin
   `;
 }
 function requireUser(request: FastifyRequest) { const user = userFrom(request); if (!user) throw new Error("UNAUTHORIZED"); return user; }
-function requireAdmin(request: FastifyRequest) { const user = requireUser(request); if (user.role !== "ADMIN") throw new Error("FORBIDDEN"); return user; }
-function guardError(error: unknown, reply: any) { const message = error instanceof Error ? error.message : "ERROR"; if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message }); if (message === "FORBIDDEN") return reply.code(403).send({ error: message }); throw error; }
+function requireAdminSession(request: FastifyRequest): SessionUser & { role: AdminRole } {
+  const user = requireUser(request);
+  if (!isAdminRole(user.role)) throw new Error("FORBIDDEN");
+  if (user.role === "ANALISTA_COOPERATIVA" && !user.cooperativeId) {
+    throw new Error("COOPERATIVE_SCOPE_REQUIRED");
+  }
+  return user as SessionUser & { role: AdminRole };
+}
+function requirePermission(request: FastifyRequest, permission: Permission) {
+  const user = requireAdminSession(request);
+  if (!hasPermission(user.role, permission, user.permissions)) throw new Error("FORBIDDEN");
+  return user;
+}
+function guardError(error: unknown, reply: any) { const message = error instanceof Error ? error.message : "ERROR"; if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message }); if (message === "FORBIDDEN" || message === "COOPERATIVE_SCOPE_REQUIRED") return reply.code(403).send({ error: message }); throw error; }
 
 export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   publishTripStatus(tripId: string, status: string): void;
@@ -172,16 +238,29 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const parsed = loginSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOGIN" });
     if (process.env.DATABASE_URL) {
       const rows = await database()`
-        select id, email, full_name, role
+        select id, email, full_name, role, cooperative_id::text as "cooperativeId"
         from users
         where lower(email) = lower(${parsed.data.email})
           and password_hash = crypt(${parsed.data.password}, password_hash)
           and status = 'ACTIVE'
-          and role in ('ADMIN', 'SUPPORT')
+          and role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA')
       `;
-      const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole } | undefined;
+      const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole; cooperativeId?: string } | undefined;
       if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
-      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role };
+      const overrides = await database()`
+        select permission, allowed
+        from admin_permission_overrides
+        where user_id=${account.id}
+      ` as unknown as PermissionOverride[];
+      const user: SessionUser = {
+        id: account.id,
+        email: account.email,
+        name: account.full_name,
+        role: account.role,
+        cooperativeId: account.cooperativeId,
+        permissions: permissionsForRole(account.role, overrides),
+        expiresAt: Date.now() + 8 * 60 * 60 * 1000
+      };
       audit(user, "LOGIN", "SESSION", "Inicio de sesión administrativo");
       return { token: tokenFor(user), user };
     }
@@ -190,16 +269,167 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const supportEmail = process.env.SUPPORT_EMAIL ?? "soporte@mototaxi.local";
     const supportPassword = process.env.SUPPORT_PASSWORD ?? "Soporte2026!";
     let user: SessionUser | undefined;
-    if (parsed.data.email === adminEmail && parsed.data.password === adminPassword) user = { email: adminEmail, name: "Administrador principal", role: "ADMIN" };
-    if (parsed.data.email === supportEmail && parsed.data.password === supportPassword) user = { email: supportEmail, name: "Equipo de soporte", role: "SUPPORT" };
+    if (parsed.data.email === adminEmail && parsed.data.password === adminPassword) user = { email: adminEmail, name: "Administrador principal", role: "ADMIN", permissions: permissionsForRole("ADMIN"), expiresAt: Date.now() + 8 * 60 * 60 * 1000 };
+    if (parsed.data.email === supportEmail && parsed.data.password === supportPassword) user = { email: supportEmail, name: "Equipo de soporte", role: "SUPPORT", permissions: permissionsForRole("SUPPORT"), expiresAt: Date.now() + 8 * 60 * 60 * 1000 };
     if (!user) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
     audit(user, "LOGIN", "SESSION", "Inicio de sesión administrativo");
     return { token: tokenFor(user), user };
   });
 
-  app.get("/v1/admin/me", async (request, reply) => { try { return requireUser(request); } catch (e) { return guardError(e, reply); } });
+  app.get("/v1/admin/me", async (request, reply) => { try { return requireAdminSession(request); } catch (e) { return guardError(e, reply); } });
+  app.get("/v1/admin/access/roles", async (request, reply) => { try {
+    requirePermission(request, "roles:manage");
+    return adminRoles.map(role => ({ role, permissions: rolePermissions[role] }));
+  } catch (e) { return guardError(e, reply); } });
+  app.get("/v1/admin/access/users", async (request, reply) => { try {
+    requirePermission(request, "roles:manage");
+    if (!process.env.DATABASE_URL) return [];
+    return await database()`
+      select u.id::text, u.full_name as name, u.email, u.role,
+        u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName",
+        coalesce(jsonb_agg(jsonb_build_object('permission', permission.permission, 'allowed', permission.allowed))
+          filter (where permission.permission is not null), '[]'::jsonb) as overrides
+      from users u
+      left join cooperatives c on c.id=u.cooperative_id
+      left join admin_permission_overrides permission on permission.user_id=u.id
+      where u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA')
+      group by u.id, c.name
+      order by u.created_at
+    `;
+  } catch (e) { return guardError(e, reply); } });
+  app.post("/v1/admin/access/users", async (request, reply) => { try {
+    const actor = requirePermission(request, "roles:manage");
+    const body = adminUserCreateSchema.parse(request.body);
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const normalizedPhone = body.phone.startsWith("+") ? body.phone : `+${body.phone}`;
+    const [account] = await database()`
+      insert into users
+        (phone_e164, full_name, email, password_hash, role, status,
+          cooperative_id, phone_verified_at, terms_accepted_at)
+      values (${normalizedPhone}, ${body.fullName}, ${body.email.toLowerCase()},
+        crypt(${body.password}, gen_salt('bf')), ${body.role}, 'ACTIVE',
+        ${body.cooperativeId ?? null}, now(), now())
+      returning id::text, full_name as name, email, role,
+        cooperative_id::text as "cooperativeId"
+    `;
+    await persistAudit(actor, "ADMIN_USER_CREATED", "USER", String(account!.id),
+      `Rol ${body.role}`);
+    return reply.code(201).send(account);
+  } catch (e) {
+    if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_ADMIN_USER", details: e.issues });
+    return guardError(e, reply);
+  } });
+  app.patch("/v1/admin/access/users/:id", async (request, reply) => { try {
+    const actor = requirePermission(request, "roles:manage");
+    const body = adminAccessSchema.parse(request.body);
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const id = (request.params as { id: string }).id;
+    const updated = await database().begin(async tx => {
+      const [current] = await tx`select id::text, role from users where id=${id} for update`;
+      if (!current || !isAdminRole(String(current.role))) return null;
+      if ((current.role === "ADMIN" || current.role === "SUPER_ADMIN") &&
+          body.role !== "ADMIN" && body.role !== "SUPER_ADMIN") {
+        const [remaining] = await tx`
+          select count(*)::int as total from users
+          where id<>${id} and status='ACTIVE' and role in ('ADMIN', 'SUPER_ADMIN')
+        `;
+        if (Number(remaining?.total ?? 0) === 0) throw new Error("LAST_SUPER_ADMIN");
+      }
+      const [account] = await tx`
+        update users set role=${body.role}, cooperative_id=${body.cooperativeId ?? null},
+          active_session_id=null, updated_at=now()
+        where id=${id}
+        returning id::text, full_name as name, email, role, cooperative_id::text as "cooperativeId"
+      `;
+      await tx`delete from admin_permission_overrides where user_id=${id}`;
+      for (const override of body.overrides) {
+        await tx`
+          insert into admin_permission_overrides (user_id, permission, allowed, granted_by)
+          values (${id}, ${override.permission}, ${override.allowed}, ${actor.id ?? null})
+        `;
+      }
+      return account;
+    });
+    if (!updated) return reply.code(404).send({ error: "NOT_FOUND" });
+    await persistAudit(actor, "ADMIN_ACCESS_UPDATED", "USER", id,
+      `Rol ${body.role}; cooperativa ${body.cooperativeId ?? "sin alcance"}`);
+    return { ...updated, permissions: permissionsForRole(body.role, body.overrides) };
+  } catch (e) {
+    if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_ACCESS_CONFIGURATION", details: e.issues });
+    if (e instanceof Error && e.message === "LAST_SUPER_ADMIN") return reply.code(409).send({ error: e.message });
+    return guardError(e, reply);
+  } });
+  app.get("/v1/admin/cooperatives", async (request, reply) => { try {
+    requirePermission(request, "cooperatives:view");
+    if (!process.env.DATABASE_URL) return [];
+    return await database()`
+      select c.id::text, c.name, c.legal_name as "legalName",
+        c.registration_number as "registrationNumber", c.email,
+        c.phone_e164 as phone, c.status, c.created_at as "createdAt",
+        count(distinct driver.id)::int as drivers
+      from cooperatives c
+      left join users driver on driver.cooperative_id=c.id and driver.role='DRIVER'
+      group by c.id order by c.name
+    `;
+  } catch (e) { return guardError(e, reply); } });
+  app.post("/v1/admin/cooperatives", async (request, reply) => { try {
+    const actor = requirePermission(request, "cooperatives:manage");
+    const body = cooperativeSchema.parse(request.body);
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const [item] = await database()`
+      insert into cooperatives
+        (name, legal_name, registration_number, email, phone_e164, status, created_by)
+      values (${body.name}, ${body.legalName || null}, ${body.registrationNumber || null},
+        ${body.email || null}, ${body.phone || null}, ${body.status}, ${actor.id ?? null})
+      returning id::text, name, legal_name as "legalName",
+        registration_number as "registrationNumber", email, phone_e164 as phone, status
+    `;
+    await persistAudit(actor, "COOPERATIVE_CREATED", "COOPERATIVE", String(item!.id), body.name);
+    return reply.code(201).send(item);
+  } catch (e) { if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_COOPERATIVE" }); return guardError(e, reply); } });
+  app.patch("/v1/admin/cooperatives/:id", async (request, reply) => { try {
+    const actor = requirePermission(request, "cooperatives:manage");
+    const body = cooperativeUpdateSchema.parse(request.body);
+    const id = (request.params as { id: string }).id;
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const [current] = await database()`select * from cooperatives where id=${id}`;
+    if (!current) return reply.code(404).send({ error: "NOT_FOUND" });
+    const [item] = await database()`
+      update cooperatives set name=${body.name ?? current.name},
+        legal_name=${body.legalName === "" ? null : (body.legalName ?? current.legal_name)},
+        registration_number=${body.registrationNumber === "" ? null : (body.registrationNumber ?? current.registration_number)},
+        email=${body.email === "" ? null : (body.email ?? current.email)},
+        phone_e164=${body.phone === "" ? null : (body.phone ?? current.phone_e164)},
+        status=${body.status ?? current.status}, updated_at=now()
+      where id=${id}
+      returning id::text, name, legal_name as "legalName",
+        registration_number as "registrationNumber", email, phone_e164 as phone, status
+    `;
+    await persistAudit(actor, "COOPERATIVE_UPDATED", "COOPERATIVE", id, item!.name);
+    return item;
+  } catch (e) { if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_COOPERATIVE" }); return guardError(e, reply); } });
+  app.get("/v1/admin/cooperative-dashboard/summary", async (request, reply) => { try {
+    const user = requirePermission(request, "cooperative_dashboard:view");
+    const cooperativeId = user.cooperativeId!;
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const [summary] = await database()`
+      select c.id::text as "cooperativeId", c.name as cooperative,
+        count(t.id)::int as "totalTrips",
+        count(t.id) filter (where t.status='COMPLETED')::int as "completedTrips",
+        count(t.id) filter (where t.status='CANCELLED')::int as "cancelledTrips",
+        count(distinct t.passenger_id)::int as "passengersServed",
+        (select count(*)::int from users driver join drivers d on d.user_id=driver.id
+          where driver.cooperative_id=c.id and driver.role='DRIVER' and driver.status='ACTIVE') as "activeDrivers"
+      from cooperatives c
+      left join trips t on t.cooperative_id=c.id
+      where c.id=${cooperativeId}
+      group by c.id
+    `;
+    if (!summary) return reply.code(404).send({ error: "COOPERATIVE_NOT_FOUND" });
+    return summary;
+  } catch (e) { return guardError(e, reply); } });
   app.post("/v1/admin/users/:id/reset-password", async (request, reply) => { try {
-    const user = requireAdmin(request);
+    const user = requirePermission(request, "users:manage");
     const body = passwordResetSchema.parse(request.body);
     const id = (request.params as { id: string }).id;
     if (!process.env.DATABASE_URL) {
@@ -224,26 +454,28 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_PASSWORD", message: "La contraseña debe tener entre 8 y 100 caracteres." });
     return guardError(e, reply);
   } });
-  app.get("/v1/admin/dashboard", async (request, reply) => { try { requireUser(request); return { metrics: { activeTrips: 6, availableDrivers: drivers.filter(d => d.status === "ACTIVE").length, pendingDrivers: drivers.filter(d => d.status === "PENDING").length, openIncidents: incidents.filter(i => i.status !== "RESOLVED").length }, activeTrips: [
+  app.get("/v1/admin/dashboard", async (request, reply) => { try { requirePermission(request, "dashboard:view"); return { metrics: { activeTrips: 6, availableDrivers: drivers.filter(d => d.status === "ACTIVE").length, pendingDrivers: drivers.filter(d => d.status === "PENDING").length, openIncidents: incidents.filter(i => i.status !== "RESOLVED").length }, activeTrips: [
     { id: "TRIP-1048", passenger: "María Z.", driver: "José Q.", status: "IN_PROGRESS", zone: "URBAN", total: "$1,00", requestedAt: "19:42" },
     { id: "TRIP-1047", passenger: "Ana C.", driver: "Luis V.", status: "DRIVER_EN_ROUTE", zone: "EXTENDED", total: "$2,00", requestedAt: "19:38" },
     { id: "TRIP-1046", passenger: "Pedro A.", driver: "Sin asignar", status: "SEARCHING", zone: "URBAN", total: "$0,50", requestedAt: "19:36" }
   ]}; } catch(e) { return guardError(e, reply); } });
   app.get("/v1/admin/drivers", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "drivers:view");
     if (!process.env.DATABASE_URL) return drivers;
     return await database()`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, coalesce(v.identifier, 'Sin vehículo') as vehicle,
         u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/4 documentos' from driver_documents dd where dd.driver_id = d.user_id), '0/4 documentos') as documents,
-        coalesce(d.rating, 0)::float8 as rating, (u.profile_photo_data is not null) as "hasPhoto"
+        coalesce(d.rating, 0)::float8 as rating, (u.profile_photo_data is not null) as "hasPhoto",
+        u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName"
       from drivers d
       join users u on u.id = d.user_id
+      left join cooperatives c on c.id=u.cooperative_id
       left join lateral (select identifier from vehicles where driver_id = d.user_id order by created_at desc limit 1) v on true
       order by u.created_at
     `;
   } catch(e) { return guardError(e, reply); } });
   app.get("/v1/admin/drivers/:id/documents", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "drivers:documents:view");
     if (!process.env.DATABASE_URL) return [];
     const id=(request.params as { id: string }).id;
     return database()`
@@ -255,7 +487,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
   } catch(e) { return guardError(e, reply); } });
   app.post("/v1/admin/drivers/:id/documents", async (request, reply) => { try {
-    const user=requireAdmin(request); const body=adminDocumentSchema.parse(request.body);
+    const user=requirePermission(request, "drivers:documents:manage"); const body=adminDocumentSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return reply.code(201).send({ ok: true });
     const id=(request.params as { id: string }).id;
     let data: Buffer;
@@ -273,7 +505,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return reply.code(201).send(document);
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e, reply); } });
   app.delete("/v1/admin/drivers/:driverId/documents/:documentId", async (request, reply) => { try {
-    const user=requireAdmin(request);
+    const user=requirePermission(request, "drivers:documents:manage");
     if (!process.env.DATABASE_URL) return { deactivated: true };
     const { driverId, documentId }=request.params as { driverId: string; documentId: string };
     const [existing]=await database()`select document_type from driver_documents where id=${documentId} and driver_id=${driverId}`;
@@ -284,7 +516,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return { deactivated: true };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/drivers/:driverId/documents/:documentId", async (request, reply) => { try {
-    const user=requireAdmin(request); const body=documentReviewSchema.parse(request.body);
+    const user=requirePermission(request, "drivers:documents:manage"); const body=documentReviewSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return { ok: true };
     const { driverId, documentId }=request.params as { driverId: string; documentId: string };
     const [document]=await database()`
@@ -298,11 +530,19 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return document;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e, reply); } });
   app.patch("/v1/admin/drivers/:id", async (request, reply) => { try {
-    const user=requireAdmin(request); const body=driverSchema.parse(request.body);
+    const user=requirePermission(request, "drivers:approve"); const body=driverSchema.parse(request.body);
     if (!process.env.DATABASE_URL) { const item=drivers.find(d=>d.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"DRIVER_STATUS",item.id,body.reason); return item; }
     const id=(request.params as { id: string }).id;
     const rows=await database().begin(async tx=>{
-      const updated=await tx`update users set status=${body.status}, updated_at=now() where id=${id} and role='DRIVER' returning id, full_name as name, phone_e164 as phone, status`;
+      const updated=await tx`
+        update users set status=${body.status},
+          cooperative_id=case when ${body.cooperativeId !== undefined}
+            then ${body.cooperativeId ?? null} else cooperative_id end,
+          updated_at=now()
+        where id=${id} and role='DRIVER'
+        returning id, full_name as name, phone_e164 as phone, status,
+          cooperative_id::text as "cooperativeId"
+      `;
       if(updated[0]) {
         await tx`
           update drivers
@@ -322,7 +562,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return item;
   } catch(e){ if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply);} });
   app.get("/v1/admin/passengers", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "passengers:view");
     if (!process.env.DATABASE_URL) return passengers;
     return await database()`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,
@@ -333,7 +573,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
   } catch(e){return guardError(e,reply);} });
   app.patch("/v1/admin/passengers/:id", async (request, reply) => { try {
-    const user=requireAdmin(request); const body=passengerSchema.parse(request.body);
+    const user=requirePermission(request, "passengers:manage"); const body=passengerSchema.parse(request.body);
     if (!process.env.DATABASE_URL) { const item=passengers.find(p=>p.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"PASSENGER_STATUS",item.id,body.reason); return item; }
     const id=(request.params as { id: string }).id;
     const rows=await database()`update users set status=${body.status}, updated_at=now() where id=${id} and role='PASSENGER' returning id, full_name as name, phone_e164 as phone, status`;
@@ -342,7 +582,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return item;
   } catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.get("/v1/admin/pricing", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "pricing:view");
     if (!process.env.DATABASE_URL) return pricing;
     return await database()`
       select id::text, version,
@@ -356,9 +596,9 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       from pricing_versions order by version desc
     `;
   } catch(e){return guardError(e,reply);} });
-  app.post("/v1/admin/pricing", async (request, reply) => { try { const user=requireAdmin(request); const body=pricingSchema.parse(request.body); const next:PricingVersion={id:`PRICE-${pricing.length+1}`,version:Math.max(...pricing.map(p=>p.version))+1,...body,status:new Date(body.activeFrom)>new Date()?"SCHEDULED":"ACTIVE"}; if(next.status==="ACTIVE")pricing.forEach(p=>p.status="SCHEDULED"); pricing.unshift(next); audit(user,"PRICING_PUBLISHED",next.id,`Versión ${next.version}`); return reply.code(201).send(next);}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
+  app.post("/v1/admin/pricing", async (request, reply) => { try { const user=requirePermission(request, "pricing:manage"); const body=pricingSchema.parse(request.body); const next:PricingVersion={id:`PRICE-${pricing.length+1}`,version:Math.max(...pricing.map(p=>p.version))+1,...body,status:new Date(body.activeFrom)>new Date()?"SCHEDULED":"ACTIVE"}; if(next.status==="ACTIVE")pricing.forEach(p=>p.status="SCHEDULED"); pricing.unshift(next); audit(user,"PRICING_PUBLISHED",next.id,`Versión ${next.version}`); return reply.code(201).send(next);}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.get("/v1/admin/zones", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "zones:view");
     if (!process.env.DATABASE_URL) return zones;
     return await database()`
       select id::text, name, zone_type as type, editor_points as points,
@@ -367,9 +607,9 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       order by zone_type, version desc
     `;
   } catch(e){return guardError(e,reply);} });
-  app.post("/v1/admin/zones", async (request, reply) => { try { const user=requireAdmin(request); const body=zoneSchema.parse(request.body); const item:Zone={id:`ZONE-${Date.now()}`,...body,active:true,version:1}; zones.push(item); audit(user,"ZONE_CREATED",item.id,item.name); return reply.code(201).send(item);}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
+  app.post("/v1/admin/zones", async (request, reply) => { try { const user=requirePermission(request, "zones:manage"); const body=zoneSchema.parse(request.body); const item:Zone={id:`ZONE-${Date.now()}`,...body,active:true,version:1}; zones.push(item); audit(user,"ZONE_CREATED",item.id,item.name); return reply.code(201).send(item);}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.get("/v1/admin/incidents", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "incidents:view");
     if (!process.env.DATABASE_URL) return incidents;
     return await database()`
       select i.id::text, coalesce(i.trip_id::text, 'Sin viaje') as trip,
@@ -380,9 +620,9 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       order by i.created_at desc
     `;
   } catch(e){return guardError(e,reply);} });
-  app.patch("/v1/admin/incidents/:id", async (request, reply) => { try { const user=requireUser(request); const body=incidentSchema.parse(request.body); const item=incidents.find(i=>i.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); Object.assign(item,body); audit(user,"INCIDENT_UPDATED",item.id,body.status); return item;}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
+  app.patch("/v1/admin/incidents/:id", async (request, reply) => { try { const user=requirePermission(request, "incidents:manage"); const body=incidentSchema.parse(request.body); const item=incidents.find(i=>i.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); Object.assign(item,body); audit(user,"INCIDENT_UPDATED",item.id,body.status); return item;}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.post("/v1/admin/pricing/persist", async (request, reply) => { try {
-    const user = requireAdmin(request); const body = pricingSchema.parse(request.body);
+    const user = requirePermission(request, "pricing:manage"); const body = pricingSchema.parse(request.body);
     const next = await database().begin(async sql => {
       const [row] = await sql`select coalesce(max(version), 0) + 1 as version from pricing_versions`;
       const version = Number(row!.version);
@@ -394,20 +634,20 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return reply.code(201).send({ ...next, status: new Date(next.activeFrom) > new Date() ? "SCHEDULED" : "ACTIVE" });
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.post("/v1/admin/zones/persist", async (request, reply) => { try {
-    const user = requireAdmin(request); const body = zoneSchema.parse(request.body); const wkt = zoneBoundaryWkt(body.points);
+    const user = requirePermission(request, "zones:manage"); const body = zoneSchema.parse(request.body); const wkt = zoneBoundaryWkt(body.points);
     const [item] = await database()`insert into service_zones (name, zone_type, boundary, version, active_from, created_by, editor_points) values (${body.name}, ${body.type}, ST_GeogFromText(${wkt}), 1, now(), ${user.id!}, ${JSON.stringify(body.points)}::jsonb) returning id::text, name, zone_type as type, editor_points as points, is_active as active, version`;
     await persistAudit(user, "ZONE_CREATED", "ZONE", item!.id, item!.name);
     return reply.code(201).send(item);
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.patch("/v1/admin/incidents/:id/persist", async (request, reply) => { try {
-    const user = requireUser(request); const body = incidentSchema.parse(request.body); const id = (request.params as { id: string }).id;
+    const user = requirePermission(request, "incidents:manage"); const body = incidentSchema.parse(request.body); const id = (request.params as { id: string }).id;
     const [item] = await database()`update incidents set status=${body.status}, assigned_to=(select id from users where full_name=${body.assignedTo} limit 1), updated_at=now(), resolved_at=case when ${body.status}='RESOLVED' then now() else null end where id=${id} returning id::text, status`;
     if (!item) return reply.code(404).send({ error: "NOT_FOUND" });
     await persistAudit(user, "INCIDENT_UPDATED", "INCIDENT", id, body.status);
     return item;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.get("/v1/admin/trips", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "trips:view");
     if (!process.env.DATABASE_URL) return [];
     return await database()`
       select t.id::text, t.status, t.passengers, t.service_zone as zone,
@@ -421,12 +661,12 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
   } catch(e) { return guardError(e, reply); } });
   app.get("/v1/admin/settings", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "settings:view");
     const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", updated_at as "updatedAt" from operational_settings where id=1`;
     return settings ?? { searchRadiusMeters: 3000 };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/settings", async (request, reply) => { try {
-    const user = requireAdmin(request);
+    const user = requirePermission(request, "settings:manage");
     const body = operationalSettingsSchema.parse(request.body);
     const [settings] = await database()`
       insert into operational_settings (id, search_radius_meters, updated_at, updated_by)
@@ -438,7 +678,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return settings;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.get("/v1/admin/banners", async (request, reply) => { try {
-    requireUser(request);
+    requirePermission(request, "advertising:view");
     if (!process.env.DATABASE_URL) return [];
     return await database()`
       select id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
@@ -448,7 +688,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
   } catch(e) { return guardError(e, reply); } });
   app.post("/v1/admin/banners", async (request, reply) => { try {
-    const user = requireAdmin(request);
+    const user = requirePermission(request, "advertising:manage");
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
     const body = bannerSchema.parse(request.body);
     const image = Buffer.from(body.imageBase64.replace(/^data:[^;]+;base64,/, ""), "base64");
@@ -471,7 +711,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return reply.code(201).send(item);
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.patch("/v1/admin/banners/:id", async (request, reply) => { try {
-    const user = requireAdmin(request);
+    const user = requirePermission(request, "advertising:manage");
     const body = bannerUpdateSchema.parse(request.body);
     const id = (request.params as { id: string }).id;
     const [current] = await database()`select * from affiliate_banners where id=${id}`;
@@ -504,7 +744,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return item;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.post("/v1/admin/trips/:id/action", async (request, reply) => { try {
-    const user = requireAdmin(request); const body = adminTripActionSchema.parse(request.body);
+    const user = requirePermission(request, "trips:manage"); const body = adminTripActionSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
     const id = (request.params as { id: string }).id;
     const trip = await database().begin(async tx => {
@@ -528,7 +768,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return { id, status: "CANCELLED", cancellationReason: "ADMIN_CANCELLED" };
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.get("/v1/admin/audit", async (request, reply) => { try {
-    requireAdmin(request);
+    requirePermission(request, "audit:view");
     if (!process.env.DATABASE_URL) return audits;
     return await database()`
       select a.id::text, coalesce(u.email, 'Sistema') as actor, a.action,
@@ -538,5 +778,5 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       order by a.created_at desc limit 200
     `;
   } catch(e){return guardError(e,reply);} });
-  app.get("/v1/admin/database", async (request, reply) => { try { requireAdmin(request); const rows=await database()`select current_database() as database, version() as postgres_version, postgis_full_version() as postgis_version`; return { connected:true,...rows[0]}; } catch(error){ return reply.code(503).send({connected:false,message:error instanceof Error?error.message:"Base no disponible"}); } });
+  app.get("/v1/admin/database", async (request, reply) => { try { requirePermission(request, "database:view"); const rows=await database()`select current_database() as database, version() as postgres_version, postgis_full_version() as postgis_version`; return { connected:true,...rows[0]}; } catch(error){ return guardError(error, reply); } });
 }

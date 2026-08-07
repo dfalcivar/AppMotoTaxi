@@ -807,7 +807,13 @@ export async function buildApp() {
         await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
         return { error: "DRIVER_BUSY" };
       }
-      const accepted = await tx`update trips set driver_id=${user.id!}, status='DRIVER_EN_ROUTE', assigned_at=now() where id=${offer.trip_id} and status='SEARCHING' returning id`;
+      const accepted = await tx`
+        update trips set driver_id=${user.id!},
+          cooperative_id=(select cooperative_id from users where id=${user.id!}),
+          status='DRIVER_EN_ROUTE', assigned_at=now()
+        where id=${offer.trip_id} and status='SEARCHING'
+        returning id
+      `;
       if (!accepted.length) {
         await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
         return { error: "TRIP_ALREADY_ASSIGNED" };
