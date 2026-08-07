@@ -1,9 +1,10 @@
 .dashboard { display: grid; gap: 28px; max-width: 1540px; margin: 0 auto; }
 .dashboard-section { display: grid; gap: 4px; scroll-margin-top: 24px; }
 .dashboard-section > .section-title { margin-bottom: 12px; }
-.dashboard-filters { position: sticky; top: 12px; z-index: 5; border-color: #c8dcdf; box-shadow: 0 18px 45px rgba(21,64,72,.12); background: rgba(255,255,255,.96); backdrop-filter: blur(12px); }
+.dashboard-filters { position: relative; top: auto; z-index: 1; padding: 18px 20px; border-color: #c8dcdf; box-shadow: 0 10px 28px rgba(21,64,72,.08); background: #fff; }
+.dashboard-filters > .section-title { margin-bottom: 12px; }
 .dashboard-filters form { display: grid; gap: 12px; }
-.filter-grid { display: grid; grid-template-columns: repeat(4,minmax(130px,1fr)); gap: 10px; align-items: end; }
+.filter-grid { display: grid; grid-template-columns: repeat(8,minmax(112px,1fr)); gap: 8px; align-items: end; }
 .filter-grid label { display: grid; gap: 6px; color: #526a70; font-size: .75rem; font-weight: 750; }
 .filter-grid input,.filter-grid select { min-height: 42px; background: #f9fbfb; border-color: #d5e3e5; }
 .filter-grid .primary { min-height: 42px; box-shadow: 0 8px 18px rgba(11,86,99,.16); }
@@ -61,7 +62,7 @@
 .danger { color: #a33d31; }
 @media (max-width:1200px) {
   .dashboard-metrics { grid-template-columns: repeat(3,1fr); }
-  .filter-grid { grid-template-columns: repeat(3,1fr); }
+  .filter-grid { grid-template-columns: repeat(4,1fr); }
   .signal-grid { grid-template-columns: repeat(2,1fr); }
 }
 @media (max-width:720px) {

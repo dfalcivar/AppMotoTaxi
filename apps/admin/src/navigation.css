@@ -1,0 +1,32 @@
+.app-shell {
+  grid-template-columns: 76px minmax(0, 1fr);
+  transition: grid-template-columns .22s ease;
+}
+.app-shell.sidebar-open { grid-template-columns: 248px minmax(0, 1fr); }
+.app-shell aside { width: 100%; padding: 14px 10px; overflow: hidden; }
+.sidebar-head { display: flex; align-items: center; gap: 10px; min-height: 48px; margin-bottom: 12px; }
+.menu-toggle { width: 48px; height: 44px; flex: 0 0 48px; display: grid; place-items: center; border: 0; border-radius: 12px; color: #d8eaed; background: #174955; font-size: 1.25rem; cursor: pointer; }
+.menu-toggle:hover { background: #22606d; color: #fff; }
+.sidebar-head .brand { min-width: 0; padding: 0; opacity: 1; transition: opacity .15s ease; }
+.sidebar-head .brand-mark { width: 38px; height: 38px; flex: 0 0 38px; border-radius: 11px; }
+.sidebar-head .brand strong,.sidebar-head .brand small { white-space: nowrap; }
+.sidebar-collapsed .sidebar-head .brand { opacity: 0; pointer-events: none; }
+.app-shell aside nav { min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #3c6b75 transparent; padding-right: 2px; }
+.app-shell aside nav button { width: 100%; min-height: 46px; }
+.app-shell aside nav button > span:first-child { flex: 0 0 30px; width: 30px; }
+.nav-label { overflow: hidden; white-space: nowrap; opacity: 1; transition: opacity .15s ease; }
+.sidebar-collapsed .nav-label { width: 0; opacity: 0; }
+.sidebar-collapsed aside nav button { justify-content: center; padding-inline: 8px; gap: 0; }
+.sidebar-collapsed .profile { opacity: 0; pointer-events: none; }
+.sidebar-scrim { display: none; }
+.mobile-menu-toggle { display: none; }
+
+@media (max-width: 720px) {
+  .app-shell,.app-shell.sidebar-open { grid-template-columns: 1fr; }
+  .app-shell aside { position: fixed; inset: 0 auto 0 0; width: min(82vw, 280px); height: 100dvh; z-index: 30; transform: translateX(-100%); transition: transform .22s ease; }
+  .app-shell.sidebar-open aside { transform: translateX(0); }
+  .sidebar-collapsed .sidebar-head .brand,.sidebar-collapsed .nav-label,.sidebar-collapsed .profile { width: auto; opacity: 1; pointer-events: auto; }
+  .sidebar-collapsed aside nav button { justify-content: flex-start; padding: 11px 12px; gap: 12px; }
+  .sidebar-scrim { display: block; position: fixed; inset: 0; z-index: 20; border: 0; background: rgba(3,25,31,.48); }
+  .mobile-menu-toggle { width: 42px; height: 42px; display: grid; place-items: center; border: 0; border-radius: 11px; background: #0b5663; color: #fff; font-size: 1.1rem; cursor: pointer; }
+}

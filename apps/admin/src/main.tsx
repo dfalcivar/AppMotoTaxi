@@ -6,6 +6,7 @@ import "./settings.css";
 import "./advertising.css";
 import "./password-reset.css";
 import "./dashboard.css";
+import "./navigation.css";
 
 type Module = "dashboard" | "trips" | "drivers" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "access" | "audit" | "database";
 
@@ -383,13 +384,29 @@ function Database({ token }: { token: string }) {
 function App() {
   const [session, setSession] = useState<Session | undefined>(() => { try { return JSON.parse(localStorage.getItem("admin-session") ?? ""); } catch { return undefined; } });
   const [module, setModule] = useState<Module>("dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   function save(next: Session) { localStorage.setItem("admin-session", JSON.stringify(next)); setSession(next); }
   function logout() { localStorage.removeItem("admin-session"); setSession(undefined); }
   if (!session) return <Login onSession={save} />;
   const allowed = (permission: string) => can(session.user, permission);
   const visible = (Object.keys(labels) as Module[]).filter(item => modulePermissions[item].some(allowed));
   const cooperativeDashboard = allowed("cooperative_dashboard:view") && !allowed("dashboard:view");
-  return <div className="app-shell"><aside><div className="brand"><div className="brand-mark">M</div><div><strong>Mototaxi</strong><small>Atacames</small></div></div><nav>{visible.map(item => <button key={item} className={module === item ? "active" : ""} onClick={() => setModule(item)}><span>{icons[item]}</span>{labels[item]}</button>)}</nav><div className="profile"><strong>{session.user.name}</strong><small>{session.user.role.replaceAll("_", " ")}</small><button onClick={logout}>Cerrar sesión</button></div></aside><main><header className="topbar"><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Render conectado</span></header>{module === "dashboard" && <Dashboard token={session.token} cooperative={cooperativeDashboard} />}{module === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}{module === "drivers" && <Drivers token={session.token} canApprove={allowed("drivers:approve")} canViewDocuments={allowed("drivers:documents:view")} canManageDocuments={allowed("drivers:documents:manage")} canResetPasswords={allowed("users:manage")} />}{module === "passengers" && <Passengers token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}{module === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}{module === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}{module === "zones" && <Zones token={session.token} admin={allowed("zones:manage")} />}{module === "settings" && <Settings token={session.token} admin={allowed("settings:manage")} />}{module === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}{module === "incidents" && <Incidents token={session.token} />}{module === "access" && <AccessManagement token={session.token} />}{module === "audit" && <Audit token={session.token} />}{module === "database" && <Database token={session.token} />}</main></div>;
+  function selectModule(next: Module) {
+    setModule(next);
+    if (window.innerWidth <= 720) setSidebarOpen(false);
+  }
+  return <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-collapsed"}`}>
+    <aside aria-label="Menú principal">
+      <div className="sidebar-head">
+        <button className="menu-toggle" type="button" aria-label={sidebarOpen ? "Cerrar menú" : "Abrir menú"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(value => !value)}>☰</button>
+        <div className="brand"><div className="brand-mark">M</div><div><strong>AtacamesGo</strong><small>Centro de control</small></div></div>
+      </div>
+      <nav>{visible.map(item => <button key={item} title={!sidebarOpen ? labels[item] : undefined} className={module === item ? "active" : ""} onClick={() => selectModule(item)}><span>{icons[item]}</span><span className="nav-label">{labels[item]}</span></button>)}</nav>
+      <div className="profile"><strong>{session.user.name}</strong><small>{session.user.role.replaceAll("_", " ")}</small><button onClick={logout}>Cerrar sesión</button></div>
+    </aside>
+    {sidebarOpen && <button className="sidebar-scrim" aria-label="Cerrar menú" onClick={() => setSidebarOpen(false)} />}
+    <main><header className="topbar"><button className="mobile-menu-toggle" type="button" aria-label="Abrir menú" onClick={() => setSidebarOpen(true)}>☰</button><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Render conectado</span></header>{module === "dashboard" && <Dashboard token={session.token} cooperative={cooperativeDashboard} />}{module === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}{module === "drivers" && <Drivers token={session.token} canApprove={allowed("drivers:approve")} canViewDocuments={allowed("drivers:documents:view")} canManageDocuments={allowed("drivers:documents:manage")} canResetPasswords={allowed("users:manage")} />}{module === "passengers" && <Passengers token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}{module === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}{module === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}{module === "zones" && <Zones token={session.token} admin={allowed("zones:manage")} />}{module === "settings" && <Settings token={session.token} admin={allowed("settings:manage")} />}{module === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}{module === "incidents" && <Incidents token={session.token} />}{module === "access" && <AccessManagement token={session.token} />}{module === "audit" && <Audit token={session.token} />}{module === "database" && <Database token={session.token} />}</main>
+  </div>;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
