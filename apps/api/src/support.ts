@@ -22,7 +22,12 @@ const createIncidentSchema = z.object({
 });
 const userMessageSchema = z.object({ body: z.string().trim().min(1).max(4000) });
 
-async function supportUser(request: FastifyRequest, reply: FastifyReply): Promise<SessionUser | undefined> {
+type AuthenticatedSupportUser = SessionUser & { id: string; sessionId: string };
+
+async function supportUser(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<AuthenticatedSupportUser | undefined> {
   const user = userFrom(request);
   if (!user?.id || !user.sessionId) {
     reply.code(401).send({ error: "UNAUTHORIZED" });
@@ -40,7 +45,7 @@ async function supportUser(request: FastifyRequest, reply: FastifyReply): Promis
     reply.code(428).send({ error: "PASSWORD_CHANGE_REQUIRED" });
     return;
   }
-  return user;
+  return { ...user, id: user.id, sessionId: user.sessionId };
 }
 
 function decodeAttachment(input: z.infer<typeof attachmentSchema>): Buffer {
@@ -99,13 +104,15 @@ export async function registerSupportRoutes(app: FastifyInstance) {
           `;
           if (!trip) throw new Error("TRIP_NOT_ACCESSIBLE");
         }
-        const relatedUserId = trip
+        const relatedUserValue = trip
           ? (String(trip.passenger_id) === user.id ? trip.driver_id : trip.passenger_id)
           : null;
+        const relatedUserId = relatedUserValue ? String(relatedUserValue) : null;
+        const cooperativeId = trip?.cooperative_id ? String(trip.cooperative_id) : null;
         const [created] = await sql`
           insert into incidents (trip_id,reported_by,related_user_id,cooperative_id,category,
             subject,description,priority,preferred_contact,status)
-          values (${body.tripId ?? null},${user.id},${relatedUserId ?? null},${trip?.cooperative_id ?? null},
+          values (${body.tripId ?? null},${user.id},${relatedUserId},${cooperativeId},
             ${body.category},${body.subject},${body.description},${body.priority},${body.preferredContact},'NUEVO')
           returning id::text, status, created_at as "createdAt"
         `;
