@@ -33,6 +33,10 @@ services:
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_BASE64
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NOTIFICATION_FROM_EMAIL
+        sync: false
 
   - type: web
     name: mototaxi-atacames-admin
