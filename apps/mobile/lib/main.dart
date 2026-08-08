@@ -23,6 +23,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'affiliate_banners.dart';
 import 'chat_sheet.dart';
+import 'in_app_notification_banner.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
 
@@ -147,8 +148,8 @@ String supportTripIdentifier(dynamic trip) {
   if (trip is! Map) return '';
   final value = (trip['tripId'] ?? trip['id'])?.toString().trim() ?? '';
   return RegExp(
-          r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-      .hasMatch(value)
+              r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+          .hasMatch(value)
       ? value
       : '';
 }
@@ -347,6 +348,13 @@ Future<void> main() async {
   try {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     await Firebase.initializeApp();
+    await FirebaseMessaging.instance.setAutoInitEnabled(true);
+    await FirebaseMessaging.instance
+        .setForegroundNotificationPresentationOptions(
+      alert: false,
+      badge: true,
+      sound: true,
+    );
     final permission = await FirebaseMessaging.instance.requestPermission(
       alert: true,
       badge: true,
@@ -623,7 +631,7 @@ class Api {
         d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
         mustChangePassword: d['user']['mustChangePassword'] == true,
         approvalStatus: d['user']['driverApprovalStatus']);
-    unawaited(registerFcm(s.token));
+    await registerFcm(s.token);
     return s;
   }
 
@@ -641,7 +649,8 @@ class Api {
         final response =
             await call('PUT', '/v1/devices/fcm-token', token: token, body: {
           'token': fcm,
-          'platform': 'ANDROID',
+          'platform':
+              defaultTargetPlatform == TargetPlatform.iOS ? 'IOS' : 'ANDROID',
           'firebaseProjectId': Firebase.app().options.projectId,
         });
         final push = response?['push'];
@@ -707,7 +716,8 @@ class Api {
   Future<List<dynamic>> notifications(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/notifications', token: t));
   Future<Map<String, dynamic>> supportConfig(String t) async =>
-      Map<String, dynamic>.from(await call('GET', '/v1/support/config', token: t));
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/support/config', token: t));
   Future<List<dynamic>> supportFaqs(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/support/faqs', token: t));
   Future<List<dynamic>> supportIncidents(String t) async =>
@@ -715,9 +725,11 @@ class Api {
   Future<dynamic> createSupportIncident(String t, Map<String, dynamic> body) =>
       call('POST', '/v1/support/incidents', token: t, body: body);
   Future<Map<String, dynamic>> supportIncident(String t, String id) async =>
-      Map<String, dynamic>.from(await call('GET', '/v1/support/incidents/$id', token: t));
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/support/incidents/$id', token: t));
   Future<dynamic> sendSupportMessage(String t, String id, String body) =>
-      call('POST', '/v1/support/incidents/$id/messages', token: t, body: {'body': body});
+      call('POST', '/v1/support/incidents/$id/messages',
+          token: t, body: {'body': body});
   Future<List<dynamic>> banners(String t, String placement) async =>
       List<dynamic>.from(await call(
           'GET', '/v1/banners?placement=${Uri.encodeQueryComponent(placement)}',
@@ -725,7 +737,8 @@ class Api {
   Future<dynamic> trip(String t, String id) =>
       call('GET', '/v1/trips/$id', token: t);
   Future<Map<String, dynamic>> route(
-      String t, LatLng origin, LatLng destination) async {
+      String t, LatLng origin, LatLng destination,
+      {String? tripId, String purpose = 'MAP'}) async {
     final value = await call('POST', '/v1/routes', token: t, body: {
       'origin': {
         'latitude': origin.latitude,
@@ -735,6 +748,8 @@ class Api {
         'latitude': destination.latitude,
         'longitude': destination.longitude,
       },
+      if (tripId != null) 'tripId': tripId,
+      'purpose': purpose,
     });
     return Map<String, dynamic>.from(value);
   }
@@ -843,9 +858,9 @@ class Api {
             'latitude': location.latitude
           }
       });
-  Future<void> respond(String t, String id) =>
+  Future<void> respond(String t, String id, {required bool accept}) =>
       call('POST', '/v1/driver/offers/$id/respond',
-          token: t, body: {'accept': true});
+          token: t, body: {'accept': accept});
   Future<void> action(String t, String id, String a) =>
       call('POST', '/v1/trips/$id/action', token: t, body: {'action': a});
   Future<void> rate(
@@ -1174,7 +1189,8 @@ class _LoginState extends State<Login> {
                 builder: (_) => s.mustChangePassword
                     ? ChangeTemporaryPassword(s)
                     : s.role == 'DRIVER'
-                        ? (s.approvalStatus == null || s.approvalStatus == 'APROBADO'
+                        ? (s.approvalStatus == null ||
+                                s.approvalStatus == 'APROBADO'
                             ? Driver(s)
                             : DriverApprovalScreen(s))
                         : Passenger(s)));
@@ -1523,7 +1539,8 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
           context,
           MaterialPageRoute(
               builder: (_) => session.role == 'DRIVER'
-                  ? (session.approvalStatus == null || session.approvalStatus == 'APROBADO'
+                  ? (session.approvalStatus == null ||
+                          session.approvalStatus == 'APROBADO'
                       ? Driver(session)
                       : DriverApprovalScreen(session))
                   : Passenger(session)),
@@ -1841,7 +1858,8 @@ class _RegisterState extends State<Register> {
                         child: Text('Conductor independiente')),
                     ...cooperatives.map((item) => DropdownMenuItem<String>(
                         value: item['id']?.toString(),
-                        child: Text(item['name']?.toString() ?? 'Cooperativa'))),
+                        child:
+                            Text(item['name']?.toString() ?? 'Cooperativa'))),
                   ],
                   onChanged: submitted || loadingCooperatives
                       ? null
@@ -2339,9 +2357,16 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
   String? error;
   bool loading = true;
   @override
-  void initState() { super.initState(); load(); }
+  void initState() {
+    super.initState();
+    load();
+  }
+
   Future<void> load() async {
-    setState(() { loading = true; error = null; });
+    setState(() {
+      loading = true;
+      error = null;
+    });
     try {
       final value = await Api().profile(widget.session.token);
       if (mounted) setState(() => profile = value);
@@ -2349,44 +2374,104 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
         final approved = Session(widget.session.token, widget.session.role,
             widget.session.name, widget.session.id,
             approvalStatus: 'APROBADO');
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => Driver(approved)));
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => Driver(approved)));
       }
+    } catch (reason) {
+      if (mounted) setState(() => error = reason.toString());
+    } finally {
+      if (mounted) setState(() => loading = false);
     }
-    catch (reason) { if (mounted) setState(() => error = reason.toString()); }
-    finally { if (mounted) setState(() => loading = false); }
   }
+
   Future<void> logout() async {
-    try { await Api().logout(widget.session.token); } catch (_) {}
+    try {
+      await Api().logout(widget.session.token);
+    } catch (_) {}
     if (!mounted) return;
-    Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
+    Navigator.pushAndRemoveUntil(context,
+        MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
   }
-  String statusText(String? value) => const {
-    'PENDIENTE_DOCUMENTOS': 'Completa tus documentos',
-    'PENDIENTE_REVISION': 'Documentos enviados para revisión',
-    'OBSERVADO': 'Se requieren correcciones',
-    'RECHAZADO': 'Solicitud rechazada',
-    'SUSPENDIDO': 'Cuenta suspendida',
-  }[value] ?? 'Solicitud en proceso';
+
+  String statusText(String? value) =>
+      const {
+        'PENDIENTE_DOCUMENTOS': 'Completa tus documentos',
+        'PENDIENTE_REVISION': 'Documentos enviados para revisión',
+        'OBSERVADO': 'Se requieren correcciones',
+        'RECHAZADO': 'Solicitud rechazada',
+        'SUSPENDIDO': 'Cuenta suspendida',
+      }[value] ??
+      'Solicitud en proceso';
   @override
   Widget build(BuildContext context) {
-    final status = profile?['approvalStatus']?.toString() ?? widget.session.approvalStatus;
-    return PopScope(canPop: false, child: Scaffold(
-      appBar: AppBar(title: const Text('Habilitación de conductor'), automaticallyImplyLeading: false),
-      body: loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(20), children: [
-        Icon(status == 'PENDIENTE_REVISION' ? Icons.hourglass_top : Icons.fact_check_outlined, size: 72, color: Theme.of(context).colorScheme.primary),
-        const SizedBox(height: 16),
-        Text(statusText(status), textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 10),
-        const Text('Para proteger a pasajeros y conductores, debes cargar y aprobar todos los documentos antes de recibir viajes.', textAlign: TextAlign.center),
-        if (profile?['approvalObservation']?.toString().isNotEmpty == true) Card(color: Theme.of(context).colorScheme.errorContainer, child: Padding(padding: const EdgeInsets.all(16), child: Text(profile['approvalObservation']))),
-        if (error != null) Padding(padding: const EdgeInsets.all(12), child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-        const SizedBox(height: 20),
-        FilledButton.icon(onPressed: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => DriverDocumentsScreen(widget.session))); await load(); }, icon: const Icon(Icons.upload_file_outlined), label: const Text('Revisar documentos habilitantes')),
-        OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SupportCenter(widget.session))), icon: const Icon(Icons.support_agent_outlined), label: const Text('Ayuda y soporte')),
-        OutlinedButton.icon(onPressed: load, icon: const Icon(Icons.refresh), label: const Text('Actualizar estado')),
-        TextButton(onPressed: logout, child: const Text('Cerrar sesión')),
-      ]),
-    ));
+    final status =
+        profile?['approvalStatus']?.toString() ?? widget.session.approvalStatus;
+    return PopScope(
+        canPop: false,
+        child: Scaffold(
+          appBar: AppBar(
+              title: const Text('Habilitación de conductor'),
+              automaticallyImplyLeading: false),
+          body: loading
+              ? const Center(child: CircularProgressIndicator())
+              : ListView(padding: const EdgeInsets.all(20), children: [
+                  Icon(
+                      status == 'PENDIENTE_REVISION'
+                          ? Icons.hourglass_top
+                          : Icons.fact_check_outlined,
+                      size: 72,
+                      color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(height: 16),
+                  Text(statusText(status),
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 10),
+                  const Text(
+                      'Para proteger a pasajeros y conductores, debes cargar y aprobar todos los documentos antes de recibir viajes.',
+                      textAlign: TextAlign.center),
+                  if (profile?['approvalObservation']?.toString().isNotEmpty ==
+                      true)
+                    Card(
+                        color: Theme.of(context).colorScheme.errorContainer,
+                        child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(profile['approvalObservation']))),
+                  if (error != null)
+                    Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(error!,
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error))),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                      onPressed: () async {
+                        await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    DriverDocumentsScreen(widget.session)));
+                        await load();
+                      },
+                      icon: const Icon(Icons.upload_file_outlined),
+                      label: const Text('Revisar documentos habilitantes')),
+                  OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => SupportCenter(widget.session))),
+                      icon: const Icon(Icons.support_agent_outlined),
+                      label: const Text('Ayuda y soporte')),
+                  OutlinedButton.icon(
+                      onPressed: load,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Actualizar estado')),
+                  TextButton(
+                      onPressed: logout, child: const Text('Cerrar sesión')),
+                ]),
+        ));
   }
 }
 
@@ -2404,7 +2489,10 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
   String? message;
   static const labels = {
     'PROFILE_PHOTO': ('Foto del conductor', Icons.account_circle_outlined),
-    'IDENTIFICATION': ('Documento de identificación', Icons.contact_page_outlined),
+    'IDENTIFICATION': (
+      'Documento de identificación',
+      Icons.contact_page_outlined
+    ),
     'LICENSE': ('Licencia de conducir', Icons.badge_outlined),
     'REGISTRATION': ('Matrícula de la mototaxi', Icons.description_outlined),
     'OPERATING_PERMIT': ('Permiso de operación', Icons.verified_outlined),
@@ -2682,14 +2770,16 @@ const supportCategoryLabels = <String, String>{
   'OTHER': 'Otro motivo',
 };
 
-String supportStatusLabel(String value) => const {
+String supportStatusLabel(String value) =>
+    const {
       'NUEVO': 'Nuevo',
       'ASIGNADO': 'Asignado',
       'EN_REVISION': 'En revisión',
       'ESPERANDO_USUARIO': 'Esperando tu respuesta',
       'RESUELTO': 'Resuelto',
       'CERRADO': 'Cerrado',
-    }[value] ?? value.replaceAll('_', ' ');
+    }[value] ??
+    value.replaceAll('_', ' ');
 
 class SupportCenter extends StatefulWidget {
   const SupportCenter(this.session, {super.key});
@@ -2730,7 +2820,8 @@ class _SupportCenterState extends State<SupportCenter> {
       setState(() {
         faqs = values[0] as List<dynamic>;
         incidents = values[1] as List<dynamic>;
-        whatsapp = (values[2] as Map<String, dynamic>)['whatsapp']?.toString() ?? '';
+        whatsapp =
+            (values[2] as Map<String, dynamic>)['whatsapp']?.toString() ?? '';
       });
     } catch (reason) {
       if (mounted) setState(() => error = reason.toString());
@@ -2740,8 +2831,10 @@ class _SupportCenterState extends State<SupportCenter> {
   Future<void> openWhatsapp() async {
     final digits = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
     if (digits.isEmpty) return;
-    final uri = Uri.parse('https://wa.me/$digits?text=${Uri.encodeQueryComponent('Hola, necesito ayuda con AtacamesGo.')}');
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+    final uri = Uri.parse(
+        'https://wa.me/$digits?text=${Uri.encodeQueryComponent('Hola, necesito ayuda con AtacamesGo.')}');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No se pudo abrir WhatsApp.')));
     }
@@ -2768,13 +2861,21 @@ class _SupportCenterState extends State<SupportCenter> {
                   colors: [Color(0xff006f7c), Color(0xff00a2b2)]),
               borderRadius: BorderRadius.circular(24),
             ),
-            child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Icon(Icons.support_agent, color: Colors.white, size: 38),
-              SizedBox(height: 10),
-              Text('¿Cómo podemos ayudarte?', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
-              SizedBox(height: 4),
-              Text('Consulta respuestas o crea una solicitud para nuestro equipo.', style: TextStyle(color: Colors.white70)),
-            ]),
+            child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.support_agent, color: Colors.white, size: 38),
+                  SizedBox(height: 10),
+                  Text('¿Cómo podemos ayudarte?',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800)),
+                  SizedBox(height: 4),
+                  Text(
+                      'Consulta respuestas o crea una solicitud para nuestro equipo.',
+                      style: TextStyle(color: Colors.white70)),
+                ]),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -2782,47 +2883,103 @@ class _SupportCenterState extends State<SupportCenter> {
             decoration: InputDecoration(
               hintText: 'Buscar en preguntas frecuentes',
               prefixIcon: const Icon(Icons.search),
-              suffixIcon: search.text.isEmpty ? null : IconButton(onPressed: search.clear, icon: const Icon(Icons.close)),
+              suffixIcon: search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      onPressed: search.clear, icon: const Icon(Icons.close)),
             ),
           ),
-          if (error != null) Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          if (error != null)
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(error!,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error))),
           const SizedBox(height: 12),
-          Text('Preguntas frecuentes', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-          if (faqs == null) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
-          else if (visibleFaqs.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No encontramos una respuesta. Puedes crear una solicitud de soporte.')))
-          else ...visibleFaqs.map((faq) => Card(child: ExpansionTile(
-            leading: const Icon(Icons.help_outline),
-            title: Text(faq['question']),
-            subtitle: Text(faq['category']),
-            children: [Padding(padding: const EdgeInsets.fromLTRB(18, 0, 18, 18), child: Align(alignment: Alignment.centerLeft, child: Text(faq['answer'])))],
-          ))),
+          Text('Preguntas frecuentes',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          if (faqs == null)
+            const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()))
+          else if (visibleFaqs.isEmpty)
+            const Card(
+                child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text(
+                        'No encontramos una respuesta. Puedes crear una solicitud de soporte.')))
+          else
+            ...visibleFaqs.map((faq) => Card(
+                    child: ExpansionTile(
+                  leading: const Icon(Icons.help_outline),
+                  title: Text(faq['question']),
+                  subtitle: Text(faq['category']),
+                  children: [
+                    Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                        child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(faq['answer'])))
+                  ],
+                ))),
           const SizedBox(height: 18),
           FilledButton.icon(
             onPressed: () async {
-              final created = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => CreateSupportRequest(widget.session)));
+              final created = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => CreateSupportRequest(widget.session)));
               if (created == true) await load();
             },
             icon: const Icon(Icons.add_comment_outlined),
             label: const Text('Crear solicitud de soporte'),
           ),
-          if (whatsapp.isNotEmpty) OutlinedButton.icon(onPressed: openWhatsapp, icon: const Icon(Icons.chat_outlined), label: const Text('Contactar por WhatsApp')),
+          if (whatsapp.isNotEmpty)
+            OutlinedButton.icon(
+                onPressed: openWhatsapp,
+                icon: const Icon(Icons.chat_outlined),
+                label: const Text('Contactar por WhatsApp')),
           const SizedBox(height: 22),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text('Mis solicitudes', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+            Text('Mis solicitudes',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w800)),
             IconButton(onPressed: load, icon: const Icon(Icons.refresh)),
           ]),
-          if (incidents == null) const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()))
-          else if (incidents!.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('Aún no has creado solicitudes de soporte.')))
-          else ...incidents!.map((item) => Card(child: ListTile(
-            leading: CircleAvatar(child: Icon(item['priority'] == 'CRITICA' ? Icons.warning_amber : Icons.support_agent_outlined)),
-            title: Text(item['subject']),
-            subtitle: Text('${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => SupportIncidentDetail(widget.session, item['id'])));
-              await load();
-            },
-          ))),
+          if (incidents == null)
+            const Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(child: CircularProgressIndicator()))
+          else if (incidents!.isEmpty)
+            const Card(
+                child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text('Aún no has creado solicitudes de soporte.')))
+          else
+            ...incidents!.map((item) => Card(
+                    child: ListTile(
+                  leading: CircleAvatar(
+                      child: Icon(item['priority'] == 'CRITICA'
+                          ? Icons.warning_amber
+                          : Icons.support_agent_outlined)),
+                  title: Text(item['subject']),
+                  subtitle: Text(
+                      '${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => SupportIncidentDetail(
+                                widget.session, item['id'])));
+                    await load();
+                  },
+                ))),
         ]),
       ),
     );
@@ -2849,31 +3006,52 @@ class _CreateSupportRequestState extends State<CreateSupportRequest> {
   @override
   void initState() {
     super.initState();
-    Api().trips(widget.session.token).then((value) { if (mounted) setState(() => trips = value); }).catchError((_) { if (mounted) setState(() => trips = []); });
+    Api().trips(widget.session.token).then((value) {
+      if (mounted) setState(() => trips = value);
+    }).catchError((_) {
+      if (mounted) setState(() => trips = []);
+    });
   }
 
   @override
   void dispose() {
-    subject.dispose(); description.dispose(); super.dispose();
+    subject.dispose();
+    description.dispose();
+    super.dispose();
   }
 
   Future<void> chooseAttachment() async {
-    final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70, maxWidth: 1600, maxHeight: 1600);
+    final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 70,
+        maxWidth: 1600,
+        maxHeight: 1600);
     if (file == null) return;
     final bytes = await file.readAsBytes();
     final mime = supportedImageMime(bytes);
     if (mime == null || bytes.length > 2500000) {
-      setState(() => message = 'La imagen debe ser JPG, PNG o WEBP y pesar máximo 2,5 MB.');
+      setState(() => message =
+          'La imagen debe ser JPG, PNG o WEBP y pesar máximo 2,5 MB.');
       return;
     }
-    setState(() { attachment = file; attachmentBytes = bytes; attachmentMime = mime; message = null; });
+    setState(() {
+      attachment = file;
+      attachmentBytes = bytes;
+      attachmentMime = mime;
+      message = null;
+    });
   }
 
   Future<void> submit() async {
     if (subject.text.trim().length < 5 || description.text.trim().length < 10) {
-      setState(() => message = 'Completa el asunto y describe lo ocurrido con suficiente detalle.'); return;
+      setState(() => message =
+          'Completa el asunto y describe lo ocurrido con suficiente detalle.');
+      return;
     }
-    setState(() { busy = true; message = null; });
+    setState(() {
+      busy = true;
+      message = null;
+    });
     try {
       await Api().createSupportIncident(widget.session.token, {
         'category': category,
@@ -2882,41 +3060,130 @@ class _CreateSupportRequestState extends State<CreateSupportRequest> {
         'description': description.text.trim(),
         'priority': priority,
         'preferredContact': contact,
-        'attachments': attachmentBytes == null ? [] : [{
-          'fileName': attachment!.name,
-          'fileMime': attachmentMime,
-          'fileBase64': base64Encode(attachmentBytes!),
-        }],
+        'attachments': attachmentBytes == null
+            ? []
+            : [
+                {
+                  'fileName': attachment!.name,
+                  'fileMime': attachmentMime,
+                  'fileBase64': base64Encode(attachmentBytes!),
+                }
+              ],
       });
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Solicitud creada correctamente.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Solicitud creada correctamente.')));
       Navigator.pop(context, true);
     } catch (reason) {
       if (mounted) setState(() => message = reason.toString());
-    } finally { if (mounted) setState(() => busy = false); }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Nueva solicitud')),
-    body: ListView(padding: const EdgeInsets.all(18), children: [
-      DropdownButtonFormField<String>(initialValue: category, decoration: const InputDecoration(labelText: 'Categoría *'), items: supportCategoryLabels.entries.map((entry) => DropdownMenuItem(value: entry.key, child: Text(entry.value))).toList(), onChanged: (value) => setState(() => category = value!)),
-      const SizedBox(height: 14),
-      DropdownButtonFormField<String>(initialValue: tripId, decoration: const InputDecoration(labelText: 'Viaje relacionado', helperText: 'Opcional; facilita que soporte revise el caso'), items: [const DropdownMenuItem(value: '', child: Text('Sin viaje relacionado')), ...(trips ?? []).take(30).where((trip) => supportTripIdentifier(trip).isNotEmpty).map((trip) => DropdownMenuItem(value: supportTripIdentifier(trip), child: Text('${trip['originReference'] ?? 'Origen'} → ${trip['destinationReference'] ?? 'Destino'}', overflow: TextOverflow.ellipsis)))], onChanged: (value) => setState(() => tripId = value!)),
-      const SizedBox(height: 14),
-      TextField(controller: subject, maxLength: 140, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Asunto *')),
-      const SizedBox(height: 8),
-      TextField(controller: description, minLines: 4, maxLines: 8, maxLength: 4000, decoration: const InputDecoration(labelText: 'Descripción *', alignLabelWithHint: true, hintText: 'Indica qué ocurrió, cuándo y qué ayuda necesitas.')),
-      const SizedBox(height: 8),
-      Row(children: [Expanded(child: DropdownButtonFormField<String>(initialValue: priority, decoration: const InputDecoration(labelText: 'Prioridad'), items: const [DropdownMenuItem(value: 'BAJA', child: Text('Baja')), DropdownMenuItem(value: 'MEDIA', child: Text('Media')), DropdownMenuItem(value: 'ALTA', child: Text('Alta')), DropdownMenuItem(value: 'CRITICA', child: Text('Crítica'))], onChanged: (value) => setState(() => priority = value!))), const SizedBox(width: 10), Expanded(child: DropdownButtonFormField<String>(initialValue: contact, decoration: const InputDecoration(labelText: 'Contacto'), items: const [DropdownMenuItem(value: 'APP', child: Text('Aplicación')), DropdownMenuItem(value: 'TELEFONO', child: Text('Teléfono')), DropdownMenuItem(value: 'WHATSAPP', child: Text('WhatsApp')), DropdownMenuItem(value: 'CORREO', child: Text('Correo'))], onChanged: (value) => setState(() => contact = value!)))]),
-      const SizedBox(height: 14),
-      OutlinedButton.icon(onPressed: chooseAttachment, icon: const Icon(Icons.attach_file), label: Text(attachment == null ? 'Adjuntar fotografía' : attachment!.name)),
-      if (attachmentBytes != null) Padding(padding: const EdgeInsets.only(top: 10), child: ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.memory(attachmentBytes!, height: 150, fit: BoxFit.cover))),
-      if (message != null) Padding(padding: const EdgeInsets.all(12), child: Text(message!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-      const SizedBox(height: 10),
-      FilledButton.icon(onPressed: busy ? null : submit, icon: const Icon(Icons.send_outlined), label: Text(busy ? 'Enviando…' : 'Enviar solicitud')),
-    ]),
-  );
+        appBar: AppBar(title: const Text('Nueva solicitud')),
+        body: ListView(padding: const EdgeInsets.all(18), children: [
+          DropdownButtonFormField<String>(
+              initialValue: category,
+              decoration: const InputDecoration(labelText: 'Categoría *'),
+              items: supportCategoryLabels.entries
+                  .map((entry) => DropdownMenuItem(
+                      value: entry.key, child: Text(entry.value)))
+                  .toList(),
+              onChanged: (value) => setState(() => category = value!)),
+          const SizedBox(height: 14),
+          DropdownButtonFormField<String>(
+              initialValue: tripId,
+              decoration: const InputDecoration(
+                  labelText: 'Viaje relacionado',
+                  helperText: 'Opcional; facilita que soporte revise el caso'),
+              items: [
+                const DropdownMenuItem(
+                    value: '', child: Text('Sin viaje relacionado')),
+                ...(trips ?? [])
+                    .take(30)
+                    .where((trip) => supportTripIdentifier(trip).isNotEmpty)
+                    .map((trip) => DropdownMenuItem(
+                        value: supportTripIdentifier(trip),
+                        child: Text(
+                            '${trip['originReference'] ?? 'Origen'} → ${trip['destinationReference'] ?? 'Destino'}',
+                            overflow: TextOverflow.ellipsis)))
+              ],
+              onChanged: (value) => setState(() => tripId = value!)),
+          const SizedBox(height: 14),
+          TextField(
+              controller: subject,
+              maxLength: 140,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(labelText: 'Asunto *')),
+          const SizedBox(height: 8),
+          TextField(
+              controller: description,
+              minLines: 4,
+              maxLines: 8,
+              maxLength: 4000,
+              decoration: const InputDecoration(
+                  labelText: 'Descripción *',
+                  alignLabelWithHint: true,
+                  hintText:
+                      'Indica qué ocurrió, cuándo y qué ayuda necesitas.')),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+                child: DropdownButtonFormField<String>(
+                    initialValue: priority,
+                    decoration: const InputDecoration(labelText: 'Prioridad'),
+                    items: const [
+                      DropdownMenuItem(value: 'BAJA', child: Text('Baja')),
+                      DropdownMenuItem(value: 'MEDIA', child: Text('Media')),
+                      DropdownMenuItem(value: 'ALTA', child: Text('Alta')),
+                      DropdownMenuItem(value: 'CRITICA', child: Text('Crítica'))
+                    ],
+                    onChanged: (value) => setState(() => priority = value!))),
+            const SizedBox(width: 10),
+            Expanded(
+                child: DropdownButtonFormField<String>(
+                    initialValue: contact,
+                    decoration: const InputDecoration(labelText: 'Contacto'),
+                    items: const [
+                      DropdownMenuItem(value: 'APP', child: Text('Aplicación')),
+                      DropdownMenuItem(
+                          value: 'TELEFONO', child: Text('Teléfono')),
+                      DropdownMenuItem(
+                          value: 'WHATSAPP', child: Text('WhatsApp')),
+                      DropdownMenuItem(value: 'CORREO', child: Text('Correo'))
+                    ],
+                    onChanged: (value) => setState(() => contact = value!)))
+          ]),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+              onPressed: chooseAttachment,
+              icon: const Icon(Icons.attach_file),
+              label: Text(attachment == null
+                  ? 'Adjuntar fotografía'
+                  : attachment!.name)),
+          if (attachmentBytes != null)
+            Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.memory(attachmentBytes!,
+                        height: 150, fit: BoxFit.cover))),
+          if (message != null)
+            Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(message!,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error))),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+              onPressed: busy ? null : submit,
+              icon: const Icon(Icons.send_outlined),
+              label: Text(busy ? 'Enviando…' : 'Enviar solicitud')),
+        ]),
+      );
 }
 
 class SupportIncidentDetail extends StatefulWidget {
@@ -2933,40 +3200,145 @@ class _SupportIncidentDetailState extends State<SupportIncidentDetail> {
   String? error;
   bool sending = false;
   @override
-  void initState() { super.initState(); load(); }
+  void initState() {
+    super.initState();
+    load();
+  }
+
   @override
-  void dispose() { response.dispose(); super.dispose(); }
-  Future<void> load() async { try { final value = await Api().supportIncident(widget.session.token, widget.id); if (mounted) setState(() { incident = value; error = null; }); } catch (reason) { if (mounted) setState(() => error = reason.toString()); } }
+  void dispose() {
+    response.dispose();
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    try {
+      final value =
+          await Api().supportIncident(widget.session.token, widget.id);
+      if (mounted) {
+        setState(() {
+          incident = value;
+          error = null;
+        });
+      }
+    } catch (reason) {
+      if (mounted) setState(() => error = reason.toString());
+    }
+  }
+
   Future<void> send() async {
     if (response.text.trim().isEmpty) return;
     setState(() => sending = true);
-    try { await Api().sendSupportMessage(widget.session.token, widget.id, response.text.trim()); response.clear(); await load(); }
-    catch (reason) { if (mounted) setState(() => error = reason.toString()); }
-    finally { if (mounted) setState(() => sending = false); }
+    try {
+      await Api().sendSupportMessage(
+          widget.session.token, widget.id, response.text.trim());
+      response.clear();
+      await load();
+    } catch (reason) {
+      if (mounted) setState(() => error = reason.toString());
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
   }
+
   @override
   Widget build(BuildContext context) {
     final item = incident;
-    final closed = item != null && ['RESUELTO', 'CERRADO'].contains(item['status']);
+    final closed =
+        item != null && ['RESUELTO', 'CERRADO'].contains(item['status']);
     return Scaffold(
       appBar: AppBar(title: const Text('Detalle de soporte')),
-      body: item == null ? Center(child: error == null ? const CircularProgressIndicator() : Text(error!)) : Column(children: [
-        Expanded(child: ListView(padding: const EdgeInsets.all(16), children: [
-          Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(item['subject'], style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 6),
-            Text('${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
-            if (item['tripId'] != null) Text('Viaje: ${item['tripId']}', style: Theme.of(context).textTheme.bodySmall),
-          ]))),
-          const SizedBox(height: 10),
-          ...(item['messages'] as List<dynamic>).map((message) {
-            final mine = message['authorRole'] == widget.session.role;
-            return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(margin: const EdgeInsets.symmetric(vertical: 5), padding: const EdgeInsets.all(12), constraints: const BoxConstraints(maxWidth: 330), decoration: BoxDecoration(color: mine ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(16)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(message['body']), const SizedBox(height: 4), Text('${message['author']} · ${DateTime.parse(message['createdAt']).toLocal().toString().substring(0, 16)}', style: Theme.of(context).textTheme.bodySmall)])));
-          }),
-          if ((item['attachments'] as List).isNotEmpty) Card(child: ListTile(leading: const Icon(Icons.attach_file), title: Text('${(item['attachments'] as List).length} archivo(s) adjunto(s)'), subtitle: const Text('Los archivos fueron enviados al equipo de soporte.'))),
-        ])),
-        if (!closed) SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(12, 8, 12, 12), child: Row(children: [Expanded(child: TextField(controller: response, minLines: 1, maxLines: 4, decoration: const InputDecoration(hintText: 'Escribe una respuesta'))), const SizedBox(width: 8), IconButton.filled(onPressed: sending ? null : send, icon: sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send))]))),
-      ]),
+      body: item == null
+          ? Center(
+              child: error == null
+                  ? const CircularProgressIndicator()
+                  : Text(error!))
+          : Column(children: [
+              Expanded(
+                  child: ListView(padding: const EdgeInsets.all(16), children: [
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(item['subject'],
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.w800)),
+                              const SizedBox(height: 6),
+                              Text(
+                                  '${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
+                              if (item['tripId'] != null)
+                                Text('Viaje: ${item['tripId']}',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                            ]))),
+                const SizedBox(height: 10),
+                ...(item['messages'] as List<dynamic>).map((message) {
+                  final mine = message['authorRole'] == widget.session.role;
+                  return Align(
+                      alignment:
+                          mine ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 5),
+                          padding: const EdgeInsets.all(12),
+                          constraints: const BoxConstraints(maxWidth: 330),
+                          decoration: BoxDecoration(
+                              color: mine
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .primaryContainer
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(16)),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(message['body']),
+                                const SizedBox(height: 4),
+                                Text(
+                                    '${message['author']} · ${DateTime.parse(message['createdAt']).toLocal().toString().substring(0, 16)}',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall)
+                              ])));
+                }),
+                if ((item['attachments'] as List).isNotEmpty)
+                  Card(
+                      child: ListTile(
+                          leading: const Icon(Icons.attach_file),
+                          title: Text(
+                              '${(item['attachments'] as List).length} archivo(s) adjunto(s)'),
+                          subtitle: const Text(
+                              'Los archivos fueron enviados al equipo de soporte.'))),
+              ])),
+              if (!closed)
+                SafeArea(
+                    top: false,
+                    child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                        child: Row(children: [
+                          Expanded(
+                              child: TextField(
+                                  controller: response,
+                                  minLines: 1,
+                                  maxLines: 4,
+                                  decoration: const InputDecoration(
+                                      hintText: 'Escribe una respuesta'))),
+                          const SizedBox(width: 8),
+                          IconButton.filled(
+                              onPressed: sending ? null : send,
+                              icon: sending
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2))
+                                  : const Icon(Icons.send))
+                        ]))),
+            ]),
     );
   }
 }
@@ -3252,14 +3624,35 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((push) {
         final type = push.data['type'];
+        if (type == 'CHAT_MESSAGE' && !passengerChatOpen) {
+          if (!mounted) return;
+          InAppNotificationBanner.show(
+            context,
+            id: 'chat-${push.data['messageId'] ?? push.data['tripId']}',
+            title: push.notification?.title ?? 'Nuevo mensaje del conductor',
+            message: push.notification?.body ??
+                'Tienes un nuevo mensaje sobre tu viaje.',
+            actionLabel: 'Abrir',
+            icon: Icons.chat_bubble_outline,
+            onTap: () => openPassengerChat(push.data['tripId']),
+          );
+        }
         if (const {
+          'TRIP_ASSIGNED',
           'DRIVER_EN_ROUTE',
           'DRIVER_ARRIVED',
           'IN_PROGRESS',
           'COMPLETED',
           'TRIP_CANCELLED'
         }.contains(type)) {
-          reflectTripStatus(type, push.data['tripId']);
+          final status = type == 'TRIP_ASSIGNED' ? 'DRIVER_EN_ROUTE' : type;
+          reflectTripStatus(status, push.data['tripId']);
+          showPassengerNotification(
+            status?.toString() ?? 'TRIP_UPDATE',
+            push.data['tripId']?.toString(),
+            title: push.notification?.title,
+            body: push.notification?.body,
+          );
           load();
         }
       });
@@ -3326,6 +3719,37 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final push = await FirebaseMessaging.instance.getInitialMessage();
     if (!mounted || push == null) return;
     handleOpenedPush(push);
+  }
+
+  void showPassengerNotification(String type, String? tripId,
+      {String? title, String? body}) {
+    if (!mounted) return;
+    final defaults = <String, List<String>>{
+      'DRIVER_EN_ROUTE': [
+        'Conductor en camino',
+        'Tu conductor se dirige hacia el origen.'
+      ],
+      'DRIVER_ARRIVED': [
+        'Conductor llegó',
+        'Tu conductor ya se encuentra en el punto de partida.'
+      ],
+      'IN_PROGRESS': ['Viaje iniciado', 'Tu viaje está en curso.'],
+      'COMPLETED': ['Viaje finalizado', 'El recorrido terminó correctamente.'],
+      'TRIP_CANCELLED': [
+        'Viaje cancelado',
+        'La solicitud ya no se encuentra activa.'
+      ],
+    };
+    final fallback = defaults[type] ??
+        ['Actualización del viaje', 'Hay novedades en tu solicitud.'];
+    InAppNotificationBanner.show(
+      context,
+      id: '$type-${tripId ?? 'active'}',
+      title: title ?? fallback[0],
+      message: body ?? fallback[1],
+      actionLabel: 'Ver',
+      onTap: load,
+    );
   }
 
   void reflectTripStatus(dynamic statusValue, dynamic tripIdValue) {
@@ -3429,18 +3853,24 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     if (type == 'trip:status') {
       reflectTripStatus(event['status'], event['tripId']);
+      showPassengerNotification(event['status']?.toString() ?? 'TRIP_UPDATE',
+          event['tripId']?.toString());
       load();
       return;
     }
     if (type == 'chat:message') {
       if (passengerChatOpen) return;
       final value = Map<String, dynamic>.from(event['message'] as Map);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Tienes un nuevo mensaje sobre tu viaje.'),
-          action: SnackBarAction(
-              label: 'Abrir',
-              onPressed: () =>
-                  openPassengerChat(value['tripId']?.toString()))));
+      InAppNotificationBanner.show(
+        context,
+        id: 'chat-${value['messageId'] ?? value['clientMessageId'] ?? DateTime.now().millisecondsSinceEpoch}',
+        title: 'Nuevo mensaje del conductor',
+        message: value['body']?.toString() ??
+            'Tienes un nuevo mensaje sobre tu viaje.',
+        actionLabel: 'Abrir',
+        icon: Icons.chat_bubble_outline,
+        onTap: () => openPassengerChat(value['tripId']?.toString()),
+      );
     }
   }
 
@@ -4670,6 +5100,7 @@ class Driver extends StatefulWidget {
 class _DriverState extends State<Driver> with WidgetsBindingObserver {
   final api = Api();
   final driverSheetController = DraggableScrollableController();
+  final offerPageController = PageController(viewportFraction: .94);
   late final RealtimeService realtime;
   dynamic active;
   List offers = [];
@@ -4689,6 +5120,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   List<LatLng> routePoints = [];
   DateTime? lastRouteAt;
   bool driverChatOpen = false;
+  final Map<String, DateTime> announcedOfferIds = <String, DateTime>{};
+  int offerIndex = 0;
+  String? preloadedRouteTripId;
+  List<LatLng>? preloadedTripRoute;
+  bool routePreparing = false;
+  final Set<String> processingOfferIds = <String>{};
   @override
   void initState() {
     super.initState();
@@ -4698,6 +5135,27 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     realtime.connect();
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((message) {
+        if (message.data['type'] == 'CHAT_MESSAGE' && !driverChatOpen) {
+          if (!mounted) return;
+          InAppNotificationBanner.show(
+            context,
+            id: 'chat-${message.data['messageId'] ?? message.data['tripId']}',
+            title: message.notification?.title ?? 'Nuevo mensaje del pasajero',
+            message: message.notification?.body ??
+                'Tienes un nuevo mensaje sobre tu viaje.',
+            actionLabel: 'Abrir',
+            icon: Icons.chat_bubble_outline,
+            onTap: () => openDriverChat(message.data['tripId']),
+          );
+        }
+        if (message.data['type'] == 'TRIP_OFFER') {
+          announceTripOffer(
+            message.data['tripId']?.toString(),
+            title: message.notification?.title,
+            body: message.notification?.body,
+            eventAt: message.data['eventAt']?.toString(),
+          );
+        }
         if (message.data['type'] == 'TRIP_CANCELLED' && mounted) {
           setState(() => driverMessage =
               message.data['reason'] == 'ADMIN_CANCELLED'
@@ -4705,6 +5163,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   : 'El pasajero canceló la solicitud.');
         }
         if (message.data['type'] == 'TRIP_OFFER' ||
+            message.data['type'] == 'TRIP_OFFER_CANCELLED' ||
             message.data['type'] == 'TRIP_CANCELLED') {
           refresh();
         }
@@ -4729,6 +5188,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     realtimeSubscription?.cancel();
     realtime.dispose();
     driverSheetController.dispose();
+    offerPageController.dispose();
     super.dispose();
   }
 
@@ -4753,6 +5213,50 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final push = await FirebaseMessaging.instance.getInitialMessage();
     if (!mounted || push == null) return;
     handleOpenedPush(push);
+  }
+
+  Future<void> announceTripOffer(String? tripId,
+      {String? title, String? body, String? eventAt}) async {
+    if (!mounted || tripId == null || tripId.isEmpty) return;
+    final now = DateTime.now();
+    announcedOfferIds.removeWhere(
+        (_, value) => now.difference(value) > const Duration(minutes: 3));
+    final previous = announcedOfferIds[tripId];
+    if (previous != null &&
+        now.difference(previous) < const Duration(seconds: 8)) {
+      debugPrint('Evento duplicado de solicitud ignorado: $tripId');
+      return;
+    }
+    announcedOfferIds[tripId] = now;
+    final shown = InAppNotificationBanner.show(
+      context,
+      id: 'trip-offer-$tripId',
+      title: title ?? 'Nuevo viaje disponible',
+      message: body ?? 'Un pasajero solicita un viaje cercano.',
+      actionLabel: 'Ver viaje',
+      onTap: () {
+        _moveDriverSheet(.58);
+        unawaited(refresh());
+      },
+    );
+    if (!shown) return;
+    final generatedAt = eventAt == null ? null : DateTime.tryParse(eventAt);
+    if (generatedAt != null) {
+      debugPrint(
+          'Solicitud visible ${DateTime.now().difference(generatedAt).inMilliseconds} ms después del evento.');
+    }
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await nativeActions.invokeMethod<bool>('showForegroundTripOffer', {
+          'tripId': tripId,
+          'title': title ?? 'Nuevo viaje disponible',
+          'body': body ?? 'Un pasajero solicita un viaje cercano.',
+        });
+      } on PlatformException catch (error) {
+        debugPrint(
+            'No se pudo mostrar la alerta sonora del viaje: ${error.code}');
+      }
+    }
   }
 
   void _moveDriverSheet(double size) {
@@ -4794,19 +5298,32 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (!mounted) return;
     if (event['type'] == 'connected' && active?['tripId'] != null) {
       realtime.subscribeTrip(active['tripId'].toString());
-    } else if (event['type'] == 'trip:offer' ||
-        event['type'] == 'trip:offer:cancelled') {
+    } else if (event['type'] == 'trip:offer') {
+      final tripId = event['tripId']?.toString();
+      announceTripOffer(tripId, eventAt: event['eventAt']?.toString());
+      refresh();
+    } else if (event['type'] == 'trip:offer:cancelled') {
+      final tripId = event['tripId']?.toString();
+      if (tripId != null && mounted) {
+        setState(() => offers
+            .removeWhere((offer) => offer['tripId']?.toString() == tripId));
+      }
       refresh();
     } else if (event['type'] == 'trip:status') {
       refresh();
     } else if (event['type'] == 'chat:message') {
       if (driverChatOpen) return;
       final value = Map<String, dynamic>.from(event['message'] as Map);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Tienes un nuevo mensaje del pasajero.'),
-          action: SnackBarAction(
-              label: 'Abrir',
-              onPressed: () => openDriverChat(value['tripId']?.toString()))));
+      InAppNotificationBanner.show(
+        context,
+        id: 'chat-${value['messageId'] ?? value['clientMessageId'] ?? DateTime.now().millisecondsSinceEpoch}',
+        title: 'Nuevo mensaje del pasajero',
+        message: value['body']?.toString() ??
+            'Tienes un nuevo mensaje sobre tu viaje.',
+        actionLabel: 'Abrir',
+        icon: Icons.chat_bubble_outline,
+        onTap: () => openDriverChat(value['tripId']?.toString()),
+      );
     }
   }
 
@@ -4885,7 +5402,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   Future<void> restore({bool adjustSheet = true}) async {
-    await api.registerFcm(widget.s.token);
+    unawaited(api.registerFcm(widget.s.token));
     final values = await Future.wait(
         [api.active(widget.s.token), api.driverState(widget.s.token)]);
     if (!mounted) return;
@@ -4901,7 +5418,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
     });
     if (adjustSheet) _moveDriverSheet(active == null ? .30 : .50);
-    if (active != null) unawaited(resolveOriginAddress(active));
+    if (active != null) {
+      unawaited(resolveOriginAddress(active));
+      unawaited(preloadActiveTripRoute(active));
+    }
     if (serverAvailable || active != null) {
       try {
         await startGpsTracking(markAvailable: serverAvailable);
@@ -4979,7 +5499,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         final r = await api.offers(widget.s.token);
         if (mounted) {
           final hadOffers = offers.isNotEmpty;
-          setState(() => offers = r);
+          final unique = <String, dynamic>{};
+          for (final offer in r) {
+            unique[offer['tripId'].toString()] = offer;
+          }
+          setState(() {
+            offers = unique.values.toList();
+            if (offerIndex >= offers.length) offerIndex = 0;
+          });
           if (!hadOffers && r.isNotEmpty) _moveDriverSheet(.48);
         }
       } else if (offers.isNotEmpty && mounted) {
@@ -5039,7 +5566,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (target == null) return;
     lastRouteAt = now;
     try {
-      final route = await api.route(widget.s.token, current, target);
+      final route = await api.route(widget.s.token, current, target,
+          tripId: active['tripId']?.toString(), purpose: 'ACTIVE_TRIP');
       final points = List<dynamic>.from(route['points'] ?? const [])
           .map((point) => LatLng((point['latitude'] as num).toDouble(),
               (point['longitude'] as num).toDouble()))
@@ -5050,15 +5578,70 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> preloadActiveTripRoute(dynamic trip) async {
+    final tripId = trip?['tripId']?.toString();
+    if (tripId == null || preloadedRouteTripId == tripId) return;
+    final pickup = trip['originLatitude'] == null
+        ? null
+        : LatLng((trip['originLatitude'] as num).toDouble(),
+            (trip['originLongitude'] as num).toDouble());
+    final dropoff = trip['destinationLatitude'] == null
+        ? null
+        : LatLng((trip['destinationLatitude'] as num).toDouble(),
+            (trip['destinationLongitude'] as num).toDouble());
+    if (pickup == null || dropoff == null) return;
+    preloadedRouteTripId = tripId;
+    final timer = Stopwatch()..start();
+    try {
+      final route = await api.route(widget.s.token, pickup, dropoff,
+          tripId: tripId, purpose: 'PRELOAD');
+      final points = List<dynamic>.from(route['points'] ?? const [])
+          .map((point) => LatLng((point['latitude'] as num).toDouble(),
+              (point['longitude'] as num).toDouble()))
+          .toList();
+      if (active?['tripId']?.toString() == tripId && points.isNotEmpty) {
+        preloadedTripRoute = points;
+        debugPrint(
+            'Ruta anticipada lista en ${timer.elapsedMilliseconds} ms; cache=${route['cacheHit']}');
+      }
+    } catch (error) {
+      if (preloadedRouteTripId == tripId) preloadedRouteTripId = null;
+      debugPrint('No se pudo precargar la ruta del viaje: $error');
+    }
+  }
+
   Future<void> progress(BuildContext c, String action) async {
     final tripId = active['tripId'];
-    await api.action(widget.s.token, tripId, action);
-    if (action == 'COMPLETE') {
-      if (!c.mounted) return;
-      await rating(c, widget.s, tripId, () => {});
+    final timer = Stopwatch()..start();
+    if (action == 'START' && mounted) setState(() => routePreparing = true);
+    try {
+      await api.action(widget.s.token, tripId, action);
+      if (action == 'START' && mounted) {
+        final cached =
+            preloadedRouteTripId == tripId ? preloadedTripRoute : null;
+        setState(() {
+          active = {
+            ...Map<String, dynamic>.from(active as Map),
+            'status': 'IN_PROGRESS'
+          };
+          if (cached != null && cached.isNotEmpty) routePoints = cached;
+          routePreparing = false;
+        });
+        debugPrint(
+            'Inicio de viaje visible en ${timer.elapsedMilliseconds} ms; rutaAnticipada=${cached?.isNotEmpty == true}');
+        unawaited(refreshDriverRoute(force: true));
+        unawaited(restore(adjustSheet: false));
+        return;
+      }
+      if (action == 'COMPLETE') {
+        if (!c.mounted) return;
+        await rating(c, widget.s, tripId, () => {});
+      }
+      await restore(adjustSheet: false);
+      await refresh();
+    } finally {
+      if (mounted && routePreparing) setState(() => routePreparing = false);
     }
-    await restore(adjustSheet: false);
-    await refresh();
   }
 
   String? next() => {
@@ -5128,6 +5711,175 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   child: const Text('Cerrar')),
             ]),
           ),
+        ),
+      );
+
+  Future<bool> _respondToOffer(dynamic offer,
+      {required bool accept, bool confirmReject = false}) async {
+    final offerId = offer['offerId']?.toString();
+    if (offerId == null || processingOfferIds.contains(offerId)) return false;
+    if (!accept && confirmReject) {
+      final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Rechazar esta solicitud'),
+              content: const Text(
+                  'Solo se quitará de tu lista. Otro conductor todavía podrá aceptarla.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Volver')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('Rechazar')),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirmed) return false;
+    }
+    setState(() => processingOfferIds.add(offerId));
+    try {
+      await api.respond(widget.s.token, offerId, accept: accept);
+      if (!mounted) return true;
+      if (accept) {
+        await restore();
+        await refresh();
+      } else {
+        setState(() {
+          offers.removeWhere((item) => item['offerId']?.toString() == offerId);
+          if (offerIndex >= offers.length) offerIndex = 0;
+        });
+      }
+      return true;
+    } catch (error) {
+      if (mounted) {
+        setState(() => driverMessage = error.toString());
+        await refresh();
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => processingOfferIds.remove(offerId));
+    }
+  }
+
+  Widget _offerCard(BuildContext context, dynamic offer, int index) {
+    final offerId = offer['offerId']?.toString() ?? 'offer-$index';
+    final busy = processingOfferIds.contains(offerId);
+    final distance = (offer['distanceMeters'] as num?)?.toDouble();
+    final duration = (offer['durationSeconds'] as num?)?.toDouble();
+    final fare = (offer['quotedTotalCents'] as num?)?.toInt();
+    return Dismissible(
+      key: ValueKey(offerId),
+      direction: DismissDirection.down,
+      confirmDismiss: (_) =>
+          _respondToOffer(offer, accept: false, confirmReject: true),
+      background: Container(
+        alignment: Alignment.topCenter,
+        padding: const EdgeInsets.only(top: 22),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.errorContainer,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.close),
+          SizedBox(width: 8),
+          Text('Soltar para rechazar'),
+        ]),
+      ),
+      child: Card(
+        margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              const Icon(Icons.notifications_active_outlined),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Nuevo viaje · ${offer['passengers']} pasajero(s)',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Text('${index + 1} de ${offers.length}'),
+            ]),
+            if (offers.length > 1) ...[
+              const SizedBox(height: 4),
+              const Text('Desliza a los lados para revisar otras solicitudes.',
+                  style: TextStyle(fontSize: 12)),
+            ],
+            const SizedBox(height: 12),
+            Text('Origen', style: Theme.of(context).textTheme.labelLarge),
+            Text(
+                cleanAddressLabel(offer['originReference'],
+                    fallback: 'Origen seleccionado'),
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 10),
+            Text('Destino', style: Theme.of(context).textTheme.labelLarge),
+            Text(
+                cleanAddressLabel(offer['destinationReference'],
+                    fallback: 'Destino seleccionado'),
+                style: Theme.of(context).textTheme.titleMedium),
+            if (offer['notes']?.toString().trim().isNotEmpty == true) ...[
+              const SizedBox(height: 8),
+              Text('Referencia: ${offer['notes']}'),
+            ],
+            const SizedBox(height: 10),
+            Wrap(spacing: 12, runSpacing: 6, children: [
+              if (distance != null)
+                Text('${(distance / 1000).toStringAsFixed(1)} km aprox.'),
+              if (duration != null)
+                Text('${(duration / 60).ceil()} min aprox.'),
+              if (fare != null) Text('\$${(fare / 100).toStringAsFixed(2)}'),
+              Text(offer['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'),
+            ]),
+            const SizedBox(height: 14),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () => _respondToOffer(offer,
+                          accept: false, confirmReject: true),
+                  icon: const Icon(Icons.close),
+                  label: const Text('Rechazar'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed:
+                      busy ? null : () => _respondToOffer(offer, accept: true),
+                  icon: busy
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.check),
+                  label: const Text('Aceptar'),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            const Text('También puedes deslizar hacia abajo para rechazarla.',
+                textAlign: TextAlign.center, style: TextStyle(fontSize: 11)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _offerCarousel(BuildContext context) => SizedBox(
+        height: 400,
+        child: PageView.builder(
+          controller: offerPageController,
+          itemCount: offers.length,
+          onPageChanged: (value) => setState(() => offerIndex = value),
+          itemBuilder: (context, index) =>
+              _offerCard(context, offers[index], index),
         ),
       );
 
@@ -5267,77 +6019,29 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           ),
           if (action != null)
             FilledButton(
-              onPressed: () => progress(context, action),
-              child: Text(label(action)),
+              onPressed:
+                  routePreparing ? null : () => progress(context, action),
+              child: routePreparing
+                  ? const Row(mainAxisSize: MainAxisSize.min, children: [
+                      SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(width: 10),
+                      Text('Preparando ruta...'),
+                    ])
+                  : Text(label(action)),
             ),
         ],
-        ...offers.map((offer) => Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(children: [
-                        const Icon(Icons.notifications_active_outlined),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Nuevo viaje · ${offer['passengers']} pasajero(s)',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ),
-                      ]),
-                      const SizedBox(height: 12),
-                      Text('Origen',
-                          style: Theme.of(context).textTheme.labelLarge),
-                      Text(
-                        cleanAddressLabel(offer['originReference'],
-                            fallback: 'Origen seleccionado'),
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 10),
-                      Text('Destino',
-                          style: Theme.of(context).textTheme.labelLarge),
-                      Text(
-                        cleanAddressLabel(offer['destinationReference'],
-                            fallback: 'Destino seleccionado'),
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      if (offer['notes']?.toString().trim().isNotEmpty ==
-                          true) ...[
-                        const SizedBox(height: 10),
-                        Text('Referencia: ${offer['notes']}'),
-                      ],
-                      const SizedBox(height: 8),
-                      Text(
-                          'Pago: ${offer['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
-                      const SizedBox(height: 14),
-                      FilledButton.icon(
-                        onPressed: () async {
-                          setState(() => offers = []);
-                          try {
-                            await api.respond(widget.s.token, offer['offerId']);
-                          } catch (error) {
-                            if (mounted) {
-                              setState(() => driverMessage = error.toString());
-                            }
-                          } finally {
-                            await restore();
-                            await refresh();
-                          }
-                        },
-                        icon: const Icon(Icons.check),
-                        label: const Text('Aceptar viaje'),
-                      ),
-                    ]),
-              ),
-            )),
+        if (offers.isNotEmpty) _offerCarousel(context),
       ];
 
   @override
   Widget build(BuildContext context) {
     final action = next();
-    final mapTrip = active ?? (offers.isEmpty ? null : offers.first);
+    final mapTrip = active ??
+        (offers.isEmpty
+            ? null
+            : offers[offerIndex < offers.length ? offerIndex : 0]);
     final pickup = mapTrip?['originLatitude'] == null
         ? null
         : LatLng((mapTrip['originLatitude'] as num).toDouble(),

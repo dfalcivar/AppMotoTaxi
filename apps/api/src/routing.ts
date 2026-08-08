@@ -7,6 +7,18 @@ export interface RouteResult {
   points: RoutePoint[];
   distanceMeters: number | null;
   durationSeconds: number | null;
+  provider: "GOOGLE" | "ORS";
+  cacheHit: boolean;
+}
+
+const routeCache = new Map<string, { expiresAt: number; route: RouteResult }>();
+const inFlightRoutes = new Map<string, Promise<RouteResult>>();
+const routeCacheTtlMs = 2 * 60 * 1000;
+
+function routeKey(origin: RoutePoint, destination: RoutePoint): string {
+  return [origin.latitude, origin.longitude, destination.latitude, destination.longitude]
+    .map(value => value.toFixed(5))
+    .join(":");
 }
 
 export function decodeGooglePolyline(encoded: string): RoutePoint[] {
@@ -76,7 +88,9 @@ async function googleRoute(
     distanceMeters: route.distanceMeters ?? null,
     durationSeconds: route.duration
       ? Number(route.duration.replace(/s$/, ""))
-      : null
+      : null,
+    provider: "GOOGLE",
+    cacheHit: false
   };
 }
 
@@ -113,11 +127,13 @@ async function openRouteServiceRoute(
         longitude: longitude!
       })) ?? [],
     distanceMeters: feature?.properties?.summary?.distance ?? null,
-    durationSeconds: feature?.properties?.summary?.duration ?? null
+    durationSeconds: feature?.properties?.summary?.duration ?? null,
+    provider: "ORS",
+    cacheHit: false
   };
 }
 
-export async function computeRoute(
+async function computeFreshRoute(
   origin: RoutePoint,
   destination: RoutePoint
 ): Promise<RouteResult> {
@@ -132,4 +148,34 @@ export async function computeRoute(
   const orsKey = process.env.ORS_API_KEY?.trim();
   if (orsKey) return openRouteServiceRoute(origin, destination, orsKey);
   throw new Error("ROUTING_NOT_CONFIGURED");
+}
+
+export async function computeRoute(
+  origin: RoutePoint,
+  destination: RoutePoint
+): Promise<RouteResult> {
+  const key = routeKey(origin, destination);
+  const cached = routeCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { ...cached.route, cacheHit: true };
+  }
+  if (cached) routeCache.delete(key);
+
+  const inFlight = inFlightRoutes.get(key);
+  if (inFlight) return { ...(await inFlight), cacheHit: true };
+
+  const request = computeFreshRoute(origin, destination);
+  inFlightRoutes.set(key, request);
+  try {
+    const route = await request;
+    routeCache.set(key, { expiresAt: Date.now() + routeCacheTtlMs, route });
+    return route;
+  } finally {
+    inFlightRoutes.delete(key);
+  }
+}
+
+export function clearRouteCacheForTests(): void {
+  routeCache.clear();
+  inFlightRoutes.clear();
 }

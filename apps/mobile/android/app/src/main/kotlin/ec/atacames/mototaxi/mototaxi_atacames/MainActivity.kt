@@ -1,10 +1,15 @@
 package ec.atacames.mototaxi.mototaxi_atacames
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.AlertDialog
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.hardware.fingerprint.FingerprintManager
 import android.net.Uri
 import android.app.Notification
@@ -56,10 +61,56 @@ class MainActivity : FlutterFragmentActivity() {
                         startActivity(Intent(Intent.ACTION_VIEW, uri))
                         result.success(null)
                     }
+                    "showForegroundTripOffer" -> {
+                        val title = call.argument<String>("title")?.trim().orEmpty()
+                        val body = call.argument<String>("body")?.trim().orEmpty()
+                        val tripId = call.argument<String>("tripId")?.trim().orEmpty()
+                        result.success(showForegroundTripOffer(title, body, tripId))
+                    }
                     "authenticateFingerprintLegacy" -> authenticateFingerprintLegacy(result)
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun showForegroundTripOffer(title: String, body: String, tripId: String): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return false
+
+        val manager = getSystemService(NotificationManager::class.java)
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("notificationType", "TRIP_OFFER")
+            putExtra("tripId", tripId)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            tripId.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, "mototaxi_trip_offers_v2")
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+                .setPriority(Notification.PRIORITY_MAX)
+                .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
+                .setVibrate(longArrayOf(0, 350, 180, 350))
+        }
+        builder
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title.ifBlank { "Nuevo viaje disponible" })
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setCategory(Notification.CATEGORY_CALL)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(pendingIntent)
+        manager.notify(tripId.ifBlank { "trip-offer" }.hashCode(), builder.build())
+        return true
     }
 
     @Suppress("DEPRECATION")
@@ -126,8 +177,25 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            val alarmAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            val offerChannel = NotificationChannel(
+                "mototaxi_trip_offers_v2",
+                "Nuevas solicitudes de viaje",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alerta sonora para nuevas solicitudes disponibles"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 350, 180, 350)
+                setSound(alarmSound, alarmAttributes)
+                setShowBadge(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
             val tripChannel = NotificationChannel(
-                "mototaxi_trip_alerts_v3",
+                "mototaxi_trip_alerts_v4",
                 "Solicitudes y estados del viaje",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
@@ -137,7 +205,7 @@ class MainActivity : FlutterFragmentActivity() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             val chatChannel = NotificationChannel(
-                "mototaxi_chat_messages_v1",
+                "mototaxi_chat_messages_v2",
                 "Mensajes del viaje",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
@@ -147,7 +215,7 @@ class MainActivity : FlutterFragmentActivity() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             getSystemService(NotificationManager::class.java)
-                .createNotificationChannels(listOf(tripChannel, chatChannel))
+                .createNotificationChannels(listOf(offerChannel, tripChannel, chatChannel))
         }
     }
 }

@@ -51,19 +51,21 @@ export function pushConfigurationStatus(clientProjectId?: string) {
 }
 
 export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}) {
+  const startedAt = performance.now();
   try {
     const client = messaging();
     if (!client) {
       console.warn("Push omitido: FIREBASE_SERVICE_ACCOUNT_BASE64 no está configurado.");
       return { sent: 0, skipped: true, errorCode: "firebase/not-configured" };
     }
-    const rows = await database()`select token from device_tokens where user_id=${userId} and last_seen_at > now() - interval '90 days'`;
+    const rows = await database()`select distinct token from device_tokens where user_id=${userId} and last_seen_at > now() - interval '90 days'`;
     const tokens = rows.map(row => String(row.token));
     if (!tokens.length) {
-      console.warn(`Push omitido: el usuario ${userId} no tiene un dispositivo registrado.`);
+      console.warn("Push omitido: el usuario no tiene un dispositivo registrado.", { type: data.type ?? "unknown" });
       return { sent: 0, attempted: 0, errorCode: "firebase/device-not-registered" };
     }
     const isChat = data.type === "CHAT_MESSAGE";
+    const isTripOffer = data.type === "TRIP_OFFER";
     const notificationTag = data.tripId
       ? `${isChat ? "chat" : "trip"}-${data.tripId}`
       : `atacamesgo-${data.type ?? "general"}`;
@@ -77,12 +79,27 @@ export async function sendPush(userId: string, title: string, body: string, data
         collapseKey: notificationTag,
         ttl,
         notification: {
-          channelId: isChat ? "mototaxi_chat_messages_v1" : "mototaxi_trip_alerts_v3",
+          channelId: isChat
+            ? "mototaxi_chat_messages_v2"
+            : isTripOffer
+              ? "mototaxi_trip_offers_v2"
+              : "mototaxi_trip_alerts_v4",
           tag: notificationTag,
-          notificationCount: 1,
+          priority: isTripOffer ? "max" : "high",
           sound: "default",
           defaultVibrateTimings: true,
           visibility: "public"
+        }
+      },
+      apns: {
+        headers: { "apns-priority": "10", "apns-push-type": "alert" },
+        payload: {
+          aps: {
+            sound: "default",
+            badge: 1,
+            category: isTripOffer ? "TRIP_OFFER" : "TRIP_UPDATE",
+            threadId: notificationTag
+          }
         }
       }
     });
@@ -96,10 +113,17 @@ export async function sendPush(userId: string, title: string, body: string, data
       .filter(response => !response.success)
       .map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" }));
     if (result.failureCount) console.warn("Firebase rechazó una o más notificaciones.", errors.map(error => error.code));
-    return { sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors };
+    const durationMs = Math.round(performance.now() - startedAt);
+    console.info("Push procesado.", {
+      type: data.type ?? "unknown",
+      attempted: tokens.length,
+      sent: result.successCount,
+      failed: result.failureCount,
+      durationMs
+    });
+    return { sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors, durationMs };
   } catch (error) {
     console.error("Firebase no pudo enviar la notificación.", {
-      userId,
       type: data.type ?? "unknown",
       code: firebaseErrorCode(error),
       error: error instanceof Error ? error.message : String(error)

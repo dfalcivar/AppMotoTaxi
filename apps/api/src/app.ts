@@ -64,10 +64,15 @@ const reverseLocationSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90),
   longitude: z.coerce.number().min(-180).max(180)
 });
-const routeSchema = z.object({ origin: pointSchema, destination: pointSchema });
+const routeSchema = z.object({
+  origin: pointSchema,
+  destination: pointSchema,
+  tripId: z.string().uuid().optional(),
+  purpose: z.enum(["PRELOAD", "ACTIVE_TRIP", "QUOTE", "MAP"]).optional()
+});
 const deviceTokenSchema = z.object({
   token: z.string().min(20).max(4096),
-  platform: z.enum(["ANDROID"]).default("ANDROID"),
+  platform: z.enum(["ANDROID", "IOS"]).default("ANDROID"),
   firebaseProjectId: z.string().trim().min(3).max(200).optional()
 });
 const testPushSchema = z.object({ delaySeconds: z.number().int().min(0).max(15).default(0) });
@@ -239,8 +244,15 @@ export async function buildApp() {
       return { tripId: String(trip.tripId), passengers: Number(trip.passengers), originReference: trip.originReference as string | null, destinationReference: trip.destinationReference as string | null, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
     if (dispatched) {
-      for (const driverId of dispatched.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: dispatched.tripId });
-      void Promise.all(dispatched.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${dispatched.passengers} pasajero(s): ${dispatched.originReference ?? "Origen"} → ${dispatched.destinationReference ?? "Destino"}`, { tripId: dispatched.tripId, type: "TRIP_OFFER" }))).catch(() => undefined);
+      const eventAt = new Date().toISOString();
+      for (const driverId of dispatched.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: dispatched.tripId, eventAt });
+      const pushes = await Promise.all(dispatched.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${dispatched.passengers} pasajero(s): ${dispatched.originReference ?? "Origen"} → ${dispatched.destinationReference ?? "Destino"}`, { tripId: dispatched.tripId, type: "TRIP_OFFER", eventAt })));
+      const failed = pushes.filter(push => push.sent === 0);
+      if (failed.length) app.log.warn({
+        type: "TRIP_OFFER", tripId: dispatched.tripId,
+        recipients: dispatched.driverIds.length, undelivered: failed.length,
+        errorCodes: failed.map(push => push.errorCode ?? "firebase/no-delivery")
+      }, "trip_offer_push_not_delivered");
     }
     return dispatched;
   }
@@ -263,7 +275,17 @@ export async function buildApp() {
     const parsed = routeSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_ROUTE" });
     try {
       const { origin, destination } = parsed.data;
-      return await computeRoute(origin, destination);
+      const startedAt = performance.now();
+      const route = await computeRoute(origin, destination);
+      request.log.info({
+        tripId: parsed.data.tripId,
+        purpose: parsed.data.purpose ?? "MAP",
+        provider: route.provider,
+        cacheHit: route.cacheHit,
+        durationMs: Math.round(performance.now() - startedAt),
+        points: route.points.length
+      }, "route_loaded");
+      return route;
     } catch (error) {
       if ((error as Error).message === "ROUTING_NOT_CONFIGURED") {
         return reply.code(503).send({
@@ -297,10 +319,7 @@ export async function buildApp() {
     if (account.role !== "DRIVER" && account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
 
     const sessionId = randomUUID();
-    await database().begin(async tx => {
-      await tx`update users set active_session_id=${sessionId} where id=${account.id}`;
-      await tx`delete from device_tokens where user_id=${account.id}`;
-    });
+    await database()`update users set active_session_id=${sessionId} where id=${account.id}`;
     const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: account.mustChangePassword, driverApprovalStatus: account.approvalStatus };
     return { token: tokenFor(user), user, restricted: account.role === "DRIVER" && account.status !== "ACTIVE" };
   });
@@ -385,7 +404,6 @@ export async function buildApp() {
   app.post("/v1/auth/lock", async (request, reply) => {
     const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
     await database().begin(async tx => {
-      await tx`delete from device_tokens where user_id=${user.id!}`;
       if (user.role === "DRIVER") await tx`update drivers set is_available=false where user_id=${user.id!}`;
     });
     return { locked: true, biometricSessionPreserved: true };
@@ -394,11 +412,16 @@ export async function buildApp() {
   app.put("/v1/devices/fcm-token", async (request, reply) => {
     const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const parsed = deviceTokenSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_DEVICE_TOKEN" });
-    await database()`
-      insert into device_tokens (user_id, token, platform, last_seen_at)
-      values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now())
-      on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now()
-    `;
+    await database().begin(async tx => {
+      // La cuenta admite una sola sesión activa. Conservamos el token actual y
+      // retiramos tokens antiguos sin crear una ventana en la que no haya push.
+      await tx`delete from device_tokens where user_id=${user.id!} and token<>${parsed.data.token}`;
+      await tx`
+        insert into device_tokens (user_id, token, platform, last_seen_at)
+        values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now())
+        on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now()
+      `;
+    });
     return { registered: true, push: pushConfigurationStatus(parsed.data.firebaseProjectId) };
   });
 
@@ -596,8 +619,15 @@ export async function buildApp() {
       for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
       return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
-    void Promise.all(trip.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${input.destinationReference ?? "Destino"}`, { tripId: trip.id, type: "TRIP_OFFER" }))).catch(() => undefined);
-    for (const driverId of trip.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: String(trip.id) });
+    const eventAt = new Date().toISOString();
+    const offerPushes = await Promise.all(trip.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${input.destinationReference ?? "Destino"}`, { tripId: String(trip.id), type: "TRIP_OFFER", eventAt })));
+    const undelivered = offerPushes.filter(push => push.sent === 0);
+    if (undelivered.length) request.log.warn({
+      type: "TRIP_OFFER", tripId: String(trip.id),
+      recipients: trip.driverIds.length, undelivered: undelivered.length,
+      errorCodes: undelivered.map(push => push.errorCode ?? "firebase/no-delivery")
+    }, "trip_offer_push_not_delivered");
+    for (const driverId of trip.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: String(trip.id), eventAt });
     return reply.code(201).send({ tripId: trip.id, status: "SEARCHING", offers: trip.offers, quotedTotalCents: total, zone });
   });
 
@@ -756,7 +786,15 @@ export async function buildApp() {
     const [passenger] = await database()`select passenger_id from trips where id=${tripId}`;
     const messages: Record<string, [string, string]> = { DRIVER_EN_ROUTE: ["Conductor en camino", "Tu conductor ya se dirige al punto de recogida."], DRIVER_ARRIVED: ["Tu conductor llegó", "Tu conductor está en el punto de recogida."], IN_PROGRESS: ["Viaje iniciado", "Tu viaje ya está en curso."], COMPLETED: ["Viaje finalizado", "Puedes calificar tu experiencia."] };
     const notification = messages[result.status as string];
-    if (passenger && notification) void sendPush(String(passenger.passenger_id), notification[0], notification[1], { tripId, type: result.status }).catch(() => undefined);
+    if (passenger && notification) {
+      const push = await sendPush(String(passenger.passenger_id), notification[0], notification[1], {
+        tripId,
+        type: String(result.status)
+      });
+      if (push.sent === 0) request.log.warn({
+        type: String(result.status), tripId, errorCode: push.errorCode, failed: push.failed
+      }, "trip_status_push_not_delivered");
+    }
     if (result.status === "COMPLETED") void redispatchOldestTrip().catch(() => undefined);
     realtime.publishTripStatus(tripId, String(result.status));
     return result;
@@ -807,7 +845,9 @@ export async function buildApp() {
         t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
-        o.expires_at as "expiresAt"
+        ST_Distance(t.origin, t.destination)::float8 as "distanceMeters",
+        ceil(ST_Distance(t.origin, t.destination) / 400.0)::int * 60 as "durationSeconds",
+        o.offered_at as "offeredAt", o.expires_at as "expiresAt"
       from driver_offers o
       join trips t on t.id=o.trip_id
       where o.driver_id=${user.id!} and o.responded_at is null
@@ -842,7 +882,7 @@ export async function buildApp() {
       if (!offer) return { error: "OFFER_UNAVAILABLE" };
       if (!body.data.accept) {
         await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
-        return { status: "REJECTED" };
+        return { status: "REJECTED", tripId: String(offer.trip_id), otherDriverIds: [] as string[] };
       }
       await tx`select pg_advisory_xact_lock(hashtext(${user.id!}::text))`;
       const activeTrips = await tx`select id from trips where driver_id=${user.id!} and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS') limit 1 for update`;
@@ -861,18 +901,54 @@ export async function buildApp() {
         await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
         return { error: "TRIP_ALREADY_ASSIGNED" };
       }
+      const otherDrivers = await tx`
+        select driver_id::text as "driverId" from driver_offers
+        where trip_id=${offer.trip_id} and id<>${offerId}
+          and responded_at is null and expires_at > now()
+      `;
       await tx`update driver_offers set responded_at=now(), accepted=true where id=${offerId}`;
       await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${offer.trip_id} and id<>${offerId}`;
       await tx`update driver_offers set responded_at=now(), accepted=false where driver_id=${user.id!} and id<>${offerId} and responded_at is null`;
       await tx`update drivers set is_available=false where user_id=${user.id!}`;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id) values (${offer.trip_id}, 'SEARCHING', 'DRIVER_EN_ROUTE', ${user.id!})`;
-      return { status: "DRIVER_EN_ROUTE", tripId: offer.trip_id };
+      return {
+        status: "DRIVER_EN_ROUTE",
+        tripId: String(offer.trip_id),
+        otherDriverIds: otherDrivers.map(driver => String(driver.driverId))
+      };
     });
     if ("error" in result) return reply.code(409).send(result);
+    if (result.status === "REJECTED") {
+      request.log.info({ offerId, tripId: result.tripId, driverId: user.id }, "trip_offer_rejected_by_driver");
+      return result;
+    }
     realtime.publishDriverUnavailable(user.id!);
     realtime.publishTripStatus(String(result.tripId), "DRIVER_EN_ROUTE");
+    const cancelledOfferPushes = [];
+    for (const driverId of result.otherDriverIds) {
+      realtime.publishToUser(driverId, {
+        type: "trip:offer:cancelled",
+        tripId: String(result.tripId),
+        reason: "ACCEPTED_BY_OTHER_DRIVER"
+      });
+      cancelledOfferPushes.push(sendPush(
+        driverId,
+        "Solicitud asignada",
+        "Este viaje ya fue aceptado por otro conductor.",
+        { tripId: String(result.tripId), type: "TRIP_OFFER_CANCELLED" }
+      ));
+    }
     const [trip] = await database()`select passenger_id from trips where id=${result.tripId}`;
-    if (trip) void sendPush(String(trip.passenger_id), "Viaje confirmado", "Un conductor aceptó tu solicitud y va en camino.", { tripId: result.tripId, type: "TRIP_ASSIGNED" }).catch(() => undefined);
+    const passengerPush = trip
+      ? await sendPush(String(trip.passenger_id), "Viaje confirmado", "Un conductor aceptó tu solicitud y va en camino.", {
+          tripId: String(result.tripId), type: "TRIP_ASSIGNED"
+        })
+      : undefined;
+    await Promise.all(cancelledOfferPushes);
+    if (passengerPush?.sent === 0) request.log.warn({
+      type: "TRIP_ASSIGNED", tripId: result.tripId,
+      errorCode: passengerPush.errorCode, failed: passengerPush.failed
+    }, "trip_assignment_push_not_delivered");
     return result;
   });
 

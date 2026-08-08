@@ -302,9 +302,16 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
               const message = await createMessage(user, event);
               broadcastTrip(event.tripId, { type: "chat:message", message: { ...message, mine: undefined, recipientId: undefined } });
               send(socket, { type: "chat:ack", clientMessageId: event.clientMessageId, message });
-              void sendPush(String(message.recipientId), `Mensaje de ${user.name}`, event.body, {
-                type: "CHAT_MESSAGE", tripId: event.tripId
-              }).catch(() => undefined);
+              const push = await sendPush(String(message.recipientId), `Mensaje de ${user.name}`, event.body, {
+                type: "CHAT_MESSAGE",
+                tripId: event.tripId,
+                messageId: String((message as Record<string, unknown>).id ?? event.clientMessageId)
+              });
+              if (push.sent === 0) app.log.warn({
+                type: "CHAT_MESSAGE", tripId: event.tripId,
+                recipientId: String(message.recipientId),
+                errorCode: push.errorCode, failed: push.failed
+              }, "chat_push_not_delivered");
             } catch (error) {
               send(socket, { type: "error", code: statusForError(error).code });
             }
@@ -357,9 +364,16 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
     try {
       const message = await createMessage(user, { tripId, ...parsed.data });
       broadcastTrip(tripId, { type: "chat:message", message: { ...message, mine: undefined, recipientId: undefined } });
-      void sendPush(String(message.recipientId), `Mensaje de ${user.name}`, parsed.data.body, {
-        type: "CHAT_MESSAGE", tripId
-      }).catch(() => undefined);
+      const push = await sendPush(String(message.recipientId), `Mensaje de ${user.name}`, parsed.data.body, {
+        type: "CHAT_MESSAGE",
+        tripId,
+        messageId: String((message as Record<string, unknown>).id ?? parsed.data.clientMessageId)
+      });
+      if (push.sent === 0) request.log.warn({
+        type: "CHAT_MESSAGE", tripId,
+        recipientId: String(message.recipientId),
+        errorCode: push.errorCode, failed: push.failed
+      }, "chat_push_not_delivered");
       return reply.code(201).send(message);
     } catch (error) {
       const mapped = statusForError(error);
