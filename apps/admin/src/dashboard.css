@@ -60,6 +60,7 @@
 .approval-avatar { display: grid; place-items: center; background: #dcebed; color: #0b5663; font-size: 1.7rem; font-weight: 850; }
 .approval-summary { display: grid; gap: 5px; min-width: 0; }
 .approval-summary small { color: #61797f; }
+.approval-summary strong,.approval-summary small { overflow-wrap: anywhere; }
 .approval-summary p { margin: 4px 0; padding: 8px 10px; border-radius: 8px; background: #fff1ca; color: #775a12; }
 .approval-summary .link { width: max-content; padding: 0; }
 .approval-actions { display: grid; gap: 7px; min-width: 180px; }
@@ -69,6 +70,12 @@
   .filter-grid { grid-template-columns: repeat(4,1fr); }
   .signal-grid { grid-template-columns: repeat(2,1fr); }
 }
+@media (max-width:900px) and (min-width:721px) {
+  .approval-card { grid-template-columns: 64px minmax(0,1fr); align-items: start; }
+  .approval-card > img,.approval-avatar { width: 64px; height: 64px; }
+  .approval-actions { grid-column: 1 / -1; grid-template-columns: repeat(3,minmax(0,1fr)); min-width: 0; }
+  .approval-actions button { min-height: 44px; }
+}
 @media (max-width:720px) {
   .dashboard { gap: 14px; }
   .dashboard-filters { position: static; }
@@ -77,10 +84,18 @@
   .signal-grid,.skeleton-grid,.driver-detail-grid { grid-template-columns: 1fr; }
   .approval-card { grid-template-columns: 58px 1fr; }
   .approval-card > img,.approval-avatar { width: 58px; height: 58px; }
-  .approval-actions { grid-column: 1 / -1; grid-template-columns: 1fr; }
+  .approval-inbox { padding: 16px; }
+  .approval-inbox > .section-title { display: grid; gap: 8px; }
+  .approval-inbox > .section-title .muted-pill { width: fit-content; }
+  .approval-card { align-items: start; padding: 14px; gap: 12px; }
+  .approval-actions { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; min-width: 0; }
+  .approval-actions button { min-height: 46px; }
+  .approval-actions .danger { grid-column: 1 / -1; min-height: 42px; border-radius: 10px; background: #fff0ed; }
   .bar-row { grid-template-columns: minmax(75px,1fr) minmax(80px,2fr) 36px; }
   .heatmap { min-height: 230px; }
 }
 @media (max-width:430px) {
   .filter-grid,.dashboard-metrics { grid-template-columns: 1fr; }
+  .approval-actions { grid-template-columns: 1fr; }
+  .approval-actions .danger { grid-column: auto; }
 }

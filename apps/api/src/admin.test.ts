@@ -57,6 +57,20 @@ describe("consola administrativa", () => {
     expect(response.json().error).toBe("DATABASE_UNAVAILABLE");
   });
 
+  it("protege los centros operativos y no inventa datos sin base", async () => {
+    const supportOperations = await app.inject({ method: "GET", url: "/v1/admin/operations", headers: { authorization: `Bearer ${supportToken}` } });
+    const supportAlerts = await app.inject({ method: "GET", url: "/v1/admin/alerts", headers: { authorization: `Bearer ${supportToken}` } });
+    expect(supportOperations.statusCode).toBe(403);
+    expect(supportAlerts.statusCode).toBe(403);
+
+    const adminOperations = await app.inject({ method: "GET", url: "/v1/admin/operations", headers: { authorization: `Bearer ${adminToken}` } });
+    const adminAlerts = await app.inject({ method: "GET", url: "/v1/admin/alerts", headers: { authorization: `Bearer ${adminToken}` } });
+    expect(adminOperations.statusCode).toBe(503);
+    expect(adminOperations.json().error).toBe("DATABASE_UNAVAILABLE");
+    expect(adminAlerts.statusCode).toBe(503);
+    expect(adminAlerts.json().error).toBe("DATABASE_UNAVAILABLE");
+  });
+
   it("impide que soporte apruebe conductores", async () => {
     const response = await app.inject({ method: "PATCH", url: "/v1/admin/drivers/DRV-001", headers: { authorization: `Bearer ${supportToken}` }, payload: { status: "ACTIVE", reason: "Aprobación de prueba" } });
     expect(response.statusCode).toBe(403);

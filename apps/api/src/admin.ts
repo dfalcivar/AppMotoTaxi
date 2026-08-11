@@ -122,7 +122,8 @@ const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.s
 const operationalSettingsSchema = z.object({
   searchRadiusMeters: z.number().int().min(500).max(20000),
   scheduledTripLeadMinutes: z.number().int().min(5).max(60),
-  scheduledTripMinimumNoticeMinutes: z.number().int().min(5).max(720)
+  scheduledTripMinimumNoticeMinutes: z.number().int().min(5).max(720),
+  documentExpiryAlertDays: z.number().int().min(1).max(180)
 }).refine(value => value.scheduledTripMinimumNoticeMinutes >= value.scheduledTripLeadMinutes + 5, {
   message: "MINIMUM_NOTICE_MUST_EXCEED_ACTIVATION_LEAD",
   path: ["scheduledTripMinimumNoticeMinutes"]
@@ -514,6 +515,106 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DASHBOARD_FILTERS", details: e.issues });
     return guardError(e, reply);
   } });
+  app.get("/v1/admin/operations", async (request, reply) => { try {
+    requirePermission(request, "operations:view");
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const sql = database();
+    const [metricsRows, activeTrips, driverLocations, upcomingTrips, criticalIncidents] = await Promise.all([
+      sql`select
+        (select count(*)::int from trips where status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) as "activeTrips",
+        (select count(*)::int from trips where status='SEARCHING') as "searchingTrips",
+        (select count(*)::int from trips where status='SEARCHING' and requested_at < now() - interval '2 minutes') as "delayedRequests",
+        (select count(*)::int from trips where scheduled_for between now() and now() + interval '2 hours' and status not in ('COMPLETED','CANCELLED')) as "upcomingScheduled",
+        (select count(*)::int from drivers d join users u on u.id=d.user_id where u.status='ACTIVE' and d.last_location_at >= now() - interval '5 minutes') as "connectedDrivers",
+        (select count(*)::int from drivers d join users u on u.id=d.user_id where u.status='ACTIVE' and d.is_available=true) as "availableDrivers",
+        (select count(distinct driver_id)::int from trips where driver_id is not null and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) as "busyDrivers",
+        (select count(*)::int from incidents where priority='CRITICA' and status not in ('RESUELTO','CERRADO')) as "criticalIncidents"`,
+      sql`select t.id::text, t.status, t.requested_at as "requestedAt", t.scheduled_for as "scheduledFor",
+        passenger.full_name as passenger, coalesce(driver.full_name,'Sin conductor') as driver,
+        t.origin_reference as origin, t.destination_reference as destination,
+        st_y(t.origin::geometry)::double precision as "originLatitude",
+        st_x(t.origin::geometry)::double precision as "originLongitude",
+        case when d.last_location is null then null else st_y(d.last_location::geometry)::double precision end as "driverLatitude",
+        case when d.last_location is null then null else st_x(d.last_location::geometry)::double precision end as "driverLongitude",
+        extract(epoch from (now()-t.requested_at))::int as "ageSeconds"
+        from trips t join users passenger on passenger.id=t.passenger_id
+        left join users driver on driver.id=t.driver_id left join drivers d on d.user_id=t.driver_id
+        where t.status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+        order by case when t.status='SEARCHING' then 0 else 1 end, t.requested_at limit 60`,
+      sql`select d.user_id::text as id, u.full_name as name, d.is_available as available,
+        d.last_location_at as "lastLocationAt", d.approval_status as "approvalStatus",
+        st_y(d.last_location::geometry)::double precision as latitude,
+        st_x(d.last_location::geometry)::double precision as longitude,
+        exists(select 1 from trips t where t.driver_id=d.user_id and t.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) as busy
+        from drivers d join users u on u.id=d.user_id
+        where u.status='ACTIVE' and d.last_location is not null and d.last_location_at >= now() - interval '30 minutes'
+        order by d.last_location_at desc limit 100`,
+      sql`select t.id::text, t.scheduled_for as "scheduledFor", t.schedule_status as "scheduleStatus",
+        passenger.full_name as passenger, coalesce(driver.full_name,'Sin conductor') as driver,
+        t.origin_reference as origin, t.destination_reference as destination
+        from trips t join users passenger on passenger.id=t.passenger_id left join users driver on driver.id=t.driver_id
+        where t.scheduled_for between now() and now()+interval '2 hours' and t.status not in ('COMPLETED','CANCELLED')
+        order by t.scheduled_for limit 30`,
+      sql`select i.id::text, i.subject, i.category, i.status, i.priority, i.created_at as "createdAt",
+        reporter.full_name as reporter
+        from incidents i left join users reporter on reporter.id=i.reported_by
+        where i.priority='CRITICA' and i.status not in ('RESUELTO','CERRADO')
+        order by i.created_at limit 30`
+    ]);
+    return { metrics: metricsRows[0], activeTrips, driverLocations, upcomingTrips, criticalIncidents, updatedAt: new Date().toISOString() };
+  } catch(e) { return guardError(e, reply); } });
+  app.get("/v1/admin/alerts", async (request, reply) => { try {
+    requirePermission(request, "alerts:view");
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const sql = database();
+    const [settings] = await sql`select document_expiry_alert_days as "documentExpiryAlertDays" from operational_settings where id=1`;
+    const expiryDays = Number(settings?.documentExpiryAlertDays ?? 30);
+    const [pendingDrivers, expiringDocuments, delayedTrips, unassignedScheduled, criticalIncidents, cancellationDrivers, suspendedDrivers, usersWithoutPush] = await Promise.all([
+      sql`select d.user_id::text as id, u.full_name as name, d.approval_status as status, d.approval_updated_at as "createdAt"
+        from drivers d join users u on u.id=d.user_id
+        where d.approval_status in ('PENDIENTE_REVISION','OBSERVADO') order by d.approval_updated_at limit 30`,
+      sql`select dd.id::text, dd.document_type as "documentType", dd.expires_at as "expiresAt", u.full_name as driver,
+        dd.driver_id::text as "driverId", greatest(0,dd.expires_at-current_date)::int as "daysRemaining"
+        from driver_documents dd join users u on u.id=dd.driver_id
+        where dd.expires_at is not null and dd.status<>'SUSPENDED' and dd.expires_at <= current_date + (${expiryDays} * interval '1 day')
+        order by dd.expires_at limit 50`,
+      sql`select t.id::text, passenger.full_name as passenger, t.requested_at as "createdAt",
+        extract(epoch from(now()-t.requested_at))::int as "ageSeconds"
+        from trips t join users passenger on passenger.id=t.passenger_id
+        where t.status='SEARCHING' and t.requested_at < now()-interval '2 minutes' order by t.requested_at limit 30`,
+      sql`select t.id::text, passenger.full_name as passenger, t.scheduled_for as "scheduledFor"
+        from trips t join users passenger on passenger.id=t.passenger_id
+        where t.scheduled_for between now() and now()+interval '24 hours' and t.driver_id is null and t.status not in ('COMPLETED','CANCELLED')
+        order by t.scheduled_for limit 30`,
+      sql`select i.id::text, i.subject, i.category, i.created_at as "createdAt"
+        from incidents i where i.priority='CRITICA' and i.status not in ('RESUELTO','CERRADO') order by i.created_at limit 30`,
+      sql`select u.id::text, u.full_name as driver, count(*)::int as total,
+        count(*) filter(where t.status='CANCELLED')::int as cancelled,
+        round(100.0*count(*) filter(where t.status='CANCELLED')/nullif(count(*),0),1)::float as "cancellationRate"
+        from trips t join users u on u.id=t.driver_id where t.requested_at >= now()-interval '30 days'
+        group by u.id,u.full_name having count(*)>=5 and count(*) filter(where t.status='CANCELLED')::numeric/count(*) >= .3
+        order by "cancellationRate" desc limit 20`,
+      sql`select d.user_id::text as id,u.full_name as driver,d.approval_updated_at as "createdAt"
+        from drivers d join users u on u.id=d.user_id where d.approval_status='SUSPENDIDO' order by d.approval_updated_at desc limit 20`,
+      sql`select count(*)::int as count from users u where u.role in ('DRIVER','PASSENGER') and u.status='ACTIVE'
+        and not exists(select 1 from device_tokens dt where dt.user_id=u.id and dt.last_seen_at >= now()-interval '30 days')`
+    ]);
+    const alerts = [
+      ...pendingDrivers.map(item => ({ id:`DRIVER-${item.id}`, type:"DRIVER_PENDING", severity:"WARNING", title:"Conductor pendiente de revisión", detail:`${item.name} requiere una decisión administrativa.`, createdAt:item.createdAt, entityType:"DRIVER", entityId:item.id })),
+      ...expiringDocuments.map(item => ({ id:`DOCUMENT-${item.id}`, type:"DOCUMENT_EXPIRY", severity:Number(item.daysRemaining)===0?"CRITICAL":"WARNING", title:Number(item.daysRemaining)===0?"Documento vencido":"Documento próximo a vencer", detail:`${item.documentType} de ${item.driver}: ${item.daysRemaining} días restantes.`, createdAt:item.expiresAt, entityType:"DRIVER", entityId:item.driverId })),
+      ...delayedTrips.map(item => ({ id:`DELAY-${item.id}`, type:"TRIP_DELAYED", severity:"CRITICAL", title:"Solicitud sin aceptar", detail:`${item.passenger} espera hace ${Math.ceil(Number(item.ageSeconds)/60)} minutos.`, createdAt:item.createdAt, entityType:"TRIP", entityId:item.id })),
+      ...unassignedScheduled.map(item => ({ id:`SCHEDULED-${item.id}`, type:"SCHEDULED_UNASSIGNED", severity:"WARNING", title:"Viaje programado sin conductor", detail:`${item.passenger} · ${new Date(item.scheduledFor).toLocaleString("es-EC",{timeZone:"America/Guayaquil"})}`, createdAt:item.scheduledFor, entityType:"TRIP", entityId:item.id })),
+      ...criticalIncidents.map(item => ({ id:`INCIDENT-${item.id}`, type:"CRITICAL_INCIDENT", severity:"CRITICAL", title:"Incidente crítico", detail:`${item.subject ?? item.category}`, createdAt:item.createdAt, entityType:"INCIDENT", entityId:item.id })),
+      ...cancellationDrivers.map(item => ({ id:`CANCELLATION-${item.id}`, type:"HIGH_CANCELLATION", severity:"WARNING", title:"Cancelación elevada", detail:`${item.driver}: ${item.cancellationRate}% en ${item.total} viajes.`, createdAt:new Date().toISOString(), entityType:"DRIVER", entityId:item.id })),
+      ...suspendedDrivers.map(item => ({ id:`SUSPENDED-${item.id}`, type:"DRIVER_SUSPENDED", severity:"INFO", title:"Conductor suspendido", detail:item.driver, createdAt:item.createdAt, entityType:"DRIVER", entityId:item.id }))
+    ];
+    const withoutPush = Number(usersWithoutPush[0]?.count ?? 0);
+    if (!process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) alerts.unshift({ id:"PUSH-CONFIG", type:"PUSH_CONFIGURATION", severity:"CRITICAL", title:"Notificaciones push sin configurar", detail:"La API no tiene una cuenta de servicio de Firebase utilizable.", createdAt:new Date().toISOString(), entityType:"SYSTEM", entityId:"push" });
+    else if (withoutPush > 0) alerts.push({ id:"PUSH-TOKENS", type:"PUSH_TOKENS", severity:"INFO", title:"Dispositivos sin registro push reciente", detail:`${withoutPush} usuarios activos no tienen un token actualizado en los últimos 30 días.`, createdAt:new Date().toISOString(), entityType:"SYSTEM", entityId:"push-tokens" });
+    const severityOrder: Record<string,number> = { CRITICAL:0, WARNING:1, INFO:2 };
+    alerts.sort((a,b) => (severityOrder[a.severity] ?? 3)-(severityOrder[b.severity] ?? 3) || new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime());
+    return { alerts: alerts.slice(0,100), documentExpiryAlertDays: expiryDays, updatedAt: new Date().toISOString() };
+  } catch(e) { return guardError(e, reply); } });
   app.get("/v1/admin/drivers", async (request, reply) => { try {
     requirePermission(request, "drivers:view");
     if (!process.env.DATABASE_URL) return drivers;
@@ -945,17 +1046,17 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_TRIP_FILTERS"}); return guardError(e, reply); } });
   app.get("/v1/admin/settings", async (request, reply) => { try {
     requirePermission(request, "settings:view");
-    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", updated_at as "updatedAt" from operational_settings where id=1`;
-    return settings ?? { searchRadiusMeters: 3000, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30 };
+    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt" from operational_settings where id=1`;
+    return settings ?? { searchRadiusMeters: 3000, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30, documentExpiryAlertDays: 30 };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/settings", async (request, reply) => { try {
     const user = requirePermission(request, "settings:manage");
     const body = operationalSettingsSchema.parse(request.body);
     const [settings] = await database()`
-      insert into operational_settings (id, search_radius_meters, scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, updated_at, updated_by)
-      values (1, ${body.searchRadiusMeters}, ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, now(), ${user.id!})
-      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes=excluded.scheduled_trip_minimum_notice_minutes, updated_at=now(), updated_by=excluded.updated_by
-      returning search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", updated_at as "updatedAt"
+      insert into operational_settings (id, search_radius_meters, scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, document_expiry_alert_days, updated_at, updated_by)
+      values (1, ${body.searchRadiusMeters}, ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, ${body.documentExpiryAlertDays}, now(), ${user.id!})
+      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes=excluded.scheduled_trip_minimum_notice_minutes, document_expiry_alert_days=excluded.document_expiry_alert_days, updated_at=now(), updated_by=excluded.updated_by
+      returning search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt"
     `;
     await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Radio de búsqueda: ${body.searchRadiusMeters} metros`);
     return settings;

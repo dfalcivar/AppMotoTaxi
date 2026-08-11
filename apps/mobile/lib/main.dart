@@ -105,6 +105,54 @@ class PassengerStopDraft {
   void dispose() => controller.dispose();
 }
 
+class _ScheduledRouteRow extends StatelessWidget {
+  const _ScheduledRouteRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 17, color: color),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.outline,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(value,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ]),
+      );
+}
+
 class AppHttpOverrides extends HttpOverrides {
   AppHttpOverrides(this.proxy);
 
@@ -5013,6 +5061,15 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
   }
 
+  String _scheduledStatusLabel(String value) =>
+      const {
+        'SCHEDULED': 'Buscando conductor',
+        'SCHEDULED_ASSIGNED': 'Conductor asignado',
+        'SCHEDULED_READY': 'Próximo a iniciar',
+        'ACTIVATED': 'Viaje activado',
+      }[value] ??
+      'Viaje programado';
+
   Future<void> showScheduledTrips() async {
     try {
       final trips = await api.scheduledTrips(widget.s.token);
@@ -5021,126 +5078,349 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
-        builder: (sheetContext) => SafeArea(
-          child: FractionallySizedBox(
-            heightFactor: .82,
-            child: trips.isEmpty
-                ? const Center(child: Text('No tienes viajes programados.'))
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                    itemCount: trips.length,
-                    itemBuilder: (context, index) {
-                      final trip = Map<String, dynamic>.from(trips[index]);
-                      final date = DateTime.tryParse(
-                          trip['scheduledFor']?.toString() ?? '');
-                      final stops =
-                          List<dynamic>.from(trip['stops'] ?? const []);
-                      final editable = trip['scheduleStatus'] == 'SCHEDULED' &&
-                          trip['driverName'] == null;
-                      return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                date == null
-                                    ? 'Viaje programado'
-                                    : '${MaterialLocalizations.of(context).formatMediumDate(date.toLocal())} · ${TimeOfDay.fromDateTime(date.toLocal()).format(context)}',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                              Text(
-                                  'Origen: ${cleanAddressLabel(trip['originReference'], fallback: 'Origen')}'),
-                              ...stops.asMap().entries.map((entry) => Text(
-                                  'Destino ${entry.key + 1}: ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}')),
-                              const SizedBox(height: 6),
-                              Text(trip['driverName'] == null
-                                  ? 'Aún sin conductor asignado'
-                                  : 'Conductor: ${trip['driverName']}'),
-                              Row(children: [
-                                if (editable)
-                                  TextButton.icon(
-                                    onPressed: () {
-                                      pickup = LatLng(
-                                          (trip['originLatitude'] as num)
-                                              .toDouble(),
-                                          (trip['originLongitude'] as num)
-                                              .toDouble());
-                                      origin.text =
-                                          trip['originReference']?.toString() ??
-                                              '';
-                                      people = (trip['passengers'] as num?)
-                                              ?.toInt() ??
-                                          1;
-                                      paymentMethod =
-                                          trip['paymentMethod']?.toString() ??
-                                              'CASH';
-                                      scheduledFor = date?.toLocal();
-                                      editingScheduledTripId =
-                                          trip['tripId'].toString();
-                                      for (final draft in additionalStops) {
-                                        draft.dispose();
-                                      }
-                                      additionalStops.clear();
-                                      if (stops.isNotEmpty) {
-                                        final first = stops.first;
-                                        destination.text =
-                                            first['reference']?.toString() ??
-                                                '';
-                                        dropoff = LatLng(
-                                            (first['latitude'] as num)
-                                                .toDouble(),
-                                            (first['longitude'] as num)
-                                                .toDouble());
-                                        for (final value in stops.skip(1)) {
-                                          final draft = PassengerStopDraft()
-                                            ..controller.text =
-                                                value['reference']
-                                                        ?.toString() ??
-                                                    ''
-                                            ..point = LatLng(
-                                                (value['latitude'] as num)
-                                                    .toDouble(),
-                                                (value['longitude'] as num)
-                                                    .toDouble());
-                                          additionalStops.add(draft);
-                                        }
-                                      }
-                                      Navigator.pop(sheetContext);
-                                      setState(() => message =
-                                          'Modifica los datos y confirma nuevamente el viaje programado.');
-                                      _movePassengerSheet(.78);
-                                    },
-                                    icon: const Icon(Icons.edit_outlined),
-                                    label: const Text('Modificar'),
-                                  ),
-                                const Spacer(),
-                                TextButton.icon(
-                                  onPressed: () async {
-                                    await api.cancelTrip(widget.s.token,
-                                        trip['tripId'].toString());
-                                    if (sheetContext.mounted) {
-                                      Navigator.pop(sheetContext);
-                                    }
-                                    if (mounted) {
-                                      setState(() => message =
-                                          'Viaje programado cancelado.');
-                                    }
-                                  },
-                                  icon: const Icon(Icons.close),
-                                  label: const Text('Cancelar'),
-                                ),
-                              ]),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+        useSafeArea: true,
+        builder: (sheetContext) => FractionallySizedBox(
+          heightFactor: .88,
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 2, 20, 16),
+              child: Row(children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: Theme.of(sheetContext).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(14),
                   ),
-          ),
+                  child: Icon(Icons.event_available_outlined,
+                      color: Theme.of(sheetContext)
+                          .colorScheme
+                          .onPrimaryContainer),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Mis viajes programados',
+                            style: Theme.of(sheetContext)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w900)),
+                        Text(
+                            'Consulta, modifica o cancela tus próximas reservas',
+                            style: Theme.of(sheetContext).textTheme.bodySmall),
+                      ]),
+                ),
+                if (trips.isNotEmpty)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Theme.of(sheetContext)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text('${trips.length}',
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                  ),
+              ]),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: trips.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(28),
+                        child:
+                            Column(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.event_busy_outlined,
+                              size: 54,
+                              color:
+                                  Theme.of(sheetContext).colorScheme.outline),
+                          const SizedBox(height: 14),
+                          Text('Aún no tienes viajes programados',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(sheetContext)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Selecciona “Programar para más tarde” al solicitar tu próximo viaje.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(sheetContext).textTheme.bodyMedium,
+                          ),
+                        ]),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                      itemCount: trips.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final trip = Map<String, dynamic>.from(trips[index]);
+                        final date = DateTime.tryParse(
+                            trip['scheduledFor']?.toString() ?? '');
+                        final stops =
+                            List<dynamic>.from(trip['stops'] ?? const []);
+                        final scheduleStatus =
+                            trip['scheduleStatus']?.toString() ?? 'SCHEDULED';
+                        final editable = scheduleStatus == 'SCHEDULED' &&
+                            trip['driverName'] == null;
+                        final scheme = Theme.of(context).colorScheme;
+                        return Card(
+                          margin: EdgeInsets.zero,
+                          elevation: 0,
+                          color: scheme.surfaceContainerLow,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: BorderSide(color: scheme.outlineVariant),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 44,
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 7),
+                                        decoration: BoxDecoration(
+                                          color: scheme.primaryContainer,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                        child: Column(children: [
+                                          Text(
+                                              date == null
+                                                  ? '--'
+                                                  : '${date.toLocal().day}',
+                                              style: TextStyle(
+                                                  color:
+                                                      scheme.onPrimaryContainer,
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.w900)),
+                                          Text(
+                                              date == null
+                                                  ? '---'
+                                                  : const [
+                                                      'ENE',
+                                                      'FEB',
+                                                      'MAR',
+                                                      'ABR',
+                                                      'MAY',
+                                                      'JUN',
+                                                      'JUL',
+                                                      'AGO',
+                                                      'SEP',
+                                                      'OCT',
+                                                      'NOV',
+                                                      'DIC'
+                                                    ][date.toLocal().month - 1],
+                                              style: TextStyle(
+                                                  color:
+                                                      scheme.onPrimaryContainer,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w800)),
+                                        ]),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                date == null
+                                                    ? 'Horario por confirmar'
+                                                    : TimeOfDay.fromDateTime(
+                                                            date.toLocal())
+                                                        .format(context),
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .titleLarge
+                                                    ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w900),
+                                              ),
+                                              if (date != null)
+                                                Text(
+                                                    MaterialLocalizations.of(
+                                                            context)
+                                                        .formatFullDate(
+                                                            date.toLocal()),
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .bodySmall),
+                                            ]),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 9, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: scheduleStatus ==
+                                                  'SCHEDULED_ASSIGNED'
+                                              ? scheme.tertiaryContainer
+                                              : scheme.secondaryContainer,
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          _scheduledStatusLabel(scheduleStatus),
+                                          style: TextStyle(
+                                              color: scheduleStatus ==
+                                                      'SCHEDULED_ASSIGNED'
+                                                  ? scheme.onTertiaryContainer
+                                                  : scheme.onSecondaryContainer,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w800),
+                                        ),
+                                      ),
+                                    ]),
+                                const SizedBox(height: 16),
+                                _ScheduledRouteRow(
+                                  icon: Icons.my_location,
+                                  label: 'Origen',
+                                  value: cleanAddressLabel(
+                                      trip['originReference'],
+                                      fallback: 'Origen'),
+                                  color: scheme.primary,
+                                ),
+                                ...stops
+                                    .asMap()
+                                    .entries
+                                    .map((entry) => _ScheduledRouteRow(
+                                          icon: entry.key == stops.length - 1
+                                              ? Icons.flag_rounded
+                                              : Icons.location_on_outlined,
+                                          label: entry.key == stops.length - 1
+                                              ? 'Destino final'
+                                              : 'Parada ${entry.key + 1}',
+                                          value: cleanAddressLabel(
+                                              entry.value['reference'],
+                                              fallback: 'Destino'),
+                                          color: entry.key == stops.length - 1
+                                              ? scheme.error
+                                              : scheme.tertiary,
+                                        )),
+                                const Divider(height: 24),
+                                Row(children: [
+                                  CircleAvatar(
+                                    radius: 17,
+                                    backgroundColor:
+                                        scheme.surfaceContainerHighest,
+                                    child: Icon(
+                                        trip['driverName'] == null
+                                            ? Icons.person_search_outlined
+                                            : Icons.person_outline,
+                                        size: 19),
+                                  ),
+                                  const SizedBox(width: 9),
+                                  Expanded(
+                                    child: Text(
+                                      trip['driverName'] == null
+                                          ? 'Aún sin conductor asignado'
+                                          : 'Conductor: ${trip['driverName']}',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                                ]),
+                                const SizedBox(height: 10),
+                                Row(children: [
+                                  if (editable)
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        onPressed: () {
+                                          pickup = LatLng(
+                                              (trip['originLatitude'] as num)
+                                                  .toDouble(),
+                                              (trip['originLongitude'] as num)
+                                                  .toDouble());
+                                          origin.text = trip['originReference']
+                                                  ?.toString() ??
+                                              '';
+                                          people = (trip['passengers'] as num?)
+                                                  ?.toInt() ??
+                                              1;
+                                          paymentMethod = trip['paymentMethod']
+                                                  ?.toString() ??
+                                              'CASH';
+                                          scheduledFor = date?.toLocal();
+                                          editingScheduledTripId =
+                                              trip['tripId'].toString();
+                                          for (final draft in additionalStops) {
+                                            draft.dispose();
+                                          }
+                                          additionalStops.clear();
+                                          if (stops.isNotEmpty) {
+                                            final first = stops.first;
+                                            destination.text =
+                                                first['reference']
+                                                        ?.toString() ??
+                                                    '';
+                                            dropoff = LatLng(
+                                                (first['latitude'] as num)
+                                                    .toDouble(),
+                                                (first['longitude'] as num)
+                                                    .toDouble());
+                                            for (final value in stops.skip(1)) {
+                                              final draft = PassengerStopDraft()
+                                                ..controller.text =
+                                                    value['reference']
+                                                            ?.toString() ??
+                                                        ''
+                                                ..point = LatLng(
+                                                    (value['latitude'] as num)
+                                                        .toDouble(),
+                                                    (value['longitude'] as num)
+                                                        .toDouble());
+                                              additionalStops.add(draft);
+                                            }
+                                          }
+                                          Navigator.pop(sheetContext);
+                                          setState(() => message =
+                                              'Modifica los datos y confirma nuevamente el viaje programado.');
+                                          _movePassengerSheet(.78);
+                                        },
+                                        icon: const Icon(Icons.edit_outlined),
+                                        label: const Text('Modificar'),
+                                      ),
+                                    ),
+                                  if (editable) const SizedBox(width: 10),
+                                  Expanded(
+                                    child: TextButton.icon(
+                                      onPressed: () async {
+                                        await api.cancelTrip(widget.s.token,
+                                            trip['tripId'].toString());
+                                        if (sheetContext.mounted) {
+                                          Navigator.pop(sheetContext);
+                                        }
+                                        if (mounted) {
+                                          setState(() => message =
+                                              'Viaje programado cancelado.');
+                                        }
+                                      },
+                                      icon: const Icon(Icons.close),
+                                      label: const Text('Cancelar'),
+                                    ),
+                                  ),
+                                ]),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ]),
         ),
       );
     } catch (error) {
@@ -7057,13 +7337,28 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       ?.copyWith(fontWeight: FontWeight.w800),
                 ),
               ),
-              Text('${index + 1} de ${offers.length}'),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: .22),
+                  ),
+                ),
+                child: Text(
+                  'Solicitud ${index + 1} de ${offers.length}',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w900,
+                      ),
+                ),
+              ),
             ]),
-            if (offers.length > 1) ...[
-              const SizedBox(height: 4),
-              const Text('Desliza a los lados para revisar otras solicitudes.',
-                  style: TextStyle(fontSize: 12)),
-            ],
             const SizedBox(height: 12),
             Text('Origen', style: Theme.of(context).textTheme.labelLarge),
             Text(
@@ -7132,16 +7427,37 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     );
   }
 
-  Widget _offerCarousel(BuildContext context) => SizedBox(
-        height: 400,
-        child: PageView.builder(
-          controller: offerPageController,
-          itemCount: offers.length,
-          onPageChanged: (value) => setState(() => offerIndex = value),
-          itemBuilder: (context, index) =>
-              _offerCard(context, offers[index], index),
+  Widget _offerCarousel(BuildContext context) => Column(children: [
+        SizedBox(
+          height: 400,
+          child: PageView.builder(
+            controller: offerPageController,
+            itemCount: offers.length,
+            onPageChanged: (value) => setState(() => offerIndex = value),
+            itemBuilder: (context, index) =>
+                _offerCard(context, offers[index], index),
+          ),
         ),
-      );
+        if (offers.length > 1)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 5, 12, 2),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.swipe_rounded,
+                  size: 20, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Desliza horizontalmente para ver más solicitudes',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+            ]),
+          ),
+      ]);
 
   List<Widget> _driverSheetContent(BuildContext context, String? action) => [
         SwitchListTile(
