@@ -36,7 +36,7 @@ export interface SessionUser {
 }
 interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
 interface Passenger { id: string; name: string; email?: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
-interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; stopSurchargeCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; status: "ACTIVE" | "SCHEDULED" }
+interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; stopSurchargeCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; activeUntil?: string; status: "ACTIVE" | "SCHEDULED" | "FINALIZED" }
 interface Zone { id: string; name: string; type: "URBAN" | "EXTENDED"; points: Array<{ x: number; y: number }>; active: boolean; version: number }
 interface Incident { id: string; trip: string; category: string; description: string; status: IncidentStatus; assignedTo: string; createdAt: string }
 interface AuditEntry { id: string; actor: string; action: string; entity: string; createdAt: string; detail: string }
@@ -730,7 +730,12 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         group_promotion_passengers as "promotionPassengers",
         group_promotion_total_cents as "promotionTotalCents",
         active_from as "activeFrom",
-        case when active_from > now() then 'SCHEDULED' else 'ACTIVE' end as status
+        active_until as "activeUntil",
+        case
+          when active_from > now() then 'SCHEDULED'
+          when active_until is not null and active_until <= now() then 'FINALIZED'
+          else 'ACTIVE'
+        end as status
       from pricing_versions order by version desc
     `;
   } catch(e){return guardError(e,reply);} });
@@ -740,7 +745,16 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       const next = await database().begin(async sql => {
         const [row] = await sql`select coalesce(max(version), 0) + 1 as version from pricing_versions`;
         const version = Number(row!.version);
-        if (new Date(body.activeFrom) <= new Date()) await sql`update pricing_versions set active_until=now() where active_until is null and active_from <= now()`;
+        const startsAt = new Date(body.activeFrom);
+        const [nextScheduled] = await sql`
+          select active_from as "activeFrom" from pricing_versions
+          where active_from > ${startsAt} order by active_from limit 1
+        `;
+        await sql`
+          update pricing_versions set active_until=${startsAt}
+          where active_from <= ${startsAt}
+            and (active_until is null or active_until > ${startsAt})
+        `;
         const [item] = await sql`
           insert into pricing_versions (
             version, day_starts_at, night_starts_at, urban_day_cents_per_passenger,
@@ -757,13 +771,17 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
             group_promotion_passengers as "promotionPassengers",
             group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"
         `;
+        if (nextScheduled?.activeFrom) await sql`
+          update pricing_versions set active_until=${nextScheduled.activeFrom}
+          where id=${item!.id}
+        `;
         return item!;
       });
       await persistAudit(user, "PRICING_PUBLISHED", "PRICING", next.id, `Version ${next.version}`);
       return reply.code(201).send({ ...next, status: new Date(next.activeFrom) > new Date() ? "SCHEDULED" : "ACTIVE" });
     }
     const next:PricingVersion={id:`PRICE-${pricing.length+1}`,version:Math.max(...pricing.map(p=>p.version))+1,...body,status:new Date(body.activeFrom)>new Date()?"SCHEDULED":"ACTIVE"};
-    if(next.status==="ACTIVE")pricing.forEach(p=>p.status="SCHEDULED"); pricing.unshift(next); audit(user,"PRICING_PUBLISHED",next.id,`Version ${next.version}`); return reply.code(201).send(next);
+    if(next.status==="ACTIVE")pricing.filter(p=>p.status==="ACTIVE").forEach(p=>p.status="FINALIZED"); pricing.unshift(next); audit(user,"PRICING_PUBLISHED",next.id,`Version ${next.version}`); return reply.code(201).send(next);
   }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.get("/v1/admin/zones", async (request, reply) => { try {
     requirePermission(request, "zones:view");
@@ -834,8 +852,21 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const next = await database().begin(async sql => {
       const [row] = await sql`select coalesce(max(version), 0) + 1 as version from pricing_versions`;
       const version = Number(row!.version);
-      if (new Date(body.activeFrom) <= new Date()) await sql`update pricing_versions set active_until=now() where active_until is null and active_from <= now()`;
+      const startsAt = new Date(body.activeFrom);
+      const [nextScheduled] = await sql`
+        select active_from as "activeFrom" from pricing_versions
+        where active_from > ${startsAt} order by active_from limit 1
+      `;
+      await sql`
+        update pricing_versions set active_until=${startsAt}
+        where active_from <= ${startsAt}
+          and (active_until is null or active_until > ${startsAt})
+      `;
       const [item] = await sql`insert into pricing_versions (version, day_starts_at, night_starts_at, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, stop_surcharge_cents, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, maximum_passengers, active_from, created_by) values (${version}, '06:00', '20:00', ${body.urbanDayCents}, ${body.nightCents}, ${body.extendedCents}, ${body.stopSurchargeCents}, true, ${body.promotionPassengers}, ${body.promotionTotalCents}, 4, ${body.activeFrom}, ${user.id!}) returning id::text, version, urban_day_cents_per_passenger as "urbanDayCents", night_cents_per_passenger as "nightCents", extended_cents_per_passenger as "extendedCents", stop_surcharge_cents as "stopSurchargeCents", group_promotion_passengers as "promotionPassengers", group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"`;
+      if (nextScheduled?.activeFrom) await sql`
+        update pricing_versions set active_until=${nextScheduled.activeFrom}
+        where id=${item!.id}
+      `;
       return item!;
     });
     await persistAudit(user, "PRICING_PUBLISHED", "PRICING", next.id, `Version ${next.version}`);
