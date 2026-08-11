@@ -29,7 +29,14 @@ function firebaseErrorCode(error: unknown): string {
   return "unknown";
 }
 
-export function pushConfigurationStatus(clientProjectId?: string) {
+export type PushConfigurationStatus = {
+  configured: boolean;
+  projectMatches: boolean;
+  serverProjectId?: string;
+  errorCode?: string;
+};
+
+export function pushConfigurationStatus(clientProjectId?: string): PushConfigurationStatus {
   try {
     const serviceAccount = firebaseCredential() as { project_id?: string } | undefined;
     if (!serviceAccount) return { configured: false, projectMatches: false, errorCode: "firebase/not-configured" };

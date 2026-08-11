@@ -15,8 +15,9 @@ const routeCache = new Map<string, { expiresAt: number; route: RouteResult }>();
 const inFlightRoutes = new Map<string, Promise<RouteResult>>();
 const routeCacheTtlMs = 2 * 60 * 1000;
 
-function routeKey(origin: RoutePoint, destination: RoutePoint): string {
-  return [origin.latitude, origin.longitude, destination.latitude, destination.longitude]
+function routeKey(origin: RoutePoint, destination: RoutePoint, waypoints: RoutePoint[]): string {
+  return [origin, ...waypoints, destination]
+    .flatMap(point => [point.latitude, point.longitude])
     .map(value => value.toFixed(5))
     .join(":");
 }
@@ -48,6 +49,7 @@ export function decodeGooglePolyline(encoded: string): RoutePoint[] {
 async function googleRoute(
   origin: RoutePoint,
   destination: RoutePoint,
+  waypoints: RoutePoint[],
   key: string
 ): Promise<RouteResult> {
   const response = await fetch(
@@ -63,6 +65,9 @@ async function googleRoute(
       body: JSON.stringify({
         origin: { location: { latLng: origin } },
         destination: { location: { latLng: destination } },
+        ...(waypoints.length ? {
+          intermediates: waypoints.map(point => ({ location: { latLng: point } }))
+        } : {}),
         travelMode: "DRIVE",
         routingPreference: "TRAFFIC_UNAWARE",
         polylineQuality: "OVERVIEW",
@@ -97,6 +102,7 @@ async function googleRoute(
 async function openRouteServiceRoute(
   origin: RoutePoint,
   destination: RoutePoint,
+  waypoints: RoutePoint[],
   key: string
 ): Promise<RouteResult> {
   const response = await fetch(
@@ -107,6 +113,7 @@ async function openRouteServiceRoute(
       body: JSON.stringify({
         coordinates: [
           [origin.longitude, origin.latitude],
+          ...waypoints.map(point => [point.longitude, point.latitude]),
           [destination.longitude, destination.latitude]
         ]
       })
@@ -135,26 +142,28 @@ async function openRouteServiceRoute(
 
 async function computeFreshRoute(
   origin: RoutePoint,
-  destination: RoutePoint
+  destination: RoutePoint,
+  waypoints: RoutePoint[]
 ): Promise<RouteResult> {
   const googleKey = process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim();
   if (googleKey) {
     try {
-      return await googleRoute(origin, destination, googleKey);
+      return await googleRoute(origin, destination, waypoints, googleKey);
     } catch {
       // OpenRouteService queda como respaldo durante la migración.
     }
   }
   const orsKey = process.env.ORS_API_KEY?.trim();
-  if (orsKey) return openRouteServiceRoute(origin, destination, orsKey);
+  if (orsKey) return openRouteServiceRoute(origin, destination, waypoints, orsKey);
   throw new Error("ROUTING_NOT_CONFIGURED");
 }
 
 export async function computeRoute(
   origin: RoutePoint,
-  destination: RoutePoint
+  destination: RoutePoint,
+  waypoints: RoutePoint[] = []
 ): Promise<RouteResult> {
-  const key = routeKey(origin, destination);
+  const key = routeKey(origin, destination, waypoints);
   const cached = routeCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return { ...cached.route, cacheHit: true };
@@ -164,7 +173,7 @@ export async function computeRoute(
   const inFlight = inFlightRoutes.get(key);
   if (inFlight) return { ...(await inFlight), cacheHit: true };
 
-  const request = computeFreshRoute(origin, destination);
+  const request = computeFreshRoute(origin, destination, waypoints);
   inFlightRoutes.set(key, request);
   try {
     const route = await request;

@@ -119,7 +119,10 @@ const faqSchema = z.object({
   active: z.boolean()
 });
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
-const operationalSettingsSchema = z.object({ searchRadiusMeters: z.number().int().min(500).max(20000) });
+const operationalSettingsSchema = z.object({
+  searchRadiusMeters: z.number().int().min(500).max(20000),
+  scheduledTripLeadMinutes: z.number().int().min(5).max(60)
+});
 const cooperativeSchema = z.object({
   name: z.string().trim().min(3).max(120),
   legalName: z.string().trim().max(160).optional().or(z.literal("")),
@@ -840,30 +843,49 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   app.get("/v1/admin/trips", async (request, reply) => { try {
     requirePermission(request, "trips:view");
     if (!process.env.DATABASE_URL) return [];
+    const filters = z.object({
+      scheduled: z.enum(["ALL", "SCHEDULED", "IMMEDIATE"]).default("ALL"),
+      status: z.string().trim().max(40).optional(),
+      passenger: z.string().trim().max(100).optional(),
+      driver: z.string().trim().max(100).optional(),
+      from: z.string().date().optional(),
+      to: z.string().date().optional(),
+      unassigned: z.coerce.boolean().optional()
+    }).parse(request.query);
     return await database()`
       select t.id::text, t.status, t.passengers, t.service_zone as zone,
         t.quoted_total_cents as "quotedTotalCents", t.requested_at as "requestedAt",
+        t.scheduled_for as "scheduledFor", t.schedule_status as "scheduleStatus",
         passenger.full_name as passenger, coalesce(driver.full_name, 'Sin asignar') as driver,
-        t.origin_reference as "originReference", t.destination_reference as "destinationReference"
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        coalesce((select json_agg(json_build_object('order', stop.stop_order, 'reference', stop.reference, 'completedAt', stop.completed_at) order by stop.stop_order) from trip_stops stop where stop.trip_id=t.id), '[]'::json) as stops,
+        coalesce((select json_agg(json_build_object('reason', event.reason_code, 'occurredAt', event.occurred_at) order by event.occurred_at) from trip_events event where event.trip_id=t.id and event.reason_code in ('SCHEDULED_ACCEPTED','SCHEDULED_UPDATED','PASSENGER_CANCELLED','ADMIN_CANCELLED','SCHEDULED_RELEASED')), '[]'::json) as "scheduleHistory"
       from trips t
       join users passenger on passenger.id=t.passenger_id
       left join users driver on driver.id=t.driver_id
-      order by t.requested_at desc limit 100
+      where (${filters.scheduled}='ALL' or (${filters.scheduled}='SCHEDULED' and t.scheduled_for is not null) or (${filters.scheduled}='IMMEDIATE' and t.scheduled_for is null))
+        and (${filters.status ?? null}::text is null or t.status=${filters.status ?? null})
+        and (${filters.passenger ?? null}::text is null or passenger.full_name ilike ${filters.passenger ? `%${filters.passenger}%` : null})
+        and (${filters.driver ?? null}::text is null or driver.full_name ilike ${filters.driver ? `%${filters.driver}%` : null})
+        and (${filters.from ?? null}::date is null or coalesce(t.scheduled_for,t.requested_at) >= ${filters.from ?? null}::date)
+        and (${filters.to ?? null}::date is null or coalesce(t.scheduled_for,t.requested_at) < (${filters.to ?? null}::date + interval '1 day'))
+        and (${filters.unassigned ?? false}=false or t.driver_id is null)
+      order by coalesce(t.scheduled_for,t.requested_at) desc limit 200
     `;
-  } catch(e) { return guardError(e, reply); } });
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_TRIP_FILTERS"}); return guardError(e, reply); } });
   app.get("/v1/admin/settings", async (request, reply) => { try {
     requirePermission(request, "settings:view");
-    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", updated_at as "updatedAt" from operational_settings where id=1`;
-    return settings ?? { searchRadiusMeters: 3000 };
+    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", updated_at as "updatedAt" from operational_settings where id=1`;
+    return settings ?? { searchRadiusMeters: 3000, scheduledTripLeadMinutes: 10 };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/settings", async (request, reply) => { try {
     const user = requirePermission(request, "settings:manage");
     const body = operationalSettingsSchema.parse(request.body);
     const [settings] = await database()`
-      insert into operational_settings (id, search_radius_meters, updated_at, updated_by)
-      values (1, ${body.searchRadiusMeters}, now(), ${user.id!})
-      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, updated_at=now(), updated_by=excluded.updated_by
-      returning search_radius_meters as "searchRadiusMeters", updated_at as "updatedAt"
+      insert into operational_settings (id, search_radius_meters, scheduled_trip_lead_minutes, updated_at, updated_by)
+      values (1, ${body.searchRadiusMeters}, ${body.scheduledTripLeadMinutes}, now(), ${user.id!})
+      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes, updated_at=now(), updated_by=excluded.updated_by
+      returning search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", updated_at as "updatedAt"
     `;
     await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Radio de búsqueda: ${body.searchRadiusMeters} metros`);
     return settings;

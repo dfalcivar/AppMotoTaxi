@@ -165,6 +165,21 @@ flutter build apk --release --dart-define=API_BASE_URL=http://127.0.0.1:3001
 Para pruebas sin cable debe desplegarse la API actualizada en Render y compilar
 sin `API_BASE_URL`; así se utiliza la URL pública configurada por defecto.
 
+### Viajes programados y paradas
+
+- El pasajero puede solicitar ahora o programar dentro de las próximas 24 horas.
+- Cada viaje admite entre uno y tres destinos ordenados. La API conserva las
+  coordenadas de cada parada en `trip_stops` y Google Routes/ORS calcula el
+  recorrido completo utilizando puntos intermedios.
+- Las reservas pasan por `SCHEDULED`, `SCHEDULED_ASSIGNED`, `SCHEDULED_READY` y
+  `ACTIVATED`; el estado operativo normal del viaje permanece compatible con
+  las solicitudes inmediatas.
+- La anticipación se configura en el panel administrativo, entre 5 y 60
+  minutos (10 por defecto). Al llegar ese margen, la API activa la reserva y
+  envía recordatorios push.
+- El contenedor de la API ejecuta `pnpm db:migrate` antes de iniciar, por lo que
+  la migración de reservas y paradas se aplica al desplegar la API en Render.
+
 ### Emulador recomendado para equipos modestos
 
 Crea en Android Studio un `Small Phone`, Android 11/API 30, Google APIs x86_64, 1 GB de RAM y gráficos por software. Después:

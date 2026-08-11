@@ -70,22 +70,39 @@ Map<String, dynamic> buildTripRequestPayload({
   required LatLng selectedDestination,
   required String paymentMethod,
   String notes = '',
+  List<Map<String, dynamic>>? destinations,
+  DateTime? scheduledFor,
 }) =>
     {
       'origin': {
         'longitude': selectedOrigin.longitude,
         'latitude': selectedOrigin.latitude,
       },
-      'destination': {
-        'longitude': selectedDestination.longitude,
-        'latitude': selectedDestination.latitude,
-      },
+      if (destinations == null)
+        'destination': {
+          'longitude': selectedDestination.longitude,
+          'latitude': selectedDestination.latitude,
+        }
+      else
+        'destinations': destinations,
       'passengers': passengers,
       'paymentMethod': paymentMethod,
       'originReference': originReference,
       'destinationReference': destinationReference,
       if (notes.trim().isNotEmpty) 'notes': notes.trim(),
+      if (scheduledFor != null)
+        'scheduledFor': scheduledFor.toUtc().toIso8601String(),
     };
+
+class PassengerStopDraft {
+  PassengerStopDraft({String text = '', this.point})
+      : controller = TextEditingController(text: text);
+
+  final TextEditingController controller;
+  LatLng? point;
+
+  void dispose() => controller.dispose();
+}
 
 class AppHttpOverrides extends HttpOverrides {
   AppHttpOverrides(this.proxy);
@@ -113,6 +130,7 @@ http.Client buildHttpClient() {
 final apiHttpClient = buildHttpClient();
 bool firebaseReady = false;
 String? activeFcmAuthToken;
+String? lastFcmRegistrationMessage;
 StreamSubscription<String>? fcmTokenRefreshSubscription;
 const nativeActions = MethodChannel('ec.atacames.mototaxi/native');
 const secureStorage = FlutterSecureStorage();
@@ -559,6 +577,12 @@ String mensajeApi(dynamic code) =>
           'La fotografía no es válida o supera el tamaño permitido.',
       'INVALID_FAVORITE_PLACE':
           'Revisa el nombre y la dirección del lugar favorito.',
+      'FIREBASE_PROJECT_MISMATCH':
+          'La APK y la API de Render pertenecen a proyectos Firebase diferentes.',
+      'FIREBASE_SERVER_NOT_CONFIGURED':
+          'La credencial Firebase de la API no está configurada o no es válida.',
+      'INVALID_DEVICE_TOKEN':
+          'Firebase no entregó un token válido para este teléfono.',
     }[code] ??
     'No se pudo completar la operación.';
 
@@ -636,7 +660,11 @@ class Api {
   }
 
   Future<bool> registerFcm(String token, {String? fcmToken}) async {
-    if (!firebaseReady) return false;
+    if (!firebaseReady) {
+      lastFcmRegistrationMessage =
+          'Firebase no pudo inicializarse en esta instalación de AtacamesGo.';
+      return false;
+    }
     activeFcmAuthToken = token;
     Object? lastError;
     StackTrace? lastStack;
@@ -661,10 +689,22 @@ class Api {
         if (push is Map && push['configured'] == false) {
           throw StateError('La credencial Firebase de la API no es valida.');
         }
+        lastFcmRegistrationMessage = null;
         return true;
       } catch (error, stack) {
         lastError = error;
         lastStack = stack;
+        lastFcmRegistrationMessage = error is ApiException
+            ? error.message
+            : error.toString().replaceFirst('Bad state: ', '');
+        if (error is ApiException &&
+            const {
+              'FIREBASE_PROJECT_MISMATCH',
+              'FIREBASE_SERVER_NOT_CONFIGURED',
+              'INVALID_DEVICE_TOKEN'
+            }.contains(error.code)) {
+          break;
+        }
         if (attempt < 2) {
           await Future<void>.delayed(Duration(seconds: attempt + 1));
         }
@@ -738,7 +778,9 @@ class Api {
       call('GET', '/v1/trips/$id', token: t);
   Future<Map<String, dynamic>> route(
       String t, LatLng origin, LatLng destination,
-      {String? tripId, String purpose = 'MAP'}) async {
+      {List<LatLng> waypoints = const [],
+      String? tripId,
+      String purpose = 'MAP'}) async {
     final value = await call('POST', '/v1/routes', token: t, body: {
       'origin': {
         'latitude': origin.latitude,
@@ -748,6 +790,12 @@ class Api {
         'latitude': destination.latitude,
         'longitude': destination.longitude,
       },
+      'waypoints': waypoints
+          .map((point) => {
+                'latitude': point.latitude,
+                'longitude': point.longitude,
+              })
+          .toList(),
       if (tripId != null) 'tripId': tripId,
       'purpose': purpose,
     });
@@ -765,7 +813,10 @@ class Api {
       });
   Future<dynamic> create(
           String t, int n, String o, String d, LatLng pickup, LatLng dropoff,
-          {String paymentMethod = 'CASH', String notes = ''}) =>
+          {String paymentMethod = 'CASH',
+          String notes = '',
+          List<Map<String, dynamic>>? destinations,
+          DateTime? scheduledFor}) =>
       call('POST', '/v1/trips',
           token: t,
           body: buildTripRequestPayload(
@@ -776,7 +827,28 @@ class Api {
             selectedDestination: dropoff,
             paymentMethod: paymentMethod,
             notes: notes,
+            destinations: destinations,
+            scheduledFor: scheduledFor,
           ));
+  Future<Map<String, dynamic>> previewTrip(
+          String t, Map<String, dynamic> payload) async =>
+      Map<String, dynamic>.from(
+          await call('POST', '/v1/trips/preview', token: t, body: payload));
+  Future<List<dynamic>> scheduledTrips(String t) async =>
+      List<dynamic>.from(await call('GET', '/v1/trips/scheduled', token: t));
+  Future<dynamic> updateScheduled(
+          String t, String tripId, Map<String, dynamic> payload) =>
+      call('PUT', '/v1/trips/$tripId/scheduled', token: t, body: payload);
+  Future<List<dynamic>> scheduledOffers(String t) async => List<dynamic>.from(
+      await call('GET', '/v1/driver/scheduled-offers', token: t));
+  Future<dynamic> respondScheduled(String t, String tripId, bool accept) =>
+      call('POST', '/v1/driver/scheduled-offers/$tripId/respond',
+          token: t, body: {'accept': accept});
+  Future<dynamic> releaseScheduled(String t, String tripId) => call(
+      'POST', '/v1/driver/scheduled-trips/$tripId/release',
+      token: t);
+  Future<dynamic> completeStop(String t, String tripId, String stopId) =>
+      call('POST', '/v1/trips/$tripId/stops/$stopId/complete', token: t);
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
@@ -2022,8 +2094,8 @@ class _ProfileState extends State<Profile> {
     try {
       final registered = await Api().registerFcm(widget.s.token);
       if (!registered) {
-        throw const ApiException(
-            'La app no pudo registrar este teléfono en Firebase. Revisa que la credencial de Render pertenezca al mismo proyecto Firebase de la APK.');
+        throw ApiException(lastFcmRegistrationMessage ??
+            'La app no pudo registrar este teléfono en Firebase.');
       }
       await Api().testPush(widget.s.token, delaySeconds: 8);
       if (!mounted) return;
@@ -3581,6 +3653,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   final api = Api();
   final origin = TextEditingController();
   final destination = TextEditingController();
+  final List<PassengerStopDraft> additionalStops = [];
   final notes = TextEditingController();
   final passengerSheetController = DraggableScrollableController();
   late final RealtimeService realtime;
@@ -3589,6 +3662,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   StreamSubscription<RemoteMessage>? openedMessageSubscription;
   LatLng? pickup;
   LatLng? dropoff;
+  int selectedDestinationIndex = 0;
+  DateTime? scheduledFor;
+  String? editingScheduledTripId;
   LatLng? currentLocation;
   LatLng? driverPosition;
   double driverBearing = 0;
@@ -3655,6 +3731,25 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           );
           load();
         }
+        if (const {
+          'SCHEDULED_TRIP_CREATED',
+          'SCHEDULED_TRIP_ASSIGNED',
+          'SCHEDULED_TRIP_REMINDER',
+          'SCHEDULED_TRIP_RELEASED'
+        }.contains(type)) {
+          if (!mounted) return;
+          InAppNotificationBanner.show(
+            context,
+            id: 'scheduled-${push.data['tripId']}-$type',
+            title: push.notification?.title ?? 'Viaje programado',
+            message: push.notification?.body ??
+                'Hay una actualización en tu viaje programado.',
+            actionLabel: 'Ver',
+            icon: Icons.event_available_outlined,
+            onTap: showScheduledTrips,
+          );
+          load();
+        }
       });
       openedMessageSubscription =
           FirebaseMessaging.onMessageOpenedApp.listen((message) {
@@ -3681,6 +3776,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     realtime.dispose();
     origin.dispose();
     destination.dispose();
+    for (final stop in additionalStops) {
+      stop.dispose();
+    }
     notes.dispose();
     passengerSheetController.dispose();
     super.dispose();
@@ -3697,6 +3795,30 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       );
     });
   }
+
+  TextEditingController _destinationController(int index) =>
+      index == 0 ? destination : additionalStops[index - 1].controller;
+
+  LatLng? _destinationPoint(int index) =>
+      index == 0 ? dropoff : additionalStops[index - 1].point;
+
+  void _setDestinationPoint(int index, LatLng? point) {
+    if (index == 0) {
+      dropoff = point;
+    } else {
+      additionalStops[index - 1].point = point;
+    }
+  }
+
+  List<LatLng> get _destinationPoints => [
+        if (dropoff != null) dropoff!,
+        ...additionalStops
+            .where((stop) => stop.point != null)
+            .map((stop) => stop.point!),
+      ];
+
+  LatLng? get _finalDestinationPoint =>
+      _destinationPoints.isEmpty ? null : _destinationPoints.last;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -3910,6 +4032,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       dropoff = null;
       origin.text = 'Mi ubicación actual';
       destination.clear();
+      for (final stop in additionalStops) {
+        stop.dispose();
+      }
+      additionalStops.clear();
+      scheduledFor = null;
       routePoints = [];
       routeDistanceMeters = null;
       routeDurationSeconds = null;
@@ -3990,8 +4117,29 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         if (t['originLatitude'] != null) {
           pickup = LatLng((t['originLatitude'] as num).toDouble(),
               (t['originLongitude'] as num).toDouble());
-          dropoff = LatLng((t['destinationLatitude'] as num).toDouble(),
-              (t['destinationLongitude'] as num).toDouble());
+          final serverStops = List<dynamic>.from(t['stops'] ?? const []);
+          if (serverStops.isNotEmpty) {
+            for (final stop in additionalStops) {
+              stop.dispose();
+            }
+            additionalStops.clear();
+            final points = serverStops
+                .map((stop) => PassengerStopDraft(
+                      text: stop['reference']?.toString() ?? 'Destino',
+                      point: LatLng((stop['latitude'] as num).toDouble(),
+                          (stop['longitude'] as num).toDouble()),
+                    ))
+                .toList();
+            dropoff = points.first.point;
+            destination.text = points.first.controller.text;
+            for (final stop in points.skip(1)) {
+              additionalStops.add(stop);
+            }
+            points.first.dispose();
+          } else {
+            dropoff = LatLng((t['destinationLatitude'] as num).toDouble(),
+                (t['destinationLongitude'] as num).toDouble());
+          }
         }
         if (t['driverLatitude'] != null) {
           driverPosition = LatLng((t['driverLatitude'] as num).toDouble(),
@@ -4057,9 +4205,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
   }
 
-  void clearPoint(bool isOrigin) {
+  void clearPoint(bool isOrigin, {int destinationIndex = 0}) {
     if (isOrigin) originSelectionGuard.markManualOrigin();
     setState(() {
+      selectedDestinationIndex = destinationIndex;
       mapSelection =
           isOrigin ? MapPointSelection.origin : MapPointSelection.destination;
       pendingMapPoint = currentLocation ?? pickup ?? dropoff;
@@ -4071,8 +4220,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         pickup = null;
         nearbyDrivers.clear();
       } else {
-        destination.clear();
-        dropoff = null;
+        _destinationController(destinationIndex).clear();
+        _setDestinationPoint(destinationIndex, null);
       }
       routePoints = [];
       routeDistanceMeters = null;
@@ -4084,7 +4233,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     _movePassengerSheet(.24);
   }
 
-  void beginMapSelection(MapPointSelection selection) {
+  void beginMapSelection(MapPointSelection selection,
+      {int destinationIndex = 0}) {
     FocusManager.instance.primaryFocus?.unfocus();
     if (selection == MapPointSelection.origin) {
       // A GPS lookup started during initialization must not win after the
@@ -4092,10 +4242,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       originSelectionGuard.markManualOrigin();
     }
     setState(() {
+      selectedDestinationIndex = destinationIndex;
       mapSelection = selection;
       pendingMapPoint = selection == MapPointSelection.origin
           ? pickup ?? currentLocation
-          : dropoff ?? pickup ?? currentLocation;
+          : _destinationPoint(destinationIndex) ?? pickup ?? currentLocation;
       selectionResolving = false;
       selectionMoving = false;
       sheetExtent = .24;
@@ -4162,7 +4313,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         if (selection == MapPointSelection.origin) {
           origin.text = label;
         } else {
-          destination.text = label;
+          _destinationController(selectedDestinationIndex).text = label;
         }
         selectionResolving = false;
         message = 'Dirección encontrada. Puedes confirmar el punto.';
@@ -4335,8 +4486,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> locate(bool isOrigin) async {
-    final field = isOrigin ? origin : destination;
+  Future<void> locate(bool isOrigin, {int destinationIndex = 0}) async {
+    final field = isOrigin ? origin : _destinationController(destinationIndex);
     if (field.text.trim().length < 3) {
       setState(() => message = 'Escribe al menos tres letras de la dirección.');
       return;
@@ -4381,8 +4532,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           pickup = LatLng((r['latitude'] as num).toDouble(),
               (r['longitude'] as num).toDouble());
         } else {
-          dropoff = LatLng((r['latitude'] as num).toDouble(),
-              (r['longitude'] as num).toDouble());
+          _setDestinationPoint(
+              destinationIndex,
+              LatLng((r['latitude'] as num).toDouble(),
+                  (r['longitude'] as num).toDouble()));
         }
         message = 'Ubicación actualizada en el mapa.';
       });
@@ -4405,7 +4558,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     final coordinateLabel =
         'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
-    final field = selection == MapPointSelection.origin ? origin : destination;
+    final destinationIndex = selectedDestinationIndex;
+    final field = selection == MapPointSelection.origin
+        ? origin
+        : _destinationController(destinationIndex);
     final previewIsCurrent = pendingMapPoint != null &&
         const Distance().as(LengthUnit.Meter, pendingMapPoint!, point) < 2 &&
         !selectionResolving &&
@@ -4423,8 +4579,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         if (!previewIsCurrent) origin.text = coordinateLabel;
         message = 'Consultando la dirección del origen...';
       } else {
-        dropoff = point;
-        if (!previewIsCurrent) destination.text = coordinateLabel;
+        _setDestinationPoint(destinationIndex, point);
+        if (!previewIsCurrent) field.text = coordinateLabel;
         message = 'Consultando la dirección del destino...';
       }
     });
@@ -4445,8 +4601,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     try {
       final result = await api.reverse(widget.s.token, point);
       if (!mounted) return;
-      final selectedPoint =
-          selection == MapPointSelection.origin ? pickup : dropoff;
+      final selectedPoint = selection == MapPointSelection.origin
+          ? pickup
+          : _destinationPoint(destinationIndex);
       if (selectedPoint?.latitude != point.latitude ||
           selectedPoint?.longitude != point.longitude) {
         return;
@@ -4457,7 +4614,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               cleanAddressLabel(result['label'], fallback: coordinateLabel);
           message = 'Origen identificado por su dirección.';
         } else {
-          destination.text =
+          field.text =
               cleanAddressLabel(result['label'], fallback: coordinateLabel);
           message = 'Destino identificado por su dirección.';
         }
@@ -4479,16 +4636,31 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     LatLng? from;
     LatLng? to;
+    List<LatLng> waypoints = [];
     final status = active?['status']?.toString();
     if (driverPosition != null && status == 'DRIVER_EN_ROUTE') {
       from = driverPosition;
       to = pickup;
     } else if (driverPosition != null && status == 'IN_PROGRESS') {
       from = driverPosition;
-      to = dropoff;
+      final remainingStops = List<dynamic>.from(active?['stops'] ?? const [])
+          .where((stop) => stop['completedAt'] == null)
+          .map((stop) => LatLng((stop['latitude'] as num).toDouble(),
+              (stop['longitude'] as num).toDouble()))
+          .toList();
+      if (remainingStops.isNotEmpty) {
+        to = remainingStops.last;
+        waypoints = remainingStops.take(remainingStops.length - 1).toList();
+      } else {
+        to = _finalDestinationPoint;
+      }
     } else {
       from = pickup;
-      to = dropoff;
+      final destinations = _destinationPoints;
+      if (destinations.isNotEmpty) {
+        to = destinations.last;
+        waypoints = destinations.take(destinations.length - 1).toList();
+      }
     }
     if (from == null || to == null) return;
     final requestGeneration = ++routeRequestGeneration;
@@ -4496,7 +4668,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final requestedTo = to;
     lastRouteAt = now;
     try {
-      final route = await api.route(widget.s.token, requestedFrom, requestedTo);
+      final route = await api.route(widget.s.token, requestedFrom, requestedTo,
+          waypoints: waypoints);
       final points = List<dynamic>.from(route['points'] ?? const [])
           .map((point) => LatLng((point['latitude'] as num).toDouble(),
               (point['longitude'] as num).toDouble()))
@@ -4518,27 +4691,322 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> create() async {
-    if (pickup == null || dropoff == null) {
+  List<Map<String, dynamic>>? _serializedDestinations() {
+    final values = <Map<String, dynamic>>[];
+    if (dropoff == null || destination.text.trim().isEmpty) return null;
+    values.add({
+      'location': {
+        'latitude': dropoff!.latitude,
+        'longitude': dropoff!.longitude,
+      },
+      'reference': destination.text.trim(),
+    });
+    for (final stop in additionalStops) {
+      if (stop.point == null || stop.controller.text.trim().isEmpty) {
+        return null;
+      }
+      values.add({
+        'location': {
+          'latitude': stop.point!.latitude,
+          'longitude': stop.point!.longitude,
+        },
+        'reference': stop.controller.text.trim(),
+      });
+    }
+    return values;
+  }
+
+  Map<String, dynamic>? _currentRequestPayload() {
+    final destinations = _serializedDestinations();
+    if (pickup == null || destinations == null) return null;
+    return buildTripRequestPayload(
+      passengers: people,
+      originReference: origin.text,
+      destinationReference: destination.text,
+      selectedOrigin: pickup!,
+      selectedDestination: _finalDestinationPoint!,
+      paymentMethod: paymentMethod,
+      notes: notes.text,
+      destinations: destinations,
+      scheduledFor: scheduledFor,
+    );
+  }
+
+  Future<void> chooseSchedule() async {
+    final now = DateTime.now();
+    final initial = scheduledFor ?? now.add(const Duration(minutes: 30));
+    final date = await showDatePicker(
+      context: context,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: now.add(const Duration(days: 1)),
+      initialDate: DateTime(initial.year, initial.month, initial.day),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return;
+    final selected =
+        DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final delay = selected.difference(DateTime.now());
+    if (delay <= Duration.zero || delay > const Duration(hours: 24)) {
       setState(() => message =
-          'Marca el origen y el destino en el mapa antes de solicitar.');
+          'Selecciona una fecha futura dentro de las próximas 24 horas.');
       return;
     }
+    setState(() {
+      scheduledFor = selected;
+      message = null;
+    });
+  }
+
+  Future<bool> confirmTripSummary(Map<String, dynamic> payload) async {
+    setState(() => message = 'Calculando el resumen del viaje…');
+    try {
+      final preview = await api.previewTrip(widget.s.token, payload);
+      if (!mounted) return false;
+      final previewPoints =
+          List<dynamic>.from(preview['routePoints'] ?? const [])
+              .map((point) => LatLng((point['latitude'] as num).toDouble(),
+                  (point['longitude'] as num).toDouble()))
+              .toList();
+      setState(() {
+        routePoints = previewPoints;
+        routeDistanceMeters = (preview['distanceMeters'] as num?)?.toDouble();
+        routeDurationSeconds = (preview['durationSeconds'] as num?)?.toDouble();
+        message = null;
+      });
+      return await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Confirma tu viaje'),
+              content: SingleChildScrollView(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(scheduledFor == null
+                          ? 'Salida: ahora'
+                          : 'Salida: ${MaterialLocalizations.of(context).formatMediumDate(scheduledFor!)} · ${TimeOfDay.fromDateTime(scheduledFor!).format(context)}'),
+                      const Divider(),
+                      Text('Origen: ${origin.text.trim()}'),
+                      const SizedBox(height: 8),
+                      ...List<dynamic>.from(preview['stops'] ?? const [])
+                          .asMap()
+                          .entries
+                          .map((entry) => Padding(
+                                padding: const EdgeInsets.only(bottom: 5),
+                                child: Text(
+                                    'Destino ${entry.key + 1}: ${entry.value['reference']}'),
+                              )),
+                      const Divider(),
+                      Text('Pasajeros: $people'),
+                      Text(
+                          'Pago: ${paymentMethod == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
+                      Text(
+                          'Distancia: ${(((preview['distanceMeters'] as num?) ?? 0) / 1000).toStringAsFixed(1)} km'),
+                      Text(
+                          'Tiempo estimado: ${(((preview['durationSeconds'] as num?) ?? 0) / 60).ceil()} min'),
+                      Text(
+                          'Tarifa estimada: \$${(((preview['quotedTotalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
+                      if ((preview['stopSurchargeCents'] as num?) != null)
+                        Text(
+                            'Adicional por paradas: \$${((preview['stopSurchargeCents'] as num) / 100).toStringAsFixed(2)}'),
+                    ]),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Modificar')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('Confirmar solicitud')),
+              ],
+            ),
+          ) ??
+          false;
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+      return false;
+    }
+  }
+
+  Future<void> showScheduledTrips() async {
+    try {
+      final trips = await api.scheduledTrips(widget.s.token);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: FractionallySizedBox(
+            heightFactor: .82,
+            child: trips.isEmpty
+                ? const Center(child: Text('No tienes viajes programados.'))
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    itemCount: trips.length,
+                    itemBuilder: (context, index) {
+                      final trip = Map<String, dynamic>.from(trips[index]);
+                      final date = DateTime.tryParse(
+                          trip['scheduledFor']?.toString() ?? '');
+                      final stops =
+                          List<dynamic>.from(trip['stops'] ?? const []);
+                      final editable = trip['scheduleStatus'] == 'SCHEDULED' &&
+                          trip['driverName'] == null;
+                      return Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                date == null
+                                    ? 'Viaje programado'
+                                    : '${MaterialLocalizations.of(context).formatMediumDate(date.toLocal())} · ${TimeOfDay.fromDateTime(date.toLocal()).format(context)}',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
+                              Text(
+                                  'Origen: ${cleanAddressLabel(trip['originReference'], fallback: 'Origen')}'),
+                              ...stops.asMap().entries.map((entry) => Text(
+                                  'Destino ${entry.key + 1}: ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}')),
+                              const SizedBox(height: 6),
+                              Text(trip['driverName'] == null
+                                  ? 'Aún sin conductor asignado'
+                                  : 'Conductor: ${trip['driverName']}'),
+                              Row(children: [
+                                if (editable)
+                                  TextButton.icon(
+                                    onPressed: () {
+                                      pickup = LatLng(
+                                          (trip['originLatitude'] as num)
+                                              .toDouble(),
+                                          (trip['originLongitude'] as num)
+                                              .toDouble());
+                                      origin.text =
+                                          trip['originReference']?.toString() ??
+                                              '';
+                                      people = (trip['passengers'] as num?)
+                                              ?.toInt() ??
+                                          1;
+                                      paymentMethod =
+                                          trip['paymentMethod']?.toString() ??
+                                              'CASH';
+                                      scheduledFor = date?.toLocal();
+                                      editingScheduledTripId =
+                                          trip['tripId'].toString();
+                                      for (final draft in additionalStops) {
+                                        draft.dispose();
+                                      }
+                                      additionalStops.clear();
+                                      if (stops.isNotEmpty) {
+                                        final first = stops.first;
+                                        destination.text =
+                                            first['reference']?.toString() ??
+                                                '';
+                                        dropoff = LatLng(
+                                            (first['latitude'] as num)
+                                                .toDouble(),
+                                            (first['longitude'] as num)
+                                                .toDouble());
+                                        for (final value in stops.skip(1)) {
+                                          final draft = PassengerStopDraft()
+                                            ..controller.text =
+                                                value['reference']
+                                                        ?.toString() ??
+                                                    ''
+                                            ..point = LatLng(
+                                                (value['latitude'] as num)
+                                                    .toDouble(),
+                                                (value['longitude'] as num)
+                                                    .toDouble());
+                                          additionalStops.add(draft);
+                                        }
+                                      }
+                                      Navigator.pop(sheetContext);
+                                      setState(() => message =
+                                          'Modifica los datos y confirma nuevamente el viaje programado.');
+                                      _movePassengerSheet(.78);
+                                    },
+                                    icon: const Icon(Icons.edit_outlined),
+                                    label: const Text('Modificar'),
+                                  ),
+                                const Spacer(),
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    await api.cancelTrip(widget.s.token,
+                                        trip['tripId'].toString());
+                                    if (sheetContext.mounted) {
+                                      Navigator.pop(sheetContext);
+                                    }
+                                    if (mounted) {
+                                      setState(() => message =
+                                          'Viaje programado cancelado.');
+                                    }
+                                  },
+                                  icon: const Icon(Icons.close),
+                                  label: const Text('Cancelar'),
+                                ),
+                              ]),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    }
+  }
+
+  Future<void> create() async {
+    final payload = _currentRequestPayload();
+    if (payload == null) {
+      setState(() => message =
+          'Marca el origen y todos los destinos en el mapa antes de solicitar.');
+      return;
+    }
+    if (!await confirmTripSummary(payload)) return;
     try {
       ratingPrompted = false;
       // Freeze the coordinates represented by the confirmed markers. The
       // request body, fare/route context and driver search all use this exact
       // origin rather than currentLocation.
       final requestedOrigin = pickup!;
-      final requestedDestination = dropoff!;
-      final t = await api.create(widget.s.token, people, origin.text,
-          destination.text, requestedOrigin, requestedDestination,
-          paymentMethod: paymentMethod, notes: notes.text);
+      final requestedDestination = _finalDestinationPoint!;
+      final destinations = _serializedDestinations()!;
+      final payload = _currentRequestPayload()!;
+      final editingId = editingScheduledTripId;
+      final t = editingId == null
+          ? await api.create(widget.s.token, people, origin.text,
+              destination.text, requestedOrigin, requestedDestination,
+              paymentMethod: paymentMethod,
+              notes: notes.text,
+              destinations: destinations,
+              scheduledFor: scheduledFor)
+          : await api.updateScheduled(widget.s.token, editingId, payload);
       setState(() {
-        active = {'tripId': t['tripId'], 'status': 'SEARCHING'};
-        sheetExtent = .46;
+        if (scheduledFor == null) {
+          active = {'tripId': t['tripId'], 'status': 'SEARCHING'};
+          sheetExtent = .46;
+        } else {
+          message = editingId == null
+              ? 'Viaje programado guardado correctamente.'
+              : 'Viaje programado actualizado correctamente.';
+          scheduledFor = null;
+          editingScheduledTripId = null;
+          sheetExtent = .35;
+        }
       });
-      _movePassengerSheet(.50);
+      _movePassengerSheet(active == null ? .35 : .50);
       await load();
     } catch (e) {
       setState(() => message = e.toString());
@@ -4776,9 +5244,15 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   List<Widget> _mapSelectionContent(BuildContext context) {
     final isOrigin = mapSelection == MapPointSelection.origin;
-    final address = (isOrigin ? origin.text : destination.text).trim();
+    final address = (isOrigin
+            ? origin.text
+            : _destinationController(selectedDestinationIndex).text)
+        .trim();
     return [
-      Text(isOrigin ? 'Fija tu punto de partida' : 'Fija tu destino',
+      Text(
+          isOrigin
+              ? 'Fija tu punto de partida'
+              : 'Fija el destino ${selectedDestinationIndex + 1}',
           textAlign: TextAlign.center,
           style: Theme.of(context)
               .textTheme
@@ -4831,6 +5305,99 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     ];
   }
 
+  void addDestination() {
+    if (additionalStops.length >= 2) return;
+    setState(() => additionalStops.add(PassengerStopDraft()));
+    _movePassengerSheet(.78);
+  }
+
+  void removeDestination(int index) {
+    if (index == 0 || index > additionalStops.length) return;
+    setState(() {
+      additionalStops.removeAt(index - 1).dispose();
+      routePoints = [];
+      routeDistanceMeters = null;
+      routeDurationSeconds = null;
+    });
+    unawaited(refreshRoute(force: true));
+  }
+
+  void reorderDestinations(int oldIndex, int newIndex) {
+    if (newIndex > oldIndex) newIndex--;
+    if (oldIndex == newIndex) return;
+    final controllers = [
+      destination,
+      ...additionalStops.map((stop) => stop.controller)
+    ];
+    final points = [dropoff, ...additionalStops.map((stop) => stop.point)];
+    final values = controllers.map((controller) => controller.text).toList();
+    final movedText = values.removeAt(oldIndex);
+    final movedPoint = points.removeAt(oldIndex);
+    values.insert(newIndex, movedText);
+    points.insert(newIndex, movedPoint);
+    setState(() {
+      for (var index = 0; index < controllers.length; index++) {
+        controllers[index].text = values[index];
+        _setDestinationPoint(index, points[index]);
+      }
+      routePoints = [];
+    });
+    unawaited(refreshRoute(force: true));
+  }
+
+  Widget destinationField(int index) {
+    final controller = _destinationController(index);
+    return Padding(
+      key: ValueKey('destination-$index-${controller.hashCode}'),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        ReorderableDragStartListener(
+          index: index,
+          child: CircleAvatar(
+            radius: 15,
+            child: Text('${index + 1}',
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: TextField(
+            controller: controller,
+            onTap: () => _movePassengerSheet(.78),
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: 'Destino ${index + 1}',
+              hintText: 'Dirección o punto en el mapa',
+              suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (controller.text.isNotEmpty)
+                  IconButton(
+                      tooltip: 'Borrar destino',
+                      icon: const Icon(Icons.close),
+                      onPressed: () =>
+                          clearPoint(false, destinationIndex: index)),
+                IconButton(
+                    tooltip: 'Ajustar en el mapa',
+                    icon: const Icon(Icons.edit_location_alt_outlined),
+                    onPressed: () => beginMapSelection(
+                        MapPointSelection.destination,
+                        destinationIndex: index)),
+                IconButton(
+                    tooltip: 'Buscar dirección',
+                    icon: const Icon(Icons.search),
+                    onPressed: () => locate(false, destinationIndex: index)),
+              ]),
+            ),
+          ),
+        ),
+        if (index > 0)
+          IconButton(
+              tooltip: 'Eliminar destino',
+              onPressed: () => removeDestination(index),
+              icon: const Icon(Icons.remove_circle_outline)),
+      ]),
+    );
+  }
+
   List<Widget> _requestContent(BuildContext context) => [
         Row(children: [
           Icon(Icons.electric_rickshaw,
@@ -4845,6 +5412,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               tooltip: 'Lugares favoritos',
               onPressed: showFavoritePlaces,
               icon: const Icon(Icons.star_outline)),
+          IconButton(
+              tooltip: 'Viajes programados',
+              onPressed: showScheduledTrips,
+              icon: const Icon(Icons.event_note_outlined)),
         ]),
         TextField(
           controller: origin,
@@ -4871,31 +5442,58 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           ),
         ),
         const SizedBox(height: 12),
-        TextField(
-          controller: destination,
-          onTap: () => _movePassengerSheet(.72),
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            labelText: 'Destino',
-            hintText: 'Escribe una dirección o mueve el mapa',
-            suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (destination.text.isNotEmpty)
-                IconButton(
-                    tooltip: 'Borrar destino',
-                    icon: const Icon(Icons.close),
-                    onPressed: () => clearPoint(false)),
-              IconButton(
-                  tooltip: 'Ajustar destino en el mapa',
-                  icon: const Icon(Icons.edit_location_alt_outlined),
-                  onPressed: () =>
-                      beginMapSelection(MapPointSelection.destination)),
-              IconButton(
-                  tooltip: 'Buscar dirección',
-                  icon: const Icon(Icons.search),
-                  onPressed: () => locate(false)),
-            ]),
+        Row(children: [
+          Expanded(
+            child: Text('Destinos y paradas',
+                style: Theme.of(context).textTheme.titleSmall),
           ),
+          IconButton.filledTonal(
+            tooltip: additionalStops.length >= 2
+                ? 'Máximo tres destinos'
+                : 'Agregar parada',
+            onPressed: additionalStops.length >= 2 ? null : addDestination,
+            icon: const Icon(Icons.add),
+          ),
+        ]),
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: 1 + additionalStops.length,
+          onReorderItem: reorderDestinations,
+          itemBuilder: (context, index) => destinationField(index),
         ),
+        Row(children: [
+          Expanded(
+            child: SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('Ahora')),
+                ButtonSegment(
+                    value: true, label: Text('Programar para más tarde')),
+              ],
+              selected: {scheduledFor != null},
+              onSelectionChanged: (value) async {
+                if (value.first) {
+                  await chooseSchedule();
+                } else {
+                  setState(() => scheduledFor = null);
+                }
+              },
+            ),
+          ),
+        ]),
+        if (scheduledFor != null)
+          ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.event_available_outlined),
+            title: Text(MaterialLocalizations.of(context)
+                .formatMediumDate(scheduledFor!)),
+            subtitle:
+                Text(TimeOfDay.fromDateTime(scheduledFor!).format(context)),
+            trailing: TextButton(
+                onPressed: chooseSchedule, child: const Text('Modificar')),
+          ),
         const SizedBox(height: 12),
         TextField(
           controller: notes,
@@ -4986,7 +5584,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   originLabel: originLabel,
                   destinationLabel: destinationLabel,
                   pickup: pickup,
-                  dropoff: dropoff,
+                  dropoff:
+                      editing && mapSelection == MapPointSelection.destination
+                          ? _destinationPoint(selectedDestinationIndex)
+                          : _finalDestinationPoint,
+                  stops: editing
+                      ? const []
+                      : (_destinationPoints.length <= 1
+                          ? const []
+                          : _destinationPoints.sublist(
+                              0, _destinationPoints.length - 1)),
                   currentLocation: currentLocation,
                   driverPosition: driverPosition,
                   driverBearing: driverBearing,
@@ -5104,6 +5711,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   late final RealtimeService realtime;
   dynamic active;
   List offers = [];
+  List scheduledOffers = [];
+  List scheduledTrips = [];
+  DateTime? lastScheduledRefreshAt;
   bool available = false;
   String? driverMessage;
   Timer? timer;
@@ -5166,6 +5776,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             message.data['type'] == 'TRIP_OFFER_CANCELLED' ||
             message.data['type'] == 'TRIP_CANCELLED') {
           refresh();
+        }
+        if (const {
+          'SCHEDULED_TRIP_AVAILABLE',
+          'SCHEDULED_TRIP_ACCEPTED',
+          'SCHEDULED_DRIVER_REMINDER',
+          'SCHEDULED_TRIP_RELEASED'
+        }.contains(message.data['type'])) {
+          if (!mounted) return;
+          InAppNotificationBanner.show(
+            context,
+            id: 'scheduled-${message.data['tripId']}-${message.data['type']}',
+            title: message.notification?.title ?? 'Viaje programado',
+            message: message.notification?.body ??
+                'Hay una actualización en tus viajes programados.',
+            actionLabel: 'Ver',
+            icon: Icons.event_available_outlined,
+            onTap: showDriverScheduledTrips,
+          );
+          refreshScheduled(force: true);
         }
       });
       openedMessageSubscription =
@@ -5337,15 +5966,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
     sendPosition(position);
     await positionSubscription?.cancel();
+    final activeStatus = active?['status']?.toString();
+    final foregroundTitle = activeStatus == null
+        ? 'AtacamesGo · Disponible'
+        : 'AtacamesGo · Viaje activo';
+    final foregroundText = switch (activeStatus) {
+      'ASSIGNED' || 'DRIVER_EN_ROUTE' =>
+        'Dirigiéndote al punto de recogida.',
+      'DRIVER_ARRIVED' => 'Esperando iniciar el viaje.',
+      'IN_PROGRESS' => 'Compartiendo ubicación durante el viaje.',
+      _ => 'Actualizando ubicación para recibir viajes cercanos.'
+    };
     positionSubscription = Geolocator.getPositionStream(
             locationSettings: AndroidSettings(
                 accuracy: LocationAccuracy.high,
                 distanceFilter: 10,
                 intervalDuration: const Duration(seconds: 10),
-                foregroundNotificationConfig: const ForegroundNotificationConfig(
-                    notificationTitle: 'Mototaxi disponible',
-                    notificationText:
-                        'Actualizando ubicación para recibir viajes cercanos.',
+                foregroundNotificationConfig: ForegroundNotificationConfig(
+                    notificationTitle: foregroundTitle,
+                    notificationText: foregroundText,
                     enableWakeLock: true)))
         .listen(sendPosition);
   }
@@ -5473,6 +6112,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> refresh() async {
     try {
+      await refreshScheduled();
       if (active != null) {
         final latest = await api.trip(widget.s.token, active['tripId']);
         if (latest['status'] == 'CANCELLED') {
@@ -5517,6 +6157,150 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> refreshScheduled({bool force = false}) async {
+    final now = DateTime.now();
+    if (!force &&
+        lastScheduledRefreshAt != null &&
+        now.difference(lastScheduledRefreshAt!) < const Duration(seconds: 30)) {
+      return;
+    }
+    lastScheduledRefreshAt = now;
+    try {
+      final values = await Future.wait([
+        api.scheduledOffers(widget.s.token),
+        api.scheduledTrips(widget.s.token),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        scheduledOffers = values[0];
+        scheduledTrips = values[1];
+      });
+    } catch (error) {
+      debugPrint('No se pudieron actualizar los viajes programados: $error');
+    }
+  }
+
+  Future<void> showDriverScheduledTrips() async {
+    await refreshScheduled(force: true);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: .84,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            children: [
+              Text('Viajes programados disponibles',
+                  style: Theme.of(context).textTheme.titleLarge),
+              if (scheduledOffers.isEmpty)
+                const ListTile(
+                    title: Text('No hay solicitudes programadas disponibles.')),
+              ...scheduledOffers.map((value) {
+                final offer = Map<String, dynamic>.from(value);
+                final date =
+                    DateTime.tryParse(offer['scheduledFor']?.toString() ?? '');
+                final stops = List<dynamic>.from(offer['stops'] ?? const []);
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(date == null
+                            ? 'Viaje programado'
+                            : '${MaterialLocalizations.of(context).formatMediumDate(date.toLocal())} · ${TimeOfDay.fromDateTime(date.toLocal()).format(context)}'),
+                        Text(
+                            'Origen: ${cleanAddressLabel(offer['originReference'], fallback: 'Origen')}'),
+                        ...stops.asMap().entries.map((entry) => Text(
+                            'Destino ${entry.key + 1}: ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}')),
+                        Wrap(spacing: 12, children: [
+                          Text('${offer['passengers']} pasajero(s)'),
+                          if (offer['distanceMeters'] != null)
+                            Text(
+                                '${((offer['distanceMeters'] as num) / 1000).toStringAsFixed(1)} km'),
+                          if (offer['durationSeconds'] != null)
+                            Text(
+                                '${((offer['durationSeconds'] as num) / 60).ceil()} min'),
+                          if (offer['quotedTotalCents'] != null)
+                            Text(
+                                '\$${((offer['quotedTotalCents'] as num) / 100).toStringAsFixed(2)}'),
+                        ]),
+                        Row(children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                await api.respondScheduled(widget.s.token,
+                                    offer['tripId'].toString(), false);
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                                await refreshScheduled(force: true);
+                              },
+                              child: const Text('Rechazar'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () async {
+                                await api.respondScheduled(widget.s.token,
+                                    offer['tripId'].toString(), true);
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                                await refreshScheduled(force: true);
+                              },
+                              child: const Text('Aceptar'),
+                            ),
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+              const Divider(height: 32),
+              Text('Mis próximos viajes',
+                  style: Theme.of(context).textTheme.titleLarge),
+              if (scheduledTrips.isEmpty)
+                const ListTile(title: Text('No tienes reservas aceptadas.')),
+              ...scheduledTrips.map((value) {
+                final trip = Map<String, dynamic>.from(value);
+                final date =
+                    DateTime.tryParse(trip['scheduledFor']?.toString() ?? '');
+                return ListTile(
+                  leading: const Icon(Icons.event_available_outlined),
+                  title: Text(date == null
+                      ? 'Próximo viaje'
+                      : '${MaterialLocalizations.of(context).formatMediumDate(date.toLocal())} · ${TimeOfDay.fromDateTime(date.toLocal()).format(context)}'),
+                  subtitle: Text(
+                      '${cleanAddressLabel(trip['originReference'], fallback: 'Origen')} → ${cleanAddressLabel(trip['destinationReference'], fallback: 'Destino')}'),
+                  trailing: trip['scheduleStatus'] == 'SCHEDULED_ASSIGNED'
+                      ? IconButton(
+                          tooltip: 'Liberar reserva',
+                          icon: const Icon(Icons.event_busy_outlined),
+                          onPressed: () async {
+                            await api.releaseScheduled(widget.s.token,
+                                trip['tripId'].toString());
+                            if (sheetContext.mounted) {
+                              Navigator.pop(sheetContext);
+                            }
+                            await refreshScheduled(force: true);
+                          },
+                        )
+                      : null,
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> resolveOriginAddress(dynamic trip) async {
     final tripId = trip?['tripId']?.toString();
     if (tripId == null || resolvedOriginTripId == tripId) return;
@@ -5558,10 +6342,19 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ? null
         : LatLng((active['originLatitude'] as num).toDouble(),
             (active['originLongitude'] as num).toDouble());
-    final dropoff = active['destinationLatitude'] == null
+    var dropoff = active['destinationLatitude'] == null
         ? null
         : LatLng((active['destinationLatitude'] as num).toDouble(),
             (active['destinationLongitude'] as num).toDouble());
+    if (active['status'] == 'IN_PROGRESS') {
+      final remainingStops = List<dynamic>.from(active['stops'] ?? const [])
+          .where((stop) => stop['completedAt'] == null)
+          .toList();
+      if (remainingStops.isNotEmpty) {
+        dropoff = LatLng((remainingStops.first['latitude'] as num).toDouble(),
+            (remainingStops.first['longitude'] as num).toDouble());
+      }
+    }
     final target = active['status'] == 'IN_PROGRESS' ? dropoff : pickup;
     if (target == null) return;
     lastRouteAt = now;
@@ -5585,16 +6378,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ? null
         : LatLng((trip['originLatitude'] as num).toDouble(),
             (trip['originLongitude'] as num).toDouble());
-    final dropoff = trip['destinationLatitude'] == null
+    var dropoff = trip['destinationLatitude'] == null
         ? null
         : LatLng((trip['destinationLatitude'] as num).toDouble(),
             (trip['destinationLongitude'] as num).toDouble());
+    final stopPoints = List<dynamic>.from(trip['stops'] ?? const [])
+        .map((stop) => LatLng((stop['latitude'] as num).toDouble(),
+            (stop['longitude'] as num).toDouble()))
+        .toList();
+    if (stopPoints.isNotEmpty) dropoff = stopPoints.last;
     if (pickup == null || dropoff == null) return;
     preloadedRouteTripId = tripId;
     final timer = Stopwatch()..start();
     try {
       final route = await api.route(widget.s.token, pickup, dropoff,
-          tripId: tripId, purpose: 'PRELOAD');
+          waypoints: stopPoints.length <= 1
+              ? const []
+              : stopPoints.sublist(0, stopPoints.length - 1),
+          tripId: tripId,
+          purpose: 'PRELOAD');
       final points = List<dynamic>.from(route['points'] ?? const [])
           .map((point) => LatLng((point['latitude'] as num).toDouble(),
               (point['longitude'] as num).toDouble()))
@@ -5641,6 +6443,23 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await refresh();
     } finally {
       if (mounted && routePreparing) setState(() => routePreparing = false);
+    }
+  }
+
+  Future<void> completeCurrentStop() async {
+    final tripId = active?['tripId']?.toString();
+    final remaining = List<dynamic>.from(active?['stops'] ?? const [])
+        .where((stop) => stop['completedAt'] == null)
+        .toList();
+    if (tripId == null || remaining.length <= 1) return;
+    try {
+      await api.completeStop(
+          widget.s.token, tripId, remaining.first['id'].toString());
+      lastRouteAt = null;
+      await refresh();
+      await refreshDriverRoute(force: true);
+    } catch (error) {
+      if (mounted) setState(() => driverMessage = error.toString());
     }
   }
 
@@ -5820,10 +6639,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 10),
             Text('Destino', style: Theme.of(context).textTheme.labelLarge),
-            Text(
-                cleanAddressLabel(offer['destinationReference'],
-                    fallback: 'Destino seleccionado'),
-                style: Theme.of(context).textTheme.titleMedium),
+            if (List<dynamic>.from(offer['stops'] ?? const []).isEmpty)
+              Text(
+                  cleanAddressLabel(offer['destinationReference'],
+                      fallback: 'Destino seleccionado'),
+                  style: Theme.of(context).textTheme.titleMedium)
+            else
+              ...List<dynamic>.from(offer['stops'] ?? const [])
+                  .asMap()
+                  .entries
+                  .map((entry) => Text(
+                      '${entry.key + 1}. ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}',
+                      style: Theme.of(context).textTheme.titleMedium)),
             if (offer['notes']?.toString().trim().isNotEmpty == true) ...[
               const SizedBox(height: 8),
               Text('Referencia: ${offer['notes']}'),
@@ -5890,6 +6717,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           value: available,
           onChanged: active == null ? toggle : null,
         ),
+        if (active == null)
+          OutlinedButton.icon(
+            onPressed: showDriverScheduledTrips,
+            icon: const Icon(Icons.event_note_outlined),
+            label: Text(
+                'Viajes programados (${scheduledOffers.length + scheduledTrips.length})'),
+          ),
         if (driverMessage != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -5973,6 +6807,37 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         fallback: 'Destino seleccionado'),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
+                  if (List<dynamic>.from(active['stops'] ?? const []).length >
+                      1) ...[
+                    const SizedBox(height: 12),
+                    Text('Itinerario',
+                        style: Theme.of(context).textTheme.labelLarge),
+                    ...List<dynamic>.from(active['stops'] ?? const [])
+                        .asMap()
+                        .entries
+                        .map((entry) => ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: CircleAvatar(
+                                  radius: 13,
+                                  child: entry.value['completedAt'] == null
+                                      ? Text('${entry.key + 1}')
+                                      : const Icon(Icons.check, size: 16)),
+                              title: Text(cleanAddressLabel(
+                                  entry.value['reference'],
+                                  fallback: 'Parada ${entry.key + 1}')),
+                            )),
+                    if (active['status'] == 'IN_PROGRESS' &&
+                        List<dynamic>.from(active['stops'] ?? const [])
+                                .where((stop) => stop['completedAt'] == null)
+                                .length >
+                            1)
+                      OutlinedButton.icon(
+                        onPressed: completeCurrentStop,
+                        icon: const Icon(Icons.flag_outlined),
+                        label: const Text('Completar parada actual'),
+                      ),
+                  ],
                   if (active['notes']?.toString().trim().isNotEmpty ==
                       true) ...[
                     const SizedBox(height: 10),
@@ -6050,6 +6915,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ? null
         : LatLng((mapTrip['destinationLatitude'] as num).toDouble(),
             (mapTrip['destinationLongitude'] as num).toDouble());
+    final mapStops = List<dynamic>.from(mapTrip?['stops'] ?? const [])
+        .where((stop) => stop['completedAt'] == null)
+        .map((stop) => LatLng((stop['latitude'] as num).toDouble(),
+            (stop['longitude'] as num).toDouble()))
+        .toList();
 
     return Scaffold(
       body: LayoutBuilder(builder: (context, constraints) {
@@ -6073,6 +6943,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   ),
                   pickup: pickup,
                   dropoff: dropoff,
+                  stops: mapStops.length <= 1
+                      ? const []
+                      : mapStops.sublist(0, mapStops.length - 1),
                   currentLocation: currentDriverPosition,
                   selfDriverPosition: active == null && available
                       ? currentDriverPosition

@@ -52,7 +52,24 @@ const registrationSchema = z.object({
 });
 const pointSchema = z.object({ longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) });
 const availabilitySchema = z.object({ available: z.boolean(), location: pointSchema.optional() });
-const tripRequestSchema = z.object({ origin: pointSchema, destination: pointSchema, passengers: z.number().int().min(1).max(4), paymentMethod: z.enum(['CASH','DEUNA']).default('CASH'), originReference: z.string().max(200).optional(), destinationReference: z.string().max(200).optional(), notes: z.string().trim().max(300).optional() });
+const tripDestinationSchema = z.object({
+  location: pointSchema,
+  reference: z.string().trim().min(1).max(200)
+});
+const tripRequestSchema = z.object({
+  origin: pointSchema,
+  destination: pointSchema.optional(),
+  destinations: z.array(tripDestinationSchema).min(1).max(3).optional(),
+  passengers: z.number().int().min(1).max(4),
+  paymentMethod: z.enum(['CASH','DEUNA']).default('CASH'),
+  originReference: z.string().max(200).optional(),
+  destinationReference: z.string().max(200).optional(),
+  notes: z.string().trim().max(300).optional(),
+  scheduledFor: z.string().datetime({ offset: true }).optional()
+}).refine(value => Boolean(value.destination) !== Boolean(value.destinations), {
+  message: "ONE_DESTINATION_FORMAT_REQUIRED",
+  path: ["destinations"]
+});
 const tripActionSchema = z.object({ action: z.enum(["EN_ROUTE", "ARRIVED", "START", "COMPLETE"]) });
 const ratingSchema = z.object({ score: z.number().int().min(1).max(5), comment: z.string().trim().max(500).optional(), tags: z.array(z.string().trim().min(1).max(50)).max(5).optional() });
 const locationSearchSchema = z.object({
@@ -67,6 +84,7 @@ const reverseLocationSchema = z.object({
 const routeSchema = z.object({
   origin: pointSchema,
   destination: pointSchema,
+  waypoints: z.array(pointSchema).max(2).default([]),
   tripId: z.string().uuid().optional(),
   purpose: z.enum(["PRELOAD", "ACTIVE_TRIP", "QUOTE", "MAP"]).optional()
 });
@@ -222,6 +240,7 @@ export async function buildApp() {
           ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude"
         from trips t
         where t.status='SEARCHING'
+          and (t.scheduled_for is null or t.schedule_status='SCHEDULED_READY')
           and not exists (select 1 from driver_offers o where o.trip_id=t.id and o.responded_at is null and o.expires_at > now())
         order by t.requested_at
         limit 1 for update skip locked
@@ -257,6 +276,79 @@ export async function buildApp() {
     return dispatched;
   }
 
+  async function activateScheduledTrips(): Promise<void> {
+    const [settings] = await database()`
+      select scheduled_trip_lead_minutes as "leadMinutes"
+      from operational_settings where id=1
+    `;
+    const leadMinutes = Number(settings?.leadMinutes ?? 10);
+    const due = await database()`
+      select id::text as "tripId", passenger_id::text as "passengerId",
+        driver_id::text as "driverId", scheduled_for as "scheduledFor",
+        schedule_status as "scheduleStatus"
+      from trips
+      where scheduled_for is not null
+        and schedule_status in ('SCHEDULED','SCHEDULED_ASSIGNED')
+        and status='SEARCHING'
+        and scheduled_for <= now() + (${leadMinutes} * interval '1 minute')
+      order by scheduled_for
+      limit 20
+    `;
+    for (const item of due) {
+      const activated = await database().begin(async tx => {
+        if (item.driverId) {
+          const [busy] = await tx`
+            select 1 from trips where driver_id=${item.driverId} and id<>${item.tripId}
+              and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+            limit 1
+          `;
+          if (busy) {
+            const [released] = await tx`
+              update trips set driver_id=null, assigned_at=null, schedule_status='SCHEDULED_READY'
+              where id=${item.tripId} and status='SEARCHING' and schedule_status='SCHEDULED_ASSIGNED'
+              returning id
+            `;
+            if (!released) return "SKIPPED" as const;
+            await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata) values (${item.tripId}, 'SEARCHING', 'SEARCHING', 'SCHEDULED_DRIVER_BUSY', ${JSON.stringify({ releasedDriverId: item.driverId })}::jsonb)`;
+            return "RELEASED" as const;
+          }
+          const [ready] = await tx`
+            update trips set status='ASSIGNED', schedule_status='SCHEDULED_READY',
+              schedule_activated_at=now(), passenger_reminder_sent_at=now(), driver_reminder_sent_at=now()
+            where id=${item.tripId} and status='SEARCHING' and schedule_status='SCHEDULED_ASSIGNED'
+            returning id
+          `;
+          if (!ready) return "SKIPPED" as const;
+          await tx`update drivers set is_available=false where user_id=${item.driverId}`;
+          await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata) values (${item.tripId}, 'SEARCHING', 'ASSIGNED', 'SCHEDULED_READY', ${JSON.stringify({ leadMinutes })}::jsonb)`;
+          return "ASSIGNED" as const;
+        }
+        const [ready] = await tx`
+          update trips set schedule_status='SCHEDULED_READY', schedule_activated_at=now(), passenger_reminder_sent_at=now()
+          where id=${item.tripId} and status='SEARCHING' and schedule_status='SCHEDULED'
+          returning id
+        `;
+        return ready ? "UNASSIGNED" as const : "SKIPPED" as const;
+      });
+      if (activated === "ASSIGNED") {
+        await Promise.all([
+          sendPush(String(item.passengerId), "Tu viaje programado está próximo", "El conductor asignado se preparará para dirigirse al origen.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" }),
+          sendPush(String(item.driverId), `Viaje programado en ${leadMinutes} minutos`, "Abre AtacamesGo para iniciar el desplazamiento al origen.", { tripId: String(item.tripId), type: "SCHEDULED_DRIVER_REMINDER" })
+        ]);
+        realtime.publishTripStatus(String(item.tripId), "ASSIGNED");
+      } else if (activated === "RELEASED") {
+        await Promise.all([
+          sendPush(String(item.passengerId), "Buscando otro conductor", "La reserva fue liberada y se está ofreciendo nuevamente.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_RELEASED" }),
+          sendPush(String(item.driverId), "Reserva liberada", "No fue posible iniciar el viaje programado mientras tenías otro viaje activo.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_RELEASED" })
+        ]);
+        await redispatchOldestTrip();
+      } else if (activated === "UNASSIGNED") {
+        await sendPush(String(item.passengerId), "Buscando conductor", "Tu viaje programado ya está próximo; iniciamos la búsqueda.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" });
+        await redispatchOldestTrip();
+      }
+    }
+  }
+
   app.get("/v1/locations/search", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = locationSearchSchema.safeParse(request.query);
@@ -274,16 +366,17 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = routeSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_ROUTE" });
     try {
-      const { origin, destination } = parsed.data;
+      const { origin, destination, waypoints } = parsed.data;
       const startedAt = performance.now();
-      const route = await computeRoute(origin, destination);
+      const route = await computeRoute(origin, destination, waypoints);
       request.log.info({
         tripId: parsed.data.tripId,
         purpose: parsed.data.purpose ?? "MAP",
         provider: route.provider,
         cacheHit: route.cacheHit,
         durationMs: Math.round(performance.now() - startedAt),
-        points: route.points.length
+        points: route.points.length,
+        stops: waypoints.length
       }, "route_loaded");
       return route;
     } catch (error) {
@@ -412,6 +505,23 @@ export async function buildApp() {
   app.put("/v1/devices/fcm-token", async (request, reply) => {
     const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const parsed = deviceTokenSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_DEVICE_TOKEN" });
+    const push = pushConfigurationStatus(parsed.data.firebaseProjectId);
+    if (!push.configured) {
+      request.log.error({ errorCode: push.errorCode }, "firebase_server_not_configured");
+      return reply.code(503).send({ error: "FIREBASE_SERVER_NOT_CONFIGURED" });
+    }
+    if (!push.projectMatches) {
+      request.log.error({
+        clientProjectId: parsed.data.firebaseProjectId,
+        serverProjectId: push.serverProjectId,
+        errorCode: push.errorCode
+      }, "firebase_project_mismatch");
+      return reply.code(409).send({
+        error: "FIREBASE_PROJECT_MISMATCH",
+        clientProjectId: parsed.data.firebaseProjectId,
+        serverProjectId: push.serverProjectId
+      });
+    }
     await database().begin(async tx => {
       // La cuenta admite una sola sesión activa. Conservamos el token actual y
       // retiramos tokens antiguos sin crear una ventana en la que no haya push.
@@ -422,7 +532,7 @@ export async function buildApp() {
         on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now()
       `;
     });
-    return { registered: true, push: pushConfigurationStatus(parsed.data.firebaseProjectId) };
+    return { registered: true, push };
   });
 
   // Diagnóstico temporal del piloto: permite comprobar el envío al dispositivo
@@ -598,37 +708,142 @@ export async function buildApp() {
     return { available: parsed.data.available };
   });
 
+  app.post("/v1/trips/preview", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = tripRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_TRIP_REQUEST", details: parsed.error.issues });
+    const input = parsed.data;
+    const destinations = input.destinations ?? [{
+      location: input.destination!, reference: input.destinationReference?.trim() || "Destino"
+    }];
+    const finalDestination = destinations.at(-1)!;
+    const scheduledFor = input.scheduledFor ? new Date(input.scheduledFor) : undefined;
+    if (scheduledFor) {
+      const delay = scheduledFor.getTime() - Date.now();
+      if (delay <= 0 || delay > 24 * 60 * 60 * 1000) return reply.code(400).send({ error: "INVALID_SCHEDULE_TIME" });
+    }
+    const sql = database();
+    const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
+    const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
+    const [price] = await sql`select version, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents from pricing_versions where active_from <= now() and (active_until is null or active_until > now()) order by version desc limit 1`;
+    if (!price) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
+    const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "America/Guayaquil", hour: "2-digit", hour12: false }).format(scheduledFor ?? new Date()));
+    const night = hour >= 20 || hour < 6;
+    const total = night
+      ? Number(price.night_cents_per_passenger) * input.passengers
+      : zone === "EXTENDED"
+        ? Number(price.extended_cents_per_passenger) * input.passengers
+        : Boolean(price.group_promotion_enabled) && input.passengers === Number(price.group_promotion_passengers)
+          ? Number(price.group_promotion_total_cents)
+          : Number(price.urban_day_cents_per_passenger) * input.passengers;
+    const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location));
+    return {
+      scheduledFor: scheduledFor?.toISOString() ?? null,
+      zone,
+      stops: destinations,
+      passengers: input.passengers,
+      paymentMethod: input.paymentMethod,
+      quotedTotalCents: total,
+      stopSurchargeCents: 0,
+      distanceMeters: route.distanceMeters,
+      durationSeconds: route.durationSeconds,
+      routePoints: route.points
+    };
+  });
+
   app.post("/v1/trips", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = tripRequestSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_TRIP_REQUEST", details: parsed.error.issues });
     const input = parsed.data;
+    const destinations = input.destinations ?? [{
+      location: input.destination!,
+      reference: input.destinationReference?.trim() || "Destino"
+    }];
+    const finalDestination = destinations.at(-1)!;
+    const scheduledFor = input.scheduledFor ? new Date(input.scheduledFor) : undefined;
+    if (scheduledFor) {
+      const delay = scheduledFor.getTime() - Date.now();
+      if (delay <= 0 || delay > 24 * 60 * 60 * 1000) {
+        return reply.code(400).send({ error: "INVALID_SCHEDULE_TIME" });
+      }
+    }
     const sql = database();
     const searchRadius = await configuredSearchRadius();
-    const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
+    const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
     const prices = await sql`select version, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents from pricing_versions where active_from <= now() and (active_until is null or active_until > now()) order by version desc limit 1`;
     const price = prices[0]; if (!price) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
-    const hour = new Intl.DateTimeFormat("en-GB", { timeZone: "America/Guayaquil", hour: "2-digit", hour12: false }).format(new Date());
+    const hour = new Intl.DateTimeFormat("en-GB", { timeZone: "America/Guayaquil", hour: "2-digit", hour12: false }).format(scheduledFor ?? new Date());
     const isNight = Number(hour) >= 20 || Number(hour) < 6;
     const total = isNight ? Number(price.night_cents_per_passenger) * input.passengers : zone === "EXTENDED" ? Number(price.extended_cents_per_passenger) * input.passengers : Boolean(price.group_promotion_enabled) && input.passengers === Number(price.group_promotion_passengers) ? Number(price.group_promotion_total_cents) : Number(price.urban_day_cents_per_passenger) * input.passengers;
+    const route = await computeRoute(
+      input.origin,
+      finalDestination.location,
+      destinations.slice(0, -1).map(stop => stop.location)
+    ).catch(() => undefined);
     const trip = await sql.begin(async tx => {
-      const [created] = await tx`insert into trips (passenger_id, passengers, payment_method, origin, destination, origin_reference, destination_reference, passenger_notes, service_zone, pricing_version, pricing_snapshot, quoted_total_cents) values (${user.id!}, ${input.passengers}, ${input.paymentMethod}, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ST_SetSRID(ST_MakePoint(${input.destination.longitude}, ${input.destination.latitude}),4326)::geography, ${input.originReference ?? null}, ${input.destinationReference ?? null}, ${input.notes || null}, ${zone}, ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total })}::jsonb, ${total}) returning id`;
-      await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, '{}'::jsonb)`;
+      const [created] = await tx`
+        insert into trips (
+          passenger_id, passengers, payment_method, origin, destination,
+          origin_reference, destination_reference, passenger_notes, service_zone,
+          pricing_version, pricing_snapshot, quoted_total_cents, scheduled_for,
+          schedule_status, estimated_distance_meters, estimated_duration_seconds
+        ) values (
+          ${user.id!}, ${input.passengers}, ${input.paymentMethod},
+          ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
+          ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
+          ${input.originReference ?? null}, ${finalDestination.reference}, ${input.notes || null}, ${zone},
+          ${price.version}, ${JSON.stringify({ version: price.version, zone, totalCents: total, stops: destinations.length, stopSurchargeCents: 0 })}::jsonb,
+          ${total}, ${scheduledFor ?? null}, ${scheduledFor ? "SCHEDULED" : null},
+          ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
+          ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)}
+        ) returning id
+      `;
+      for (let index = 0; index < destinations.length; index++) {
+        const stop = destinations[index]!;
+        await tx`
+          insert into trip_stops (trip_id, stop_order, location, reference)
+          values (
+            ${created!.id}, ${index + 1},
+            ST_SetSRID(ST_MakePoint(${stop.location.longitude}, ${stop.location.latitude}),4326)::geography,
+            ${stop.reference}
+          )
+        `;
+      }
+      await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, ${JSON.stringify({ scheduledFor: scheduledFor?.toISOString() ?? null, scheduleStatus: scheduledFor ? "SCHEDULED" : null, stops: destinations.length })}::jsonb)`;
       const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ${searchRadius}) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
-      for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
+      if (!scheduledFor) for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
       return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
     const eventAt = new Date().toISOString();
-    const offerPushes = await Promise.all(trip.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${input.destinationReference ?? "Destino"}`, { tripId: String(trip.id), type: "TRIP_OFFER", eventAt })));
+    const offerPushes = await Promise.all(trip.driverIds.map(driverId => sendPush(
+      driverId,
+      scheduledFor ? "Nuevo viaje programado" : "Nuevo viaje cercano",
+      `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${finalDestination.reference}`,
+      { tripId: String(trip.id), type: scheduledFor ? "SCHEDULED_TRIP_AVAILABLE" : "TRIP_OFFER", eventAt }
+    )));
     const undelivered = offerPushes.filter(push => push.sent === 0);
     if (undelivered.length) request.log.warn({
-      type: "TRIP_OFFER", tripId: String(trip.id),
+      type: scheduledFor ? "SCHEDULED_TRIP_AVAILABLE" : "TRIP_OFFER", tripId: String(trip.id),
       recipients: trip.driverIds.length, undelivered: undelivered.length,
       errorCodes: undelivered.map(push => push.errorCode ?? "firebase/no-delivery")
     }, "trip_offer_push_not_delivered");
-    for (const driverId of trip.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: String(trip.id), eventAt });
-    return reply.code(201).send({ tripId: trip.id, status: "SEARCHING", offers: trip.offers, quotedTotalCents: total, zone });
+    if (!scheduledFor) for (const driverId of trip.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: String(trip.id), eventAt });
+    if (scheduledFor) await sendPush(user.id!, "Viaje programado", `Tu solicitud quedó guardada para ${scheduledFor.toLocaleString("es-EC", { timeZone: "America/Guayaquil" })}.`, { tripId: String(trip.id), type: "SCHEDULED_TRIP_CREATED" });
+    return reply.code(201).send({
+      tripId: trip.id,
+      status: "SEARCHING",
+      scheduleStatus: scheduledFor ? "SCHEDULED" : null,
+      scheduledFor: scheduledFor?.toISOString() ?? null,
+      offers: scheduledFor ? 0 : trip.offers,
+      quotedTotalCents: total,
+      distanceMeters: route?.distanceMeters ?? null,
+      durationSeconds: route?.durationSeconds ?? null,
+      stops: destinations,
+      zone
+    });
   });
 
   app.post("/v1/trips/:tripId/cancel", async (request, reply) => {
@@ -636,8 +851,14 @@ export async function buildApp() {
     if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
     const tripId = (request.params as { tripId: string }).tripId;
     const result = await database().begin(async tx => {
+      const [existing] = await tx`
+        select driver_id::text as "driverId", schedule_status as "scheduleStatus"
+        from trips where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
+        for update
+      `;
+      if (!existing) return null;
       const [trip] = await tx`
-        update trips set status='CANCELLED', cancelled_at=now()
+        update trips set status='CANCELLED', cancelled_at=now(), schedule_status=null
         where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
         returning id::text
       `;
@@ -645,11 +866,22 @@ export async function buildApp() {
       const drivers = await tx`select driver_id from driver_offers where trip_id=${tripId} and responded_at is null`;
       await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${tripId}`;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code) values (${tripId}, 'SEARCHING', 'CANCELLED', ${user.id!}, 'PASSENGER_CANCELLED')`;
-      return drivers.map(driver => String(driver.driver_id));
+      return {
+        driverIds: [...new Set([
+          ...drivers.map(driver => String(driver.driver_id)),
+          ...(existing.driverId ? [String(existing.driverId)] : [])
+        ])],
+        scheduled: Boolean(existing.scheduleStatus)
+      };
     });
     if (!result) return reply.code(409).send({ error: "TRIP_NOT_CANCELLABLE" });
-    for (const driverId of result) realtime.publishToUser(driverId, { type: "trip:offer:cancelled", tripId });
-    void Promise.all(result.map(driverId => sendPush(driverId, "Solicitud cancelada", "El pasajero canceló la solicitud antes de ser asignada.", { tripId, type: "TRIP_CANCELLED" }))).catch(() => undefined);
+    for (const driverId of result.driverIds) realtime.publishToUser(driverId, { type: "trip:offer:cancelled", tripId });
+    await Promise.all(result.driverIds.map(driverId => sendPush(
+      driverId,
+      result.scheduled ? "Viaje programado cancelado" : "Solicitud cancelada",
+      result.scheduled ? "El pasajero canceló la reserva programada." : "El pasajero canceló la solicitud antes de ser asignada.",
+      { tripId, type: "TRIP_CANCELLED" }
+    )));
     realtime.publishTripStatus(tripId, "CANCELLED");
     return { tripId, status: "CANCELLED", cancellationReason: "PASSENGER_CANCELLED" };
   });
@@ -669,7 +901,14 @@ export async function buildApp() {
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
         ST_X(live.position::geometry) as "driverLongitude", ST_Y(live.position::geometry) as "driverLatitude",
         live.bearing as "driverBearing", live.speed_mps as "driverSpeed", live.recorded_at as "driverLocationAt",
-        cancellation.reason_code as "cancellationReason"
+        cancellation.reason_code as "cancellationReason", t.scheduled_for as "scheduledFor",
+        t.schedule_status as "scheduleStatus", t.estimated_distance_meters as "distanceMeters",
+        t.estimated_duration_seconds as "durationSeconds",
+        coalesce((select json_agg(json_build_object(
+          'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
+          'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry),
+          'completedAt', stop.completed_at
+        ) order by stop.stop_order) from trip_stops stop where stop.trip_id=t.id), '[]'::json) as stops
       from trips t
       left join users d_user on d_user.id=t.driver_id
       left join drivers d on d.user_id=t.driver_id
@@ -697,7 +936,14 @@ export async function buildApp() {
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
         ST_X(live.position::geometry) as "driverLongitude", ST_Y(live.position::geometry) as "driverLatitude",
-        live.bearing as "driverBearing", live.speed_mps as "driverSpeed", live.recorded_at as "driverLocationAt"
+        live.bearing as "driverBearing", live.speed_mps as "driverSpeed", live.recorded_at as "driverLocationAt",
+        t.scheduled_for as "scheduledFor", t.schedule_status as "scheduleStatus",
+        t.estimated_distance_meters as "distanceMeters", t.estimated_duration_seconds as "durationSeconds",
+        coalesce((select json_agg(json_build_object(
+          'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
+          'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry),
+          'completedAt', stop.completed_at
+        ) order by stop.stop_order) from trip_stops stop where stop.trip_id=t.id), '[]'::json) as stops
       from trips t
       join users p_user on p_user.id=t.passenger_id
       left join users d_user on d_user.id=t.driver_id
@@ -706,6 +952,7 @@ export async function buildApp() {
       left join trip_live_locations live on live.trip_id=t.id
       where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
         and t.status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+        and (t.scheduled_for is null or t.schedule_status in ('SCHEDULED_READY','ACTIVATED'))
       order by t.requested_at desc limit 1
     `;
     return rows[0] ?? null;
@@ -715,6 +962,7 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     return database()`
       select t.id::text as "tripId", t.status, t.requested_at as "requestedAt",
+        t.scheduled_for as "scheduledFor", t.schedule_status as "scheduleStatus",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
         t.quoted_total_cents as "quotedTotalCents", passenger.full_name as "passengerName", driver.full_name as "driverName"
       from trips t join users passenger on passenger.id=t.passenger_id
@@ -722,6 +970,222 @@ export async function buildApp() {
       where ${user.id!}=t.passenger_id or ${user.id!}=t.driver_id
       order by t.requested_at desc limit 30
     `;
+  });
+
+  app.get("/v1/trips/scheduled", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    await activateScheduledTrips();
+    return database()`
+      select t.id::text as "tripId", t.status, t.schedule_status as "scheduleStatus",
+        t.scheduled_for as "scheduledFor", t.requested_at as "requestedAt",
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        ST_Y(t.origin::geometry) as "originLatitude", ST_X(t.origin::geometry) as "originLongitude",
+        t.passengers, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
+        t.estimated_distance_meters as "distanceMeters", t.estimated_duration_seconds as "durationSeconds",
+        passenger.full_name as "passengerName", driver.full_name as "driverName",
+        coalesce((select json_agg(json_build_object(
+          'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
+          'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry),
+          'completedAt', stop.completed_at
+        ) order by stop.stop_order) from trip_stops stop where stop.trip_id=t.id), '[]'::json) as stops
+      from trips t
+      join users passenger on passenger.id=t.passenger_id
+      left join users driver on driver.id=t.driver_id
+      where t.scheduled_for is not null
+        and (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
+        and t.status not in ('COMPLETED','CANCELLED')
+      order by t.scheduled_for
+    `;
+  });
+
+  app.put("/v1/trips/:tripId/scheduled", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = tripRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_SCHEDULED_TRIP", details: parsed.error.issues });
+    if (!parsed.data.scheduledFor) return reply.code(400).send({ error: "INVALID_SCHEDULED_TRIP" });
+    const input = parsed.data;
+    const scheduledFor = new Date(parsed.data.scheduledFor);
+    const delay = scheduledFor.getTime() - Date.now();
+    if (delay <= 0 || delay > 24 * 60 * 60 * 1000) return reply.code(400).send({ error: "INVALID_SCHEDULE_TIME" });
+    const destinations = input.destinations ?? [{
+      location: input.destination!, reference: input.destinationReference?.trim() || "Destino"
+    }];
+    const finalDestination = destinations.at(-1)!;
+    const sql = database();
+    const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
+    const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
+    const [price] = await sql`select version, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents from pricing_versions where active_from <= now() and (active_until is null or active_until > now()) order by version desc limit 1`;
+    if (!price) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
+    const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "America/Guayaquil", hour: "2-digit", hour12: false }).format(scheduledFor));
+    const total = hour >= 20 || hour < 6
+      ? Number(price.night_cents_per_passenger) * input.passengers
+      : zone === "EXTENDED"
+        ? Number(price.extended_cents_per_passenger) * input.passengers
+        : Boolean(price.group_promotion_enabled) && input.passengers === Number(price.group_promotion_passengers)
+          ? Number(price.group_promotion_total_cents)
+          : Number(price.urban_day_cents_per_passenger) * input.passengers;
+    const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location)).catch(() => undefined);
+    const tripId = (request.params as { tripId: string }).tripId;
+    const updated = await sql.begin(async tx => {
+      const [trip] = await tx`
+        update trips set passengers=${input.passengers}, payment_method=${input.paymentMethod},
+          origin=ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
+          destination=ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
+          origin_reference=${input.originReference ?? null}, destination_reference=${finalDestination.reference},
+          passenger_notes=${input.notes || null}, service_zone=${zone}, pricing_version=${price.version},
+          pricing_snapshot=${JSON.stringify({ version: price.version, zone, totalCents: total, stops: destinations.length, stopSurchargeCents: 0 })}::jsonb,
+          quoted_total_cents=${total}, scheduled_for=${scheduledFor},
+          estimated_distance_meters=${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
+          estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)}
+        where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
+          and schedule_status='SCHEDULED' and driver_id is null and scheduled_for > now()
+        returning id::text
+      `;
+      if (!trip) return undefined;
+      await tx`delete from trip_stops where trip_id=${tripId}`;
+      await tx`delete from scheduled_trip_responses where trip_id=${tripId}`;
+      for (let index = 0; index < destinations.length; index++) {
+        const stop = destinations[index]!;
+        await tx`insert into trip_stops (trip_id, stop_order, location, reference)
+          values (${tripId}, ${index + 1}, ST_SetSRID(ST_MakePoint(${stop.location.longitude}, ${stop.location.latitude}),4326)::geography, ${stop.reference})`;
+      }
+      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code, metadata)
+        values (${tripId}, 'SEARCHING', 'SEARCHING', ${user.id!}, 'SCHEDULED_UPDATED', ${JSON.stringify({ scheduledFor: scheduledFor.toISOString(), stops: destinations.length })}::jsonb)`;
+      return trip;
+    });
+    if (!updated) return reply.code(409).send({ error: "SCHEDULED_TRIP_NOT_EDITABLE" });
+    return { tripId, scheduledFor: scheduledFor.toISOString(), quotedTotalCents: total, stops: destinations };
+  });
+
+  app.get("/v1/driver/scheduled-offers", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    await activateScheduledTrips();
+    return database()`
+      select t.id::text as "tripId", t.scheduled_for as "scheduledFor",
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        t.passengers, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
+        t.estimated_distance_meters as "distanceMeters", t.estimated_duration_seconds as "durationSeconds",
+        coalesce((select json_agg(json_build_object(
+          'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
+          'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry)
+        ) order by stop.stop_order) from trip_stops stop where stop.trip_id=t.id), '[]'::json) as stops
+      from trips t join drivers d on d.user_id=${user.id!}
+      where t.scheduled_for is not null and t.schedule_status='SCHEDULED'
+        and t.status='SEARCHING' and t.driver_id is null
+        and (t.payment_method='CASH' or d.deuna_enabled=true)
+        and not exists (
+          select 1 from scheduled_trip_responses response
+          where response.trip_id=t.id and response.driver_id=${user.id!} and response.accepted=false
+        )
+      order by t.scheduled_for
+      limit 30
+    `;
+  });
+
+  app.post("/v1/driver/scheduled-offers/:tripId/respond", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = z.object({ accept: z.boolean() }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_OFFER_RESPONSE" });
+    const tripId = (request.params as { tripId: string }).tripId;
+    if (!parsed.data.accept) {
+      await database()`
+        insert into scheduled_trip_responses (trip_id, driver_id, accepted)
+        select ${tripId}, ${user.id!}, false
+        where exists (select 1 from trips where id=${tripId} and scheduled_for is not null and driver_id is null)
+        on conflict (trip_id, driver_id) do update set accepted=false, responded_at=now()
+      `;
+      return { tripId, status: "REJECTED" };
+    }
+    const result = await database().begin(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtext(${user.id!}::text))`;
+      const [conflict] = await tx`
+        select 1 from trips
+        where driver_id=${user.id!} and scheduled_for is not null
+          and schedule_status in ('SCHEDULED_ASSIGNED','SCHEDULED_READY')
+          and abs(extract(epoch from (scheduled_for - (select scheduled_for from trips where id=${tripId})))) < 3600
+        limit 1
+      `;
+      if (conflict) return { error: "SCHEDULE_CONFLICT" as const };
+      const [trip] = await tx`
+        update trips set driver_id=${user.id!},
+          cooperative_id=(select cooperative_id from users where id=${user.id!}),
+          schedule_status='SCHEDULED_ASSIGNED', assigned_at=now()
+        where id=${tripId} and status='SEARCHING' and schedule_status='SCHEDULED'
+          and driver_id is null and scheduled_for > now()
+        returning passenger_id::text as "passengerId", scheduled_for as "scheduledFor"
+      `;
+      if (!trip) return { error: "TRIP_ALREADY_ASSIGNED" as const };
+      await tx`
+        insert into scheduled_trip_responses (trip_id, driver_id, accepted)
+        values (${tripId}, ${user.id!}, true)
+        on conflict (trip_id, driver_id) do update set accepted=true, responded_at=now()
+      `;
+      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code, metadata) values (${tripId}, 'SEARCHING', 'SEARCHING', ${user.id!}, 'SCHEDULED_ACCEPTED', ${JSON.stringify({ scheduleStatus: "SCHEDULED_ASSIGNED" })}::jsonb)`;
+      return { passengerId: String(trip.passengerId), scheduledFor: trip.scheduledFor };
+    });
+    if ("error" in result) return reply.code(409).send(result);
+    await Promise.all([
+      sendPush(result.passengerId, "Conductor asignado", "Tu viaje programado ya tiene un conductor reservado.", { tripId, type: "SCHEDULED_TRIP_ASSIGNED" }),
+      sendPush(user.id!, "Viaje programado aceptado", "La reserva fue agregada a tus próximos viajes.", { tripId, type: "SCHEDULED_TRIP_ACCEPTED" })
+    ]);
+    return { tripId, status: "SCHEDULED_ASSIGNED", scheduledFor: result.scheduledFor };
+  });
+
+  app.post("/v1/driver/scheduled-trips/:tripId/release", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const tripId = (request.params as { tripId: string }).tripId;
+    const result = await database().begin(async tx => {
+      const [trip] = await tx`
+        update trips set driver_id=null, cooperative_id=null, assigned_at=null,
+          schedule_status='SCHEDULED'
+        where id=${tripId} and driver_id=${user.id!} and status='SEARCHING'
+          and schedule_status='SCHEDULED_ASSIGNED' and scheduled_for > now()
+        returning passenger_id::text as "passengerId"
+      `;
+      if (!trip) return undefined;
+      await tx`
+        insert into scheduled_trip_responses (trip_id, driver_id, accepted)
+        values (${tripId}, ${user.id!}, false)
+        on conflict (trip_id, driver_id) do update set accepted=false, responded_at=now()
+      `;
+      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code, metadata)
+        values (${tripId}, 'SEARCHING', 'SEARCHING', ${user.id!}, 'SCHEDULED_RELEASED', ${JSON.stringify({ scheduleStatus: "SCHEDULED" })}::jsonb)`;
+      return trip;
+    });
+    if (!result) return reply.code(409).send({ error: "SCHEDULED_TRIP_NOT_RELEASABLE" });
+    await Promise.all([
+      sendPush(String(result.passengerId), "Buscando otro conductor", "El conductor liberó la reserva; volveremos a ofrecerla.", { tripId, type: "SCHEDULED_TRIP_RELEASED" }),
+      sendPush(user.id!, "Reserva liberada", "El viaje programado ya no está asignado a tu cuenta.", { tripId, type: "SCHEDULED_TRIP_RELEASED" })
+    ]);
+    return { tripId, status: "SCHEDULED" };
+  });
+
+  app.post("/v1/trips/:tripId/stops/:stopId/complete", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const { tripId, stopId } = request.params as { tripId: string; stopId: string };
+    const result = await database().begin(async tx => {
+      const [next] = await tx`
+        select stop.id from trip_stops stop join trips trip on trip.id=stop.trip_id
+        where stop.trip_id=${tripId} and trip.driver_id=${user.id!} and trip.status='IN_PROGRESS'
+          and stop.completed_at is null order by stop.stop_order limit 1 for update
+      `;
+      if (!next || String(next.id) !== stopId) return undefined;
+      await tx`update trip_stops set completed_at=now() where id=${stopId}`;
+      const [remaining] = await tx`
+        select id::text, stop_order as "order", reference,
+          ST_Y(location::geometry) as latitude, ST_X(location::geometry) as longitude
+        from trip_stops where trip_id=${tripId} and completed_at is null order by stop_order limit 1
+      `;
+      return remaining ?? null;
+    });
+    if (result === undefined) return reply.code(409).send({ error: "STOP_NOT_ACTIVE" });
+    realtime.publishTripStatus(tripId, result ? "STOP_COMPLETED" : "FINAL_STOP_COMPLETED");
+    return { completed: true, nextStop: result };
   });
 
   app.get("/v1/trips/pending-rating", async (request, reply) => {
@@ -770,6 +1234,7 @@ export async function buildApp() {
     const result = await database().begin(async tx => {
       const [trip] = await tx`
         update trips set status=${transition.to},
+          schedule_status=case when ${transition.to}='DRIVER_EN_ROUTE' and scheduled_for is not null then 'ACTIVATED' else schedule_status end,
           started_at=case when ${transition.to}='IN_PROGRESS' then now() else started_at end,
           completed_at=case when ${transition.to}='COMPLETED' then now() else completed_at end,
           final_total_cents=case when ${transition.to}='COMPLETED' then quoted_total_cents else final_total_cents end
@@ -845,8 +1310,13 @@ export async function buildApp() {
         t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
-        ST_Distance(t.origin, t.destination)::float8 as "distanceMeters",
-        ceil(ST_Distance(t.origin, t.destination) / 400.0)::int * 60 as "durationSeconds",
+        coalesce(t.estimated_distance_meters, ST_Distance(t.origin, t.destination)::int)::float8 as "distanceMeters",
+        coalesce(t.estimated_duration_seconds, ceil(ST_Distance(t.origin, t.destination) / 400.0)::int * 60) as "durationSeconds",
+        coalesce((select json_agg(json_build_object(
+          'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
+          'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry),
+          'completedAt', stop.completed_at
+        ) order by stop.stop_order) from trip_stops stop where stop.trip_id=t.id), '[]'::json) as stops,
         o.offered_at as "offeredAt", o.expires_at as "expiresAt"
       from driver_offers o
       join trips t on t.id=o.trip_id
@@ -969,6 +1439,14 @@ export async function buildApp() {
         message: error instanceof Error ? error.message : "No se pudo cotizar."
       });
     }
+  });
+
+  const scheduledTimer = process.env.DATABASE_URL
+    ? setInterval(() => void activateScheduledTrips().catch(error => app.log.error({ error }, "scheduled_trip_activation_failed")), 60_000)
+    : undefined;
+  scheduledTimer?.unref();
+  app.addHook("onClose", async () => {
+    if (scheduledTimer) clearInterval(scheduledTimer);
   });
 
   return app;

@@ -37,4 +37,28 @@ describe("rutas de Google", () => {
     expect(second).toMatchObject({ provider: "GOOGLE", cacheHit: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("envía las paradas intermedias en el orden indicado", async () => {
+    process.env.GOOGLE_MAPS_SERVER_API_KEY = "test-key";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      routes: [{ distanceMeters: 2500, duration: "480s", polyline: { encodedPolyline: "" } }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await computeRoute(
+      { latitude: -2.9, longitude: -79.0 },
+      { latitude: -2.93, longitude: -79.03 },
+      [
+        { latitude: -2.91, longitude: -79.01 },
+        { latitude: -2.92, longitude: -79.02 }
+      ]
+    );
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body));
+    expect(body.intermediates).toEqual([
+      { location: { latLng: { latitude: -2.91, longitude: -79.01 } } },
+      { location: { latLng: { latitude: -2.92, longitude: -79.02 } } }
+    ]);
+  });
 });

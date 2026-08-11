@@ -58,6 +58,36 @@ void main() {
     expect(origin['longitude'], isNot(gpsOriginal.longitude));
   });
 
+  test('serializa paradas ordenadas y fecha programada sin perder coordenadas', () {
+    final scheduledFor = DateTime.parse('2026-08-08T18:30:00-05:00');
+    final payload = buildTripRequestPayload(
+      passengers: 3,
+      originReference: 'Parque central',
+      destinationReference: 'Destino final',
+      selectedOrigin: const LatLng(-0.866, -79.847),
+      selectedDestination: const LatLng(-0.874, -79.861),
+      paymentMethod: 'DEUNA',
+      scheduledFor: scheduledFor,
+      destinations: [
+        {
+          'location': {'latitude': -0.870, 'longitude': -79.852},
+          'reference': 'Parada 1'
+        },
+        {
+          'location': {'latitude': -0.874, 'longitude': -79.861},
+          'reference': 'Destino final'
+        },
+      ],
+    );
+
+    final destinations = payload['destinations'] as List<dynamic>;
+    expect(payload.containsKey('destination'), isFalse);
+    expect(destinations, hasLength(2));
+    expect(destinations.first['reference'], 'Parada 1');
+    expect(destinations.last['location']['longitude'], -79.861);
+    expect(payload['scheduledFor'], scheduledFor.toUtc().toIso8601String());
+  });
+
   test('traduce todos los estados operativos visibles', () {
     expect(estadoViaje('SEARCHING'), 'Buscando conductor');
     expect(estadoViaje('DRIVER_EN_ROUTE'), 'Conductor en camino');

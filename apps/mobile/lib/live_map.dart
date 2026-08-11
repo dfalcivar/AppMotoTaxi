@@ -88,6 +88,7 @@ class LiveMap extends StatefulWidget {
     required this.destinationLabel,
     this.pickup,
     this.dropoff,
+    this.stops = const [],
     this.driverPosition,
     this.selfDriverPosition,
     this.driverBearing = 0,
@@ -110,6 +111,7 @@ class LiveMap extends StatefulWidget {
   final String destinationLabel;
   final LatLng? pickup;
   final LatLng? dropoff;
+  final List<LatLng> stops;
   final LatLng? driverPosition;
   final LatLng? selfDriverPosition;
   final double driverBearing;
@@ -409,6 +411,13 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           child: const _SimpleMapPin(
               icon: Icons.flag_rounded, color: Color(0xffef5b4d)),
         ),
+      for (var index = 0; index < widget.stops.length; index++)
+        Marker(
+          point: widget.stops[index],
+          width: 30,
+          height: 38,
+          child: _NumberedStopPin(number: index + 1),
+        ),
       for (final entry in widget.nearbyDrivers.entries)
         Marker(
           key: ValueKey(entry.key),
@@ -468,6 +477,16 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               gmaps.LatLng(widget.dropoff!.latitude, widget.dropoff!.longitude),
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
               gmaps.BitmapDescriptor.hueRed),
+          anchor: const Offset(.5, 1),
+        ),
+      for (var index = 0; index < widget.stops.length; index++)
+        gmaps.Marker(
+          markerId: gmaps.MarkerId('stop-${index + 1}'),
+          position: gmaps.LatLng(
+              widget.stops[index].latitude, widget.stops[index].longitude),
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+              gmaps.BitmapDescriptor.hueOrange),
+          infoWindow: gmaps.InfoWindow(title: 'Parada ${index + 1}'),
           anchor: const Offset(.5, 1),
         ),
       for (final entry in widget.nearbyDrivers.entries)
@@ -743,4 +762,26 @@ class _SimpleMapPin extends StatelessWidget {
       color: color,
       size: 29,
       shadows: const [Shadow(color: Colors.black38, blurRadius: 5)]);
+}
+
+class _NumberedStopPin extends StatelessWidget {
+  const _NumberedStopPin({required this.number});
+
+  final int number;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 28,
+        height: 28,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: const Color(0xffffa62b),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 5)],
+        ),
+        child: Text('$number',
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.w800)),
+      );
 }
