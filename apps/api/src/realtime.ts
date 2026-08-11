@@ -64,6 +64,7 @@ interface LiveLocation {
 
 export interface RealtimeHub {
   publishTripStatus(tripId: string, status: string): void;
+  publishTripEvent(tripId: string, type: string, payload?: Record<string, unknown>): void;
   publishDriverUnavailable(driverId: string): void;
   publishToUser(userId: string, payload: unknown): void;
 }
@@ -390,6 +391,9 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
   return {
     publishTripStatus(tripId, status) {
       broadcastTrip(tripId, { type: "trip:status", tripId, status, occurredAt: new Date().toISOString() });
+    },
+    publishTripEvent(tripId, type, payload = {}) {
+      broadcastTrip(tripId, { type, tripId, ...payload, occurredAt: new Date().toISOString() });
     },
     publishDriverUnavailable,
     publishToUser(userId, payload) {

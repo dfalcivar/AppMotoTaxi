@@ -23,6 +23,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'affiliate_banners.dart';
 import 'chat_sheet.dart';
+import 'driver_navigation.dart';
 import 'in_app_notification_banner.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
@@ -565,6 +566,11 @@ String mensajeApi(dynamic code) =>
           'La solicitud ya fue asignada y no puede cancelarse desde aquí.',
       'INVALID_TRIP_STATE':
           'Esta acción ya no está disponible para el estado actual del viaje.',
+      'SCHEDULE_TOO_SOON': 'El viaje debe reservarse con mayor anticipación.',
+      'SCHEDULE_TOO_FAR':
+          'El viaje solo puede programarse dentro de las próximas 24 horas.',
+      'PENDING_STOPS':
+          'Completa las paradas anteriores antes de finalizar el viaje.',
       'PASSWORD_CHANGE_REQUIRED':
           'Debes cambiar la contraseña temporal para continuar.',
       'PASSWORD_REUSED':
@@ -749,6 +755,9 @@ class Api {
   Future<List<dynamic>> cooperatives() async =>
       List<dynamic>.from(await call('GET', '/v1/cooperatives'));
   Future<dynamic> active(String t) => call('GET', '/v1/trips/active', token: t);
+  Future<Map<String, dynamic>> schedulingSettings(String t) async =>
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/trips/scheduling-settings', token: t));
   Future<List<dynamic>> trips(String t) async =>
       List<dynamic>.from(await call('GET', '/v1/trips/mine', token: t));
   Future<dynamic> pendingRating(String t) =>
@@ -780,7 +789,8 @@ class Api {
       String t, LatLng origin, LatLng destination,
       {List<LatLng> waypoints = const [],
       String? tripId,
-      String purpose = 'MAP'}) async {
+      String purpose = 'MAP',
+      bool includeRouteToken = false}) async {
     final value = await call('POST', '/v1/routes', token: t, body: {
       'origin': {
         'latitude': origin.latitude,
@@ -798,6 +808,7 @@ class Api {
           .toList(),
       if (tripId != null) 'tripId': tripId,
       'purpose': purpose,
+      'includeRouteToken': includeRouteToken,
     });
     return Map<String, dynamic>.from(value);
   }
@@ -844,9 +855,8 @@ class Api {
   Future<dynamic> respondScheduled(String t, String tripId, bool accept) =>
       call('POST', '/v1/driver/scheduled-offers/$tripId/respond',
           token: t, body: {'accept': accept});
-  Future<dynamic> releaseScheduled(String t, String tripId) => call(
-      'POST', '/v1/driver/scheduled-trips/$tripId/release',
-      token: t);
+  Future<dynamic> releaseScheduled(String t, String tripId) =>
+      call('POST', '/v1/driver/scheduled-trips/$tripId/release', token: t);
   Future<dynamic> completeStop(String t, String tripId, String stopId) =>
       call('POST', '/v1/trips/$tripId/stops/$stopId/complete', token: t);
   Future<dynamic> cancelTrip(String t, String id) =>
@@ -3689,6 +3699,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   DateTime? lastRouteAt;
   double? routeDistanceMeters;
   double? routeDurationSeconds;
+  int scheduledMinimumNoticeMinutes = 30;
+  int scheduledMaximumAdvanceMinutes = 24 * 60;
   @override
   void initState() {
     super.initState();
@@ -3758,12 +3770,28 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       Future.microtask(restoreInitialPush);
     }
     load();
+    loadSchedulingSettings();
     loadFavoritePlaces();
     Future.microtask(() => useCurrentLocation(explicit: false));
     timer = Timer.periodic(const Duration(seconds: 15), (_) {
       unawaited(load());
       unawaited(refreshNearbyDrivers());
     });
+  }
+
+  Future<void> loadSchedulingSettings() async {
+    try {
+      final settings = await api.schedulingSettings(widget.s.token);
+      if (!mounted) return;
+      setState(() {
+        scheduledMinimumNoticeMinutes =
+            (settings['minimumNoticeMinutes'] as num?)?.toInt() ?? 30;
+        scheduledMaximumAdvanceMinutes =
+            (settings['maximumAdvanceMinutes'] as num?)?.toInt() ?? 24 * 60;
+      });
+    } catch (_) {
+      // El backend vuelve a validar; se conservan valores seguros por defecto.
+    }
   }
 
   @override
@@ -3971,6 +3999,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         driverBearing = (item['bearing'] as num?)?.toDouble() ?? 0;
       });
       refreshRoute(force: true);
+      return;
+    }
+    if (type == 'trip:stop-completed') {
+      final completed = event['completedStop'] is Map
+          ? Map<String, dynamic>.from(event['completedStop'] as Map)
+          : <String, dynamic>{};
+      final order = (completed['order'] as num?)?.toInt();
+      final stopLabel = order == null ? 'Parada' : 'Destino $order';
+      setState(() =>
+          message = '$stopLabel finalizado. Continuamos al siguiente destino.');
+      showPassengerNotification('STOP_COMPLETED', event['tripId']?.toString(),
+          title: '$stopLabel finalizado',
+          body: 'El viaje continúa hacia el siguiente destino.');
+      load();
       return;
     }
     if (type == 'trip:status') {
@@ -4734,11 +4776,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<void> chooseSchedule() async {
     final now = DateTime.now();
-    final initial = scheduledFor ?? now.add(const Duration(minutes: 30));
+    final minimumRaw =
+        now.add(Duration(minutes: scheduledMinimumNoticeMinutes));
+    final minimum = DateTime(minimumRaw.year, minimumRaw.month, minimumRaw.day,
+            minimumRaw.hour, minimumRaw.minute)
+        .add(const Duration(minutes: 1));
+    final maximum = now.add(Duration(minutes: scheduledMaximumAdvanceMinutes));
+    final initial = scheduledFor ?? minimum;
     final date = await showDatePicker(
       context: context,
       firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: now.add(const Duration(days: 1)),
+      lastDate: maximum,
       initialDate: DateTime(initial.year, initial.month, initial.day),
     );
     if (date == null || !mounted) return;
@@ -4750,9 +4798,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final selected =
         DateTime(date.year, date.month, date.day, time.hour, time.minute);
     final delay = selected.difference(DateTime.now());
-    if (delay <= Duration.zero || delay > const Duration(hours: 24)) {
+    if (delay < Duration(minutes: scheduledMinimumNoticeMinutes) ||
+        delay > Duration(minutes: scheduledMaximumAdvanceMinutes)) {
       setState(() => message =
-          'Selecciona una fecha futura dentro de las próximas 24 horas.');
+          'Reserva con al menos $scheduledMinimumNoticeMinutes minutos de anticipación y dentro de las próximas 24 horas.');
       return;
     }
     setState(() {
@@ -5482,6 +5531,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             ),
           ),
         ]),
+        if (scheduledFor == null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Las reservas requieren al menos $scheduledMinimumNoticeMinutes minutos de anticipación.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
         if (scheduledFor != null)
           ListTile(
             dense: true,
@@ -5735,6 +5792,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   String? preloadedRouteTripId;
   List<LatLng>? preloadedTripRoute;
   bool routePreparing = false;
+  String? promptedRatingTripId;
   final Set<String> processingOfferIds = <String>{};
   @override
   void initState() {
@@ -5938,6 +5996,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             .removeWhere((offer) => offer['tripId']?.toString() == tripId));
       }
       refresh();
+    } else if (event['type'] == 'trip:stop-completed') {
+      final completed = event['completedStop'] is Map
+          ? Map<String, dynamic>.from(event['completedStop'] as Map)
+          : <String, dynamic>{};
+      final order = (completed['order'] as num?)?.toInt();
+      if (mounted) {
+        setState(() => driverMessage = order == null
+            ? 'Parada completada. Continúa al siguiente destino.'
+            : 'Destino $order finalizado. Continúa al siguiente destino.');
+      }
+      refresh();
     } else if (event['type'] == 'trip:status') {
       refresh();
     } else if (event['type'] == 'chat:message') {
@@ -5971,8 +6040,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ? 'AtacamesGo · Disponible'
         : 'AtacamesGo · Viaje activo';
     final foregroundText = switch (activeStatus) {
-      'ASSIGNED' || 'DRIVER_EN_ROUTE' =>
-        'Dirigiéndote al punto de recogida.',
+      'ASSIGNED' || 'DRIVER_EN_ROUTE' => 'Dirigiéndote al punto de recogida.',
       'DRIVER_ARRIVED' => 'Esperando iniciar el viaje.',
       'IN_PROGRESS' => 'Compartiendo ubicación durante el viaje.',
       _ => 'Actualizando ubicación para recibir viajes cercanos.'
@@ -6057,6 +6125,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
     });
     if (adjustSheet) _moveDriverSheet(active == null ? .30 : .50);
+    if (active == null) unawaited(checkPendingDriverRating());
     if (active != null) {
       unawaited(resolveOriginAddress(active));
       unawaited(preloadActiveTripRoute(active));
@@ -6115,6 +6184,21 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await refreshScheduled();
       if (active != null) {
         final latest = await api.trip(widget.s.token, active['tripId']);
+        if (latest['status'] == 'COMPLETED') {
+          final completedTripId = latest['tripId'].toString();
+          if (mounted) {
+            setState(() {
+              active = null;
+              routePoints = [];
+              preloadedTripRoute = null;
+              preloadedRouteTripId = null;
+              driverMessage = 'Viaje finalizado. Registra la calificación.';
+            });
+          }
+          await promptDriverRating(completedTripId);
+          await restore();
+          return;
+        }
         if (latest['status'] == 'CANCELLED') {
           if (mounted) {
             setState(() => driverMessage =
@@ -6283,8 +6367,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           tooltip: 'Liberar reserva',
                           icon: const Icon(Icons.event_busy_outlined),
                           onPressed: () async {
-                            await api.releaseScheduled(widget.s.token,
-                                trip['tripId'].toString());
+                            await api.releaseScheduled(
+                                widget.s.token, trip['tripId'].toString());
                             if (sheetContext.mounted) {
                               Navigator.pop(sheetContext);
                             }
@@ -6412,8 +6496,110 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> openDriverNavigation() async {
+    if (!navigationSdkEnabled || active == null) return;
+    final status = active['status']?.toString();
+    if (status != 'DRIVER_EN_ROUTE' && status != 'IN_PROGRESS') return;
+    var current = currentDriverPosition;
+    if (current == null) {
+      try {
+        current = pointFrom(await currentGpsPosition());
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Activa la ubicaciÃ³n precisa para navegar.')));
+        }
+        return;
+      }
+    }
+
+    final navigationStops = <DriverNavigationStop>[];
+    if (status == 'DRIVER_EN_ROUTE') {
+      if (active['originLatitude'] == null ||
+          active['originLongitude'] == null) {
+        return;
+      }
+      navigationStops.add(DriverNavigationStop(
+        latitude: (active['originLatitude'] as num).toDouble(),
+        longitude: (active['originLongitude'] as num).toDouble(),
+        label: cleanAddressLabel(active['originReference'],
+            fallback: 'Punto de recogida'),
+      ));
+    } else {
+      final remaining = List<dynamic>.from(active['stops'] ?? const [])
+          .where((stop) => stop['completedAt'] == null)
+          .toList();
+      if (remaining.isNotEmpty) {
+        for (final stop in remaining) {
+          navigationStops.add(DriverNavigationStop(
+            latitude: (stop['latitude'] as num).toDouble(),
+            longitude: (stop['longitude'] as num).toDouble(),
+            label: cleanAddressLabel(stop['reference'], fallback: 'Destino'),
+          ));
+        }
+      } else if (active['destinationLatitude'] != null &&
+          active['destinationLongitude'] != null) {
+        navigationStops.add(DriverNavigationStop(
+          latitude: (active['destinationLatitude'] as num).toDouble(),
+          longitude: (active['destinationLongitude'] as num).toDouble(),
+          label: cleanAddressLabel(active['destinationReference'],
+              fallback: 'Destino'),
+        ));
+      }
+    }
+    if (navigationStops.isEmpty || !mounted) return;
+
+    String? routeToken;
+    final routeTimer = Stopwatch()..start();
+    try {
+      final destination = navigationStops.last;
+      final route = await api.route(
+        widget.s.token,
+        current,
+        LatLng(destination.latitude, destination.longitude),
+        waypoints: navigationStops.length <= 1
+            ? const []
+            : navigationStops
+                .sublist(0, navigationStops.length - 1)
+                .map((stop) => LatLng(stop.latitude, stop.longitude))
+                .toList(),
+        tripId: active['tripId']?.toString(),
+        purpose: 'NAVIGATION',
+        includeRouteToken: true,
+      );
+      routeToken = route['routeToken']?.toString();
+      debugPrint(
+          'NAVIGATION_ROUTE_READY durationMs=${routeTimer.elapsedMilliseconds} token=${routeToken?.isNotEmpty == true} provider=${route['provider']}');
+    } catch (error) {
+      debugPrint(
+          'NAVIGATION_ROUTE_TOKEN_UNAVAILABLE type=${error.runtimeType}');
+      // Navigation SDK puede calcular la ruta; LiveMap sigue siendo el fallback.
+    }
+    if (!mounted) return;
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DriverNavigationScreen(
+          stops: navigationStops,
+          routeToken: routeToken,
+          phaseLabel:
+              status == 'IN_PROGRESS' ? 'En viaje' : 'Recogiendo pasajero',
+        ),
+      ),
+    );
+    if (mounted && result == false) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Navigation SDK no estÃ¡ disponible. ContinÃºa con el mapa actual.')));
+    }
+  }
+
   Future<void> progress(BuildContext c, String action) async {
     final tripId = active['tripId'];
+    if (action == 'COMPLETE_STOP') {
+      await completeCurrentStop();
+      return;
+    }
     final timer = Stopwatch()..start();
     if (action == 'START' && mounted) setState(() => routePreparing = true);
     try {
@@ -6433,16 +6619,46 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             'Inicio de viaje visible en ${timer.elapsedMilliseconds} ms; rutaAnticipada=${cached?.isNotEmpty == true}');
         unawaited(refreshDriverRoute(force: true));
         unawaited(restore(adjustSheet: false));
+        unawaited(openDriverNavigation());
         return;
       }
       if (action == 'COMPLETE') {
+        if (mounted) {
+          setState(() {
+            active = null;
+            routePoints = [];
+            preloadedTripRoute = null;
+            preloadedRouteTripId = null;
+            driverMessage = 'Viaje finalizado. Registra la calificación.';
+          });
+        }
         if (!c.mounted) return;
-        await rating(c, widget.s, tripId, () => {});
+        await promptDriverRating(tripId.toString());
+        await restore();
+        await refresh();
+        return;
       }
       await restore(adjustSheet: false);
       await refresh();
     } finally {
       if (mounted && routePreparing) setState(() => routePreparing = false);
+    }
+  }
+
+  Future<void> promptDriverRating(String tripId) async {
+    if (!mounted || promptedRatingTripId == tripId) return;
+    promptedRatingTripId = tripId;
+    await rating(context, widget.s, tripId, () => {});
+  }
+
+  Future<void> checkPendingDriverRating() async {
+    try {
+      final pending = await api.pendingRating(widget.s.token);
+      final tripId = pending?['tripId']?.toString();
+      if (!mounted || tripId == null) return;
+      await promptDriverRating(tripId);
+    } catch (_) {
+      // Se vuelve a consultar al restaurar la sesión o abrir Mi cuenta.
     }
   }
 
@@ -6456,6 +6672,29 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await api.completeStop(
           widget.s.token, tripId, remaining.first['id'].toString());
       lastRouteAt = null;
+      if (mounted) {
+        final completedOrder = (remaining.first['order'] as num?)?.toInt();
+        setState(() {
+          final stops = List<dynamic>.from(active?['stops'] ?? const []);
+          active = {
+            ...Map<String, dynamic>.from(active as Map),
+            'status': 'IN_PROGRESS',
+            'stops': stops
+                .map((stop) =>
+                    stop['id']?.toString() == remaining.first['id']?.toString()
+                        ? {
+                            ...Map<String, dynamic>.from(stop as Map),
+                            'completedAt': DateTime.now().toIso8601String()
+                          }
+                        : stop)
+                .toList(),
+          };
+          driverMessage = completedOrder == null
+              ? 'Parada completada. Continúa al siguiente destino.'
+              : 'Destino $completedOrder finalizado. Continúa al siguiente destino.';
+          routePoints = [];
+        });
+      }
       await refresh();
       await refreshDriverRoute(force: true);
     } catch (error) {
@@ -6463,16 +6702,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
-  String? next() => {
-        'ASSIGNED': 'EN_ROUTE',
-        'DRIVER_EN_ROUTE': 'ARRIVED',
-        'DRIVER_ARRIVED': 'START',
-        'IN_PROGRESS': 'COMPLETE'
-      }[active?['status']];
+  String? next() {
+    if (active?['status'] == 'IN_PROGRESS') {
+      final remaining = List<dynamic>.from(active?['stops'] ?? const [])
+          .where((stop) => stop['completedAt'] == null)
+          .length;
+      return remaining > 1 ? 'COMPLETE_STOP' : 'COMPLETE';
+    }
+    return {
+      'ASSIGNED': 'EN_ROUTE',
+      'DRIVER_EN_ROUTE': 'ARRIVED',
+      'DRIVER_ARRIVED': 'START',
+    }[active?['status']];
+  }
+
   String label(String a) => {
         'EN_ROUTE': 'Estoy en camino',
         'ARRIVED': 'Ya llegué',
         'START': 'Iniciar viaje',
+        'COMPLETE_STOP': 'Finalizar destino actual',
         'COMPLETE': 'Finalizar viaje'
       }[a]!;
 
@@ -6827,16 +7075,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   entry.value['reference'],
                                   fallback: 'Parada ${entry.key + 1}')),
                             )),
-                    if (active['status'] == 'IN_PROGRESS' &&
-                        List<dynamic>.from(active['stops'] ?? const [])
-                                .where((stop) => stop['completedAt'] == null)
-                                .length >
-                            1)
-                      OutlinedButton.icon(
-                        onPressed: completeCurrentStop,
-                        icon: const Icon(Icons.flag_outlined),
-                        label: const Text('Completar parada actual'),
-                      ),
                   ],
                   if (active['notes']?.toString().trim().isNotEmpty ==
                       true) ...[
@@ -6882,6 +7120,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             icon: const Icon(Icons.shield_outlined),
             label: const Text('Seguridad y compartir viaje'),
           ),
+          if (navigationSdkEnabled &&
+              const {'DRIVER_EN_ROUTE', 'IN_PROGRESS'}
+                  .contains(active['status']?.toString()))
+            FilledButton.tonalIcon(
+              onPressed: openDriverNavigation,
+              icon: const Icon(Icons.navigation_outlined),
+              label: Text(active['status'] == 'IN_PROGRESS'
+                  ? 'Navegar al destino'
+                  : 'Iniciar navegaciÃ³n'),
+            ),
           if (action != null)
             FilledButton(
               onPressed:

@@ -36,7 +36,7 @@ export interface SessionUser {
 }
 interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
 interface Passenger { id: string; name: string; email?: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
-interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; status: "ACTIVE" | "SCHEDULED" }
+interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; stopSurchargeCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; status: "ACTIVE" | "SCHEDULED" }
 interface Zone { id: string; name: string; type: "URBAN" | "EXTENDED"; points: Array<{ x: number; y: number }>; active: boolean; version: number }
 interface Incident { id: string; trip: string; category: string; description: string; status: IncidentStatus; assignedTo: string; createdAt: string }
 interface AuditEntry { id: string; actor: string; action: string; entity: string; createdAt: string; detail: string }
@@ -52,7 +52,7 @@ const passengers: Passenger[] = [
   { id: "PAS-003", name: "Pedro Angulo", phone: "+593 96 143 9082", status: "SUSPENDED", trips: 3, lastTrip: "24 jul, 10:40" }
 ];
 const pricing: PricingVersion[] = [
-  { id: "PRICE-1", version: 1, urbanDayCents: 50, nightCents: 100, extendedCents: 100, promotionPassengers: 3, promotionTotalCents: 100, activeFrom: "2026-07-27T00:00:00-05:00", status: "ACTIVE" }
+  { id: "PRICE-1", version: 1, urbanDayCents: 50, nightCents: 100, extendedCents: 100, stopSurchargeCents: 0, promotionPassengers: 3, promotionTotalCents: 100, activeFrom: "2026-07-27T00:00:00-05:00", status: "ACTIVE" }
 ];
 const zones: Zone[] = [
   { id: "ZONE-URBAN-1", name: "Casco urbano Atacames", type: "URBAN", points: [{x:18,y:22},{x:76,y:16},{x:88,y:63},{x:48,y:84},{x:14,y:62}], active: true, version: 1 },
@@ -101,7 +101,7 @@ function decodeAdminImage(value: z.infer<typeof adminDocumentSchema>): Buffer {
   }
   return data;
 }
-const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
+const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), stopSurchargeCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
 const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
 const incidentSchema = z.object({
   status: z.enum(["NUEVO", "ASIGNADO", "EN_REVISION", "ESPERANDO_USUARIO", "RESUELTO", "CERRADO"]),
@@ -121,7 +121,11 @@ const faqSchema = z.object({
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
 const operationalSettingsSchema = z.object({
   searchRadiusMeters: z.number().int().min(500).max(20000),
-  scheduledTripLeadMinutes: z.number().int().min(5).max(60)
+  scheduledTripLeadMinutes: z.number().int().min(5).max(60),
+  scheduledTripMinimumNoticeMinutes: z.number().int().min(5).max(720)
+}).refine(value => value.scheduledTripMinimumNoticeMinutes >= value.scheduledTripLeadMinutes + 5, {
+  message: "MINIMUM_NOTICE_MUST_EXCEED_ACTIVATION_LEAD",
+  path: ["scheduledTripMinimumNoticeMinutes"]
 });
 const cooperativeSchema = z.object({
   name: z.string().trim().min(3).max(120),
@@ -722,6 +726,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         urban_day_cents_per_passenger as "urbanDayCents",
         night_cents_per_passenger as "nightCents",
         extended_cents_per_passenger as "extendedCents",
+        stop_surcharge_cents as "stopSurchargeCents",
         group_promotion_passengers as "promotionPassengers",
         group_promotion_total_cents as "promotionTotalCents",
         active_from as "activeFrom",
@@ -729,7 +734,37 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       from pricing_versions order by version desc
     `;
   } catch(e){return guardError(e,reply);} });
-  app.post("/v1/admin/pricing", async (request, reply) => { try { const user=requirePermission(request, "pricing:manage"); const body=pricingSchema.parse(request.body); const next:PricingVersion={id:`PRICE-${pricing.length+1}`,version:Math.max(...pricing.map(p=>p.version))+1,...body,status:new Date(body.activeFrom)>new Date()?"SCHEDULED":"ACTIVE"}; if(next.status==="ACTIVE")pricing.forEach(p=>p.status="SCHEDULED"); pricing.unshift(next); audit(user,"PRICING_PUBLISHED",next.id,`Versión ${next.version}`); return reply.code(201).send(next);}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
+  app.post("/v1/admin/pricing", async (request, reply) => { try {
+    const user=requirePermission(request, "pricing:manage"); const body=pricingSchema.parse(request.body);
+    if (process.env.DATABASE_URL) {
+      const next = await database().begin(async sql => {
+        const [row] = await sql`select coalesce(max(version), 0) + 1 as version from pricing_versions`;
+        const version = Number(row!.version);
+        if (new Date(body.activeFrom) <= new Date()) await sql`update pricing_versions set active_until=now() where active_until is null and active_from <= now()`;
+        const [item] = await sql`
+          insert into pricing_versions (
+            version, day_starts_at, night_starts_at, urban_day_cents_per_passenger,
+            night_cents_per_passenger, extended_cents_per_passenger, stop_surcharge_cents,
+            group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents,
+            maximum_passengers, active_from, created_by
+          ) values (
+            ${version}, '06:00', '20:00', ${body.urbanDayCents}, ${body.nightCents},
+            ${body.extendedCents}, ${body.stopSurchargeCents}, true,
+            ${body.promotionPassengers}, ${body.promotionTotalCents}, 4, ${body.activeFrom}, ${user.id!}
+          ) returning id::text, version, urban_day_cents_per_passenger as "urbanDayCents",
+            night_cents_per_passenger as "nightCents", extended_cents_per_passenger as "extendedCents",
+            stop_surcharge_cents as "stopSurchargeCents",
+            group_promotion_passengers as "promotionPassengers",
+            group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"
+        `;
+        return item!;
+      });
+      await persistAudit(user, "PRICING_PUBLISHED", "PRICING", next.id, `Version ${next.version}`);
+      return reply.code(201).send({ ...next, status: new Date(next.activeFrom) > new Date() ? "SCHEDULED" : "ACTIVE" });
+    }
+    const next:PricingVersion={id:`PRICE-${pricing.length+1}`,version:Math.max(...pricing.map(p=>p.version))+1,...body,status:new Date(body.activeFrom)>new Date()?"SCHEDULED":"ACTIVE"};
+    if(next.status==="ACTIVE")pricing.forEach(p=>p.status="SCHEDULED"); pricing.unshift(next); audit(user,"PRICING_PUBLISHED",next.id,`Version ${next.version}`); return reply.code(201).send(next);
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.get("/v1/admin/zones", async (request, reply) => { try {
     requirePermission(request, "zones:view");
     if (!process.env.DATABASE_URL) return zones;
@@ -800,7 +835,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       const [row] = await sql`select coalesce(max(version), 0) + 1 as version from pricing_versions`;
       const version = Number(row!.version);
       if (new Date(body.activeFrom) <= new Date()) await sql`update pricing_versions set active_until=now() where active_until is null and active_from <= now()`;
-      const [item] = await sql`insert into pricing_versions (version, day_starts_at, night_starts_at, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, maximum_passengers, active_from, created_by) values (${version}, '06:00', '20:00', ${body.urbanDayCents}, ${body.nightCents}, ${body.extendedCents}, true, ${body.promotionPassengers}, ${body.promotionTotalCents}, 4, ${body.activeFrom}, ${user.id!}) returning id::text, version, urban_day_cents_per_passenger as "urbanDayCents", night_cents_per_passenger as "nightCents", extended_cents_per_passenger as "extendedCents", group_promotion_passengers as "promotionPassengers", group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"`;
+      const [item] = await sql`insert into pricing_versions (version, day_starts_at, night_starts_at, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, stop_surcharge_cents, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, maximum_passengers, active_from, created_by) values (${version}, '06:00', '20:00', ${body.urbanDayCents}, ${body.nightCents}, ${body.extendedCents}, ${body.stopSurchargeCents}, true, ${body.promotionPassengers}, ${body.promotionTotalCents}, 4, ${body.activeFrom}, ${user.id!}) returning id::text, version, urban_day_cents_per_passenger as "urbanDayCents", night_cents_per_passenger as "nightCents", extended_cents_per_passenger as "extendedCents", stop_surcharge_cents as "stopSurchargeCents", group_promotion_passengers as "promotionPassengers", group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"`;
       return item!;
     });
     await persistAudit(user, "PRICING_PUBLISHED", "PRICING", next.id, `Version ${next.version}`);
@@ -875,17 +910,17 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_TRIP_FILTERS"}); return guardError(e, reply); } });
   app.get("/v1/admin/settings", async (request, reply) => { try {
     requirePermission(request, "settings:view");
-    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", updated_at as "updatedAt" from operational_settings where id=1`;
-    return settings ?? { searchRadiusMeters: 3000, scheduledTripLeadMinutes: 10 };
+    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", updated_at as "updatedAt" from operational_settings where id=1`;
+    return settings ?? { searchRadiusMeters: 3000, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30 };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/settings", async (request, reply) => { try {
     const user = requirePermission(request, "settings:manage");
     const body = operationalSettingsSchema.parse(request.body);
     const [settings] = await database()`
-      insert into operational_settings (id, search_radius_meters, scheduled_trip_lead_minutes, updated_at, updated_by)
-      values (1, ${body.searchRadiusMeters}, ${body.scheduledTripLeadMinutes}, now(), ${user.id!})
-      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes, updated_at=now(), updated_by=excluded.updated_by
-      returning search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", updated_at as "updatedAt"
+      insert into operational_settings (id, search_radius_meters, scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, updated_at, updated_by)
+      values (1, ${body.searchRadiusMeters}, ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, now(), ${user.id!})
+      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes=excluded.scheduled_trip_minimum_notice_minutes, updated_at=now(), updated_by=excluded.updated_by
+      returning search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", updated_at as "updatedAt"
     `;
     await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Radio de búsqueda: ${body.searchRadiusMeters} metros`);
     return settings;

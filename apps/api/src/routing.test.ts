@@ -61,4 +61,31 @@ describe("rutas de Google", () => {
       { location: { latLng: { latitude: -2.92, longitude: -79.02 } } }
     ]);
   });
+
+  it("solicita un route token solo para una sesiÃ³n de navegaciÃ³n", async () => {
+    process.env.GOOGLE_MAPS_SERVER_API_KEY = "test-key";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      routes: [{
+        distanceMeters: 900,
+        duration: "180s",
+        polyline: { encodedPolyline: "" },
+        routeToken: "encrypted-navigation-token"
+      }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const route = await computeRoute(
+      { latitude: -2.9, longitude: -79.0 },
+      { latitude: -2.91, longitude: -79.01 },
+      [],
+      { includeRouteToken: true }
+    );
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body));
+    const headers = request.headers as Record<string, string>;
+    expect(body.routingPreference).toBe("TRAFFIC_AWARE");
+    expect(headers["X-Goog-FieldMask"]).toContain("routes.routeToken");
+    expect(route.routeToken).toBe("encrypted-navigation-token");
+  });
 });

@@ -9,17 +9,22 @@ export interface RouteResult {
   durationSeconds: number | null;
   provider: "GOOGLE" | "ORS";
   cacheHit: boolean;
+  routeToken?: string;
+}
+
+export interface RouteOptions {
+  includeRouteToken?: boolean;
 }
 
 const routeCache = new Map<string, { expiresAt: number; route: RouteResult }>();
 const inFlightRoutes = new Map<string, Promise<RouteResult>>();
 const routeCacheTtlMs = 2 * 60 * 1000;
 
-function routeKey(origin: RoutePoint, destination: RoutePoint, waypoints: RoutePoint[]): string {
+function routeKey(origin: RoutePoint, destination: RoutePoint, waypoints: RoutePoint[], options: RouteOptions): string {
   return [origin, ...waypoints, destination]
     .flatMap(point => [point.latitude, point.longitude])
     .map(value => value.toFixed(5))
-    .join(":");
+    .join(":") + (options.includeRouteToken ? ":navigation" : ":map");
 }
 
 export function decodeGooglePolyline(encoded: string): RoutePoint[] {
@@ -50,8 +55,10 @@ async function googleRoute(
   origin: RoutePoint,
   destination: RoutePoint,
   waypoints: RoutePoint[],
-  key: string
+  key: string,
+  options: RouteOptions
 ): Promise<RouteResult> {
+  const includeRouteToken = options.includeRouteToken === true;
   const response = await fetch(
     "https://routes.googleapis.com/directions/v2:computeRoutes",
     {
@@ -60,7 +67,7 @@ async function googleRoute(
         "Content-Type": "application/json",
         "X-Goog-Api-Key": key,
         "X-Goog-FieldMask":
-          "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline"
+          `routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline${includeRouteToken ? ",routes.routeToken" : ""}`
       },
       body: JSON.stringify({
         origin: { location: { latLng: origin } },
@@ -69,7 +76,7 @@ async function googleRoute(
           intermediates: waypoints.map(point => ({ location: { latLng: point } }))
         } : {}),
         travelMode: "DRIVE",
-        routingPreference: "TRAFFIC_UNAWARE",
+        routingPreference: includeRouteToken ? "TRAFFIC_AWARE" : "TRAFFIC_UNAWARE",
         polylineQuality: "OVERVIEW",
         languageCode: "es",
         units: "METRIC"
@@ -82,6 +89,7 @@ async function googleRoute(
       distanceMeters?: number;
       duration?: string;
       polyline?: { encodedPolyline?: string };
+      routeToken?: string;
     }>;
   };
   const route = payload.routes?.[0];
@@ -95,7 +103,8 @@ async function googleRoute(
       ? Number(route.duration.replace(/s$/, ""))
       : null,
     provider: "GOOGLE",
-    cacheHit: false
+    cacheHit: false,
+    ...(route.routeToken ? { routeToken: route.routeToken } : {})
   };
 }
 
@@ -143,12 +152,13 @@ async function openRouteServiceRoute(
 async function computeFreshRoute(
   origin: RoutePoint,
   destination: RoutePoint,
-  waypoints: RoutePoint[]
+  waypoints: RoutePoint[],
+  options: RouteOptions
 ): Promise<RouteResult> {
   const googleKey = process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim();
   if (googleKey) {
     try {
-      return await googleRoute(origin, destination, waypoints, googleKey);
+      return await googleRoute(origin, destination, waypoints, googleKey, options);
     } catch {
       // OpenRouteService queda como respaldo durante la migración.
     }
@@ -161,9 +171,10 @@ async function computeFreshRoute(
 export async function computeRoute(
   origin: RoutePoint,
   destination: RoutePoint,
-  waypoints: RoutePoint[] = []
+  waypoints: RoutePoint[] = [],
+  options: RouteOptions = {}
 ): Promise<RouteResult> {
-  const key = routeKey(origin, destination, waypoints);
+  const key = routeKey(origin, destination, waypoints, options);
   const cached = routeCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return { ...cached.route, cacheHit: true };
@@ -173,7 +184,7 @@ export async function computeRoute(
   const inFlight = inFlightRoutes.get(key);
   if (inFlight) return { ...(await inFlight), cacheHit: true };
 
-  const request = computeFreshRoute(origin, destination, waypoints);
+  const request = computeFreshRoute(origin, destination, waypoints, options);
   inFlightRoutes.set(key, request);
   try {
     const route = await request;
