@@ -662,7 +662,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           bottom: widget.viewportPadding.bottom + 12,
           child: FloatingActionButton.small(
             heroTag: null,
-            tooltip: 'Volver a mi ubicaciÃ³n',
+            tooltip: 'Volver a mi ubicación',
             onPressed: widget.onUseCurrentLocation == null
                 ? null
                 : () {

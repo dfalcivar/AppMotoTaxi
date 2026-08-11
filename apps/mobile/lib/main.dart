@@ -236,8 +236,8 @@ class BiometricSessionStore {
 Future<void> dialPhone(BuildContext context, dynamic phoneValue) async {
   final phone = phoneValue?.toString().trim() ?? '';
   if (phone.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Este usuario no registrÃ³ un telÃ©fono.')));
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Este usuario no registró un teléfono.')));
     return;
   }
   try {
@@ -245,7 +245,7 @@ Future<void> dialPhone(BuildContext context, dynamic phoneValue) async {
   } catch (_) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('No se pudo abrir la aplicaciÃ³n de llamadas.')));
+          content: Text('No se pudo abrir la aplicación de llamadas.')));
     }
   }
 }
@@ -1765,7 +1765,7 @@ class _RegisterState extends State<Register> {
     }
     final mime = supportedImageMime(bytes);
     if (mime == null) {
-      setState(() => message = 'Usa una fotografÃ­a JPG, JPEG, PNG o WEBP.');
+      setState(() => message = 'Usa una fotografía JPG, JPEG, PNG o WEBP.');
       return;
     }
     setState(() {
@@ -1798,7 +1798,7 @@ class _RegisterState extends State<Register> {
     if (valid && (role != 'DRIVER' || profilePhotoBytes != null)) return true;
     if (role == 'DRIVER' && profilePhotoBytes == null) {
       setState(() => message =
-          'Carga una fotografÃ­a frontal y clara para completar el registro.');
+          'Carga una fotografía frontal y clara para completar el registro.');
       return false;
     }
     final fields = <(TextEditingController, FocusNode)>[
@@ -1971,15 +1971,15 @@ class _RegisterState extends State<Register> {
                           child: Icon(Icons.person_outline, size: 48)),
                     const SizedBox(height: 10),
                     const Text(
-                        'FotografÃ­a frontal, clara y con el rostro visible *',
+                        'Fotografía frontal, clara y con el rostro visible *',
                         textAlign: TextAlign.center),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
                       onPressed: submitted ? null : chooseProfilePhoto,
                       icon: const Icon(Icons.add_a_photo_outlined),
                       label: Text(profilePhotoBytes == null
-                          ? 'Seleccionar fotografÃ­a'
-                          : 'Cambiar fotografÃ­a'),
+                          ? 'Seleccionar fotografía'
+                          : 'Cambiar fotografía'),
                     ),
                   ]),
                 ),
@@ -2087,7 +2087,7 @@ class _ProfileState extends State<Profile> {
             ..['photoUpdatedAt'] = DateTime.now().toUtc().toIso8601String();
         });
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Fotografia actualizada.')));
+            const SnackBar(content: Text('Fotografía actualizada.')));
       }
     } catch (error) {
       if (mounted) {
@@ -2200,7 +2200,7 @@ class _ProfileState extends State<Profile> {
                   color: Colors.white,
                   shape: const CircleBorder(),
                   child: IconButton(
-                    tooltip: 'Cambiar fotografÃ­a',
+                    tooltip: 'Cambiar fotografía',
                     onPressed: photoBusy ? null : changePhoto,
                     icon: photoBusy
                         ? const SizedBox(
@@ -5771,6 +5771,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   List scheduledOffers = [];
   List scheduledTrips = [];
   DateTime? lastScheduledRefreshAt;
+  DateTime? lastActiveProbeAt;
   bool available = false;
   String? driverMessage;
   Timer? timer;
@@ -5852,7 +5853,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             icon: Icons.event_available_outlined,
             onTap: showDriverScheduledTrips,
           );
-          refreshScheduled(force: true);
+          if (message.data['type'] == 'SCHEDULED_DRIVER_REMINDER') {
+            unawaited(syncActivatedScheduledTrip(force: true));
+          } else {
+            unawaited(refreshScheduled(force: true));
+          }
         }
       });
       openedMessageSubscription =
@@ -5891,6 +5896,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   void handleOpenedPush(RemoteMessage push) {
     if (push.data['type'] == 'CHAT_MESSAGE') {
       unawaited(openDriverChat(push.data['tripId']));
+    } else if (push.data['type'] == 'SCHEDULED_DRIVER_REMINDER') {
+      unawaited(syncActivatedScheduledTrip(force: true));
     } else {
       unawaited(refresh());
     }
@@ -6008,7 +6015,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
       refresh();
     } else if (event['type'] == 'trip:status') {
-      refresh();
+      if (active == null) {
+        unawaited(syncActivatedScheduledTrip(force: true));
+      } else {
+        unawaited(refresh());
+      }
     } else if (event['type'] == 'chat:message') {
       if (driverChatOpen) return;
       final value = Map<String, dynamic>.from(event['message'] as Map);
@@ -6104,7 +6115,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   (item['longitude'] as num).toDouble()))));
       });
     } catch (_) {
-      // Mantiene el ultimo snapshot visible cuando la seÃ±al es inestable.
+      // Mantiene el último snapshot visible cuando la señal es inestable.
     }
   }
 
@@ -6182,6 +6193,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Future<void> refresh() async {
     try {
       await refreshScheduled();
+      if (active == null) await syncActivatedScheduledTrip();
       if (active != null) {
         final latest = await api.trip(widget.s.token, active['tripId']);
         if (latest['status'] == 'COMPLETED') {
@@ -6238,6 +6250,41 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
     } catch (e) {
       if (mounted) setState(() => driverMessage = e.toString());
+    }
+  }
+
+  Future<bool> syncActivatedScheduledTrip({bool force = false}) async {
+    if (active != null) return true;
+    final now = DateTime.now();
+    if (!force &&
+        lastActiveProbeAt != null &&
+        now.difference(lastActiveProbeAt!) < const Duration(seconds: 10)) {
+      return false;
+    }
+    lastActiveProbeAt = now;
+    try {
+      final latest = await api.active(widget.s.token);
+      if (latest == null || !mounted) return false;
+      setState(() {
+        active = latest;
+        available = false;
+        offers = [];
+        nearbyDriverPositions.clear();
+        driverMessage = 'Tu viaje programado está listo para iniciar.';
+      });
+      _moveDriverSheet(.50);
+      realtime.subscribeTrip(latest['tripId'].toString());
+      unawaited(resolveOriginAddress(latest));
+      unawaited(preloadActiveTripRoute(latest));
+      try {
+        await startGpsTracking(markAvailable: false);
+      } catch (error) {
+        debugPrint('No se pudo actualizar el GPS del viaje programado: $error');
+      }
+      return true;
+    } catch (error) {
+      debugPrint('No se pudo sincronizar el viaje programado activo: $error');
+      return false;
     }
   }
 
@@ -6507,7 +6554,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       } catch (_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Activa la ubicaciÃ³n precisa para navegar.')));
+              content: Text('Activa la ubicación precisa para navegar.')));
         }
         return;
       }
@@ -6590,7 +6637,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (mounted && result == false) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
-              'Navigation SDK no estÃ¡ disponible. ContinÃºa con el mapa actual.')));
+              'Navigation SDK no está disponible. Continúa con el mapa actual.')));
     }
   }
 
@@ -6984,7 +7031,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               const Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.location_on, color: Colors.blue, size: 18),
                 SizedBox(width: 4),
-                Text('Mi ubicacion'),
+                Text('Mi ubicación'),
               ]),
               Row(mainAxisSize: MainAxisSize.min, children: [
                 const Icon(Icons.electric_rickshaw_outlined, size: 18),
@@ -7128,7 +7175,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               icon: const Icon(Icons.navigation_outlined),
               label: Text(active['status'] == 'IN_PROGRESS'
                   ? 'Navegar al destino'
-                  : 'Iniciar navegaciÃ³n'),
+                  : 'Iniciar navegación'),
             ),
           if (action != null)
             FilledButton(

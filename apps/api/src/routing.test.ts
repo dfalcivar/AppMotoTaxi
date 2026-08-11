@@ -62,7 +62,7 @@ describe("rutas de Google", () => {
     ]);
   });
 
-  it("solicita un route token solo para una sesiÃ³n de navegaciÃ³n", async () => {
+  it("solicita un route token solo para una sesión de navegación", async () => {
     process.env.GOOGLE_MAPS_SERVER_API_KEY = "test-key";
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       routes: [{

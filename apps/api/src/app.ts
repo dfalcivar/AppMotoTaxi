@@ -275,8 +275,8 @@ export async function buildApp() {
       .send(banner.image_data);
   });
 
-  // Cuando un conductor se libera, vuelve a publicar la solicitud mÃ¡s antigua
-  // que ya no tenga una oferta vigente. AsÃ­ una carrera no queda abandonada
+  // Cuando un conductor se libera, vuelve a publicar la solicitud más antigua
+  // que ya no tenga una oferta vigente. Así una carrera no queda abandonada
   // por haber llegado mientras todos los conductores estaban ocupados.
   async function redispatchOldestTrip(): Promise<{ tripId: string; passengers: number; originReference: string | null; destinationReference: string | null; driverIds: string[] } | null> {
     const searchRadius = await configuredSearchRadius();
@@ -363,6 +363,10 @@ export async function buildApp() {
           `;
           if (!ready) return "SKIPPED" as const;
           await tx`update drivers set is_available=false where user_id=${item.driverId}`;
+          await tx`
+            update driver_offers set responded_at=now(), accepted=false
+            where driver_id=${item.driverId} and responded_at is null
+          `;
           await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata) values (${item.tripId}, 'SEARCHING', 'ASSIGNED', 'SCHEDULED_READY', ${JSON.stringify({ leadMinutes })}::jsonb)`;
           return "ASSIGNED" as const;
         }
@@ -374,6 +378,14 @@ export async function buildApp() {
         return ready ? "UNASSIGNED" as const : "SKIPPED" as const;
       });
       if (activated === "ASSIGNED") {
+        const activationEvent = {
+          type: "trip:status",
+          tripId: String(item.tripId),
+          status: "ASSIGNED",
+          scheduleStatus: "SCHEDULED_READY"
+        };
+        realtime.publishToUser(String(item.passengerId), activationEvent);
+        realtime.publishToUser(String(item.driverId), activationEvent);
         await Promise.all([
           sendPush(String(item.passengerId), "Tu viaje programado está próximo", "El conductor asignado se preparará para dirigirse al origen.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" }),
           sendPush(String(item.driverId), `Viaje programado en ${leadMinutes} minutos`, "Abre AtacamesGo para iniciar el desplazamiento al origen.", { tripId: String(item.tripId), type: "SCHEDULED_DRIVER_REMINDER" })
@@ -1374,6 +1386,11 @@ export async function buildApp() {
       join trips t on t.id=o.trip_id
       where o.driver_id=${user.id!} and o.responded_at is null
         and o.expires_at > now() and t.status='SEARCHING'
+        and not exists (
+          select 1 from trips active_trip
+          where active_trip.driver_id=${user.id!}
+            and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+        )
       order by o.offered_at
     `;
   });

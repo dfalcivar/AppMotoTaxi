@@ -72,9 +72,16 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
     }
   }
 
+  @override
+  void didChangeMetrics() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_updateMapPadding());
+    });
+  }
+
   Future<void> _initialize() async {
     if (!navigationSdkEnabled || widget.stops.isEmpty) {
-      _setFailure('La navegaciÃ³n avanzada no estÃ¡ disponible.');
+      _setFailure('La navegación avanzada no está disponible.');
       return;
     }
     try {
@@ -87,7 +94,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
           'DFAR System',
         );
         if (!accepted) {
-          _setFailure('Debes aceptar los tÃ©rminos de navegaciÃ³n de Google.');
+          _setFailure('Debes aceptar los términos de navegación de Google.');
           return;
         }
       }
@@ -122,7 +129,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
       final status =
           await nav.GoogleMapsNavigator.setDestinations(destinations);
       if (status != nav.NavigationRouteStatus.statusOk) {
-        _setFailure('No se pudo preparar la navegaciÃ³n ($status).');
+        _setFailure('No se pudo preparar la navegación ($status).');
         return;
       }
       await nav.GoogleMapsNavigator.startGuidance();
@@ -145,11 +152,11 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
   String _sessionError(nav.SessionInitializationException error) {
     return switch (error.code) {
       nav.SessionInitializationError.locationPermissionMissing =>
-        'Navigation SDK necesita permiso de ubicaciÃ³n precisa.',
+        'Navigation SDK necesita permiso de ubicación precisa.',
       nav.SessionInitializationError.notAuthorized =>
-        'La clave de Google no estÃ¡ autorizada para Navigation SDK.',
+        'La clave de Google no está autorizada para Navigation SDK.',
       nav.SessionInitializationError.termsNotAccepted =>
-        'Debes aceptar los tÃ©rminos de navegaciÃ³n de Google.',
+        'Debes aceptar los términos de navegación de Google.',
     };
   }
 
@@ -198,7 +205,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
       await controller.followMyLocation(nav.CameraPerspective.tilted);
       if (mounted) setState(() => _cameraFollowing = true);
     } catch (_) {
-      // La navegaciÃ³n continÃºa aunque la vista todavÃ­a no estÃ© lista.
+      // La navegación continúa aunque la vista todavía no esté lista.
     }
   }
 
@@ -210,14 +217,25 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
       await controller.setNavigationHeaderEnabled(false);
       await controller.setNavigationFooterEnabled(false);
       await controller.settings.setTrafficEnabled(true);
-      await controller.setPadding(EdgeInsets.only(
-        top: 118 * pixelRatio,
-        bottom: 112 * pixelRatio,
-      ));
+      await _updateMapPadding(pixelRatio: pixelRatio);
       await _restoreFollowingState();
     } catch (_) {
-      // La sesiÃ³n puede estar terminando mientras se crea la vista.
+      // La sesión puede estar terminando mientras se crea la vista.
     }
+  }
+
+  Future<void> _updateMapPadding({double? pixelRatio}) async {
+    final controller = _controller;
+    if (controller == null || !mounted) return;
+    final media = MediaQuery.of(context);
+    final ratio = pixelRatio ?? media.devicePixelRatio;
+    final textScale = media.textScaler.scale(1).clamp(1.0, 1.6);
+    final top = media.padding.top + 112 + (textScale - 1) * 32;
+    final bottom = media.padding.bottom + 92 + (textScale - 1) * 24;
+    await controller.setPadding(EdgeInsets.only(
+      top: top * ratio,
+      bottom: bottom * ratio,
+    ));
   }
 
   void _setFailure(String message) {
@@ -270,7 +288,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
   Widget build(BuildContext context) {
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('NavegaciÃ³n')),
+        appBar: AppBar(title: const Text('Navegación')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -319,108 +337,145 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
                   ),
           ),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(children: [
-                Material(
-                  elevation: 5,
-                  borderRadius: BorderRadius.circular(20),
-                  color: Theme.of(context).colorScheme.surface,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 12, 10),
-                    child: Row(children: [
-                      IconButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        icon: const Icon(Icons.arrow_back),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(widget.phaseLabel,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelLarge
-                                    ?.copyWith(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .primary)),
-                            Text(
-                              _arrived
-                                  ? 'Has llegado. Confirma el siguiente estado.'
-                                  : step?.fullInstructions ??
-                                      'Sigue la ruta indicada',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
-                            if (!_arrived)
-                              Text(_distance(
-                                  _navInfo?.distanceToCurrentStepMeters)),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: _voiceEnabled
-                            ? 'Silenciar indicaciones'
-                            : 'Activar indicaciones',
-                        onPressed: _navigationStarted ? _toggleVoice : null,
-                        icon: Icon(_voiceEnabled
-                            ? Icons.volume_up_outlined
-                            : Icons.volume_off_outlined),
-                      ),
-                    ]),
-                  ),
-                ),
-                const Spacer(),
-                if (!_cameraFollowing)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FloatingActionButton.extended(
-                      heroTag: 'navigation-recenter',
-                      onPressed: _restoreFollowingState,
-                      icon: const Icon(Icons.my_location),
-                      label: const Text('Centrar'),
+            minimum: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            child: Column(children: [
+              Material(
+                elevation: 5,
+                borderRadius: BorderRadius.circular(20),
+                color: Theme.of(context).colorScheme.surface,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 12, 10),
+                  child: Row(children: [
+                    IconButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      icon: const Icon(Icons.arrow_back),
                     ),
-                  ),
-                const SizedBox(height: 10),
-                Material(
-                  elevation: 5,
-                  borderRadius: BorderRadius.circular(20),
-                  color: Theme.of(context).colorScheme.surface,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 14),
-                    child: Row(children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${_duration(_navInfo?.timeToFinalDestinationSeconds)} Â· ${_distance(_navInfo?.distanceToFinalDestinationMeters)}',
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(widget.phaseLabel,
                               style: Theme.of(context)
                                   .textTheme
-                                  .titleLarge
-                                  ?.copyWith(fontWeight: FontWeight.w800),
-                            ),
-                            Text('Destino: ${widget.stops.last.label}',
-                                maxLines: 1, overflow: TextOverflow.ellipsis),
-                          ],
-                        ),
+                                  .labelLarge
+                                  ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary)),
+                          Text(
+                            _arrived
+                                ? 'Has llegado. Confirma el siguiente estado.'
+                                : step?.fullInstructions ??
+                                    'Sigue la ruta indicada',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          if (!_arrived)
+                            Text(_distance(
+                                _navInfo?.distanceToCurrentStepMeters)),
+                        ],
                       ),
-                      FilledButton.tonalIcon(
-                        onPressed: () => Navigator.pop(context, true),
-                        icon: const Icon(Icons.close),
-                        label: const Text('Salir'),
-                      ),
-                    ]),
+                    ),
+                    IconButton(
+                      tooltip: _voiceEnabled
+                          ? 'Silenciar indicaciones'
+                          : 'Activar indicaciones',
+                      onPressed: _navigationStarted ? _toggleVoice : null,
+                      icon: Icon(_voiceEnabled
+                          ? Icons.volume_up_outlined
+                          : Icons.volume_off_outlined),
+                    ),
+                  ]),
+                ),
+              ),
+              const Spacer(),
+              if (!_cameraFollowing)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FloatingActionButton.extended(
+                    heroTag: 'navigation-recenter',
+                    onPressed: _restoreFollowingState,
+                    icon: const Icon(Icons.my_location),
+                    label: const Text('Centrar'),
                   ),
                 ),
-              ]),
+              const SizedBox(height: 10),
+              NavigationTripFooter(
+                duration: _duration(_navInfo?.timeToFinalDestinationSeconds),
+                distance: _distance(_navInfo?.distanceToFinalDestinationMeters),
+                destination: widget.stops.last.label,
+                onExit: () => Navigator.pop(context, true),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class NavigationTripFooter extends StatelessWidget {
+  const NavigationTripFooter({
+    super.key,
+    required this.duration,
+    required this.distance,
+    required this.destination,
+    required this.onExit,
+  });
+
+  final String duration;
+  final String distance;
+  final String destination;
+  final VoidCallback onExit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 5,
+      borderRadius: BorderRadius.circular(20),
+      color: Theme.of(context).colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+        child: Row(children: [
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$duration · $distance',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Destino: $destination',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.tonalIcon(
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 44),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: onExit,
+            icon: const Icon(Icons.close, size: 20),
+            label: const Text('Salir'),
           ),
         ]),
       ),
