@@ -135,6 +135,8 @@ String? lastFcmRegistrationMessage;
 StreamSubscription<String>? fcmTokenRefreshSubscription;
 const nativeActions = MethodChannel('ec.atacames.mototaxi/native');
 const secureStorage = FlutterSecureStorage();
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+bool handlingRevokedSession = false;
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -189,13 +191,15 @@ class BiometricSessionStore {
   static Future<void> clear() => secureStorage.delete(key: _key);
 
   static Future<Session?> saved() async {
-    final value = await secureStorage.read(key: _key);
-    if (value == null) return null;
     try {
+      final value = await secureStorage.read(key: _key);
+      if (value == null) return null;
       final data = jsonDecode(value) as Map<String, dynamic>;
       return Session(data['token'], data['role'], data['name'], data['id']);
     } catch (_) {
-      await clear();
+      try {
+        await clear();
+      } catch (_) {}
       return null;
     }
   }
@@ -231,6 +235,66 @@ class BiometricSessionStore {
     }
     return 'No se pudo habilitar el acceso biométrico. Inténtalo nuevamente.';
   }
+}
+
+class AppSessionStore {
+  static const _key = 'atacamesgo_app_session';
+
+  static Future<void> save(Session session) => secureStorage.write(
+      key: _key,
+      value: jsonEncode({
+        'token': session.token,
+        'role': session.role,
+        'name': session.name,
+        'id': session.id,
+        'mustChangePassword': session.mustChangePassword,
+        'approvalStatus': session.approvalStatus,
+      }));
+
+  static Future<Session?> saved() async {
+    try {
+      final value = await secureStorage.read(key: _key);
+      if (value == null) return null;
+      final data = jsonDecode(value) as Map<String, dynamic>;
+      return Session(
+        data['token'],
+        data['role'],
+        data['name'],
+        data['id'],
+        mustChangePassword: data['mustChangePassword'] == true,
+        approvalStatus: data['approvalStatus']?.toString(),
+      );
+    } catch (_) {
+      try {
+        await clear();
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  static Future<void> clear() => secureStorage.delete(key: _key);
+}
+
+Future<void> clearLocalSession() async {
+  activeFcmAuthToken = null;
+  try {
+    await AppSessionStore.clear();
+  } catch (_) {}
+  try {
+    await BiometricSessionStore.clear();
+  } catch (_) {}
+}
+
+Future<void> handleRevokedSession() async {
+  if (handlingRevokedSession) return;
+  handlingRevokedSession = true;
+  await clearLocalSession();
+  final navigator = rootNavigatorKey.currentState;
+  if (navigator != null) {
+    navigator.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
+  }
+  handlingRevokedSession = false;
 }
 
 Future<void> dialPhone(BuildContext context, dynamic phoneValue) async {
@@ -620,6 +684,11 @@ class Api {
         }
         if (response.statusCode >= 400) {
           final code = data?['error']?.toString();
+          if (token != null &&
+              response.statusCode == 401 &&
+              const {'UNAUTHORIZED', 'SESSION_REPLACED'}.contains(code)) {
+            unawaited(handleRevokedSession());
+          }
           throw ApiException(mensajeApi(code),
               code: code, statusCode: response.statusCode);
         }
@@ -661,6 +730,7 @@ class Api {
         d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
         mustChangePassword: d['user']['mustChangePassword'] == true,
         approvalStatus: d['user']['driverApprovalStatus']);
+    await AppSessionStore.save(s);
     await registerFcm(s.token);
     return s;
   }
@@ -951,12 +1021,63 @@ class Api {
           token: t, body: {'score': score, 'tags': tags, 'comment': comment});
 }
 
+Widget homeForSession(Session session) {
+  if (session.mustChangePassword) return ChangeTemporaryPassword(session);
+  if (session.role == 'DRIVER') {
+    return session.approvalStatus == null ||
+            session.approvalStatus == 'APROBADO'
+        ? Driver(session)
+        : DriverApprovalScreen(session);
+  }
+  return Passenger(session);
+}
+
+class SessionBootstrap extends StatefulWidget {
+  const SessionBootstrap({super.key});
+
+  @override
+  State<SessionBootstrap> createState() => _SessionBootstrapState();
+}
+
+class _SessionBootstrapState extends State<SessionBootstrap> {
+  Session? session;
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    restoreSession();
+  }
+
+  Future<void> restoreSession() async {
+    final saved = await AppSessionStore.saved();
+    if (saved != null) {
+      activeFcmAuthToken = saved.token;
+      unawaited(Api().registerFcm(saved.token));
+    }
+    if (!mounted) return;
+    setState(() {
+      session = saved;
+      loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    return session == null ? const Welcome() : homeForSession(session!);
+  }
+}
+
 class MototaxiApp extends StatelessWidget {
   const MototaxiApp({super.key});
   @override
   Widget build(BuildContext c) => ValueListenableBuilder<ThemeMode>(
       valueListenable: appTheme,
       builder: (context, mode, child) => MaterialApp(
+          navigatorKey: rootNavigatorKey,
           title: 'AtacamesGo',
           debugShowCheckedModeBanner: false,
           themeMode: mode,
@@ -965,7 +1086,7 @@ class MototaxiApp extends StatelessWidget {
           navigatorObservers:
               sentryDsn.isEmpty ? const [] : [SentryNavigatorObserver()],
           builder: (context, child) => NetworkStatus(child: child!),
-          home: const Welcome()));
+          home: const SessionBootstrap()));
 
   ThemeData _theme(Brightness brightness) {
     final scheme = ColorScheme.fromSeed(
@@ -1311,6 +1432,7 @@ class _LoginState extends State<Login> {
 
     try {
       await Api().profile(session.token);
+      await AppSessionStore.save(session);
       unawaited(Api().registerFcm(session.token));
       if (!mounted) return;
       Navigator.pushReplacement(
@@ -1617,15 +1739,11 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
       final session = Session(widget.session.token, widget.session.role,
           widget.session.name, widget.session.id,
           approvalStatus: widget.session.approvalStatus);
+      await AppSessionStore.save(session);
+      if (!mounted) return;
       Navigator.pushAndRemoveUntil(
           context,
-          MaterialPageRoute(
-              builder: (_) => session.role == 'DRIVER'
-                  ? (session.approvalStatus == null ||
-                          session.approvalStatus == 'APROBADO'
-                      ? Driver(session)
-                      : DriverApprovalScreen(session))
-                  : Passenger(session)),
+          MaterialPageRoute(builder: (_) => homeForSession(session)),
           (_) => false);
     } catch (reason) {
       if (mounted) setState(() => error = reason.toString());
@@ -1638,6 +1756,7 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
     try {
       await Api().logout(widget.session.token);
     } catch (_) {}
+    await clearLocalSession();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(context,
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
@@ -1838,12 +1957,18 @@ class _RegisterState extends State<Register> {
       if (role == 'PASSENGER' && d['token'] != null) {
         final s = Session(
             d['token'], d['user']['role'], d['user']['name'], d['user']['id']);
+        await AppSessionStore.save(s);
+        unawaited(Api().registerFcm(s.token));
+        if (!mounted) return;
         Navigator.pushReplacement(
             context, MaterialPageRoute(builder: (_) => Passenger(s)));
       } else if (role == 'DRIVER' && d['token'] != null) {
         final s = Session(
             d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
             approvalStatus: d['user']['driverApprovalStatus']);
+        await AppSessionStore.save(s);
+        unawaited(Api().registerFcm(s.token));
+        if (!mounted) return;
         Navigator.pushReplacement(context,
             MaterialPageRoute(builder: (_) => DriverApprovalScreen(s)));
       } else {
@@ -2456,6 +2581,8 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
         final approved = Session(widget.session.token, widget.session.role,
             widget.session.name, widget.session.id,
             approvalStatus: 'APROBADO');
+        await AppSessionStore.save(approved);
+        if (!mounted) return;
         Navigator.pushReplacement(
             context, MaterialPageRoute(builder: (_) => Driver(approved)));
       }
@@ -2470,6 +2597,7 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
     try {
       await Api().logout(widget.session.token);
     } catch (_) {}
+    await clearLocalSession();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(context,
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
@@ -2722,23 +2850,10 @@ class _AccountHubState extends State<AccountHub> {
   }
 
   Future<void> logout(BuildContext c) async {
-    final biometric = await BiometricSessionStore.saved();
-    final keepBiometric = biometric?.id == widget.s.id;
     try {
-      if (keepBiometric) {
-        try {
-          await Api().lock(widget.s.token);
-        } catch (_) {
-          // Compatibilidad mientras el servidor incorpora /v1/auth/lock.
-          if (widget.s.role == 'DRIVER') {
-            await Api().available(widget.s.token, false);
-          }
-        }
-      } else {
-        await Api().logout(widget.s.token);
-      }
+      await Api().logout(widget.s.token);
     } catch (_) {}
-    if (!keepBiometric) await BiometricSessionStore.clear();
+    await clearLocalSession();
     if (sentryDsn.isNotEmpty) {
       await Sentry.configureScope((scope) => scope.setUser(null));
     }
@@ -3770,6 +3885,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       Future.microtask(restoreInitialPush);
     }
     load();
+    unawaited(checkPendingPassengerRating());
     loadSchedulingSettings();
     loadFavoritePlaces();
     Future.microtask(() => useCurrentLocation(explicit: false));
@@ -3853,7 +3969,23 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       realtime.connect();
       unawaited(api.registerFcm(widget.s.token));
-      load();
+      unawaited(load());
+      unawaited(checkPendingPassengerRating());
+    }
+  }
+
+  Future<void> checkPendingPassengerRating() async {
+    if (ratingPrompted) return;
+    try {
+      final pending = await api.pendingRating(widget.s.token);
+      final tripId = pending?['tripId']?.toString();
+      if (!mounted || tripId == null || ratingPrompted) return;
+      ratingPrompted = true;
+      await rating(context, widget.s, tripId, () {
+        if (mounted) setState(() => message = 'Gracias por tu calificación.');
+      });
+    } catch (_) {
+      // Se vuelve a consultar cuando la aplicación regresa al primer plano.
     }
   }
 
@@ -5620,137 +5752,143 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final searching = status == 'SEARCHING';
     final editing = active == null && mapSelection != null;
 
-    return Scaffold(
-      body: LayoutBuilder(builder: (context, constraints) {
-        final safeTop = MediaQuery.paddingOf(context).top;
-        return Stack(children: [
-          Positioned.fill(
-            child: AnimatedBuilder(
-              animation: passengerSheetController,
-              builder: (context, _) {
-                final extent = passengerSheetController.isAttached
-                    ? passengerSheetController.size
-                    : sheetExtent;
-                // While choosing a point, the selector must not move when the
-                // bottom sheet expands or collapses. The map and fixed pin use
-                // a stable viewport; after confirmation normal dynamic
-                // padding is restored for routes and trip markers.
-                final mapBottomPadding =
-                    editing ? 16.0 : constraints.maxHeight * extent + 16;
-                return LiveMap(
-                  originLabel: originLabel,
-                  destinationLabel: destinationLabel,
-                  pickup: pickup,
-                  dropoff:
-                      editing && mapSelection == MapPointSelection.destination
+    return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) SystemNavigator.pop();
+        },
+        child: Scaffold(
+          body: LayoutBuilder(builder: (context, constraints) {
+            final safeTop = MediaQuery.paddingOf(context).top;
+            return Stack(children: [
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: passengerSheetController,
+                  builder: (context, _) {
+                    final extent = passengerSheetController.isAttached
+                        ? passengerSheetController.size
+                        : sheetExtent;
+                    // While choosing a point, the selector must not move when the
+                    // bottom sheet expands or collapses. The map and fixed pin use
+                    // a stable viewport; after confirmation normal dynamic
+                    // padding is restored for routes and trip markers.
+                    final mapBottomPadding =
+                        editing ? 16.0 : constraints.maxHeight * extent + 16;
+                    return LiveMap(
+                      originLabel: originLabel,
+                      destinationLabel: destinationLabel,
+                      pickup: pickup,
+                      dropoff: editing &&
+                              mapSelection == MapPointSelection.destination
                           ? _destinationPoint(selectedDestinationIndex)
                           : _finalDestinationPoint,
-                  stops: editing
-                      ? const []
-                      : (_destinationPoints.length <= 1
+                      stops: editing
                           ? const []
-                          : _destinationPoints.sublist(
-                              0, _destinationPoints.length - 1)),
-                  currentLocation: currentLocation,
-                  driverPosition: driverPosition,
-                  driverBearing: driverBearing,
-                  routePoints: routePoints,
-                  nearbyDrivers:
-                      active == null ? nearbyDrivers : const <String, LatLng>{},
-                  editing: active == null ? mapSelection : null,
-                  onSelectionCenterChanged:
-                      editing ? selectionCenterChanged : null,
-                  onSelectionSettled: editing ? previewMapSelection : null,
-                  onSelectionMovementStarted:
-                      editing ? selectionMovementStarted : null,
-                  onUseCurrentLocation:
-                      active == null ? useCurrentLocation : null,
-                  fillAvailable: true,
-                  borderRadius: 0,
-                  viewportPadding: EdgeInsets.fromLTRB(
-                      12, safeTop + 72, 12, mapBottomPadding),
-                );
-              },
-            ),
-          ),
-          Positioned(
-            top: safeTop + 8,
-            left: 12,
-            right: 12,
-            child: Row(children: [
-              Material(
-                color: Theme.of(context).colorScheme.surface,
-                elevation: 3,
-                shape: const CircleBorder(),
-                child: IconButton(
-                    tooltip: 'Mi perfil',
-                    onPressed: () => profile(context, widget.s),
-                    icon: const Icon(Icons.person_outline)),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Material(
-                  color: Theme.of(context).colorScheme.surface,
-                  elevation: 3,
-                  borderRadius: BorderRadius.circular(22),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 11),
-                    child: Text('Hola, ${widget.s.name}',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ),
+                          : (_destinationPoints.length <= 1
+                              ? const []
+                              : _destinationPoints.sublist(
+                                  0, _destinationPoints.length - 1)),
+                      currentLocation: currentLocation,
+                      driverPosition: driverPosition,
+                      driverBearing: driverBearing,
+                      routePoints: routePoints,
+                      nearbyDrivers: active == null
+                          ? nearbyDrivers
+                          : const <String, LatLng>{},
+                      editing: active == null ? mapSelection : null,
+                      onSelectionCenterChanged:
+                          editing ? selectionCenterChanged : null,
+                      onSelectionSettled: editing ? previewMapSelection : null,
+                      onSelectionMovementStarted:
+                          editing ? selectionMovementStarted : null,
+                      onUseCurrentLocation:
+                          active == null ? useCurrentLocation : null,
+                      fillAvailable: true,
+                      borderRadius: 0,
+                      viewportPadding: EdgeInsets.fromLTRB(
+                          12, safeTop + 72, 12, mapBottomPadding),
+                    );
+                  },
                 ),
               ),
-            ]),
-          ),
-          DraggableScrollableSheet(
-            controller: passengerSheetController,
-            initialChildSize: .35,
-            minChildSize: .18,
-            maxChildSize: .92,
-            snap: true,
-            snapSizes: const [.28, .52, .9],
-            builder: (context, scrollController) => Material(
-              color: Theme.of(context).colorScheme.surface,
-              elevation: 16,
-              shadowColor: Colors.black45,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(28)),
-              clipBehavior: Clip.antiAlias,
-              child: ListView(
-                controller: scrollController,
-                padding: EdgeInsets.fromLTRB(
-                    20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
-                children: [
-                  Center(
-                    child: Container(
-                      width: 44,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: .35),
-                        borderRadius: BorderRadius.circular(8),
+              Positioned(
+                top: safeTop + 8,
+                left: 12,
+                right: 12,
+                child: Row(children: [
+                  Material(
+                    color: Theme.of(context).colorScheme.surface,
+                    elevation: 3,
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                        tooltip: 'Mi perfil',
+                        onPressed: () => profile(context, widget.s),
+                        icon: const Icon(Icons.person_outline)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Material(
+                      color: Theme.of(context).colorScheme.surface,
+                      elevation: 3,
+                      borderRadius: BorderRadius.circular(22),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 11),
+                        child: Text('Hola, ${widget.s.name}',
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  if (editing)
-                    ..._mapSelectionContent(context)
-                  else if (searching)
-                    ..._searchingContent(context)
-                  else if (active != null)
-                    ..._activeTripContent(context)
-                  else
-                    ..._requestContent(context),
-                ],
+                ]),
               ),
-            ),
-          ),
-        ]);
-      }),
-    );
+              DraggableScrollableSheet(
+                controller: passengerSheetController,
+                initialChildSize: .35,
+                minChildSize: .18,
+                maxChildSize: .92,
+                snap: true,
+                snapSizes: const [.28, .52, .9],
+                builder: (context, scrollController) => Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  elevation: 16,
+                  shadowColor: Colors.black45,
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(28)),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListView(
+                    controller: scrollController,
+                    padding: EdgeInsets.fromLTRB(
+                        20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: .35),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      if (editing)
+                        ..._mapSelectionContent(context)
+                      else if (searching)
+                        ..._searchingContent(context)
+                      else if (active != null)
+                        ..._activeTripContent(context)
+                      else
+                        ..._requestContent(context),
+                    ],
+                  ),
+                ),
+              ),
+            ]);
+          }),
+        ));
   }
 }
 
@@ -7216,136 +7354,131 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             (stop['longitude'] as num).toDouble()))
         .toList();
 
-    return Scaffold(
-      body: LayoutBuilder(builder: (context, constraints) {
-        final safeTop = MediaQuery.paddingOf(context).top;
-        return Stack(children: [
-          Positioned.fill(
-            child: AnimatedBuilder(
-              animation: driverSheetController,
-              builder: (context, _) {
-                final extent = driverSheetController.isAttached
-                    ? driverSheetController.size
-                    : (active == null ? .30 : .50);
-                return LiveMap(
-                  originLabel: cleanAddressLabel(
-                    resolvedDriverOrigin ?? mapTrip?['originReference'],
-                    fallback: 'Origen',
-                  ),
-                  destinationLabel: cleanAddressLabel(
-                    mapTrip?['destinationReference'],
-                    fallback: 'Destino',
-                  ),
-                  pickup: pickup,
-                  dropoff: dropoff,
-                  stops: mapStops.length <= 1
-                      ? const []
-                      : mapStops.sublist(0, mapStops.length - 1),
-                  currentLocation: currentDriverPosition,
-                  selfDriverPosition: active == null && available
-                      ? currentDriverPosition
-                      : null,
-                  driverPosition: active == null ? null : currentDriverPosition,
-                  driverBearing: currentDriverBearing,
-                  routePoints: routePoints,
-                  nearbyDrivers: active == null
-                      ? nearbyDriverPositions
-                      : const <String, LatLng>{},
-                  fillAvailable: true,
-                  borderRadius: 0,
-                  viewportPadding: EdgeInsets.fromLTRB(
-                    12,
-                    safeTop + 72,
-                    12,
-                    constraints.maxHeight * extent + 16,
-                  ),
-                );
-              },
-            ),
-          ),
-          Positioned(
-            top: safeTop + 8,
-            left: 12,
-            right: 12,
-            child: Row(children: [
-              Material(
-                color: Theme.of(context).colorScheme.surface,
-                elevation: 3,
-                shape: const CircleBorder(),
-                child: IconButton(
-                  tooltip: 'Volver',
-                  onPressed: () => Navigator.maybePop(context),
-                  icon: const Icon(Icons.arrow_back),
+    return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) SystemNavigator.pop();
+        },
+        child: Scaffold(
+          body: LayoutBuilder(builder: (context, constraints) {
+            final safeTop = MediaQuery.paddingOf(context).top;
+            return Stack(children: [
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: driverSheetController,
+                  builder: (context, _) {
+                    final extent = driverSheetController.isAttached
+                        ? driverSheetController.size
+                        : (active == null ? .30 : .50);
+                    return LiveMap(
+                      originLabel: cleanAddressLabel(
+                        resolvedDriverOrigin ?? mapTrip?['originReference'],
+                        fallback: 'Origen',
+                      ),
+                      destinationLabel: cleanAddressLabel(
+                        mapTrip?['destinationReference'],
+                        fallback: 'Destino',
+                      ),
+                      pickup: pickup,
+                      dropoff: dropoff,
+                      stops: mapStops.length <= 1
+                          ? const []
+                          : mapStops.sublist(0, mapStops.length - 1),
+                      currentLocation: currentDriverPosition,
+                      selfDriverPosition: active == null && available
+                          ? currentDriverPosition
+                          : null,
+                      driverPosition:
+                          active == null ? null : currentDriverPosition,
+                      driverBearing: currentDriverBearing,
+                      routePoints: routePoints,
+                      nearbyDrivers: active == null
+                          ? nearbyDriverPositions
+                          : const <String, LatLng>{},
+                      fillAvailable: true,
+                      borderRadius: 0,
+                      viewportPadding: EdgeInsets.fromLTRB(
+                        12,
+                        safeTop + 72,
+                        12,
+                        constraints.maxHeight * extent + 16,
+                      ),
+                    );
+                  },
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Material(
-                  color: Theme.of(context).colorScheme.surface,
-                  elevation: 3,
-                  borderRadius: BorderRadius.circular(22),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 11),
-                    child: Text('Conductor · ${widget.s.name}',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Material(
-                color: Theme.of(context).colorScheme.surface,
-                elevation: 3,
-                shape: const CircleBorder(),
-                child: IconButton(
-                  tooltip: 'Mi perfil',
-                  onPressed: () => profile(context, widget.s),
-                  icon: const Icon(Icons.person_outline),
-                ),
-              ),
-            ]),
-          ),
-          DraggableScrollableSheet(
-            controller: driverSheetController,
-            initialChildSize: active == null ? .30 : .50,
-            minChildSize: .18,
-            maxChildSize: .92,
-            snap: true,
-            snapSizes: const [.28, .52, .9],
-            builder: (context, scrollController) => Material(
-              color: Theme.of(context).colorScheme.surface,
-              elevation: 16,
-              shadowColor: Colors.black45,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(28)),
-              clipBehavior: Clip.antiAlias,
-              child: ListView(
-                controller: scrollController,
-                padding: EdgeInsets.fromLTRB(
-                    20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
-                children: [
-                  Center(
-                    child: Container(
-                      width: 44,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: .35),
-                        borderRadius: BorderRadius.circular(8),
+              Positioned(
+                top: safeTop + 8,
+                left: 12,
+                right: 12,
+                child: Row(children: [
+                  Expanded(
+                    child: Material(
+                      color: Theme.of(context).colorScheme.surface,
+                      elevation: 3,
+                      borderRadius: BorderRadius.circular(22),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 11),
+                        child: Text('Conductor · ${widget.s.name}',
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  ..._driverSheetContent(context, action),
-                ],
+                  const SizedBox(width: 8),
+                  Material(
+                    color: Theme.of(context).colorScheme.surface,
+                    elevation: 3,
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      tooltip: 'Mi perfil',
+                      onPressed: () => profile(context, widget.s),
+                      icon: const Icon(Icons.person_outline),
+                    ),
+                  ),
+                ]),
               ),
-            ),
-          ),
-        ]);
-      }),
-    );
+              DraggableScrollableSheet(
+                controller: driverSheetController,
+                initialChildSize: active == null ? .30 : .50,
+                minChildSize: .18,
+                maxChildSize: .92,
+                snap: true,
+                snapSizes: const [.28, .52, .9],
+                builder: (context, scrollController) => Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  elevation: 16,
+                  shadowColor: Colors.black45,
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(28)),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListView(
+                    controller: scrollController,
+                    padding: EdgeInsets.fromLTRB(
+                        20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: .35),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      ..._driverSheetContent(context, action),
+                    ],
+                  ),
+                ),
+              ),
+            ]);
+          }),
+        ));
   }
 }
 

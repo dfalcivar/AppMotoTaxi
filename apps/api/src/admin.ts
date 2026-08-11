@@ -474,15 +474,19 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       await persistAudit(user, "USER_PASSWORD_RESET", "USER", id, "Contraseña restablecida y sesiones cerradas");
       return { ok: true, sessionsRevoked: true };
     }
-    const [account] = await database()`
-      update users
-      set password_hash=crypt(${body.password}, gen_salt('bf')),
-          active_session_id=null,
-          must_change_password=true,
-          updated_at=now()
-      where id=${id} and role in ('PASSENGER','DRIVER')
-      returning id::text, role
-    `;
+    const account = await database().begin(async tx => {
+      const [updated] = await tx`
+        update users
+        set password_hash=crypt(${body.password}, gen_salt('bf')),
+            active_session_id=null,
+            must_change_password=true,
+            updated_at=now()
+        where id=${id} and role in ('PASSENGER','DRIVER')
+        returning id::text, role
+      `;
+      if (updated) await tx`delete from device_tokens where user_id=${id}`;
+      return updated;
+    });
     if (!account) return reply.code(404).send({ error: "NOT_FOUND" });
     await persistAudit(user, "USER_PASSWORD_RESET", "USER", id, "Contraseña restablecida y sesiones cerradas");
     return { ok: true, sessionsRevoked: true };
