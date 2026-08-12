@@ -610,6 +610,38 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     alerts.sort((a,b) => (severityOrder[a.severity] ?? 3)-(severityOrder[b.severity] ?? 3) || new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime());
     return { alerts: alerts.slice(0,100), documentExpiryAlertDays: expiryDays, updatedAt: new Date().toISOString() };
   } catch(e) { return guardError(e, reply); } });
+  app.get("/v1/admin/push-deliveries", async (request, reply) => { try {
+    requirePermission(request, "alerts:view");
+    if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const filters = z.object({
+      status: z.enum(["ALL", "SENT", "PARTIAL", "FAILED", "SKIPPED"]).default("ALL"),
+      hours: z.coerce.number().int().min(1).max(168).default(24),
+      limit: z.coerce.number().int().min(1).max(200).default(100)
+    }).parse(request.query);
+    const sql = database();
+    const [summary, deliveries] = await Promise.all([
+      sql`
+        select count(*)::int as total,
+          count(*) filter (where status='SENT')::int as sent,
+          count(*) filter (where status='PARTIAL')::int as partial,
+          count(*) filter (where status='FAILED')::int as failed,
+          count(*) filter (where status='SKIPPED')::int as skipped,
+          coalesce(round(avg(duration_ms)),0)::int as "averageDurationMs"
+        from push_delivery_events
+        where created_at >= now() - (${filters.hours} * interval '1 hour')
+      `,
+      sql`
+        select p.id::text, p.event_type as "eventType", p.status, p.attempted, p.sent, p.failed,
+          p.error_codes as "errorCodes", p.duration_ms as "durationMs", p.created_at as "createdAt",
+          p.trip_id::text as "tripId", coalesce(u.full_name, 'Usuario eliminado') as user
+        from push_delivery_events p left join users u on u.id=p.user_id
+        where p.created_at >= now() - (${filters.hours} * interval '1 hour')
+          and (${filters.status}='ALL' or p.status=${filters.status})
+        order by p.created_at desc limit ${filters.limit}
+      `
+    ]);
+    return { summary: summary[0], deliveries, hours: filters.hours, updatedAt: new Date().toISOString() };
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_PUSH_FILTERS"}); return guardError(e, reply); } });
   app.get("/v1/admin/drivers", async (request, reply) => { try {
     requirePermission(request, "drivers:view");
     if (!process.env.DATABASE_URL) return drivers;

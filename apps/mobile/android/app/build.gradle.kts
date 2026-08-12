@@ -7,6 +7,11 @@ plugins {
 val googleMapsApiKey = providers.gradleProperty("GOOGLE_MAPS_ANDROID_API_KEY")
     .orElse(providers.environmentVariable("GOOGLE_MAPS_ANDROID_API_KEY"))
     .orElse("")
+val releaseKeystorePath = providers.gradleProperty("COSTA_GO_KEYSTORE_PATH").orElse(providers.environmentVariable("COSTA_GO_KEYSTORE_PATH"))
+val releaseKeystorePassword = providers.gradleProperty("COSTA_GO_KEYSTORE_PASSWORD").orElse(providers.environmentVariable("COSTA_GO_KEYSTORE_PASSWORD"))
+val releaseKeyAlias = providers.gradleProperty("COSTA_GO_KEY_ALIAS").orElse(providers.environmentVariable("COSTA_GO_KEY_ALIAS"))
+val releaseKeyPassword = providers.gradleProperty("COSTA_GO_KEY_PASSWORD").orElse(providers.environmentVariable("COSTA_GO_KEY_PASSWORD"))
+val productionSigningConfigured = listOf(releaseKeystorePath, releaseKeystorePassword, releaseKeyAlias, releaseKeyPassword).all { it.isPresent && it.get().isNotBlank() }
 
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
@@ -44,15 +49,26 @@ android {
         manifestPlaceholders["googleMapsApiKey"] = googleMapsApiKey.get()
     }
 
+    signingConfigs {
+        if (productionSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseKeystorePath.get())
+                storePassword = releaseKeystorePassword.get()
+                keyAlias = releaseKeyAlias.get()
+                keyPassword = releaseKeyPassword.get()
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Las pruebas locales conservan firma debug hasta que se configure
+            // el almacén privado. El script de producción impide publicar así.
+            signingConfig = if (productionSigningConfigured) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 }

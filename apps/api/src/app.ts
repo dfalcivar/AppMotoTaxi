@@ -13,6 +13,7 @@ import { registerSupportRoutes } from "./support.js";
 import { reverseLocation, searchLocations } from "./geocoding.js";
 import { computeRoute } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
+import { captureOperationalError } from "./observability.js";
 import {
   authorizedServiceAreas,
   filterLocationsToArea,
@@ -240,6 +241,17 @@ export async function buildApp() {
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
   await registerSupportRoutes(app);
+
+  app.addHook("onError", async (request, reply, error) => {
+    if (reply.statusCode >= 500) {
+      captureOperationalError(error, {
+        method: request.method,
+        route: request.routeOptions.url,
+        statusCode: reply.statusCode,
+        requestId: request.id
+      });
+    }
+  });
 
   app.addHook("onResponse", async (request, reply) => {
     if (reply.elapsedTime >= 1500) {

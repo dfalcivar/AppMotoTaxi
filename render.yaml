@@ -39,6 +39,12 @@ services:
         sync: false
       - key: NOTIFICATION_FROM_EMAIL
         sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0.05"
 
   - type: web
     name: mototaxi-atacames-admin
@@ -53,6 +59,12 @@ services:
         sync: false
       - key: VITE_GOOGLE_MAPS_WEB_MAP_ID
         sync: false
+      - key: VITE_SENTRY_DSN
+        sync: false
+      - key: VITE_SENTRY_ENVIRONMENT
+        value: production
+      - key: VITE_SENTRY_TRACES_SAMPLE_RATE
+        value: "0.05"
     routes:
       - type: rewrite
         source: /*

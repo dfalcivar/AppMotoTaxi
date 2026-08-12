@@ -11,6 +11,7 @@ export interface SessionUser {
 export interface Session { token: string; user: SessionUser }
 export interface QuoteRequest { zone: Zone; passengers: number; localTime: string }
 export interface Quote { currency: "USD"; totalCents: number; total: string; period: "DAY" | "NIGHT"; zone: Zone; passengers: number; appliedRule: string; pricingVersion: number; explanation: string }
+import { captureAdminError } from "./observability.js";
 
 const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "/api";
 export function apiUrl(path: string) { return `${base}${path}`; }
@@ -33,7 +34,10 @@ export async function apiFetch<T>(path: string, token?: string, init: RequestIni
   try {
     return parse<T>(await fetcher(`${base}${persistentPath(path, init.method)}`, { ...init, headers }));
   } catch (error) {
-    if (error instanceof TypeError) throw new Error("No se pudo conectar con la API de Render. Intenta nuevamente en unos segundos.");
+    if (error instanceof TypeError) {
+      captureAdminError(error, { path, method: init.method ?? "GET", kind: "network" });
+      throw new Error("No se pudo conectar con la API de Render. Intenta nuevamente en unos segundos.");
+    }
     throw error;
   }
 }

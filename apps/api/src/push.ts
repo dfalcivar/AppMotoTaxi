@@ -4,6 +4,7 @@ import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { database } from "./database.js";
+import { captureOperationalError } from "./observability.js";
 
 const credentialPath = fileURLToPath(new URL("../secrets/firebase-service-account.json", import.meta.url));
 const firebaseProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -27,6 +28,53 @@ function firebaseErrorCode(error: unknown): string {
     return String((error as { code?: unknown }).code ?? "unknown");
   }
   return "unknown";
+}
+
+export type PushDeliveryStatus = "SENT" | "PARTIAL" | "FAILED" | "SKIPPED";
+export type PushResult = {
+  sent: number;
+  attempted?: number;
+  failed?: number;
+  skipped?: boolean;
+  errorCode?: string;
+  errors?: Array<{ code: string; message: string }>;
+  durationMs?: number;
+};
+
+export function pushDeliveryStatus(result: { skipped?: boolean; sent: number; failed?: number }): PushDeliveryStatus {
+  if (result.skipped) return "SKIPPED";
+  if (result.sent > 0 && Number(result.failed ?? 0) > 0) return "PARTIAL";
+  if (result.sent > 0) return "SENT";
+  return "FAILED";
+}
+
+async function recordPushDelivery(input: {
+  userId: string;
+  tripId?: string;
+  eventType: string;
+  status: PushDeliveryStatus;
+  attempted?: number;
+  sent?: number;
+  failed?: number;
+  errorCodes?: string[];
+  durationMs?: number;
+}): Promise<void> {
+  if (!process.env.DATABASE_URL) return;
+  const tripId = input.tripId && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.tripId) ? input.tripId : null;
+  try {
+    await database()`
+      insert into push_delivery_events
+        (user_id, trip_id, event_type, status, attempted, sent, failed, error_codes, duration_ms)
+      values (${input.userId}, ${tripId}, ${input.eventType}, ${input.status}, ${input.attempted ?? 0},
+        ${input.sent ?? 0}, ${input.failed ?? 0}, ${input.errorCodes ?? []}, ${input.durationMs ?? 0})
+    `;
+  } catch (error) {
+    console.warn("No se pudo persistir el diagnóstico de entrega push.", {
+      type: input.eventType,
+      code: firebaseErrorCode(error)
+    });
+    captureOperationalError(error, { operation: "push_delivery_audit", eventType: input.eventType });
+  }
 }
 
 export type PushConfigurationStatus = {
@@ -57,19 +105,34 @@ export function pushConfigurationStatus(clientProjectId?: string): PushConfigura
   }
 }
 
-export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}) {
+export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}): Promise<PushResult> {
   const startedAt = performance.now();
+  const eventType = data.type ?? "UNKNOWN";
+  const finish = async (result: PushResult): Promise<PushResult> => {
+    await recordPushDelivery({
+      userId,
+      tripId: data.tripId,
+      eventType,
+      status: pushDeliveryStatus(result),
+      attempted: result.attempted,
+      sent: result.sent,
+      failed: result.failed,
+      errorCodes: [...new Set([...(result.errors?.map(value => value.code) ?? []), ...(result.errorCode ? [result.errorCode] : [])])],
+      durationMs: Math.round(performance.now() - startedAt)
+    });
+    return result;
+  };
   try {
     const client = messaging();
     if (!client) {
       console.warn("Push omitido: FIREBASE_SERVICE_ACCOUNT_BASE64 no está configurado.");
-      return { sent: 0, skipped: true, errorCode: "firebase/not-configured" };
+      return finish({ sent: 0, skipped: true, errorCode: "firebase/not-configured" });
     }
     const rows = await database()`select distinct token from device_tokens where user_id=${userId} and last_seen_at > now() - interval '90 days'`;
     const tokens = rows.map(row => String(row.token));
     if (!tokens.length) {
       console.warn("Push omitido: el usuario no tiene un dispositivo registrado.", { type: data.type ?? "unknown" });
-      return { sent: 0, attempted: 0, errorCode: "firebase/device-not-registered" };
+      return finish({ sent: 0, attempted: 0, errorCode: "firebase/device-not-registered" });
     }
     const isChat = data.type === "CHAT_MESSAGE";
     const isTripOffer = data.type === "TRIP_OFFER";
@@ -131,13 +194,14 @@ export async function sendPush(userId: string, title: string, body: string, data
       failed: result.failureCount,
       durationMs
     });
-    return { sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors, durationMs };
+    return finish({ sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors, durationMs });
   } catch (error) {
     console.error("Firebase no pudo enviar la notificación.", {
       type: data.type ?? "unknown",
       code: firebaseErrorCode(error),
       error: error instanceof Error ? error.message : String(error)
     });
-    return { sent: 0, attempted: 0, failed: 0, errorCode: firebaseErrorCode(error) };
+    captureOperationalError(error, { operation: "firebase_send", eventType });
+    return finish({ sent: 0, attempted: 0, failed: 0, errorCode: firebaseErrorCode(error) });
   }
 }

@@ -13,6 +13,7 @@ import "./service-areas.css";
 import "./brand.css";
 import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
+import { AdminErrorBoundary } from "./observability.js";
 
 type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "access" | "audit" | "database";
 
@@ -467,11 +468,12 @@ function OperationsCenter({ token }: { token: string }) {
 }
 
 function AlertsCenter({ token }: { token: string }) {
-  const [data, setData] = useState<any>(); const [error, setError] = useState(""); const [severity, setSeverity] = useState("ALL"); const [loading, setLoading] = useState(true);
-  async function load() { try { setData(await apiFetch<any>("/v1/admin/alerts", token)); setError(""); } catch (reason) { setError(errorText(reason)); } finally { setLoading(false); } }
+  const [data, setData] = useState<any>(); const [pushData, setPushData] = useState<any>(); const [error, setError] = useState(""); const [severity, setSeverity] = useState("ALL"); const [pushStatus, setPushStatus] = useState("ALL"); const [loading, setLoading] = useState(true);
+  async function load() { try { const [alerts, pushes] = await Promise.all([apiFetch<any>("/v1/admin/alerts", token), apiFetch<any>(`/v1/admin/push-deliveries?status=${pushStatus}&hours=24&limit=50`, token)]); setData(alerts); setPushData(pushes); setError(""); } catch (reason) { setError(errorText(reason)); } finally { setLoading(false); } }
   useEffect(() => { void load(); const id=setInterval(() => void load(),30_000); return () => clearInterval(id); },[token]);
   const alerts = (data?.alerts ?? []).filter((item:any) => severity === "ALL" || item.severity === severity);
-  return <div className="alerts-center"><section className="card alerts-heading"><Header eyebrow="CONTROL PREVENTIVO" title="Alertas operativas" action={data?.updatedAt ? `Actualizado ${new Date(data.updatedAt).toLocaleTimeString()}` : "Actualizando"} /><div className="alerts-toolbar"><p>Documentos: aviso con {data?.documentExpiryAlertDays ?? 30} días de anticipación.</p><label>Prioridad<select value={severity} onChange={event => setSeverity(event.target.value)}><option value="ALL">Todas</option><option value="CRITICAL">Críticas</option><option value="WARNING">Advertencias</option><option value="INFO">Informativas</option></select></label><button className="secondary" type="button" onClick={() => void load()}>Actualizar</button></div><Notice error={error} /></section>{loading ? <div className="skeleton-grid"><span /><span /><span /></div> : alerts.length ? <div className="alerts-grid">{alerts.map((item:any) => <article className={`alert-card ${item.severity.toLowerCase()}`} key={item.id}><span className="alert-icon" aria-hidden="true">{item.severity === "CRITICAL" ? "!" : item.severity === "WARNING" ? "△" : "i"}</span><div><strong>{item.title}</strong><p>{item.detail}</p><small>{new Date(item.createdAt).toLocaleString()} · {item.type.replaceAll("_"," ")}</small></div></article>)}</div> : <Empty text="No existen alertas para el filtro seleccionado." />}</div>;
+  const pushSummary = pushData?.summary ?? {};
+  return <div className="alerts-center"><section className="card alerts-heading"><Header eyebrow="CONTROL PREVENTIVO" title="Alertas operativas" action={data?.updatedAt ? `Actualizado ${new Date(data.updatedAt).toLocaleTimeString()}` : "Actualizando"} /><div className="alerts-toolbar"><p>Documentos: aviso con {data?.documentExpiryAlertDays ?? 30} días de anticipación.</p><label>Prioridad<select value={severity} onChange={event => setSeverity(event.target.value)}><option value="ALL">Todas</option><option value="CRITICAL">Críticas</option><option value="WARNING">Advertencias</option><option value="INFO">Informativas</option></select></label><button className="secondary" type="button" onClick={() => void load()}>Actualizar</button></div><Notice error={error} /></section>{loading ? <div className="skeleton-grid"><span /><span /><span /></div> : <>{alerts.length ? <div className="alerts-grid">{alerts.map((item:any) => <article className={`alert-card ${item.severity.toLowerCase()}`} key={item.id}><span className="alert-icon" aria-hidden="true">{item.severity === "CRITICAL" ? "!" : item.severity === "WARNING" ? "△" : "i"}</span><div><strong>{item.title}</strong><p>{item.detail}</p><small>{new Date(item.createdAt).toLocaleString()} · {item.type.replaceAll("_"," ")}</small></div></article>)}</div> : <Empty text="No existen alertas para el filtro seleccionado." />}<section className="card"><Header eyebrow="NOTIFICACIONES PUSH · ÚLTIMAS 24 HORAS" title="Diagnóstico de entregas" action={`${pushSummary.sent ?? 0}/${pushSummary.total ?? 0} enviadas`} /><div className="alerts-toolbar"><p>Promedio: {pushSummary.averageDurationMs ?? 0} ms · Fallidas: {pushSummary.failed ?? 0} · Omitidas: {pushSummary.skipped ?? 0}</p><label>Resultado<select value={pushStatus} onChange={event => setPushStatus(event.target.value)}><option value="ALL">Todos</option><option value="SENT">Enviadas</option><option value="PARTIAL">Parciales</option><option value="FAILED">Fallidas</option><option value="SKIPPED">Omitidas</option></select></label><button className="secondary" type="button" onClick={() => void load()}>Aplicar</button></div>{pushData?.deliveries?.length ? <Table headers={["Fecha","Evento","Usuario","Resultado","Entrega","Error"]} rows={pushData.deliveries.map((item:any) => [new Date(item.createdAt).toLocaleString(),item.eventType,item.user,<Badge value={item.status} />,`${item.sent}/${item.attempted}`,item.errorCodes?.join(", ") || "—"])} /> : <Empty text="No existen intentos push en el período seleccionado." />}</section></>}</div>;
 }
 
 function Database({ token }: { token: string }) {
@@ -525,4 +527,10 @@ function App() {
   </div>;
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <AdminErrorBoundary fallback={<div className="login-shell"><div className="login-card"><h1>No se pudo cargar el panel</h1><p>El error fue registrado. Recarga la página para volver a intentarlo.</p></div></div>}>
+      <App />
+    </AdminErrorBoundary>
+  </StrictMode>
+);

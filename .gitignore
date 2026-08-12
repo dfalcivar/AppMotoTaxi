@@ -13,4 +13,9 @@ work/
 .flutter-plugins*
 build/
 *.apk
+*.aab
+*.jks
+*.keystore
+apps/mobile/android/key.properties
+.gradle-cache/
 ios/Pods/
