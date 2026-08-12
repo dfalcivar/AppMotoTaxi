@@ -146,6 +146,17 @@ async function pointStatus(userId: string, point: CoordinatePoint) {
   return row as { id: string; enabled: boolean; audience: string; allowed: boolean } | undefined;
 }
 
+export async function serviceAreaAccessError(
+  userId: string,
+  point: CoordinatePoint
+): Promise<ServiceAreaErrorCode | undefined> {
+  const status = await pointStatus(userId, point);
+  if (!status) return "OUTSIDE_SERVICE_AREA";
+  if (!status.enabled) return "SERVICE_AREA_DISABLED";
+  if (!status.allowed) return "SERVICE_AREA_NOT_ALLOWED";
+  return undefined;
+}
+
 async function resolveRequiredPoint(
   userId: string,
   point: CoordinatePoint,

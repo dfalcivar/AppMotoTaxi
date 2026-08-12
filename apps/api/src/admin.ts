@@ -914,6 +914,9 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       jsonb_build_object('west',ST_XMin(ST_Envelope(geometry)),'south',ST_YMin(ST_Envelope(geometry)),
         'east',ST_XMax(ST_Envelope(geometry)),'north',ST_YMax(ST_Envelope(geometry))) bounds
       from candidate`;
+    // Do not run ST_Intersection with an invalid candidate. Besides being
+    // unsafe, that masks PostGIS' useful validation reason with a generic 500.
+    if (!result?.valid || result?.empty) return {...result,overlaps:[]};
     const overlaps=await database()`with candidate as (select ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326) geometry)
       select a.id::text,a.code,a.name,a.priority,
         round(ST_Area(ST_Intersection(v.geometry,candidate.geometry)::geography)::numeric/1000000,3)::float as "overlapSquareKm"

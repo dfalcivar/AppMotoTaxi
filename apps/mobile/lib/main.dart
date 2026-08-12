@@ -867,6 +867,44 @@ String mensajeApi(dynamic code) =>
     }[code] ??
     'No se pudo completar la operación.';
 
+const coverageErrorCodes = <String>{
+  'ORIGIN_OUTSIDE_SERVICE_AREA',
+  'DESTINATION_OUTSIDE_SERVICE_AREA',
+  'OUTSIDE_SERVICE_AREA',
+  'SERVICE_AREA_NOT_ALLOWED',
+  'SERVICE_AREA_DISABLED',
+  'DIFFERENT_SERVICE_AREAS',
+};
+
+Future<void> showCoverageErrorDialog(
+    BuildContext context, String code, String message) {
+  final notAuthorized = code == 'SERVICE_AREA_NOT_ALLOWED';
+  final title = switch (code) {
+    'SERVICE_AREA_NOT_ALLOWED' => 'Cuenta no autorizada en esta zona',
+    'ORIGIN_OUTSIDE_SERVICE_AREA' => 'Origen fuera de cobertura',
+    'DESTINATION_OUTSIDE_SERVICE_AREA' => 'Destino fuera de cobertura',
+    'DIFFERENT_SERVICE_AREAS' => 'Viaje fuera de la zona permitida',
+    'SERVICE_AREA_DISABLED' => 'Zona temporalmente no disponible',
+    _ => 'Ubicación fuera de cobertura',
+  };
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      icon: Icon(notAuthorized
+          ? Icons.admin_panel_settings_outlined
+          : Icons.location_off_outlined),
+      title: Text(title),
+      content: Text(message),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Entendido'),
+        ),
+      ],
+    ),
+  );
+}
+
 class Api {
   Future<dynamic> call(String method, String path,
       {String? token, Object? body}) async {
@@ -1196,6 +1234,12 @@ class Api {
         if (version != null) 'version': version.toString()
       }).toString(),
       token: t);
+
+  Future<dynamic> resolveServiceArea(String t, LatLng point) =>
+      call('POST', '/v1/service-areas/resolve', token: t, body: {
+        'latitude': point.latitude,
+        'longitude': point.longitude,
+      });
 
   Future<dynamic> reverse(String t, LatLng point) => call(
       'GET',
@@ -4039,6 +4083,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   ServiceAreaCatalog? serviceAreaCatalog;
   ServiceArea? selectedOriginArea;
   ServiceArea? pendingSelectionArea;
+  bool coverageDialogOpen = false;
   @override
   void initState() {
     super.initState();
@@ -4133,7 +4178,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           await api.serviceAreas(widget.s.token, cachedVersion) as Map);
       if (!mounted) return;
       if (response['unchanged'] != true) {
-        await preferences.setString('serviceAreasCatalog', jsonEncode(response));
+        await preferences.setString(
+            'serviceAreasCatalog', jsonEncode(response));
         await preferences.setInt(
             'serviceAreasVersion', (response['version'] as num).toInt());
         serviceAreaCatalog = ServiceAreaCatalog.fromJson(response);
@@ -4190,6 +4236,29 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         curve: Curves.easeOutCubic,
       );
     });
+  }
+
+  Future<void> showPassengerCoverageError(String code, String message) async {
+    if (!mounted || coverageDialogOpen) return;
+    coverageDialogOpen = true;
+    try {
+      await showCoverageErrorDialog(context, code, message);
+    } finally {
+      coverageDialogOpen = false;
+    }
+  }
+
+  Future<String> resolveCoverageErrorCode(LatLng point) async {
+    try {
+      await api.resolveServiceArea(widget.s.token, point);
+      return 'OUTSIDE_SERVICE_AREA';
+    } on ApiException catch (error) {
+      final code = error.code;
+      if (code != null && coverageErrorCodes.contains(code)) return code;
+      return 'OUTSIDE_SERVICE_AREA';
+    } catch (_) {
+      return 'OUTSIDE_SERVICE_AREA';
+    }
   }
 
   TextEditingController _destinationController(int index) =>
@@ -4611,8 +4680,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       });
       if (!applyAsOrigin) return;
       if (serviceAreaCatalog != null && selectedOriginArea == null) {
-        setState(() => message =
-            'AtacamesGo todavía no está disponible en esta zona.');
+        final code = await resolveCoverageErrorCode(point);
+        if (!mounted || pickup != point || active != null) return;
+        final coverageMessage = mensajeApi(code);
+        setState(() => message = coverageMessage);
+        unawaited(showPassengerCoverageError(code, coverageMessage));
         return;
       }
       realtime.subscribeNearby(position.latitude, position.longitude);
@@ -4634,6 +4706,22 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       }
     } catch (e) {
       if (mounted) setState(() => message = e.toString());
+    }
+  }
+
+  Future<LatLng?> centerPassengerCurrentLocation() async {
+    try {
+      final position = await currentGpsPosition();
+      if (!mounted) return null;
+      final point = LatLng(position.latitude, position.longitude);
+      setState(() => currentLocation = point);
+      return point;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      return null;
     }
   }
 
@@ -4736,10 +4824,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       message = 'Obteniendo la dirección del punto seleccionado…';
     });
     if (serviceAreaCatalog != null && area == null) {
+      final code = await resolveCoverageErrorCode(point);
+      if (!mounted ||
+          generation != selectionLookupGeneration ||
+          mapSelection != selection) {
+        return;
+      }
       setState(() {
         selectionResolving = false;
-        message = 'AtacamesGo todavía no opera en esta ubicación.';
+        message = mensajeApi(code);
       });
+      unawaited(showPassengerCoverageError(code, mensajeApi(code)));
       return;
     }
     try {
@@ -5003,15 +5098,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     final selectedArea = serviceAreaCatalog?.find(point);
     if (serviceAreaCatalog != null && selectedArea == null) {
-      setState(() => message =
-          'AtacamesGo todavía no está disponible en esta zona.');
+      final code = await resolveCoverageErrorCode(point);
+      if (!mounted || mapSelection != selection) return;
+      final coverageMessage = mensajeApi(code);
+      setState(() => message = coverageMessage);
+      unawaited(showPassengerCoverageError(code, coverageMessage));
       return;
     }
     if (selection == MapPointSelection.destination &&
         selectedOriginArea != null &&
         selectedArea?.id != selectedOriginArea?.id) {
-      setState(() => message =
-          'El origen y el destino deben estar dentro de la misma zona de cobertura.');
+      const code = 'DIFFERENT_SERVICE_AREAS';
+      final coverageMessage = mensajeApi(code);
+      setState(() => message = coverageMessage);
+      unawaited(showPassengerCoverageError(code, coverageMessage));
       return;
     }
     final coordinateLabel =
@@ -5180,12 +5280,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (pickup == null || destinations == null) return null;
     if (serviceAreaCatalog != null) {
       final area = serviceAreaCatalog!.find(pickup!);
-      if (area == null || destinations.any((destination) {
-        final location = Map<String, dynamic>.from(destination['location'] as Map);
-        return serviceAreaCatalog!.find(LatLng(
-              (location['latitude'] as num).toDouble(),
-              (location['longitude'] as num).toDouble()))?.id != area.id;
-      })) {
+      if (area == null ||
+          destinations.any((destination) {
+            final location =
+                Map<String, dynamic>.from(destination['location'] as Map);
+            return serviceAreaCatalog!
+                    .find(LatLng((location['latitude'] as num).toDouble(),
+                        (location['longitude'] as num).toDouble()))
+                    ?.id !=
+                area.id;
+          })) {
         return null;
       }
     }
@@ -5732,7 +5836,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       _movePassengerSheet(active == null ? .35 : .50);
       await load();
     } catch (e) {
-      setState(() => message = e.toString());
+      if (!mounted) return;
+      final text = e.toString();
+      setState(() => message = text);
+      if (e is ApiException && coverageErrorCodes.contains(e.code)) {
+        unawaited(
+            showPassengerCoverageError(e.code ?? 'OUTSIDE_SERVICE_AREA', text));
+      }
     }
   }
 
@@ -6349,6 +6459,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                           editing ? selectionMovementStarted : null,
                       onUseCurrentLocation:
                           active == null ? useCurrentLocation : null,
+                      onCenterCurrentLocation: centerPassengerCurrentLocation,
                       fillAvailable: true,
                       borderRadius: 0,
                       viewportPadding: EdgeInsets.fromLTRB(
@@ -6750,6 +6861,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     notificationText: foregroundText,
                     enableWakeLock: true)))
         .listen(sendPosition);
+  }
+
+  Future<LatLng?> centerDriverCurrentLocation() async {
+    try {
+      final position = await currentGpsPosition();
+      final point = pointFrom(position);
+      if (!mounted) return null;
+      setState(() {
+        currentDriverPosition = point;
+        currentDriverBearing = position.heading < 0 ? 0 : position.heading;
+      });
+      return point;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      return null;
+    }
   }
 
   void sendPosition(Position position) {
@@ -8085,10 +8215,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       stops: mapStops.length <= 1
                           ? const []
                           : mapStops.sublist(0, mapStops.length - 1),
-                      currentLocation: currentDriverPosition,
-                      selfDriverPosition: active == null && available
-                          ? currentDriverPosition
-                          : null,
+                      currentLocation: null,
+                      selfDriverPosition:
+                          active == null ? currentDriverPosition : null,
+                      onCenterCurrentLocation: centerDriverCurrentLocation,
                       driverPosition:
                           active == null ? null : currentDriverPosition,
                       driverBearing: currentDriverBearing,

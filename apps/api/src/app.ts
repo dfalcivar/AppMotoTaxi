@@ -17,6 +17,7 @@ import {
   authorizedServiceAreas,
   filterLocationsToArea,
   resolveServiceArea,
+  serviceAreaAccessError,
   serviceAreaBounds,
   ServiceAreaError,
   validateTripServiceArea
@@ -456,7 +457,10 @@ export async function buildApp() {
     const parsed = serviceAreaResolveSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION" });
     const area = await resolveServiceArea(user.id!, parsed.data);
-    return { area: area ?? null };
+    if (area) return { area };
+    const error = await serviceAreaAccessError(user.id!, parsed.data);
+    const status = error === "SERVICE_AREA_NOT_ALLOWED" ? 403 : 422;
+    return reply.code(status).send({ error: error ?? "OUTSIDE_SERVICE_AREA" });
   });
 
   app.post("/v1/routes", async (request, reply) => {

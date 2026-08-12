@@ -99,6 +99,7 @@ class LiveMap extends StatefulWidget {
     this.onSelectionSettled,
     this.onSelectionMovementStarted,
     this.onUseCurrentLocation,
+    this.onCenterCurrentLocation,
     this.currentLocation,
     this.height = 320,
     this.fillAvailable = false,
@@ -122,6 +123,7 @@ class LiveMap extends StatefulWidget {
   final ValueChanged<LatLng>? onSelectionSettled;
   final VoidCallback? onSelectionMovementStarted;
   final VoidCallback? onUseCurrentLocation;
+  final Future<LatLng?> Function()? onCenterCurrentLocation;
   final LatLng? currentLocation;
   final double height;
   final bool fillAvailable;
@@ -433,6 +435,16 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           height: 38,
           child: const _SelfDriverMarker(),
         ),
+      if (widget.currentLocation != null &&
+          widget.editing == null &&
+          (widget.pickup == null ||
+              _meaningfullyDifferent(widget.currentLocation!, widget.pickup!)))
+        Marker(
+          point: widget.currentLocation!,
+          width: 30,
+          height: 30,
+          child: const _CurrentLocationMarker(),
+        ),
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
@@ -508,6 +520,18 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
               gmaps.BitmapDescriptor.hueAzure),
           zIndexInt: 20,
+        ),
+      if (widget.currentLocation != null &&
+          widget.editing == null &&
+          (widget.pickup == null ||
+              _meaningfullyDifferent(widget.currentLocation!, widget.pickup!)))
+        gmaps.Marker(
+          markerId: const gmaps.MarkerId('current-device-location'),
+          position: gmaps.LatLng(widget.currentLocation!.latitude,
+              widget.currentLocation!.longitude),
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+              gmaps.BitmapDescriptor.hueAzure),
+          zIndexInt: 19,
         ),
       if (_displayedDriver != null)
         gmaps.Marker(
@@ -638,18 +662,23 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       mapSurface,
       if (widget.editing == null &&
           (widget.currentLocation != null ||
-              widget.onUseCurrentLocation != null))
+              widget.onUseCurrentLocation != null ||
+              widget.onCenterCurrentLocation != null))
         Positioned(
           right: 12,
           bottom: widget.viewportPadding.bottom + 12,
           child: FloatingActionButton.small(
             heroTag: null,
             tooltip: 'Volver a mi ubicación',
-            onPressed: () {
-              final currentPoint =
-                  widget.currentLocation ?? widget.pickup ?? center;
+            onPressed: () async {
+              final refreshed = await widget.onCenterCurrentLocation?.call();
+              if (!mounted) return;
+              final currentPoint = refreshed ??
+                  widget.currentLocation ??
+                  widget.pickup ??
+                  center;
               _moveCamera(currentPoint, 17);
-              if (widget.currentLocation == null) {
+              if (refreshed == null && widget.currentLocation == null) {
                 widget.onUseCurrentLocation?.call();
               }
             },
@@ -738,6 +767,22 @@ class _SelfDriverMarker extends StatelessWidget {
           boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
         ),
         child: const Icon(Icons.my_location, color: Colors.white, size: 20),
+      );
+}
+
+class _CurrentLocationMarker extends StatelessWidget {
+  const _CurrentLocationMarker();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          color: const Color(0xff1689d8),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
+        ),
+        child:
+            const Icon(Icons.person_pin_circle, color: Colors.white, size: 18),
       );
 }
 
