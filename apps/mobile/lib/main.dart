@@ -2584,7 +2584,7 @@ class _ProfileState extends State<Profile> {
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                  colors: [Color(0xff006f7c), Color(0xff0498a7)]),
+                  colors: [Color(0xff032b49), Color(0xff087ccb)]),
               borderRadius: BorderRadius.circular(26),
             ),
             child: Column(children: [
@@ -2623,7 +2623,7 @@ class _ProfileState extends State<Profile> {
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.camera_alt_outlined,
-                            color: Color(0xff006f7c)),
+                            color: Color(0xff087ccb)),
                   ),
                 ),
               ]),
@@ -3121,6 +3121,7 @@ class AccountHub extends StatefulWidget {
 
 class _AccountHubState extends State<AccountHub> {
   dynamic pending;
+  dynamic accountProfile;
   bool biometricEnabled = false;
 
   @override
@@ -3129,7 +3130,41 @@ class _AccountHubState extends State<AccountHub> {
     Api().pendingRating(widget.s.token).then((v) {
       if (mounted) setState(() => pending = v);
     });
+    loadAccountProfile();
     loadBiometricState();
+  }
+
+  Future<void> loadAccountProfile() async {
+    try {
+      final value = await Api().profile(widget.s.token);
+      if (mounted) setState(() => accountProfile = value);
+    } catch (_) {
+      // El encabezado conserva el nombre de la sesión y el avatar predeterminado.
+    }
+  }
+
+  Widget accountAvatar() {
+    final data = accountProfile;
+    final name = (data?['name'] ?? widget.s.name).toString();
+    final fallback = Container(
+      color: Colors.white24,
+      alignment: Alignment.center,
+      child: Text(name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
+          style: const TextStyle(
+              color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+    );
+    if (data?['hasPhoto'] != true) return ClipOval(child: fallback);
+    final version = data?['photoUpdatedAt']?.toString() ?? 'profile';
+    return ClipOval(
+      child: Image.network(
+        '$base/v1/users/${widget.s.id}/profile-photo?v=${Uri.encodeQueryComponent(version)}',
+        headers: {'Authorization': 'Bearer ${widget.s.token}'},
+        width: 58,
+        height: 58,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => fallback,
+      ),
+    );
   }
 
   Future<void> loadBiometricState() async {
@@ -3160,15 +3195,11 @@ class _AccountHubState extends State<AccountHub> {
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-                colors: [Color(0xff006f7c), Color(0xff00a2b2)]),
+                colors: [Color(0xff032b49), Color(0xff087ccb)]),
             borderRadius: BorderRadius.circular(24),
           ),
           child: Row(children: [
-            const CircleAvatar(
-                radius: 28,
-                backgroundColor: Colors.white24,
-                child:
-                    Icon(Icons.person_outline, color: Colors.white, size: 30)),
+            SizedBox(width: 58, height: 58, child: accountAvatar()),
             const SizedBox(width: 14),
             Expanded(
                 child: Column(
@@ -3200,6 +3231,7 @@ class _AccountHubState extends State<AccountHub> {
             onTap: () async {
               await Navigator.push(
                   c, MaterialPageRoute(builder: (_) => Profile(widget.s)));
+              await loadAccountProfile();
               await loadBiometricState();
             }),
         ListTile(
@@ -3345,7 +3377,7 @@ class _SupportCenterState extends State<SupportCenter> {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                  colors: [Color(0xff006f7c), Color(0xff00a2b2)]),
+                  colors: [Color(0xff032b49), Color(0xff087ccb)]),
               borderRadius: BorderRadius.circular(24),
             ),
             child: const Column(
