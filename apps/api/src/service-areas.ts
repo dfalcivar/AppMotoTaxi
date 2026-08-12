@@ -118,7 +118,7 @@ export async function resolveServiceArea(
         or (a.audience='ROLES' and exists (
           select 1 from service_area_role_access role_access
           join users account on account.id=${userId}
-          where role_access.service_area_id=a.id and role_access.role=account.role
+          where role_access.service_area_id=a.id and role_access.role=account.role::text
         ))
       )
     order by a.priority desc, ST_Area(v.geometry::geography), a.code
@@ -137,7 +137,7 @@ async function pointStatus(userId: string, point: CoordinatePoint) {
       ) or (a.audience='ROLES' and exists (
         select 1 from service_area_role_access role_access
         join users account on account.id=${userId}
-        where role_access.service_area_id=a.id and role_access.role=account.role
+        where role_access.service_area_id=a.id and role_access.role=account.role::text
       ))) as allowed
     from service_areas a join service_area_versions v on v.id=a.current_version_id
     where ST_Covers(v.geometry, ST_SetSRID(ST_MakePoint(${point.longitude}, ${point.latitude}),4326))
@@ -198,7 +198,7 @@ export async function authorizedServiceAreas(userId: string, knownVersion?: numb
       ) or (a.audience='ROLES' and exists (
         select 1 from service_area_role_access role_access
         join users account on account.id=${userId}
-        where role_access.service_area_id=a.id and role_access.role=account.role
+        where role_access.service_area_id=a.id and role_access.role=account.role::text
       ))
     ) order by a.priority desc, a.name
   `;
@@ -220,7 +220,7 @@ export async function filterLocationsToArea(areaId: string, userId: string, loca
     ) or (a.audience='ROLES' and exists (
       select 1 from service_area_role_access role_access
       join users account on account.id=${userId}
-      where role_access.service_area_id=a.id and role_access.role=account.role
+      where role_access.service_area_id=a.id and role_access.role=account.role::text
     ))) and ST_Covers(v.geometry, ST_SetSRID(ST_MakePoint(
       (point->>'longitude')::double precision,
       (point->>'latitude')::double precision
@@ -241,7 +241,7 @@ export async function serviceAreaBounds(areaId: string, userId: string) {
       ) or (a.audience='ROLES' and exists (
         select 1 from service_area_role_access role_access
         join users account on account.id=${userId}
-        where role_access.service_area_id=a.id and role_access.role=account.role
+        where role_access.service_area_id=a.id and role_access.role=account.role::text
       ))
     )
   `;
