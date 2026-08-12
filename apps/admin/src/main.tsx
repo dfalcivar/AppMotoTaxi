@@ -10,6 +10,7 @@ import "./navigation.css";
 import "./responsive.css";
 import "./operations.css";
 import "./service-areas.css";
+import "./brand.css";
 import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
 
@@ -116,7 +117,7 @@ function Login({ onSession }: { onSession: (session: Session) => void }) {
     event.preventDefault(); setBusy(true); setError("");
     try { onSession(await login(email.trim(), password)); } catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
   }
-  return <div className="login-shell"><form className="login-card" onSubmit={submit}><div className="brand-mark">M</div><span className="eyebrow">MOTOTAXI ATACAMES</span><h1>Centro de control</h1><p>Acceso para administración y soporte.</p><label>Correo<input autoComplete="username" type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label><label>Contraseña<input autoComplete="current-password" type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label><Notice error={error} /><button className="primary" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button></form></div>;
+  return <div className="login-shell"><form className="login-card" onSubmit={submit}><div className="admin-brand-lockup"><img src="/costa-go-emblem.png" alt="" /><strong><span>COSTA-</span>GO</strong></div><span className="eyebrow">PLATAFORMA DE MOVILIDAD</span><h1>Centro de control</h1><p>Acceso para administración y soporte.</p><label>Correo<input autoComplete="username" type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label><label>Contraseña<input autoComplete="current-password" type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label><Notice error={error} /><button className="primary" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button></form></div>;
 }
 
 function DashboardBars({ items, valueKey = "value", labelKey = "label" }: { items: any[]; valueKey?: string; labelKey?: string }) {
@@ -497,7 +498,7 @@ function App() {
     <aside aria-label="Menú principal">
       <div className="sidebar-head">
         <button className="menu-toggle" type="button" aria-label={sidebarOpen ? "Cerrar menú" : "Abrir menú"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(value => !value)}>☰</button>
-        <div className="brand"><div className="brand-mark">M</div><div><strong>AtacamesGo</strong><small>Centro de control</small></div></div>
+        <div className="brand"><img className="brand-logo" src="/costa-go-emblem.png" alt="" /><div><strong><span>Costa-</span>Go</strong><small>Centro de control</small></div></div>
       </div>
       <nav>{visible.map(item => <button key={item} title={!sidebarOpen ? labels[item] : undefined} className={module === item ? "active" : ""} onClick={() => selectModule(item)}><span>{icons[item]}</span><span className="nav-label">{labels[item]}</span></button>)}</nav>
       <div className="profile"><strong>{session.user.name}</strong><small>{session.user.role.replaceAll("_", " ")}</small><button onClick={logout}>Cerrar sesión</button></div>

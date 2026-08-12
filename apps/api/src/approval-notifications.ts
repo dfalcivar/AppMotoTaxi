@@ -22,7 +22,7 @@ export async function notifyAdministratorsDriverReady(driverId: string, driverNa
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from, to: recipients, subject: "AtacamesGo: conductor pendiente de revisión",
+      from, to: recipients, subject: "Costa-Go: conductor pendiente de revisión",
       text: `${driverName} completó sus documentos. Ingresa al panel administrativo para revisarlos.`
     })
   });

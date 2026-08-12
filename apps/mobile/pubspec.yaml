@@ -1,7 +1,7 @@
 name: mototaxi_atacames
-description: Aplicación móvil del MVP de Mototaxi Atacames.
+description: Aplicación móvil de movilidad Costa-Go.
 publish_to: "none"
-version: 0.10.0+25
+version: 0.11.0+26
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -37,18 +37,15 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  image_path: assets/images/mototaxi-atacames-logo.png
-  adaptive_icon_foreground: assets/images/mototaxi-atacames-logo.png
-  adaptive_icon_background: "#007F8B"
+  image_path: assets/images/costa-go-emblem.png
+  adaptive_icon_foreground: assets/images/costa-go-emblem.png
+  adaptive_icon_background: "#032B49"
   adaptive_icon_foreground_inset: 18
 
 flutter:
   uses-material-design: true
   assets:
     - assets/images/atacames-login-hero.png
-    - assets/images/mototaxi-atacames-logo.png
+    - assets/images/costa-go-emblem.png
     - assets/images/advertising-placeholder.png
     - assets/images/mototaxi-map-marker.png
-    - assets/images/atacamesgo-about.png
-    - assets/images/atacamesgo-about-v2.png
-    - assets/images/atacamesgo-about-v3.png

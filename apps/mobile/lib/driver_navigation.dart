@@ -90,7 +90,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
       if (!await nav.GoogleMapsNavigator.areTermsAccepted()) {
         final accepted =
             await nav.GoogleMapsNavigator.showTermsAndConditionsDialog(
-          'AtacamesGo',
+          'Costa-Go',
           'DFAR System',
         );
         if (!accepted) {

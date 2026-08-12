@@ -254,7 +254,7 @@ export async function buildApp() {
 
   app.get("/health", async () => ({
     status: "ok",
-    service: "mototaxi-atacames-api",
+    service: "costa-go-api",
     uptimeSeconds: Math.round(process.uptime())
   }));
 
@@ -403,7 +403,7 @@ export async function buildApp() {
         realtime.publishToUser(String(item.driverId), activationEvent);
         await Promise.all([
           sendPush(String(item.passengerId), "Tu viaje programado está próximo", "El conductor asignado se preparará para dirigirse al origen.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" }),
-          sendPush(String(item.driverId), `Viaje programado en ${leadMinutes} minutos`, "Abre AtacamesGo para iniciar el desplazamiento al origen.", { tripId: String(item.tripId), type: "SCHEDULED_DRIVER_REMINDER" })
+          sendPush(String(item.driverId), `Viaje programado en ${leadMinutes} minutos`, "Abre Costa-Go para iniciar el desplazamiento al origen.", { tripId: String(item.tripId), type: "SCHEDULED_DRIVER_REMINDER" })
         ]);
         realtime.publishTripStatus(String(item.tripId), "ASSIGNED");
       } else if (activated === "RELEASED") {
@@ -436,12 +436,24 @@ export async function buildApp() {
       }
       const locations = await searchLocations(parsed.data.q, focus, bounds);
       if (!parsed.data.serviceAreaId) return locations;
-      const allowedIndexes = new Set(await filterLocationsToArea(
+      let allowedIndexes = new Set(await filterLocationsToArea(
         parsed.data.serviceAreaId,
         user.id!,
         locations
       ));
-      return locations.filter((_, index) => allowedIndexes.has(index));
+      const allowedLocations = locations.filter((_, index) => allowedIndexes.has(index));
+      if (allowedLocations.length) return allowedLocations;
+
+      // Irregular polygons can occupy only part of their rectangular bounds.
+      // If Google ranks only candidates in one of the excluded corners, retry
+      // with a location bias and apply the exact same polygon validation.
+      const retryLocations = await searchLocations(parsed.data.q, focus);
+      allowedIndexes = new Set(await filterLocationsToArea(
+        parsed.data.serviceAreaId,
+        user.id!,
+        retryLocations
+      ));
+      return retryLocations.filter((_, index) => allowedIndexes.has(index));
     } catch { return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" }); }
   });
 

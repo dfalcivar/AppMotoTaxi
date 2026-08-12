@@ -1,4 +1,4 @@
-# Plan coordinado de pruebas — Mototaxi Atacames
+# Plan coordinado de pruebas — Costa-Go
 
 Versión del plan: 1.0  
 Objetivo: validar el piloto antes de incorporar funciones comerciales adicionales.  

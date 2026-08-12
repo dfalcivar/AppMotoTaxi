@@ -6,7 +6,7 @@ PostGIS. Para Render se configuran en el servicio estático del panel:
 
 - `VITE_GOOGLE_MAPS_WEB_API_KEY`: clave web restringida al dominio del panel y
   con Maps JavaScript API habilitada.
-- `VITE_GOOGLE_MAPS_WEB_MAP_ID`: Map ID web de AtacamesGo (opcional para cargar
+- `VITE_GOOGLE_MAPS_WEB_MAP_ID`: Map ID web de Costa-Go (opcional para cargar
   el mapa; recomendado para mantener el estilo).
 
 Una zona nueva se crea inactiva. Cada edición publica una versión inmutable,

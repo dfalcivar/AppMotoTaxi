@@ -91,7 +91,7 @@ flutter build apk --release `
   --dart-define=GOOGLE_MAPS_ANDROID_DARK_MAP_ID=MAP_ID_ANDROID_OSCURO
 ```
 
-Si no se proporciona un Map ID, AtacamesGo utiliza estilos JSON locales claro
+Si no se proporciona un Map ID, Costa-Go utiliza estilos JSON locales claro
 y oscuro. Con Map ID, Google Cloud controla el estilo y la aplicacion solicita
 automaticamente el esquema claro u oscuro del sistema.
 
@@ -99,7 +99,7 @@ Configuracion manual en Google Cloud Console:
 
 1. En **Google Maps Platform > Administracion de mapas**, crear un solo Map ID
    de tipo Android. Crear IDs separados solamente al incorporar iOS o web.
-2. En **Estilos de mapa**, crear `AtacamesGo Claro` y `AtacamesGo Oscuro`.
+2. En **Estilos de mapa**, crear `Costa-Go Claro` y `Costa-Go Oscuro`.
 3. Reducir puntos de interes comerciales; conservar salud, transporte,
    terminales y parques. Destacar vias principales y mantener calles locales
    discretas.

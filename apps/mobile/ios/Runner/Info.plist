@@ -5,9 +5,9 @@
 	<key>GOOGLE_MAPS_IOS_API_KEY</key>
 	<string>$(GOOGLE_MAPS_IOS_API_KEY)</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>AtacamesGo utiliza tu ubicaciÃ³n para mantener la navegaciÃ³n activa durante el viaje.</string>
+	<string>Costa-Go utiliza tu ubicación para mantener la navegación activa durante el viaje.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>AtacamesGo utiliza tu ubicaciÃ³n para guiarte hacia el pasajero y su destino.</string>
+	<string>Costa-Go utiliza tu ubicación para guiarte hacia el pasajero y su destino.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
@@ -18,7 +18,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Mototaxi Atacames</string>
+	<string>Costa-Go</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

@@ -24,7 +24,7 @@ La aplicación ya incluye los dos proveedores de mapa:
 
 La integracion admite Cloud-based Maps Styling mediante los Map ID de
 compilacion `GOOGLE_MAPS_ANDROID_MAP_ID`, `GOOGLE_MAPS_IOS_MAP_ID` y
-`GOOGLE_MAPS_WEB_MAP_ID`. Sin Map ID se conserva un estilo local AtacamesGo
+`GOOGLE_MAPS_WEB_MAP_ID`. Sin Map ID se conserva un estilo local Costa-Go
 claro/oscuro como respaldo. Android tambien admite Map ID separados mediante
 `GOOGLE_MAPS_ANDROID_LIGHT_MAP_ID` y `GOOGLE_MAPS_ANDROID_DARK_MAP_ID`.
 

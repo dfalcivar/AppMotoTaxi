@@ -3,6 +3,13 @@ import 'package:latlong2/latlong.dart';
 import 'package:mototaxi_atacames/main.dart';
 
 void main() {
+  test('normaliza la cancelación realtime para no mostrar una acción vacía',
+      () {
+    expect(normalizePassengerTripUpdateType('CANCELLED'), 'TRIP_CANCELLED');
+    expect(
+        normalizePassengerTripUpdateType('DRIVER_ARRIVED'), 'DRIVER_ARRIVED');
+  });
+
   group('OriginSelectionGuard', () {
     test('GPS inicial se usa cuando todavÃ­a no existe origen', () {
       final guard = OriginSelectionGuard();

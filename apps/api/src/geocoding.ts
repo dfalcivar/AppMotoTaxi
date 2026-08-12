@@ -47,7 +47,7 @@ export interface LocationResult {
 }
 
 const headers = {
-  "User-Agent": "MototaxiAtacamesMVP/0.2 (development contact: admin@mototaxi.local)",
+  "User-Agent": "CostaGo/0.10 (development contact: admin@mototaxi.local)",
   Accept: "application/json"
 };
 
@@ -116,7 +116,10 @@ async function searchGooglePlaces(
     textQuery: query,
     languageCode: "es",
     regionCode: "EC",
-    pageSize: 8
+    // A ServiceArea can be an irregular polygon inside a much larger bounds
+    // rectangle. Request enough candidates so the polygon filter in the API
+    // does not discard the first eight and incorrectly report no matches.
+    pageSize: placesSearchPageSize(bounds)
   };
   if (bounds) {
     body.locationRestriction = {
@@ -162,6 +165,10 @@ async function searchGooglePlaces(
       longitude
     }];
   });
+}
+
+export function placesSearchPageSize(bounds?: SearchBounds): number {
+  return bounds ? 20 : 8;
 }
 
 async function reverseGoogleLocation(point: FocusPoint): Promise<LocationResult> {

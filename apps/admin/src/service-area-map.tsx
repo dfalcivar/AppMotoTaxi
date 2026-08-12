@@ -4,14 +4,14 @@ export type Point = [number, number];
 export type ServiceAreaGeometry = { type: "Polygon"; coordinates: Point[][] } | { type: "MultiPolygon"; coordinates: Point[][][] };
 type ZoneLayer = { id: string; code: string; geometry: ServiceAreaGeometry; enabled: boolean };
 
-declare global { interface Window { google?: any; __atacamesGoMapsPromise?: Promise<any>; } }
+declare global { interface Window { google?: any; __costaGoMapsPromise?: Promise<any>; } }
 
 function loadGoogleMaps() {
   if (window.google?.maps) return Promise.resolve(window.google.maps);
-  if (window.__atacamesGoMapsPromise) return window.__atacamesGoMapsPromise;
+  if (window.__costaGoMapsPromise) return window.__costaGoMapsPromise;
   const key = import.meta.env.VITE_GOOGLE_MAPS_WEB_API_KEY as string | undefined;
   if (!key) return Promise.reject(new Error("Falta configurar VITE_GOOGLE_MAPS_WEB_API_KEY en el panel."));
-  window.__atacamesGoMapsPromise = new Promise((resolve, reject) => {
+  window.__costaGoMapsPromise = new Promise((resolve, reject) => {
     const script = document.createElement("script");
     const mapId = import.meta.env.VITE_GOOGLE_MAPS_WEB_MAP_ID as string | undefined;
     script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly${mapId ? `&map_ids=${encodeURIComponent(mapId)}` : ""}`;
@@ -20,7 +20,7 @@ function loadGoogleMaps() {
     script.onerror = () => reject(new Error("No fue posible cargar Google Maps."));
     document.head.appendChild(script);
   });
-  return window.__atacamesGoMapsPromise;
+  return window.__costaGoMapsPromise;
 }
 
 function polygonsOf(geometry?: ServiceAreaGeometry | null): Point[][][] {

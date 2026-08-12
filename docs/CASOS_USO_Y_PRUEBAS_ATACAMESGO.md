@@ -1,9 +1,9 @@
 ---
-title: "AtacamesGo - Casos de Uso y Casos de Prueba"
+title: "Costa-Go - Casos de Uso y Casos de Prueba"
 date: "2026-08-05"
 ---
 
-# AtacamesGo - Casos de Uso y Casos de Prueba
+# Costa-Go - Casos de Uso y Casos de Prueba
 
 ## 1. Alcance general
 
@@ -43,7 +43,7 @@ Cobertura:
 ## 3. Supuestos y prerequisitos
 
 - App compilada instalada en celular/emulador con ubicación y permisos de notificaciones habilitados.
-- API de AtacamesGo en línea.
+- API de Costa-Go en línea.
 - Variables críticas configuradas: ORS/Google Maps según fase de operación, Firebase y almacenamiento.
 - Base de datos migrada al último estado.
 - Cuentas de prueba disponibles (pasajero y conductor), con al menos 2 conductores para pruebas de concurrencia.

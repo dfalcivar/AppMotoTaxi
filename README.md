@@ -1,6 +1,6 @@
-# Mototaxi Atacames
+# Costa-Go
 
-MVP para solicitar mototaxis en Atacames, Ecuador. Incluye aplicación Flutter para pasajero/conductor, API Fastify, consola administrativa React y esquema PostgreSQL/PostGIS.
+Plataforma de movilidad para solicitar mototaxis en las zonas de cobertura habilitadas. Incluye aplicación Flutter para pasajero/conductor, API Fastify, consola administrativa React y esquema PostgreSQL/PostGIS.
 
 ## Componentes
 
@@ -125,7 +125,7 @@ flutter run
 Para compilar un APK:
 
 ```bash
-flutter build apk --release
+powershell -ExecutionPolicy Bypass -File tools/build_costa_go.ps1 -Target apk
 ```
 
 El APK de lanzamiento se conecta de forma predeterminada a la API publicada en
@@ -160,6 +160,8 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```bash
 adb reverse tcp:3001 tcp:3001
 flutter build apk --release --dart-define=API_BASE_URL=http://127.0.0.1:3001
+
+El paquete público se copia como `apps/mobile/release/Costa-Go-release.apk`. Para generar también el bundle de Play Store usa `tools/build_costa_go.ps1 -Target all`.
 ```
 
 Para pruebas sin cable debe desplegarse la API actualizada en Render y compilar

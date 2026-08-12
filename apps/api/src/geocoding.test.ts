@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { cleanLocationLabel, preciseGoogleAddress } from "./geocoding.js";
+import { cleanLocationLabel, placesSearchPageSize, preciseGoogleAddress } from "./geocoding.js";
+
+describe("Google Places", () => {
+  it("solicita más candidatos cuando luego se filtrarán con un polígono", () => {
+    expect(placesSearchPageSize()).toBe(8);
+    expect(placesSearchPageSize({ west: -80, south: 0.7, east: -79.7, north: 1 })).toBe(20);
+  });
+});
 
 describe("cleanLocationLabel", () => {
   it("elimina Plus Codes al inicio de una dirección", () => {

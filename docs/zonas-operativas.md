@@ -1,4 +1,4 @@
-# Zonas operativas de AtacamesGo
+# Zonas operativas de Costa-Go
 
 Las zonas operativas definen dónde puede comenzar y terminar un viaje. No son
 las zonas tarifarias (`service_zones`) ni el radio de búsqueda de conductores.

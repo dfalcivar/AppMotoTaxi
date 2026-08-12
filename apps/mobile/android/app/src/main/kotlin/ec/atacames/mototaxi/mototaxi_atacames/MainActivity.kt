@@ -9,13 +9,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.RingtoneManager
+import android.media.ToneGenerator
 import android.hardware.fingerprint.FingerprintManager
 import android.net.Uri
 import android.app.Notification
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -67,6 +71,10 @@ class MainActivity : FlutterFragmentActivity() {
                         val tripId = call.argument<String>("tripId")?.trim().orEmpty()
                         result.success(showForegroundTripOffer(title, body, tripId))
                     }
+                    "playDriverArrivalAlert" -> {
+                        playDriverArrivalAlert()
+                        result.success(null)
+                    }
                     "authenticateFingerprintLegacy" -> authenticateFingerprintLegacy(result)
                     else -> result.notImplemented()
                 }
@@ -111,6 +119,15 @@ class MainActivity : FlutterFragmentActivity() {
             .setContentIntent(pendingIntent)
         manager.notify(tripId.ifBlank { "trip-offer" }.hashCode(), builder.build())
         return true
+    }
+
+    private fun playDriverArrivalAlert() {
+        val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
+        tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 170)
+        Handler(Looper.getMainLooper()).postDelayed({
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 170)
+        }, 280)
+        Handler(Looper.getMainLooper()).postDelayed({ tone.release() }, 650)
     }
 
     @Suppress("DEPRECATION")
@@ -204,6 +221,18 @@ class MainActivity : FlutterFragmentActivity() {
                 setShowBadge(true)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
+            val arrivalChannel = NotificationChannel(
+                "mototaxi_driver_arrival_v1",
+                "Llegada del conductor",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Aviso sonoro cuando el conductor llega al punto de encuentro"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 180, 120, 180)
+                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), alarmAttributes)
+                setShowBadge(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
             val chatChannel = NotificationChannel(
                 "mototaxi_chat_messages_v2",
                 "Mensajes del viaje",
@@ -215,7 +244,7 @@ class MainActivity : FlutterFragmentActivity() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             getSystemService(NotificationManager::class.java)
-                .createNotificationChannels(listOf(offerChannel, tripChannel, chatChannel))
+                .createNotificationChannels(listOf(offerChannel, tripChannel, arrivalChannel, chatChannel))
         }
     }
 }

@@ -73,9 +73,10 @@ export async function sendPush(userId: string, title: string, body: string, data
     }
     const isChat = data.type === "CHAT_MESSAGE";
     const isTripOffer = data.type === "TRIP_OFFER";
+    const isDriverArrival = data.type === "DRIVER_ARRIVED";
     const notificationTag = data.tripId
       ? `${isChat ? "chat" : "trip"}-${data.tripId}`
-      : `atacamesgo-${data.type ?? "general"}`;
+      : `costa-go-${data.type ?? "general"}`;
     const ttl = data.type === "TRIP_OFFER" ? 120_000 : isChat ? 86_400_000 : 900_000;
     const result = await client.sendEachForMulticast({
       tokens,
@@ -90,6 +91,8 @@ export async function sendPush(userId: string, title: string, body: string, data
             ? "mototaxi_chat_messages_v2"
             : isTripOffer
               ? "mototaxi_trip_offers_v2"
+              : isDriverArrival
+                ? "mototaxi_driver_arrival_v1"
               : "mototaxi_trip_alerts_v4",
           tag: notificationTag,
           priority: isTripOffer ? "max" : "high",

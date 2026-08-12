@@ -34,6 +34,9 @@ const base = String.fromEnvironment('API_BASE_URL',
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
+String normalizePassengerTripUpdateType(String type) =>
+    type == 'CANCELLED' ? 'TRIP_CANCELLED' : type;
+
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
 /// by the passenger.
 class OriginSelectionGuard {
@@ -416,7 +419,7 @@ class BiometricSessionStore {
       }
     }
     return _auth.authenticate(
-        localizedReason: 'Confirma tu identidad para ingresar a AtacamesGo',
+        localizedReason: 'Confirma tu identidad para ingresar a Costa-Go',
         biometricOnly: true,
         persistAcrossBackgrounding: true);
   }
@@ -556,7 +559,7 @@ Future<void> showTripSafety({
             onTap: () {
               Navigator.pop(sheetContext);
               shareText(context,
-                  'Estoy realizando un viaje en AtacamesGo con $counterpart.\nRuta: $origin → $destination\nViaje: $tripId$mapLink');
+                  'Estoy realizando un viaje en Costa-Go con $counterpart.\nRuta: $origin → $destination\nViaje: $tripId$mapLink');
             },
           ),
           ListTile(
@@ -651,7 +654,7 @@ Future<void> main() async {
       }
     });
     if (permission.authorizationStatus == AuthorizationStatus.denied) {
-      debugPrint('El usuario desactivó las notificaciones de AtacamesGo.');
+      debugPrint('El usuario desactivó las notificaciones de Costa-Go.');
     }
   } catch (error, stack) {
     debugPrint('No se pudo inicializar Firebase Messaging: $error');
@@ -853,11 +856,11 @@ String mensajeApi(dynamic code) =>
       'INVALID_DEVICE_TOKEN':
           'Firebase no entregó un token válido para este teléfono.',
       'ORIGIN_OUTSIDE_SERVICE_AREA':
-          'El origen está fuera de la zona de cobertura de AtacamesGo.',
+          'El origen está fuera de la zona de cobertura de Costa-Go.',
       'DESTINATION_OUTSIDE_SERVICE_AREA':
           'Uno de los destinos está fuera de la zona de cobertura.',
       'OUTSIDE_SERVICE_AREA':
-          'AtacamesGo todavía no está disponible en esta zona.',
+          'Costa-Go todavía no está disponible en esta zona.',
       'SERVICE_AREA_NOT_ALLOWED':
           'Tu cuenta no está autorizada para usar esta zona de pruebas.',
       'SERVICE_AREA_DISABLED':
@@ -987,7 +990,7 @@ class Api {
   Future<bool> registerFcm(String token, {String? fcmToken}) async {
     if (!firebaseReady) {
       lastFcmRegistrationMessage =
-          'Firebase no pudo inicializarse en esta instalación de AtacamesGo.';
+          'Firebase no pudo inicializarse en esta instalación de Costa-Go.';
       return false;
     }
     activeFcmAuthToken = token;
@@ -1342,7 +1345,7 @@ class MototaxiApp extends StatelessWidget {
       valueListenable: appTheme,
       builder: (context, mode, child) => MaterialApp(
           navigatorKey: rootNavigatorKey,
-          title: 'AtacamesGo',
+          title: 'Costa-Go',
           debugShowCheckedModeBanner: false,
           themeMode: mode,
           theme: _theme(Brightness.light),
@@ -1354,19 +1357,19 @@ class MototaxiApp extends StatelessWidget {
 
   ThemeData _theme(Brightness brightness) {
     final scheme = ColorScheme.fromSeed(
-        seedColor: const Color(0xff007f8b), brightness: brightness);
+        seedColor: const Color(0xff087ccb), brightness: brightness);
     return ThemeData(
         colorScheme: scheme,
         brightness: brightness,
         useMaterial3: true,
         scaffoldBackgroundColor:
-            brightness == Brightness.light ? const Color(0xfff4fafb) : null,
+            brightness == Brightness.light ? const Color(0xfff3f8fc) : null,
         appBarTheme: AppBarTheme(
             centerTitle: false,
             elevation: 0,
             scrolledUnderElevation: 0,
             backgroundColor: brightness == Brightness.light
-                ? const Color(0xfff4fafb)
+                ? const Color(0xfff3f8fc)
                 : scheme.surface,
             titleTextStyle: TextStyle(
                 color: scheme.onSurface,
@@ -1502,6 +1505,44 @@ class ThemeSelector extends StatelessWidget {
               ]));
 }
 
+class CostaGoBrand extends StatelessWidget {
+  const CostaGoBrand({super.key, this.compact = false});
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Image.asset('assets/images/costa-go-emblem.png',
+              width: compact ? 82 : 142,
+              height: compact ? 82 : 142,
+              fit: BoxFit.contain),
+          SizedBox(height: compact ? 2 : 8),
+          Text.rich(
+            TextSpan(children: [
+              const TextSpan(
+                  text: 'COSTA-', style: TextStyle(color: Colors.white)),
+              TextSpan(
+                  text: 'GO',
+                  style: TextStyle(
+                      color: compact
+                          ? const Color(0xff12bdf2)
+                          : const Color(0xff2dccff))),
+            ]),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: compact ? 26 : 36,
+                fontWeight: FontWeight.w900,
+                fontStyle: FontStyle.italic,
+                letterSpacing: -.8,
+                shadows: const [
+                  Shadow(color: Color(0x66000000), blurRadius: 8)
+                ]),
+          ),
+        ],
+      );
+}
+
 class Welcome extends StatelessWidget {
   const Welcome({super.key});
   @override
@@ -1513,7 +1554,7 @@ class Welcome extends StatelessWidget {
                 gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Color(0x55003764), Color(0xAA003B5C)]))),
+                    colors: [Color(0x66032B49), Color(0xDD032B49)]))),
         SafeArea(
             child: Stack(children: [
           const Positioned(
@@ -1524,22 +1565,7 @@ class Welcome extends StatelessWidget {
                   child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 340),
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Image.asset('assets/images/mototaxi-atacames-logo.png',
-                            width: 142, height: 142, fit: BoxFit.contain),
-                        const SizedBox(height: 8),
-                        const Text('Muévete por Atacames',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 6),
-                        const Text('Tu moto taxi seguro, rápido y confiable',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500)),
+                        const CostaGoBrand(),
                         const SizedBox(height: 28),
                         SizedBox(
                             width: 286,
@@ -1777,12 +1803,12 @@ class _LoginState extends State<Login> {
                                                               const LinearGradient(
                                                                   colors: [
                                                                 Color(
-                                                                    0xff00899a),
+                                                                    0xff087ccb),
                                                                 Color(
-                                                                    0xff00638a)
+                                                                    0xff032b49)
                                                               ])),
                                                       child: Image.asset(
-                                                          'assets/images/mototaxi-atacames-logo.png')),
+                                                          'assets/images/costa-go-emblem.png')),
                                                   const SizedBox(height: 18),
                                                   Text(
                                                       isDriver
@@ -2503,7 +2529,7 @@ class _ProfileState extends State<Profile> {
         builder: (dialogContext) => AlertDialog(
           title: const Text('Prueba programada'),
           content: const Text(
-              'Pulsa Aceptar y deja AtacamesGo en segundo plano. La notificación debe llegar en aproximadamente 8 segundos.'),
+              'Pulsa Aceptar y deja Costa-Go en segundo plano. La notificación debe llegar en aproximadamente 8 segundos.'),
           actions: [
             FilledButton(
                 onPressed: () => Navigator.pop(dialogContext),
@@ -3155,8 +3181,8 @@ class _AccountHubState extends State<AccountHub> {
                           fontWeight: FontWeight.w800)),
                   Text(
                       widget.s.role == 'DRIVER'
-                          ? 'Conductor AtacamesGo'
-                          : 'Pasajero AtacamesGo',
+                          ? 'Conductor Costa-Go'
+                          : 'Pasajero Costa-Go',
                       style: const TextStyle(color: Colors.white70)),
                 ])),
           ]),
@@ -3199,7 +3225,7 @@ class _AccountHubState extends State<AccountHub> {
             leading: const Icon(Icons.info_outline),
             title: const Text('Acerca de'),
             onTap: () => Navigator.push(
-                c, MaterialPageRoute(builder: (_) => const AboutAtacamesGo()))),
+                c, MaterialPageRoute(builder: (_) => const AboutCostaGo()))),
         if (pending != null)
           Card(
               child: ListTile(
@@ -3293,7 +3319,7 @@ class _SupportCenterState extends State<SupportCenter> {
     final digits = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
     if (digits.isEmpty) return;
     final uri = Uri.parse(
-        'https://wa.me/$digits?text=${Uri.encodeQueryComponent('Hola, necesito ayuda con AtacamesGo.')}');
+        'https://wa.me/$digits?text=${Uri.encodeQueryComponent('Hola, necesito ayuda con Costa-Go.')}');
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
         mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3804,8 +3830,8 @@ class _SupportIncidentDetailState extends State<SupportIncidentDetail> {
   }
 }
 
-class AboutAtacamesGo extends StatelessWidget {
-  const AboutAtacamesGo({super.key});
+class AboutCostaGo extends StatelessWidget {
+  const AboutCostaGo({super.key});
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -3821,15 +3847,88 @@ class AboutAtacamesGo extends StatelessWidget {
           title: const Text('Acerca de',
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
         ),
-        body: SingleChildScrollView(
-          child: Image.asset(
-            'assets/images/atacamesgo-about-v3.png',
-            width: double.infinity,
-            fit: BoxFit.fitWidth,
-            semanticLabel:
-                'Presentación de AtacamesGo, movilidad segura, rápida y confiable',
+        body: Container(
+          width: double.infinity,
+          constraints:
+              BoxConstraints(minHeight: MediaQuery.sizeOf(context).height),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xff032b49), Color(0xff064f83), Color(0xff03213d)],
+            ),
+          ),
+          child: const SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(28, 58, 28, 36),
+              child: Column(children: [
+                CostaGoBrand(),
+                SizedBox(height: 28),
+                Text('Movilidad que conecta la costa',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800)),
+                SizedBox(height: 12),
+                Text(
+                  'Costa-Go conecta pasajeros y conductores de mototaxi con una experiencia segura, rápida y cercana. La plataforma se adapta a cada zona de cobertura habilitada y acompaña a las comunidades en sus viajes cotidianos.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Color(0xffd9f4ff), fontSize: 16, height: 1.5),
+                ),
+                SizedBox(height: 30),
+                Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _AboutPill(
+                          icon: Icons.verified_user_outlined,
+                          text: 'Viajes seguros'),
+                      _AboutPill(
+                          icon: Icons.speed_outlined, text: 'Respuesta rápida'),
+                      _AboutPill(
+                          icon: Icons.people_alt_outlined,
+                          text: 'Siempre contigo'),
+                    ]),
+                SizedBox(height: 42),
+                Text('Desarrollado por',
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+                SizedBox(height: 4),
+                Text('DFAR SYSTEM',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 2)),
+              ]),
+            ),
           ),
         ),
+      );
+}
+
+class _AboutPill extends StatelessWidget {
+  const _AboutPill({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: .1),
+          border:
+              Border.all(color: const Color(0xff12bdf2).withValues(alpha: .5)),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: const Color(0xff12bdf2), size: 19),
+          const SizedBox(width: 7),
+          Text(text,
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w700)),
+        ]),
       );
 }
 
@@ -4327,6 +4426,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   void showPassengerNotification(String type, String? tripId,
       {String? title, String? body}) {
     if (!mounted) return;
+    final normalizedType = normalizePassengerTripUpdateType(type);
     final defaults = <String, List<String>>{
       'DRIVER_EN_ROUTE': [
         'Conductor en camino',
@@ -4343,16 +4443,30 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         'La solicitud ya no se encuentra activa.'
       ],
     };
-    final fallback = defaults[type] ??
+    final fallback = defaults[normalizedType] ??
         ['Actualización del viaje', 'Hay novedades en tu solicitud.'];
-    InAppNotificationBanner.show(
+    final cancelled = normalizedType == 'TRIP_CANCELLED';
+    final shown = InAppNotificationBanner.show(
       context,
-      id: '$type-${tripId ?? 'active'}',
+      id: '$normalizedType-${tripId ?? 'active'}',
       title: title ?? fallback[0],
-      message: body ?? fallback[1],
-      actionLabel: 'Ver',
-      onTap: load,
+      message: body ??
+          (cancelled ? 'Solicitud cancelada correctamente.' : fallback[1]),
+      actionLabel: cancelled ? 'Cerrar' : 'Ver',
+      onTap: cancelled ? null : load,
     );
+    if (shown && normalizedType == 'DRIVER_ARRIVED' && !kIsWeb) {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        unawaited(nativeActions
+            .invokeMethod<void>('playDriverArrivalAlert')
+            .catchError((_) {}));
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        unawaited(SystemSound.play(SystemSoundType.alert).then((_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 280));
+          await SystemSound.play(SystemSoundType.alert);
+        }));
+      }
+    }
   }
 
   void reflectTripStatus(dynamic statusValue, dynamic tripIdValue) {
@@ -6843,8 +6957,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     await positionSubscription?.cancel();
     final activeStatus = active?['status']?.toString();
     final foregroundTitle = activeStatus == null
-        ? 'AtacamesGo · Disponible'
-        : 'AtacamesGo · Viaje activo';
+        ? 'Costa-Go · Disponible'
+        : 'Costa-Go · Viaje activo';
     final foregroundText = switch (activeStatus) {
       'ASSIGNED' || 'DRIVER_EN_ROUTE' => 'Dirigiéndote al punto de recogida.',
       'DRIVER_ARRIVED' => 'Esperando iniciar el viaje.',
@@ -7744,7 +7858,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       .titleLarge
                       ?.copyWith(fontWeight: FontWeight.w800)),
               const SizedBox(height: 4),
-              const Text('Pasajero AtacamesGo'),
+              const Text('Pasajero Costa-Go'),
               const SizedBox(height: 6),
               Row(mainAxisSize: MainAxisSize.min, children: [
                 const Icon(Icons.star, color: Colors.amber, size: 20),
