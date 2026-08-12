@@ -1236,6 +1236,7 @@ export async function buildApp() {
           where access.user_id=${user.id!} and access.service_area_id=area.id
             and (access.expires_at is null or access.expires_at>now())
         )))
+        )
         and not exists (
           select 1 from scheduled_trip_responses response
           where response.trip_id=t.id and response.driver_id=${user.id!} and response.accepted=false
