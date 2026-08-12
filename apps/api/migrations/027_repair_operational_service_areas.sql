@@ -16,6 +16,17 @@ VALUES (
 )
 ON CONFLICT (code) DO NOTHING;
 
+-- La migración 025 pudo insertar la versión y fallar antes de enlazarla como
+-- actual. En ese caso se reutiliza la versión existente en vez de duplicarla.
+UPDATE service_areas area
+SET current_version_id = (
+  SELECT version.id FROM service_area_versions version
+  WHERE version.service_area_id = area.id
+  ORDER BY version.version DESC LIMIT 1
+), updated_at = now()
+WHERE area.code = 'ATACAMES_PROD' AND area.current_version_id IS NULL
+  AND EXISTS (SELECT 1 FROM service_area_versions version WHERE version.service_area_id = area.id);
+
 WITH source_geometries AS (
   SELECT ST_SetSRID(ST_GeomFromGeoJSON(value::text), 4326) geom
   FROM jsonb_array_elements(
@@ -59,6 +70,15 @@ VALUES (
   (SELECT id FROM users WHERE role IN ('SUPER_ADMIN', 'ADMIN') ORDER BY created_at LIMIT 1)
 )
 ON CONFLICT (code) DO NOTHING;
+
+UPDATE service_areas area
+SET current_version_id = (
+  SELECT version.id FROM service_area_versions version
+  WHERE version.service_area_id = area.id
+  ORDER BY version.version DESC LIMIT 1
+), updated_at = now()
+WHERE area.code = 'CUENCA_TEST' AND area.current_version_id IS NULL
+  AND EXISTS (SELECT 1 FROM service_area_versions version WHERE version.service_area_id = area.id);
 
 WITH published AS (
   INSERT INTO service_area_versions (
