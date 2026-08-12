@@ -16,7 +16,6 @@ const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(
 export function apiUrl(path: string) { return `${base}${path}`; }
 function persistentPath(path: string, method?: string): string {
   if (method === "POST" && path === "/v1/admin/pricing") return "/v1/admin/pricing/persist";
-  if (method === "POST" && path === "/v1/admin/zones") return "/v1/admin/zones/persist";
   if (method === "PATCH" && /^\/v1\/admin\/incidents\/[^/]+$/.test(path)) return `${path}/persist`;
   return path;
 }

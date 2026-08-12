@@ -16,6 +16,7 @@ import {
 import { sendPush } from "./push.js";
 import { dashboardFilters } from "./dashboard-filters.js";
 import { dashboardAnalytics, driverDashboardProfile } from "./dashboard-analytics.js";
+import { serviceAreaPublishSchema, serviceAreaRoleSchema } from "./service-areas.js";
 
 export type { AdminRole, Permission } from "./permissions.js";
 export type SessionRole = "PASSENGER" | "DRIVER" | AdminRole;
@@ -37,7 +38,6 @@ export interface SessionUser {
 interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
 interface Passenger { id: string; name: string; email?: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
 interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; stopSurchargeCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; activeUntil?: string; status: "ACTIVE" | "SCHEDULED" | "FINALIZED" }
-interface Zone { id: string; name: string; type: "URBAN" | "EXTENDED"; points: Array<{ x: number; y: number }>; active: boolean; version: number }
 interface Incident { id: string; trip: string; category: string; description: string; status: IncidentStatus; assignedTo: string; createdAt: string }
 interface AuditEntry { id: string; actor: string; action: string; entity: string; createdAt: string; detail: string }
 
@@ -53,10 +53,6 @@ const passengers: Passenger[] = [
 ];
 const pricing: PricingVersion[] = [
   { id: "PRICE-1", version: 1, urbanDayCents: 50, nightCents: 100, extendedCents: 100, stopSurchargeCents: 0, promotionPassengers: 3, promotionTotalCents: 100, activeFrom: "2026-07-27T00:00:00-05:00", status: "ACTIVE" }
-];
-const zones: Zone[] = [
-  { id: "ZONE-URBAN-1", name: "Casco urbano Atacames", type: "URBAN", points: [{x:18,y:22},{x:76,y:16},{x:88,y:63},{x:48,y:84},{x:14,y:62}], active: true, version: 1 },
-  { id: "ZONE-EXT-1", name: "Cobertura extendida", type: "EXTENDED", points: [{x:8,y:10},{x:92,y:8},{x:96,y:90},{x:10,y:92}], active: true, version: 1 }
 ];
 const incidents: Incident[] = [
   { id: "INC-001", trip: "TRIP-1042", category: "Objeto olvidado", description: "Pasajera reporta una mochila azul.", status: "NUEVO", assignedTo: "Soporte", createdAt: "2026-07-29T08:10:00-05:00" },
@@ -102,7 +98,12 @@ function decodeAdminImage(value: z.infer<typeof adminDocumentSchema>): Buffer {
   return data;
 }
 const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), stopSurchargeCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
-const zoneSchema = z.object({ name: z.string().min(3), type: z.enum(["URBAN", "EXTENDED"]), points: z.array(z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(3) });
+const serviceAreaStatusSchema = z.object({ enabled: z.boolean() });
+const serviceAreaAccessSchema = z.object({ userId: z.string().uuid(), expiresAt: z.string().datetime({ offset: true }).nullable().optional() });
+const serviceAreaValidationSchema = z.object({
+  geometry: serviceAreaPublishSchema.shape.geometry,
+  excludeAreaId: z.string().uuid().optional()
+});
 const incidentSchema = z.object({
   status: z.enum(["NUEVO", "ASIGNADO", "EN_REVISION", "ESPERANDO_USUARIO", "RESUELTO", "CERRADO"]),
   assignToSelf: z.boolean().default(false),
@@ -217,12 +218,6 @@ export function imageDimensions(image: Buffer, mime: string): { width: number; h
     }
   }
   return undefined;
-}
-
-function zoneBoundaryWkt(points: Array<{ x: number; y: number }>): string {
-  const coordinates = points.map(({ x, y }) => `${-79.858 + x * 0.0003} ${0.854 + y * 0.00024}`);
-  coordinates.push(coordinates[0]!);
-  return `POLYGON((${coordinates.join(",")}))`;
 }
 
 function secret() { return process.env.ADMIN_SESSION_SECRET ?? "local-development-secret-change-me"; }
@@ -889,16 +884,161 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if(next.status==="ACTIVE")pricing.filter(p=>p.status==="ACTIVE").forEach(p=>p.status="FINALIZED"); pricing.unshift(next); audit(user,"PRICING_PUBLISHED",next.id,`Version ${next.version}`); return reply.code(201).send(next);
   }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
   app.get("/v1/admin/zones", async (request, reply) => { try {
-    requirePermission(request, "zones:view");
-    if (!process.env.DATABASE_URL) return zones;
+    requirePermission(request, "service_areas:view");
+    if (!process.env.DATABASE_URL) return [];
     return await database()`
-      select id::text, name, zone_type as type, editor_points as points,
-        is_active as active, version
-      from service_zones where active_until is null
-      order by zone_type, version desc
+      select a.id::text, a.code, a.name, a.description, a.environment, a.audience,
+        a.enabled, a.allow_inter_zone_trips as "allowInterZoneTrips", a.priority,
+        a.created_at as "createdAt", a.updated_at as "updatedAt",
+        v.id::text as "versionId", v.version, v.source_name as "sourceName",
+        v.source_url as "sourceUrl", v.change_note as "changeNote",
+        v.created_at as "publishedAt", ST_AsGeoJSON(v.geometry, 6)::jsonb as geometry,
+        ST_NPoints(v.geometry)::int as "pointCount",
+        round(ST_Area(v.geometry::geography)::numeric / 1000000, 2)::float as "areaSquareKm",
+        jsonb_build_object('west',ST_XMin(ST_Envelope(v.geometry)),
+          'south',ST_YMin(ST_Envelope(v.geometry)),'east',ST_XMax(ST_Envelope(v.geometry)),
+          'north',ST_YMax(ST_Envelope(v.geometry))) bounds
+      from service_areas a join service_area_versions v on v.id=a.current_version_id
+      where a.archived_at is null
+      order by a.priority desc, a.name
     `;
   } catch(e){return guardError(e,reply);} });
-  app.post("/v1/admin/zones", async (request, reply) => { try { const user=requirePermission(request, "zones:manage"); const body=zoneSchema.parse(request.body); const item:Zone={id:`ZONE-${Date.now()}`,...body,active:true,version:1}; zones.push(item); audit(user,"ZONE_CREATED",item.id,item.name); return reply.code(201).send(item);}catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"});return guardError(e,reply);} });
+  app.post("/v1/admin/zones/validate", async (request, reply) => { try {
+    requirePermission(request, "service_areas:view");
+    const body=serviceAreaValidationSchema.parse(request.body);const geometry=JSON.stringify(body.geometry);
+    const [result]=await database()`with candidate as (
+      select ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326) geometry
+    ) select ST_IsValid(geometry) valid, ST_IsValidReason(geometry) reason,
+      ST_IsEmpty(geometry) empty, ST_NPoints(geometry)::int as "pointCount",
+      round(ST_Area(geometry::geography)::numeric/1000000,2)::float as "areaSquareKm",
+      jsonb_build_object('west',ST_XMin(ST_Envelope(geometry)),'south',ST_YMin(ST_Envelope(geometry)),
+        'east',ST_XMax(ST_Envelope(geometry)),'north',ST_YMax(ST_Envelope(geometry))) bounds
+      from candidate`;
+    const overlaps=await database()`with candidate as (select ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326) geometry)
+      select a.id::text,a.code,a.name,a.priority,
+        round(ST_Area(ST_Intersection(v.geometry,candidate.geometry)::geography)::numeric/1000000,3)::float as "overlapSquareKm"
+      from candidate,service_areas a join service_area_versions v on v.id=a.current_version_id
+      where a.archived_at is null and (${body.excludeAreaId ?? null}::uuid is null or a.id<>${body.excludeAreaId ?? null}::uuid)
+        and ST_Intersects(v.geometry,candidate.geometry)
+        and ST_Area(ST_Intersection(v.geometry,candidate.geometry)::geography)>1
+      order by a.priority desc,a.code`;
+    return {...result,overlaps};
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_SERVICE_AREA",details:e.issues});return guardError(e,reply);}});
+  app.get("/v1/admin/zones/:id/history",async(request,reply)=>{try{
+    requirePermission(request,"service_areas:view");const id=(request.params as {id:string}).id;
+    return database()`select v.id::text,v.version,v.source_name as "sourceName",v.source_url as "sourceUrl",
+      v.change_note as "changeNote",v.created_at as "publishedAt",coalesce(u.email,'Sistema') author,
+      ST_NPoints(v.geometry)::int as "pointCount",round(ST_Area(v.geometry::geography)::numeric/1000000,2)::float as "areaSquareKm"
+      from service_area_versions v left join users u on u.id=v.created_by
+      where v.service_area_id=${id}::uuid order by v.version desc`;
+  }catch(e){return guardError(e,reply);}});
+  app.get("/v1/admin/zones/:id/export",async(request,reply)=>{try{
+    requirePermission(request,"service_areas:view");const id=(request.params as {id:string}).id;
+    const [item]=await database()`select a.code,a.name,a.description,a.environment,a.audience,a.enabled,a.priority,
+      ST_AsGeoJSON(v.geometry,7)::jsonb geometry from service_areas a join service_area_versions v on v.id=a.current_version_id
+      where a.id=${id}::uuid and a.archived_at is null`;
+    if(!item)return reply.code(404).send({error:"NOT_FOUND"});
+    reply.header("content-type","application/geo+json; charset=utf-8");
+    reply.header("content-disposition",`attachment; filename="${item.code}.geojson"`);
+    return {type:"Feature",properties:{code:item.code,name:item.name,description:item.description,environment:item.environment,
+      audience:item.audience,enabled:item.enabled,priority:item.priority},geometry:item.geometry};
+  }catch(e){return guardError(e,reply);}});
+  app.post("/v1/admin/zones", async (request, reply) => { try {
+    const body=serviceAreaPublishSchema.parse(request.body);
+    const user=requirePermission(request, body.areaId ? "service_areas:edit" : "service_areas:create");
+    const geometry=JSON.stringify(body.geometry);
+    const [validation]=await database()`select ST_IsValid(candidate) valid,ST_IsValidReason(candidate) reason,ST_IsEmpty(candidate) empty
+      from (select ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326) candidate) value`;
+    if(!validation?.valid||validation?.empty)return reply.code(422).send({error:"INVALID_SERVICE_AREA_GEOMETRY",message:validation?.reason??"Geometría vacía"});
+    const item=await database().begin(async tx=>{
+      const [existing]=body.areaId ? await tx`select id::text,current_version_id::text as "currentVersionId" from service_areas where id=${body.areaId}::uuid and archived_at is null for update` : [];
+      if(body.areaId&&!existing)throw new Error("SERVICE_AREA_NOT_FOUND");
+      const [duplicate]=await tx`select id::text from service_areas where code=${body.code} and (${body.areaId ?? null}::uuid is null or id<>${body.areaId ?? null}::uuid)`;
+      if(duplicate)throw new Error("SERVICE_AREA_CODE_EXISTS");
+      const [area]=existing ? await tx`
+        update service_areas set code=${body.code},name=${body.name},description=${body.description || null},
+          environment=${body.environment},audience=${body.audience},enabled=${body.enabled},
+          allow_inter_zone_trips=${body.allowInterZoneTrips},priority=${body.priority},
+          updated_by=${user.id!},updated_at=now() where id=${existing.id}::uuid returning id::text
+      ` : await tx`
+        insert into service_areas(code,name,description,environment,audience,enabled,
+          allow_inter_zone_trips,priority,created_by,updated_by)
+        values(${body.code},${body.name},${body.description || null},${body.environment},${body.audience},
+          false,${body.allowInterZoneTrips},${body.priority},${user.id!},${user.id!}) returning id::text
+      `;
+      const [versionRow]=await tx`select coalesce(max(version),0)+1 as version from service_area_versions where service_area_id=${area!.id}::uuid`;
+      const [version]=await tx`
+        insert into service_area_versions(service_area_id,version,geometry,source_name,source_url,change_note,created_by)
+        values(${area!.id}::uuid,${Number(versionRow!.version)},
+          ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326)),3)),
+          ${body.sourceName},${body.sourceUrl || null},${body.changeNote},${user.id!})
+        returning id::text,version
+      `;
+      await tx`update service_areas set current_version_id=${version!.id}::uuid where id=${area!.id}::uuid`;
+      await tx`update service_area_catalog set version=version+1,updated_at=now() where id=1`;
+      return {id:area!.id,version:version!.version,code:body.code,name:body.name,enabled:existing ? body.enabled : false};
+    });
+    await persistAudit(user,body.sourceType==="GEOJSON"?"SERVICE_AREA_GEOJSON_IMPORTED":"SERVICE_AREA_PUBLISHED","SERVICE_AREA",item.id,`${item.code} v${item.version}: ${body.changeNote}`);
+    return reply.code(body.areaId?200:201).send(item);
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_SERVICE_AREA",details:e.issues});if(e instanceof Error&&e.message==="SERVICE_AREA_CODE_EXISTS")return reply.code(409).send({error:e.message});if(e instanceof Error&&e.message==="SERVICE_AREA_NOT_FOUND")return reply.code(404).send({error:e.message});return guardError(e,reply);} });
+  app.patch("/v1/admin/zones/:id/status",async(request,reply)=>{try{
+    const user=requirePermission(request,"service_areas:activate");const body=serviceAreaStatusSchema.parse(request.body);
+    const id=(request.params as {id:string}).id;
+    const [item]=await database()`update service_areas set enabled=${body.enabled},updated_by=${user.id!},updated_at=now() where id=${id}::uuid returning id::text,code,enabled`;
+    if(!item)return reply.code(404).send({error:"NOT_FOUND"});
+    await database()`update service_area_catalog set version=version+1,updated_at=now() where id=1`;
+    await persistAudit(user,"SERVICE_AREA_STATUS","SERVICE_AREA",id,`${item.code}: ${body.enabled ? "habilitada" : "deshabilitada"}`);
+    return item;
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_SERVICE_AREA_STATUS"});return guardError(e,reply);}});
+  app.get("/v1/admin/zones/:id/access",async(request,reply)=>{try{
+    requirePermission(request,"service_areas:view");const id=(request.params as {id:string}).id;
+    return database()`select u.id::text,u.full_name as name,u.email,u.role,
+      access.expires_at as "expiresAt",access.created_at as "grantedAt"
+      from user_service_area_access access join users u on u.id=access.user_id
+      where access.service_area_id=${id}::uuid order by u.full_name`;
+  }catch(e){return guardError(e,reply);}});
+  app.post("/v1/admin/zones/:id/access",async(request,reply)=>{try{
+    const user=requirePermission(request,"service_areas:edit");const body=serviceAreaAccessSchema.parse(request.body);
+    const id=(request.params as {id:string}).id;
+    const [item]=await database()`insert into user_service_area_access(user_id,service_area_id,granted_by,expires_at)
+      select ${body.userId}::uuid,area.id,${user.id!},${body.expiresAt ? new Date(body.expiresAt) : null}
+      from service_areas area join users account on account.id=${body.userId}::uuid
+      where area.id=${id}::uuid and account.role in ('PASSENGER','DRIVER')
+      on conflict(user_id,service_area_id) do update set granted_by=excluded.granted_by,expires_at=excluded.expires_at,created_at=now()
+      returning user_id::text as "userId",service_area_id::text as "serviceAreaId",expires_at as "expiresAt"`;
+    if(!item)return reply.code(404).send({error:"USER_OR_SERVICE_AREA_NOT_FOUND"});
+    await database()`update service_area_catalog set version=version+1,updated_at=now() where id=1`;
+    await persistAudit(user,"SERVICE_AREA_ACCESS_GRANTED","SERVICE_AREA",id,body.userId);return reply.code(201).send(item);
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_SERVICE_AREA_ACCESS"});return guardError(e,reply);}});
+  app.delete("/v1/admin/zones/:id/access/:userId",async(request,reply)=>{try{
+    const user=requirePermission(request,"service_areas:edit");const {id,userId}=request.params as {id:string;userId:string};
+    const removed=await database()`delete from user_service_area_access where service_area_id=${id}::uuid and user_id=${userId}::uuid returning user_id`;
+    if(!removed.length)return reply.code(404).send({error:"NOT_FOUND"});
+    await database()`update service_area_catalog set version=version+1,updated_at=now() where id=1`;
+    await persistAudit(user,"SERVICE_AREA_ACCESS_REVOKED","SERVICE_AREA",id,userId);return reply.code(204).send();
+  }catch(e){return guardError(e,reply);}});
+  app.get("/v1/admin/zones/:id/roles",async(request,reply)=>{try{
+    requirePermission(request,"service_areas:view");const id=(request.params as {id:string}).id;
+    return database()`select role,created_at as "grantedAt" from service_area_role_access where service_area_id=${id}::uuid order by role`;
+  }catch(e){return guardError(e,reply);}});
+  app.put("/v1/admin/zones/:id/roles",async(request,reply)=>{try{
+    const user=requirePermission(request,"service_areas:edit");const id=(request.params as {id:string}).id;
+    const body=serviceAreaRoleSchema.parse(request.body);
+    await database().begin(async tx=>{await tx`delete from service_area_role_access where service_area_id=${id}::uuid`;
+      for(const role of body.roles)await tx`insert into service_area_role_access(service_area_id,role,granted_by) values(${id}::uuid,${role},${user.id!})`;});
+    await database()`update service_area_catalog set version=version+1,updated_at=now() where id=1`;
+    await persistAudit(user,"SERVICE_AREA_ROLES_UPDATED","SERVICE_AREA",id,body.roles.join(", ")||"Sin roles");
+    return {id,roles:body.roles};
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_SERVICE_AREA_ROLES"});return guardError(e,reply);}});
+  app.delete("/v1/admin/zones/:id",async(request,reply)=>{try{
+    const user=requirePermission(request,"service_areas:archive");const id=(request.params as {id:string}).id;
+    const [item]=await database()`update service_areas set enabled=false,archived_at=now(),archived_by=${user.id!},updated_by=${user.id!},updated_at=now()
+      where id=${id}::uuid and archived_at is null returning id::text,code`;
+    if(!item)return reply.code(404).send({error:"NOT_FOUND"});
+    await database()`update service_area_catalog set version=version+1,updated_at=now() where id=1`;
+    await persistAudit(user,"SERVICE_AREA_ARCHIVED","SERVICE_AREA",id,item.code);
+    return reply.code(204).send();
+  }catch(e){return guardError(e,reply);}});
   app.get("/v1/admin/incidents", async (request, reply) => { try {
     requirePermission(request, "incidents:view");
     if (!process.env.DATABASE_URL) return incidents;
@@ -976,12 +1116,6 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     });
     await persistAudit(user, "PRICING_PUBLISHED", "PRICING", next.id, `Version ${next.version}`);
     return reply.code(201).send({ ...next, status: new Date(next.activeFrom) > new Date() ? "SCHEDULED" : "ACTIVE" });
-  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
-  app.post("/v1/admin/zones/persist", async (request, reply) => { try {
-    const user = requirePermission(request, "zones:manage"); const body = zoneSchema.parse(request.body); const wkt = zoneBoundaryWkt(body.points);
-    const [item] = await database()`insert into service_zones (name, zone_type, boundary, version, active_from, created_by, editor_points) values (${body.name}, ${body.type}, ST_GeogFromText(${wkt}), 1, now(), ${user.id!}, ${JSON.stringify(body.points)}::jsonb) returning id::text, name, zone_type as type, editor_points as points, is_active as active, version`;
-    await persistAudit(user, "ZONE_CREATED", "ZONE", item!.id, item!.name);
-    return reply.code(201).send(item);
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.patch("/v1/admin/incidents/:id/persist", async (request, reply) => { try {
     const user = requirePermission(request, "incidents:manage"); const body = incidentSchema.parse(request.body); const id = (request.params as { id: string }).id;

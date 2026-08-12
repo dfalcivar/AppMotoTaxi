@@ -11,6 +11,17 @@ describe("matriz de permisos administrativos", () => {
     expect(hasPermission("SOPORTE", "drivers:view")).toBe(true);
     expect(hasPermission("SOPORTE", "drivers:approve")).toBe(false);
     expect(hasPermission("SUPPORT", "audit:view")).toBe(false);
+    expect(hasPermission("SOPORTE", "service_areas:view")).toBe(true);
+    expect(hasPermission("SOPORTE", "service_areas:edit")).toBe(false);
+  });
+
+  it("separa los permisos de lectura, edición, activación y archivo de zonas", () => {
+    expect(hasPermission("SUPER_ADMIN", "service_areas:create")).toBe(true);
+    expect(hasPermission("SUPER_ADMIN", "service_areas:edit")).toBe(true);
+    expect(hasPermission("SUPER_ADMIN", "service_areas:activate")).toBe(true);
+    expect(hasPermission("SUPER_ADMIN", "service_areas:archive")).toBe(true);
+    expect(hasPermission("ADMIN_OPERACIONES", "service_areas:view")).toBe(true);
+    expect(hasPermission("ADMIN_OPERACIONES", "service_areas:activate")).toBe(false);
   });
 
   it("limita al analista a información agregada de cooperativa", () => {

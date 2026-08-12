@@ -49,6 +49,10 @@ services:
     envVars:
       - key: VITE_API_BASE_URL
         value: https://mototaxi-atacames-api.onrender.com
+      - key: VITE_GOOGLE_MAPS_WEB_API_KEY
+        sync: false
+      - key: VITE_GOOGLE_MAPS_WEB_MAP_ID
+        sync: false
     routes:
       - type: rewrite
         source: /*

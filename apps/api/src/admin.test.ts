@@ -76,6 +76,18 @@ describe("consola administrativa", () => {
     expect(response.statusCode).toBe(403);
   });
 
+  it("permite visualizar zonas a soporte pero bloquea su modificación", async () => {
+    const visible = await app.inject({ method: "GET", url: "/v1/admin/zones", headers: { authorization: `Bearer ${supportToken}` } });
+    expect(visible.statusCode).toBe(200);
+    const denied = await app.inject({
+      method: "POST", url: "/v1/admin/zones", headers: { authorization: `Bearer ${supportToken}` },
+      payload: { code: "TEST_PROD", name: "Zona prueba", environment: "PRODUCTION", audience: "ALL",
+        geometry: { type: "Polygon", coordinates: [[[0,0],[1,0],[1,1],[0,0]]] },
+        sourceName: "Prueba automatizada", changeNote: "Debe ser rechazada" }
+    });
+    expect(denied.statusCode).toBe(403);
+  });
+
   it("protege la bandeja de aprobaciones con permisos de backend", async () => {
     const denied = await app.inject({ method: "GET", url: "/v1/admin/driver-approvals", headers: { authorization: `Bearer ${supportToken}` } });
     expect(denied.statusCode).toBe(403);

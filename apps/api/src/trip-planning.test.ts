@@ -6,10 +6,19 @@ describe("política de viajes programados", () => {
 
   it("rechaza una reserva anterior al mínimo parametrizado", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-11T12:00:00-05:00"));
+    vi.setSystemTime(new Date("2026-08-11T12:00:37-05:00"));
     const policy = { minimumNoticeMinutes: 30, activationLeadMinutes: 10, maximumAdvanceMinutes: 1440 };
     expect(scheduledTimeError(new Date("2026-08-11T12:29:00-05:00"), policy)).toBe("SCHEDULE_TOO_SOON");
     expect(scheduledTimeError(new Date("2026-08-11T12:31:00-05:00"), policy)).toBeUndefined();
+  });
+
+  it("acepta desde el mínimo inclusive hasta exactamente 24 horas", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T12:00:00-05:00"));
+    const policy = { minimumNoticeMinutes: 30, activationLeadMinutes: 10, maximumAdvanceMinutes: 1440 };
+    expect(scheduledTimeError(new Date("2026-08-11T12:30:00-05:00"), policy)).toBeUndefined();
+    expect(scheduledTimeError(new Date("2026-08-12T12:00:00-05:00"), policy)).toBeUndefined();
+    expect(scheduledTimeError(new Date("2026-08-12T12:00:01-05:00"), policy)).toBe("SCHEDULE_TOO_FAR");
   });
 });
 

@@ -13,6 +13,14 @@ import { registerSupportRoutes } from "./support.js";
 import { reverseLocation, searchLocations } from "./geocoding.js";
 import { computeRoute } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
+import {
+  authorizedServiceAreas,
+  filterLocationsToArea,
+  resolveServiceArea,
+  serviceAreaBounds,
+  ServiceAreaError,
+  validateTripServiceArea
+} from "./service-areas.js";
 
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -75,12 +83,15 @@ const ratingSchema = z.object({ score: z.number().int().min(1).max(5), comment: 
 const locationSearchSchema = z.object({
   q: z.string().trim().min(3).max(160),
   latitude: z.coerce.number().min(-90).max(90).optional(),
-  longitude: z.coerce.number().min(-180).max(180).optional()
+  longitude: z.coerce.number().min(-180).max(180).optional(),
+  serviceAreaId: z.string().uuid().optional()
 }).refine(value => (value.latitude == null) === (value.longitude == null));
 const reverseLocationSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90),
   longitude: z.coerce.number().min(-180).max(180)
 });
+const serviceAreasQuerySchema = z.object({ version: z.coerce.number().int().positive().optional() });
+const serviceAreaResolveSchema = pointSchema;
 const routeSchema = z.object({
   origin: pointSchema,
   destination: pointSchema,
@@ -148,9 +159,12 @@ async function configuredScheduledTripPolicy(): Promise<ScheduledTripPolicy> {
 }
 
 export function scheduledTimeError(scheduledFor: Date, policy: ScheduledTripPolicy): string | undefined {
-  const delayMinutes = (scheduledFor.getTime() - Date.now()) / 60_000;
-  if (delayMinutes < policy.minimumNoticeMinutes) return "SCHEDULE_TOO_SOON";
-  if (delayMinutes > policy.maximumAdvanceMinutes) return "SCHEDULE_TOO_FAR";
+  const currentMinute = new Date();
+  currentMinute.setSeconds(0, 0);
+  const earliest = new Date(currentMinute.getTime() + policy.minimumNoticeMinutes * 60_000);
+  const latest = new Date(currentMinute.getTime() + policy.maximumAdvanceMinutes * 60_000);
+  if (scheduledFor < earliest) return "SCHEDULE_TOO_SOON";
+  if (scheduledFor > latest) return "SCHEDULE_TOO_FAR";
 }
 
 export function tripTotalCents(
@@ -413,8 +427,36 @@ export async function buildApp() {
         latitude: parsed.data.latitude,
         longitude: parsed.data.longitude!
       };
-      return await searchLocations(parsed.data.q, focus);
+      const bounds = parsed.data.serviceAreaId
+        ? await serviceAreaBounds(parsed.data.serviceAreaId, user.id!)
+        : undefined;
+      if (parsed.data.serviceAreaId && !bounds) {
+        return reply.code(403).send({ error: "SERVICE_AREA_NOT_ALLOWED" });
+      }
+      const locations = await searchLocations(parsed.data.q, focus, bounds);
+      if (!parsed.data.serviceAreaId) return locations;
+      const allowedIndexes = new Set(await filterLocationsToArea(
+        parsed.data.serviceAreaId,
+        user.id!,
+        locations
+      ));
+      return locations.filter((_, index) => allowedIndexes.has(index));
     } catch { return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" }); }
+  });
+
+  app.get("/v1/service-areas", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const parsed = serviceAreasQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_SERVICE_AREA_QUERY" });
+    return authorizedServiceAreas(user.id!, parsed.data.version);
+  });
+
+  app.post("/v1/service-areas/resolve", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const parsed = serviceAreaResolveSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION" });
+    const area = await resolveServiceArea(user.id!, parsed.data);
+    return { area: area ?? null };
   });
 
   app.post("/v1/routes", async (request, reply) => {
@@ -670,6 +712,18 @@ export async function buildApp() {
         select 1 from trips t
         where (${user.id!}=t.passenger_id and target.id=t.driver_id)
            or (${user.id!}=t.driver_id and target.id=t.passenger_id)
+           or (target.id=t.passenger_id and t.scheduled_for is not null
+             and t.status='SEARCHING' and t.schedule_status='SCHEDULED'
+             and t.driver_id is null and exists (
+               select 1 from drivers viewer
+               where viewer.user_id=${user.id!}
+                 and (t.payment_method='CASH' or viewer.deuna_enabled=true)
+                 and not exists (
+                   select 1 from scheduled_trip_responses response
+                   where response.trip_id=t.id and response.driver_id=${user.id!}
+                     and response.accepted=false
+                 )
+             ))
       ))
     `;
     if (!photo?.data) return reply.code(404).send({ error: "PHOTO_NOT_FOUND" });
@@ -760,6 +814,10 @@ export async function buildApp() {
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = availabilitySchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_AVAILABILITY" });
     if (parsed.data.available && !parsed.data.location) return reply.code(400).send({ error: "LOCATION_REQUIRED" });
+    if (parsed.data.available && parsed.data.location) {
+      const area = await resolveServiceArea(user.id!, parsed.data.location);
+      if (!area) return reply.code(422).send({ error: "OUTSIDE_SERVICE_AREA" });
+    }
     await database()`update drivers set is_available=${parsed.data.available}, last_location=case when ${parsed.data.location ? true : false} then ST_SetSRID(ST_MakePoint(${parsed.data.location?.longitude ?? 0}, ${parsed.data.location?.latitude ?? 0}),4326)::geography else last_location end, last_location_at=case when ${parsed.data.location ? true : false} then now() else last_location_at end where user_id=${user.id!}`;
     if (parsed.data.available) void redispatchOldestTrip().catch(() => undefined);
     else realtime.publishDriverUnavailable(user.id!);
@@ -781,6 +839,14 @@ export async function buildApp() {
       location: input.destination!, reference: input.destinationReference?.trim() || "Destino"
     }];
     const finalDestination = destinations.at(-1)!;
+    let operationalArea;
+    try {
+      operationalArea = await validateTripServiceArea(
+        user.id!, input.origin, destinations.map(stop => stop.location));
+    } catch (error) {
+      if (error instanceof ServiceAreaError) return reply.code(422).send({ error: error.code });
+      throw error;
+    }
     const scheduledFor = input.scheduledFor ? new Date(input.scheduledFor) : undefined;
     if (scheduledFor) {
       const policy = await configuredScheduledTripPolicy();
@@ -796,6 +862,7 @@ export async function buildApp() {
     const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location));
     return {
       scheduledFor: scheduledFor?.toISOString() ?? null,
+      serviceArea: { id: operationalArea.id, code: operationalArea.code, name: operationalArea.name },
       zone,
       stops: destinations,
       passengers: input.passengers,
@@ -819,6 +886,14 @@ export async function buildApp() {
       reference: input.destinationReference?.trim() || "Destino"
     }];
     const finalDestination = destinations.at(-1)!;
+    let operationalArea;
+    try {
+      operationalArea = await validateTripServiceArea(
+        user.id!, input.origin, destinations.map(stop => stop.location));
+    } catch (error) {
+      if (error instanceof ServiceAreaError) return reply.code(422).send({ error: error.code });
+      throw error;
+    }
     const scheduledFor = input.scheduledFor ? new Date(input.scheduledFor) : undefined;
     if (scheduledFor) {
       const policy = await configuredScheduledTripPolicy();
@@ -844,7 +919,8 @@ export async function buildApp() {
           passenger_id, passengers, payment_method, origin, destination,
           origin_reference, destination_reference, passenger_notes, service_zone,
           pricing_version, pricing_snapshot, quoted_total_cents, scheduled_for,
-          schedule_status, estimated_distance_meters, estimated_duration_seconds
+          schedule_status, estimated_distance_meters, estimated_duration_seconds,
+          service_area_id, service_area_version_id
         ) values (
           ${user.id!}, ${input.passengers}, ${input.paymentMethod},
           ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
@@ -853,7 +929,8 @@ export async function buildApp() {
            ${price.version}, ${JSON.stringify({ version: price.version, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents })}::jsonb,
           ${total}, ${scheduledFor ?? null}, ${scheduledFor ? "SCHEDULED" : null},
           ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
-          ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)}
+          ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
+          ${operationalArea.id}::uuid, ${operationalArea.versionId}::uuid
         ) returning id
       `;
       for (let index = 0; index < destinations.length; index++) {
@@ -897,7 +974,8 @@ export async function buildApp() {
       distanceMeters: route?.distanceMeters ?? null,
       durationSeconds: route?.durationSeconds ?? null,
       stops: destinations,
-      zone
+      zone,
+      serviceArea: { id: operationalArea.id, code: operationalArea.code, name: operationalArea.name }
     });
   });
 
@@ -1037,7 +1115,12 @@ export async function buildApp() {
         ST_Y(t.origin::geometry) as "originLatitude", ST_X(t.origin::geometry) as "originLongitude",
         t.passengers, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
         t.estimated_distance_meters as "distanceMeters", t.estimated_duration_seconds as "durationSeconds",
-        passenger.full_name as "passengerName", driver.full_name as "driverName",
+        t.passenger_id::text as "passengerId", passenger.full_name as "passengerName",
+        (passenger.profile_photo_data is not null) as "passengerHasPhoto",
+        coalesce((select avg(r.score) from ratings r where r.recipient_id=t.passenger_id), 0)::float8 as "passengerRating",
+        t.driver_id::text as "driverId", driver.full_name as "driverName",
+        (driver.profile_photo_data is not null) as "driverHasPhoto",
+        coalesce(driver_profile.rating, 0)::float8 as "driverRating", vehicle.identifier as vehicle,
         coalesce((select json_agg(json_build_object(
           'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
           'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry),
@@ -1046,6 +1129,10 @@ export async function buildApp() {
       from trips t
       join users passenger on passenger.id=t.passenger_id
       left join users driver on driver.id=t.driver_id
+      left join drivers driver_profile on driver_profile.user_id=t.driver_id
+      left join lateral (
+        select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1
+      ) vehicle on true
       where t.scheduled_for is not null
         and (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
         and t.status not in ('COMPLETED','CANCELLED')
@@ -1068,6 +1155,14 @@ export async function buildApp() {
       location: input.destination!, reference: input.destinationReference?.trim() || "Destino"
     }];
     const finalDestination = destinations.at(-1)!;
+    let operationalArea;
+    try {
+      operationalArea = await validateTripServiceArea(
+        user.id!, input.origin, destinations.map(stop => stop.location));
+    } catch (error) {
+      if (error instanceof ServiceAreaError) return reply.code(422).send({ error: error.code });
+      throw error;
+    }
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
@@ -1087,7 +1182,9 @@ export async function buildApp() {
           pricing_snapshot=${JSON.stringify({ version: price.version, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents })}::jsonb,
           quoted_total_cents=${total}, scheduled_for=${scheduledFor},
           estimated_distance_meters=${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
-          estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)}
+          estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
+          service_area_id=${operationalArea.id}::uuid,
+          service_area_version_id=${operationalArea.versionId}::uuid
         where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
           and schedule_status='SCHEDULED' and driver_id is null and scheduled_for > now()
         returning id::text
@@ -1116,15 +1213,29 @@ export async function buildApp() {
       select t.id::text as "tripId", t.scheduled_for as "scheduledFor",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
         t.passengers, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
+        t.passenger_id::text as "passengerId", passenger.full_name as "passengerName",
+        (passenger.profile_photo_data is not null) as "passengerHasPhoto",
+        coalesce((select avg(r.score) from ratings r where r.recipient_id=t.passenger_id), 0)::float8 as "passengerRating",
         t.estimated_distance_meters as "distanceMeters", t.estimated_duration_seconds as "durationSeconds",
         coalesce((select json_agg(json_build_object(
           'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
           'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry)
         ) order by stop.stop_order) from trip_stops stop where stop.trip_id=t.id), '[]'::json) as stops
-      from trips t join drivers d on d.user_id=${user.id!}
+      from trips t
+      join users passenger on passenger.id=t.passenger_id
+      join drivers d on d.user_id=${user.id!}
+      left join service_areas area on area.id=t.service_area_id and area.enabled
+      left join service_area_versions area_version on area_version.id=t.service_area_version_id
       where t.scheduled_for is not null and t.schedule_status='SCHEDULED'
         and t.status='SEARCHING' and t.driver_id is null
         and (t.payment_method='CASH' or d.deuna_enabled=true)
+        and (t.service_area_id is null or (d.last_location is not null
+        and ST_Covers(area_version.geometry, d.last_location::geometry)
+        and (area.audience='ALL' or exists (
+          select 1 from user_service_area_access access
+          where access.user_id=${user.id!} and access.service_area_id=area.id
+            and (access.expires_at is null or access.expires_at>now())
+        )))
         and not exists (
           select 1 from scheduled_trip_responses response
           where response.trip_id=t.id and response.driver_id=${user.id!} and response.accepted=false

@@ -3,6 +3,13 @@ interface FocusPoint {
   longitude: number;
 }
 
+export interface SearchBounds {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+}
+
 interface GooglePlace {
   displayName?: { text?: string };
   formattedAddress?: string;
@@ -100,7 +107,8 @@ function googleMapsKey(): string | undefined {
 
 async function searchGooglePlaces(
   query: string,
-  focus?: FocusPoint
+  focus?: FocusPoint,
+  bounds?: SearchBounds
 ): Promise<LocationResult[]> {
   const key = googleMapsKey();
   if (!key) return [];
@@ -110,7 +118,14 @@ async function searchGooglePlaces(
     regionCode: "EC",
     pageSize: 8
   };
-  if (focus) {
+  if (bounds) {
+    body.locationRestriction = {
+      rectangle: {
+        low: { latitude: bounds.south, longitude: bounds.west },
+        high: { latitude: bounds.north, longitude: bounds.east }
+      }
+    };
+  } else if (focus) {
     body.locationBias = {
       circle: {
         center: { latitude: focus.latitude, longitude: focus.longitude },
@@ -175,7 +190,12 @@ async function reverseGoogleLocation(point: FocusPoint): Promise<LocationResult>
   };
 }
 
-function addViewbox(url: URL, focus?: FocusPoint, bounded = false): void {
+function addViewbox(url: URL, focus?: FocusPoint, bounded = false, bounds?: SearchBounds): void {
+  if (bounds) {
+    url.searchParams.set("viewbox", [bounds.west, bounds.north, bounds.east, bounds.south].join(","));
+    url.searchParams.set("bounded", "1");
+    return;
+  }
   if (!focus) return;
   const radius = 0.09;
   url.searchParams.set("viewbox", [
@@ -256,10 +276,10 @@ async function findIntersection(query: string, focus?: FocusPoint): Promise<Loca
   };
 }
 
-export async function searchLocations(query: string, focus?: FocusPoint): Promise<LocationResult[]> {
+export async function searchLocations(query: string, focus?: FocusPoint, bounds?: SearchBounds): Promise<LocationResult[]> {
   if (googleMapsKey()) {
     try {
-      const places = await searchGooglePlaces(query, focus);
+      const places = await searchGooglePlaces(query, focus, bounds);
       if (places.length) return places;
     } catch {
       // Mantiene Nominatim como respaldo durante la transición a Google.
@@ -270,7 +290,7 @@ export async function searchLocations(query: string, focus?: FocusPoint): Promis
   const url = baseUrl();
   url.searchParams.set("q", `${query}, Ecuador`);
   url.searchParams.set("limit", "8");
-  addViewbox(url, focus);
+  addViewbox(url, focus, Boolean(bounds), bounds);
   const response = await fetch(url, { headers });
   if (!response.ok) throw new Error("GEOCODER_UNAVAILABLE");
   const items = await response.json() as NominatimItem[];

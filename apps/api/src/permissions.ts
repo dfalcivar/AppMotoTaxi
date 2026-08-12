@@ -34,6 +34,11 @@ export const allPermissions = [
   "pricing:manage",
   "zones:view",
   "zones:manage",
+  "service_areas:view",
+  "service_areas:create",
+  "service_areas:edit",
+  "service_areas:activate",
+  "service_areas:archive",
   "advertising:view",
   "advertising:manage",
   "settings:view",
@@ -57,14 +62,14 @@ const operationsPermissions: Permission[] = [
   "drivers:documents:manage", "cooperatives:view", "cooperatives:manage",
   "trips:view", "trips:manage", "support:view", "support:manage",
   "incidents:view", "incidents:manage", "reports:view", "reports:export",
-  "pricing:view", "zones:view", "advertising:view", "settings:view",
+  "pricing:view", "zones:view", "service_areas:view", "advertising:view", "settings:view",
   "operations:view", "alerts:view", "faq:view"
 ];
 
 const supportPermissions: Permission[] = [
   "dashboard:view", "passengers:view", "drivers:view", "trips:view",
   "support:view", "support:manage", "incidents:view", "incidents:manage",
-  "faq:view", "faq:manage"
+  "faq:view", "faq:manage", "service_areas:view"
 ];
 
 const cooperativeAnalystPermissions: Permission[] = [

@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState, type MouseEvent } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { apiFetch, apiUrl, login, type Session, type SessionUser } from "./api.js";
 import "./styles.css";
@@ -9,7 +9,9 @@ import "./dashboard.css";
 import "./navigation.css";
 import "./responsive.css";
 import "./operations.css";
+import "./service-areas.css";
 import { SupportAdmin } from "./support-admin.js";
+import { CoverageZones } from "./service-area-admin.js";
 
 type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "access" | "audit" | "database";
 
@@ -22,7 +24,7 @@ const labels: Record<Module, string> = {
   passengers: "Pasajeros",
   cooperatives: "Cooperativas",
   pricing: "Tarifas",
-  zones: "Zonas",
+  zones: "Zonas de cobertura",
   settings: "Radio de búsqueda",
   advertising: "Publicidad",
   incidents: "Soporte e incidentes",
@@ -35,7 +37,7 @@ const modulePermissions: Record<Module, string[]> = {
   dashboard: ["dashboard:view", "cooperative_dashboard:view"],
   operations: ["operations:view"], alerts: ["alerts:view"],
   trips: ["trips:view"], drivers: ["drivers:view"], passengers: ["passengers:view"],
-  cooperatives: ["cooperatives:view"], pricing: ["pricing:view"], zones: ["zones:view"],
+  cooperatives: ["cooperatives:view"], pricing: ["pricing:view"], zones: ["service_areas:view"],
   settings: ["settings:view"], advertising: ["advertising:view"], incidents: ["incidents:view"],
   access: ["roles:manage"], audit: ["audit:view"], database: ["database:view"]
 };
@@ -305,15 +307,6 @@ function Pricing({ token, admin }: { token: string; admin: boolean }) {
   return <div className="split"><section className="card"><Header eyebrow="HISTORIAL" title="Versiones tarifarias" action={`${data.length} versiones`} /><p className="muted">Las versiones son históricas y no se editan. Al iniciar una nueva versión, la anterior se finaliza automáticamente.</p><Notice error={error} success={success} />{data.length ? <Table headers={["Versión", "Urbana día", "Noche", "Extendida", "Por parada", "Promoción", "Vigencia", "Estado"]} rows={data.map(price => [`v${price.version}`, money(price.urbanDayCents), money(price.nightCents), money(price.extendedCents), money(price.stopSurchargeCents ?? 0), `${price.promotionPassengers} pasajeros por ${money(price.promotionTotalCents)}`, <div><small className="table-line">Desde: {new Date(price.activeFrom).toLocaleString()}</small><small className="table-line">Hasta: {price.activeUntil ? new Date(price.activeUntil).toLocaleString() : "Sin fecha definida"}</small></div>, <PricingBadge value={price.status} />])} /> : <Empty text="No hay tarifas configuradas." />}</section>{admin && <form className="card form-card" onSubmit={save}><Header eyebrow="PUBLICAR" title="Nueva versión" /><div className="form-grid">{([ ["urbanDayCents", "Urbana de día (centavos)"], ["nightCents", "Nocturna (centavos)"], ["extendedCents", "Extendida (centavos)"], ["stopSurchargeCents", "Adicional por cada parada (centavos)"], ["promotionPassengers", "Pasajeros promoción"], ["promotionTotalCents", "Total promoción (centavos)"] ] as Array<[keyof typeof form, string]>).map(([key, label]) => <label key={key}>{label}<input min="0" required type="number" value={form[key]} onChange={e => setForm({ ...form, [key]: Number(e.target.value) })} /></label>)}<label>Vigente desde<input required type="datetime-local" value={form.activeFrom} onChange={e => setForm({ ...form, activeFrom: e.target.value })} /></label></div><button className="primary">Publicar versión</button></form>}</div>;
 }
 
-function Zones({ token, admin }: { token: string; admin: boolean }) {
-  const [data, setData] = useState<any[]>([]); const [points, setPoints] = useState<Array<{ x: number; y: number }>>([]); const [name, setName] = useState("Nueva zona"); const [type, setType] = useState("URBAN"); const [error, setError] = useState("");
-  const load = () => apiFetch<any[]>("/v1/admin/zones", token).then(setData).catch(reason => setError(errorText(reason)));
-  useEffect(() => { void load(); }, [token]);
-  function addPoint(event: MouseEvent<SVGSVGElement>) { if (!admin) return; const rect = event.currentTarget.getBoundingClientRect(); setPoints(previous => [...previous, { x: +(((event.clientX - rect.left) / rect.width) * 100).toFixed(1), y: +(((event.clientY - rect.top) / rect.height) * 100).toFixed(1) }]); }
-  async function save() { try { await apiFetch("/v1/admin/zones", token, { method: "POST", body: JSON.stringify({ name, type, points }) }); setPoints([]); await load(); } catch (reason) { setError(errorText(reason)); } }
-  return <div className="split zones-layout"><section className="card"><Header eyebrow="COBERTURA" title="Editor de zonas" action={admin ? "Haz clic para dibujar" : "Solo lectura"} /><Notice error={error} /><svg className="zone-map" viewBox="0 0 100 100" onClick={addPoint}><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="#cfe0e2" strokeWidth=".35" /></pattern></defs><rect width="100" height="100" fill="url(#grid)" /><path d="M2 65 Q25 42 48 56 T98 38" fill="none" stroke="#71b7c0" strokeWidth="3" opacity=".55" />{data.map(zone => <polygon key={zone.id} points={(zone.points ?? []).map((point: any) => `${point.x},${point.y}`).join(" ")} className={`saved-zone ${zone.type.toLowerCase()}`} />)}{points.length > 1 && <polygon points={points.map(point => `${point.x},${point.y}`).join(" ")} className="draft-zone" />}{points.map((point, i) => <circle key={i} cx={point.x} cy={point.y} r="1.3" />)}</svg>{admin && <div className="zone-tools"><input aria-label="Nombre de zona" value={name} onChange={e => setName(e.target.value)} /><select aria-label="Tipo de zona" value={type} onChange={e => setType(e.target.value)}><option value="URBAN">Urbana</option><option value="EXTENDED">Extendida</option></select><button className="secondary" onClick={() => setPoints([])}>Limpiar</button><button className="primary" disabled={points.length < 3 || name.trim().length < 3} onClick={save}>Guardar polígono</button></div>}</section><section className="card"><Header eyebrow="VERSIONES" title="Zonas activas" action={`${data.length} zonas`} />{data.map(zone => <div className="list-row" key={zone.id}><div><strong>{zone.name}</strong><small>{(zone.points ?? []).length} vértices · versión {zone.version}</small></div><Badge value={zone.type} /></div>)}</section></div>;
-}
-
 function Settings({ token, admin }: { token: string; admin: boolean }) {
   const [radius, setRadius] = useState(3000); const [success, setSuccess] = useState(""); const [error, setError] = useState("");
   const [scheduledLead, setScheduledLead] = useState(10);
@@ -520,7 +513,7 @@ function App() {
       {module === "passengers" && <Passengers token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}
       {module === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}
       {module === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}
-      {module === "zones" && <Zones token={session.token} admin={allowed("zones:manage")} />}
+      {module === "zones" && <CoverageZones token={session.token} permissions={session.user.permissions ?? []} />}
       {module === "settings" && <><Settings token={session.token} admin={allowed("settings:manage")} /><DocumentExpirySettings token={session.token} admin={allowed("settings:manage")} /></>}
       {module === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}
       {module === "incidents" && <SupportAdmin token={session.token} />}

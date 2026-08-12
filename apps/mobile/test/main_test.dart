@@ -58,7 +58,8 @@ void main() {
     expect(origin['longitude'], isNot(gpsOriginal.longitude));
   });
 
-  test('serializa paradas ordenadas y fecha programada sin perder coordenadas', () {
+  test('serializa paradas ordenadas y fecha programada sin perder coordenadas',
+      () {
     final scheduledFor = DateTime.parse('2026-08-08T18:30:00-05:00');
     final payload = buildTripRequestPayload(
       passengers: 3,
@@ -86,6 +87,23 @@ void main() {
     expect(destinations.first['reference'], 'Parada 1');
     expect(destinations.last['location']['longitude'], -79.861);
     expect(payload['scheduledFor'], scheduledFor.toUtc().toIso8601String());
+  });
+
+  test('valida la ventana inclusiva de viajes programados', () {
+    final now = DateTime(2026, 8, 12, 8, 0, 37);
+    final currentMinute = DateTime(2026, 8, 12, 8);
+    String? validate(Duration duration) => scheduledSelectionError(
+          selected: currentMinute.add(duration),
+          now: now,
+          minimumNoticeMinutes: 30,
+          maximumAdvanceMinutes: 1440,
+        );
+
+    expect(validate(const Duration(minutes: 29)), 'SCHEDULE_TOO_SOON');
+    expect(validate(const Duration(minutes: 30)), isNull);
+    expect(validate(const Duration(hours: 2)), isNull);
+    expect(validate(const Duration(hours: 24)), isNull);
+    expect(validate(const Duration(hours: 24, minutes: 1)), 'SCHEDULE_TOO_FAR');
   });
 
   test('traduce todos los estados operativos visibles', () {

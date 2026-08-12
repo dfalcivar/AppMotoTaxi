@@ -5,6 +5,7 @@ import { z } from "zod";
 import { userFrom, type SessionUser } from "./admin.js";
 import { database } from "./database.js";
 import { sendPush } from "./push.js";
+import { resolveServiceArea } from "./service-areas.js";
 
 const pointSchema = z.object({
   latitude: z.number().min(-90).max(90),
@@ -337,6 +338,8 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
     if (user.role !== "PASSENGER" && user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = nearbyQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION" });
+    const area = await resolveServiceArea(user.id!, parsed.data);
+    if (!area) return reply.code(422).send({ error: "OUTSIDE_SERVICE_AREA" });
     return { drivers: await nearbyDrivers(parsed.data.latitude, parsed.data.longitude, user.role === "DRIVER" ? user.id : undefined) };
   });
 

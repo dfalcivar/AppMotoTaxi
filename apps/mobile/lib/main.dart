@@ -27,6 +27,7 @@ import 'driver_navigation.dart';
 import 'in_app_notification_banner.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
+import 'service_areas.dart';
 
 const base = String.fromEnvironment('API_BASE_URL',
     defaultValue: 'https://mototaxi-atacames-api.onrender.com');
@@ -95,6 +96,21 @@ Map<String, dynamic> buildTripRequestPayload({
         'scheduledFor': scheduledFor.toUtc().toIso8601String(),
     };
 
+String? scheduledSelectionError({
+  required DateTime selected,
+  required DateTime now,
+  required int minimumNoticeMinutes,
+  required int maximumAdvanceMinutes,
+}) {
+  final currentMinute =
+      DateTime(now.year, now.month, now.day, now.hour, now.minute);
+  final earliest = currentMinute.add(Duration(minutes: minimumNoticeMinutes));
+  final latest = currentMinute.add(Duration(minutes: maximumAdvanceMinutes));
+  if (selected.isBefore(earliest)) return 'SCHEDULE_TOO_SOON';
+  if (selected.isAfter(latest)) return 'SCHEDULE_TOO_FAR';
+  return null;
+}
+
 class PassengerStopDraft {
   PassengerStopDraft({String text = '', this.point})
       : controller = TextEditingController(text: text);
@@ -151,6 +167,141 @@ class _ScheduledRouteRow extends StatelessWidget {
           ),
         ]),
       );
+}
+
+class _ScheduledCounterpartCard extends StatelessWidget {
+  const _ScheduledCounterpartCard({
+    required this.token,
+    required this.userId,
+    required this.name,
+    required this.hasPhoto,
+    required this.rating,
+    required this.roleLabel,
+    this.vehicle,
+    this.emptyLabel,
+  });
+
+  final String token;
+  final String? userId;
+  final String? name;
+  final bool hasPhoto;
+  final double rating;
+  final String roleLabel;
+  final String? vehicle;
+  final String? emptyLabel;
+
+  Widget _photo(BuildContext context, double size) {
+    final fallback = Container(
+      width: size,
+      height: size,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      alignment: Alignment.center,
+      child: Icon(Icons.person_outline, size: size * .52),
+    );
+    return ClipOval(
+      child: hasPhoto && userId != null
+          ? Image.network(
+              '$base/v1/users/$userId/profile-photo',
+              headers: {'Authorization': 'Bearer $token'},
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => fallback,
+            )
+          : fallback,
+    );
+  }
+
+  Future<void> _showDetails(BuildContext context) => showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) => Dialog(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _photo(dialogContext, 210),
+              const SizedBox(height: 16),
+              Text(name ?? roleLabel,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(dialogContext)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              if (vehicle?.trim().isNotEmpty == true)
+                Text('Placa: ${vehicle!.trim()}'),
+              const SizedBox(height: 6),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.star, color: Colors.amber, size: 20),
+                const SizedBox(width: 4),
+                Text(rating.toStringAsFixed(1)),
+              ]),
+              const SizedBox(height: 14),
+              FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cerrar')),
+            ]),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    if (userId == null || name == null) {
+      return Row(children: [
+        CircleAvatar(
+          radius: 23,
+          backgroundColor:
+              Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: const Icon(Icons.person_search_outlined),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(emptyLabel ?? 'Aún sin asignar',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+        ),
+      ]);
+    }
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _showDetails(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: [
+            _photo(context, 52),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(roleLabel,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: Theme.of(context).colorScheme.outline,
+                            fontWeight: FontWeight.w700)),
+                    Text(name!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                    if (vehicle?.trim().isNotEmpty == true)
+                      Text('Placa: ${vehicle!.trim()}'),
+                  ]),
+            ),
+            Column(children: [
+              const Icon(Icons.star, color: Colors.amber, size: 19),
+              Text(rating.toStringAsFixed(1),
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
+            ]),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
 class AppHttpOverrides extends HttpOverrides {
@@ -701,6 +852,18 @@ String mensajeApi(dynamic code) =>
           'La credencial Firebase de la API no está configurada o no es válida.',
       'INVALID_DEVICE_TOKEN':
           'Firebase no entregó un token válido para este teléfono.',
+      'ORIGIN_OUTSIDE_SERVICE_AREA':
+          'El origen está fuera de la zona de cobertura de AtacamesGo.',
+      'DESTINATION_OUTSIDE_SERVICE_AREA':
+          'Uno de los destinos está fuera de la zona de cobertura.',
+      'OUTSIDE_SERVICE_AREA':
+          'AtacamesGo todavía no está disponible en esta zona.',
+      'SERVICE_AREA_NOT_ALLOWED':
+          'Tu cuenta no está autorizada para usar esta zona de pruebas.',
+      'SERVICE_AREA_DISABLED':
+          'Esta zona de cobertura está temporalmente deshabilitada.',
+      'DIFFERENT_SERVICE_AREAS':
+          'El origen y el destino deben estar dentro de la misma zona de cobertura.',
     }[code] ??
     'No se pudo completar la operación.';
 
@@ -1012,18 +1175,27 @@ class Api {
       });
   Future<void> deleteFavoritePlace(String t, String id) =>
       call('DELETE', '/v1/favorite-places/$id', token: t);
-  Future<List<dynamic>> search(String t, String query, [LatLng? focus]) async {
+  Future<List<dynamic>> search(String t, String query,
+      [LatLng? focus, String? serviceAreaId]) async {
     final parameters = <String, String>{'q': query};
     if (focus != null) {
       parameters['latitude'] = focus.latitude.toString();
       parameters['longitude'] = focus.longitude.toString();
     }
+    if (serviceAreaId != null) parameters['serviceAreaId'] = serviceAreaId;
     return List<dynamic>.from(await call(
         'GET',
         Uri(path: '/v1/locations/search', queryParameters: parameters)
             .toString(),
         token: t));
   }
+
+  Future<dynamic> serviceAreas(String t, [int? version]) => call(
+      'GET',
+      Uri(path: '/v1/service-areas', queryParameters: {
+        if (version != null) 'version': version.toString()
+      }).toString(),
+      token: t);
 
   Future<dynamic> reverse(String t, LatLng point) => call(
       'GET',
@@ -3864,6 +4036,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   double? routeDurationSeconds;
   int scheduledMinimumNoticeMinutes = 30;
   int scheduledMaximumAdvanceMinutes = 24 * 60;
+  ServiceAreaCatalog? serviceAreaCatalog;
+  ServiceArea? selectedOriginArea;
+  ServiceArea? pendingSelectionArea;
   @override
   void initState() {
     super.initState();
@@ -3936,11 +4111,40 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     unawaited(checkPendingPassengerRating());
     loadSchedulingSettings();
     loadFavoritePlaces();
+    loadServiceAreas();
     Future.microtask(() => useCurrentLocation(explicit: false));
     timer = Timer.periodic(const Duration(seconds: 15), (_) {
       unawaited(load());
       unawaited(refreshNearbyDrivers());
     });
+  }
+
+  Future<void> loadServiceAreas() async {
+    final preferences = await SharedPreferences.getInstance();
+    final cached = preferences.getString('serviceAreasCatalog');
+    var cachedVersion = preferences.getInt('serviceAreasVersion');
+    try {
+      if (cached != null) {
+        final stored = Map<String, dynamic>.from(jsonDecode(cached) as Map);
+        serviceAreaCatalog = ServiceAreaCatalog.fromJson(stored);
+        cachedVersion = serviceAreaCatalog!.version;
+      }
+      final response = Map<String, dynamic>.from(
+          await api.serviceAreas(widget.s.token, cachedVersion) as Map);
+      if (!mounted) return;
+      if (response['unchanged'] != true) {
+        await preferences.setString('serviceAreasCatalog', jsonEncode(response));
+        await preferences.setInt(
+            'serviceAreasVersion', (response['version'] as num).toInt());
+        serviceAreaCatalog = ServiceAreaCatalog.fromJson(response);
+      }
+      setState(() {
+        selectedOriginArea =
+            pickup == null ? null : serviceAreaCatalog?.find(pickup!);
+      });
+    } catch (_) {
+      // El backend mantiene la validación definitiva si la caché no carga.
+    }
   }
 
   Future<void> loadSchedulingSettings() async {
@@ -4401,10 +4605,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         if (!applyAsOrigin) return;
         if (explicit) originSelectionGuard.commitExplicitGps();
         pickup = point;
+        selectedOriginArea = serviceAreaCatalog?.find(point);
         origin.text = 'Mi ubicación actual';
         message = 'Consultando la dirección de tu ubicación…';
       });
       if (!applyAsOrigin) return;
+      if (serviceAreaCatalog != null && selectedOriginArea == null) {
+        setState(() => message =
+            'AtacamesGo todavía no está disponible en esta zona.');
+        return;
+      }
       realtime.subscribeNearby(position.latitude, position.longitude);
       unawaited(refreshNearbyDrivers(point));
       refreshRoute(force: true);
@@ -4440,6 +4650,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (isOrigin) {
         origin.clear();
         pickup = null;
+        selectedOriginArea = null;
         nearbyDrivers.clear();
       } else {
         _destinationController(destinationIndex).clear();
@@ -4516,12 +4727,21 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       return;
     }
     final generation = ++selectionLookupGeneration;
+    final area = serviceAreaCatalog?.find(point);
     setState(() {
       pendingMapPoint = point;
+      pendingSelectionArea = area;
       selectionMoving = false;
       selectionResolving = true;
       message = 'Obteniendo la dirección del punto seleccionado…';
     });
+    if (serviceAreaCatalog != null && area == null) {
+      setState(() {
+        selectionResolving = false;
+        message = 'AtacamesGo todavía no opera en esta ubicación.';
+      });
+      return;
+    }
     try {
       final result = await api.reverse(widget.s.token, point);
       if (!mounted ||
@@ -4610,6 +4830,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (isOrigin) {
         originSelectionGuard.markManualOrigin();
         pickup = point;
+        selectedOriginArea = serviceAreaCatalog?.find(point);
         origin.text = cleanAddressLabel(place['address']);
       } else {
         dropoff = point;
@@ -4716,7 +4937,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     try {
       setState(() => message = 'Buscando direcciones cercanas...');
-      final results = await api.search(widget.s.token, field.text, pickup);
+      final results = await api.search(
+          widget.s.token, field.text, pickup, selectedOriginArea?.id);
       if (results.isEmpty) {
         setState(() => message = 'No se encontraron ubicaciones cercanas.');
         return;
@@ -4753,6 +4975,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           originSelectionGuard.markManualOrigin();
           pickup = LatLng((r['latitude'] as num).toDouble(),
               (r['longitude'] as num).toDouble());
+          selectedOriginArea = serviceAreaCatalog?.find(pickup!);
         } else {
           _setDestinationPoint(
               destinationIndex,
@@ -4778,6 +5001,19 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         !point.longitude.isFinite) {
       return;
     }
+    final selectedArea = serviceAreaCatalog?.find(point);
+    if (serviceAreaCatalog != null && selectedArea == null) {
+      setState(() => message =
+          'AtacamesGo todavía no está disponible en esta zona.');
+      return;
+    }
+    if (selection == MapPointSelection.destination &&
+        selectedOriginArea != null &&
+        selectedArea?.id != selectedOriginArea?.id) {
+      setState(() => message =
+          'El origen y el destino deben estar dentro de la misma zona de cobertura.');
+      return;
+    }
     final coordinateLabel =
         'Punto (${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)})';
     final destinationIndex = selectedDestinationIndex;
@@ -4798,6 +5034,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (selection == MapPointSelection.origin) {
         originSelectionGuard.markManualOrigin();
         pickup = point;
+        selectedOriginArea = selectedArea;
         if (!previewIsCurrent) origin.text = coordinateLabel;
         message = 'Consultando la dirección del origen...';
       } else {
@@ -4941,6 +5178,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Map<String, dynamic>? _currentRequestPayload() {
     final destinations = _serializedDestinations();
     if (pickup == null || destinations == null) return null;
+    if (serviceAreaCatalog != null) {
+      final area = serviceAreaCatalog!.find(pickup!);
+      if (area == null || destinations.any((destination) {
+        final location = Map<String, dynamic>.from(destination['location'] as Map);
+        return serviceAreaCatalog!.find(LatLng(
+              (location['latitude'] as num).toDouble(),
+              (location['longitude'] as num).toDouble()))?.id != area.id;
+      })) {
+        return null;
+      }
+    }
     return buildTripRequestPayload(
       passengers: people,
       originReference: origin.text,
@@ -4956,13 +5204,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<void> chooseSchedule() async {
     final now = DateTime.now();
-    final minimumRaw =
-        now.add(Duration(minutes: scheduledMinimumNoticeMinutes));
-    final minimum = DateTime(minimumRaw.year, minimumRaw.month, minimumRaw.day,
-            minimumRaw.hour, minimumRaw.minute)
-        .add(const Duration(minutes: 1));
-    final maximum = now.add(Duration(minutes: scheduledMaximumAdvanceMinutes));
-    final initial = scheduledFor ?? minimum;
+    final currentMinute =
+        DateTime(now.year, now.month, now.day, now.hour, now.minute);
+    final minimum =
+        currentMinute.add(Duration(minutes: scheduledMinimumNoticeMinutes));
+    final maximum =
+        currentMinute.add(Duration(minutes: scheduledMaximumAdvanceMinutes));
+    final currentSelection = scheduledFor;
+    final initial = currentSelection != null &&
+            !currentSelection.isBefore(minimum) &&
+            !currentSelection.isAfter(maximum)
+        ? currentSelection
+        : minimum;
     final date = await showDatePicker(
       context: context,
       firstDate: DateTime(now.year, now.month, now.day),
@@ -4977,11 +5230,31 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (time == null) return;
     final selected =
         DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    final delay = selected.difference(DateTime.now());
-    if (delay < Duration(minutes: scheduledMinimumNoticeMinutes) ||
-        delay > Duration(minutes: scheduledMaximumAdvanceMinutes)) {
-      setState(() => message =
-          'Reserva con al menos $scheduledMinimumNoticeMinutes minutos de anticipación y dentro de las próximas 24 horas.');
+    final validation = scheduledSelectionError(
+      selected: selected,
+      now: DateTime.now(),
+      minimumNoticeMinutes: scheduledMinimumNoticeMinutes,
+      maximumAdvanceMinutes: scheduledMaximumAdvanceMinutes,
+    );
+    if (validation != null) {
+      final explanation = validation == 'SCHEDULE_TOO_SOON'
+          ? 'Selecciona una hora con al menos $scheduledMinimumNoticeMinutes minutos de anticipación.'
+          : 'Puedes programar el viaje hasta un máximo de 24 horas desde este momento.';
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: const Icon(Icons.event_busy_outlined),
+          title: const Text('Horario no disponible'),
+          content: Text(explanation),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Elegir otra hora'),
+            ),
+          ],
+        ),
+      );
       return;
     }
     setState(() {
@@ -5311,28 +5584,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                               : scheme.tertiary,
                                         )),
                                 const Divider(height: 24),
-                                Row(children: [
-                                  CircleAvatar(
-                                    radius: 17,
-                                    backgroundColor:
-                                        scheme.surfaceContainerHighest,
-                                    child: Icon(
-                                        trip['driverName'] == null
-                                            ? Icons.person_search_outlined
-                                            : Icons.person_outline,
-                                        size: 19),
-                                  ),
-                                  const SizedBox(width: 9),
-                                  Expanded(
-                                    child: Text(
-                                      trip['driverName'] == null
-                                          ? 'Aún sin conductor asignado'
-                                          : 'Conductor: ${trip['driverName']}',
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w700),
-                                    ),
-                                  ),
-                                ]),
+                                _ScheduledCounterpartCard(
+                                  token: widget.s.token,
+                                  userId: trip['driverId']?.toString(),
+                                  name: trip['driverName']?.toString(),
+                                  hasPhoto: trip['driverHasPhoto'] == true,
+                                  rating: ((trip['driverRating'] as num?) ?? 0)
+                                      .toDouble(),
+                                  roleLabel: 'Conductor asignado',
+                                  vehicle: trip['vehicle']?.toString(),
+                                  emptyLabel: 'Aún sin conductor asignado',
+                                ),
                                 const SizedBox(height: 10),
                                 Row(children: [
                                   if (editable)
@@ -5745,7 +6007,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       ),
       const SizedBox(height: 14),
       FilledButton.icon(
-        onPressed: pendingMapPoint == null ? null : confirmVisibleMapPoint,
+        onPressed: pendingMapPoint == null ||
+                (serviceAreaCatalog != null && pendingSelectionArea == null)
+            ? null
+            : confirmVisibleMapPoint,
         icon: const Icon(Icons.check),
         label: Text(isOrigin ? 'Confirmar origen' : 'Confirmar destino'),
       ),
@@ -6017,7 +6282,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               child: Text(message!)),
         _routeSummary(context),
         FilledButton(
-            onPressed: create, child: const Text('Solicitar mototaxi')),
+            onPressed: _currentRequestPayload() == null ? null : create,
+            child: const Text('Solicitar mototaxi')),
       ];
 
   @override
@@ -6752,31 +7018,106 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 final date =
                     DateTime.tryParse(offer['scheduledFor']?.toString() ?? '');
                 final stops = List<dynamic>.from(offer['stops'] ?? const []);
+                final scheme = Theme.of(sheetContext).colorScheme;
                 return Card(
+                  margin: const EdgeInsets.only(top: 10),
+                  elevation: 0,
+                  color: scheme.surfaceContainerLow,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(color: scheme.outlineVariant),
+                  ),
                   child: Padding(
-                    padding: const EdgeInsets.all(14),
+                    padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text(date == null
-                            ? 'Viaje programado'
-                            : '${MaterialLocalizations.of(context).formatMediumDate(date.toLocal())} · ${TimeOfDay.fromDateTime(date.toLocal()).format(context)}'),
-                        Text(
-                            'Origen: ${cleanAddressLabel(offer['originReference'], fallback: 'Origen')}'),
-                        ...stops.asMap().entries.map((entry) => Text(
-                            'Destino ${entry.key + 1}: ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}')),
-                        Wrap(spacing: 12, children: [
-                          Text('${offer['passengers']} pasajero(s)'),
-                          if (offer['distanceMeters'] != null)
-                            Text(
-                                '${((offer['distanceMeters'] as num) / 1000).toStringAsFixed(1)} km'),
-                          if (offer['durationSeconds'] != null)
-                            Text(
-                                '${((offer['durationSeconds'] as num) / 60).ceil()} min'),
-                          if (offer['quotedTotalCents'] != null)
-                            Text(
-                                '\$${((offer['quotedTotalCents'] as num) / 100).toStringAsFixed(2)}'),
+                        Row(children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: scheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                            child: const Icon(Icons.event_available_outlined),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      date == null
+                                          ? 'Viaje programado'
+                                          : TimeOfDay.fromDateTime(
+                                                  date.toLocal())
+                                              .format(context),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleLarge
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w900)),
+                                  if (date != null)
+                                    Text(MaterialLocalizations.of(context)
+                                        .formatFullDate(date.toLocal())),
+                                ]),
+                          ),
                         ]),
+                        const SizedBox(height: 14),
+                        _ScheduledRouteRow(
+                          icon: Icons.my_location,
+                          label: 'Origen',
+                          value: cleanAddressLabel(offer['originReference'],
+                              fallback: 'Origen'),
+                          color: scheme.primary,
+                        ),
+                        ...stops
+                            .asMap()
+                            .entries
+                            .map((entry) => _ScheduledRouteRow(
+                                  icon: entry.key == stops.length - 1
+                                      ? Icons.flag_rounded
+                                      : Icons.location_on_outlined,
+                                  label: entry.key == stops.length - 1
+                                      ? 'Destino final'
+                                      : 'Parada ${entry.key + 1}',
+                                  value: cleanAddressLabel(
+                                      entry.value['reference'],
+                                      fallback: 'Destino'),
+                                  color: entry.key == stops.length - 1
+                                      ? scheme.error
+                                      : scheme.tertiary,
+                                )),
+                        Wrap(spacing: 12, runSpacing: 6, children: [
+                          Chip(
+                              avatar:
+                                  const Icon(Icons.people_outline, size: 17),
+                              label:
+                                  Text('${offer['passengers']} pasajero(s)')),
+                          if (offer['distanceMeters'] != null)
+                            Chip(
+                                label: Text(
+                                    '${((offer['distanceMeters'] as num) / 1000).toStringAsFixed(1)} km')),
+                          if (offer['durationSeconds'] != null)
+                            Chip(
+                                label: Text(
+                                    '${((offer['durationSeconds'] as num) / 60).ceil()} min')),
+                          if (offer['quotedTotalCents'] != null)
+                            Chip(
+                                label: Text(
+                                    '\$${((offer['quotedTotalCents'] as num) / 100).toStringAsFixed(2)}')),
+                        ]),
+                        const Divider(height: 24),
+                        _ScheduledCounterpartCard(
+                          token: widget.s.token,
+                          userId: offer['passengerId']?.toString(),
+                          name: offer['passengerName']?.toString(),
+                          hasPhoto: offer['passengerHasPhoto'] == true,
+                          rating: ((offer['passengerRating'] as num?) ?? 0)
+                              .toDouble(),
+                          roleLabel: 'Pasajero',
+                        ),
+                        const SizedBox(height: 12),
                         Row(children: [
                           Expanded(
                             child: OutlinedButton(
@@ -6820,27 +7161,71 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 final trip = Map<String, dynamic>.from(value);
                 final date =
                     DateTime.tryParse(trip['scheduledFor']?.toString() ?? '');
-                return ListTile(
-                  leading: const Icon(Icons.event_available_outlined),
-                  title: Text(date == null
-                      ? 'Próximo viaje'
-                      : '${MaterialLocalizations.of(context).formatMediumDate(date.toLocal())} · ${TimeOfDay.fromDateTime(date.toLocal()).format(context)}'),
-                  subtitle: Text(
-                      '${cleanAddressLabel(trip['originReference'], fallback: 'Origen')} → ${cleanAddressLabel(trip['destinationReference'], fallback: 'Destino')}'),
-                  trailing: trip['scheduleStatus'] == 'SCHEDULED_ASSIGNED'
-                      ? IconButton(
-                          tooltip: 'Liberar reserva',
-                          icon: const Icon(Icons.event_busy_outlined),
-                          onPressed: () async {
-                            await api.releaseScheduled(
-                                widget.s.token, trip['tripId'].toString());
-                            if (sheetContext.mounted) {
-                              Navigator.pop(sheetContext);
-                            }
-                            await refreshScheduled(force: true);
-                          },
-                        )
-                      : null,
+                final scheme = Theme.of(sheetContext).colorScheme;
+                return Card(
+                  elevation: 0,
+                  color: scheme.surfaceContainerLow,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    side: BorderSide(color: scheme.outlineVariant),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(15),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                              date == null
+                                  ? 'Próximo viaje'
+                                  : '${MaterialLocalizations.of(context).formatMediumDate(date.toLocal())} · ${TimeOfDay.fromDateTime(date.toLocal()).format(context)}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 10),
+                          _ScheduledRouteRow(
+                            icon: Icons.my_location,
+                            label: 'Origen',
+                            value: cleanAddressLabel(trip['originReference'],
+                                fallback: 'Origen'),
+                            color: scheme.primary,
+                          ),
+                          _ScheduledRouteRow(
+                            icon: Icons.flag_rounded,
+                            label: 'Destino final',
+                            value: cleanAddressLabel(
+                                trip['destinationReference'],
+                                fallback: 'Destino'),
+                            color: scheme.error,
+                          ),
+                          const Divider(height: 20),
+                          _ScheduledCounterpartCard(
+                            token: widget.s.token,
+                            userId: trip['passengerId']?.toString(),
+                            name: trip['passengerName']?.toString(),
+                            hasPhoto: trip['passengerHasPhoto'] == true,
+                            rating: ((trip['passengerRating'] as num?) ?? 0)
+                                .toDouble(),
+                            roleLabel: 'Pasajero',
+                          ),
+                          if (trip['scheduleStatus'] == 'SCHEDULED_ASSIGNED')
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                icon: const Icon(Icons.event_busy_outlined),
+                                label: const Text('Liberar reserva'),
+                                onPressed: () async {
+                                  await api.releaseScheduled(widget.s.token,
+                                      trip['tripId'].toString());
+                                  if (sheetContext.mounted) {
+                                    Navigator.pop(sheetContext);
+                                  }
+                                  await refreshScheduled(force: true);
+                                },
+                              ),
+                            ),
+                        ]),
+                  ),
                 );
               }),
             ],
