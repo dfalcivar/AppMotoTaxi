@@ -324,7 +324,7 @@ export async function searchLocationsInArea(
   const contextualQuery = areaLabel
     ? `${query}, ${areaLabel}`
     : query;
-  return searchLocations(contextualQuery, focus, bounds);
+  return searchLocations(contextualQuery, focus);
 }
 
 function reverseLabel(item: NominatimReverseItem): string {

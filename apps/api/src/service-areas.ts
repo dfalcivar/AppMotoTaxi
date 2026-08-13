@@ -257,5 +257,12 @@ export async function serviceAreaBounds(areaId: string, userId: string) {
       ))
     )
   `;
-  return row as { label: string; west: number; south: number; east: number; north: number } | undefined;
+  if (!row) return undefined;
+  return {
+    label: String(row.label),
+    west: Number(row.west),
+    south: Number(row.south),
+    east: Number(row.east),
+    north: Number(row.north)
+  };
 }

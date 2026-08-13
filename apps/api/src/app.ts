@@ -452,7 +452,11 @@ export async function buildApp() {
       if (parsed.data.serviceAreaId && !bounds) {
         return reply.code(403).send({ error: "SERVICE_AREA_NOT_ALLOWED" });
       }
-      const locations = await searchLocations(parsed.data.q, focus, bounds);
+      // Google Places busca con el contexto del usuario; la ServiceArea se
+      // aplica despues como filtro espacial exacto. Enviar el bounds como una
+      // restriccion a Places dejaba fuera calles y comercios validos dentro de
+      // poligonos irregulares como CUENCA_TEST.
+      const locations = await searchLocations(parsed.data.q, focus);
       if (!parsed.data.serviceAreaId) return locations;
       let allowedIndexes = new Set(await filterLocationsToArea(
         parsed.data.serviceAreaId,

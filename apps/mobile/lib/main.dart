@@ -4260,8 +4260,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<void> loadServiceAreas() async {
     final preferences = await SharedPreferences.getInstance();
-    final cached = preferences.getString('serviceAreasCatalog');
-    var cachedVersion = preferences.getInt('serviceAreasVersion');
+    final catalogKey = 'serviceAreasCatalog-${widget.s.id}';
+    final versionKey = 'serviceAreasVersion-${widget.s.id}';
+    final cached = preferences.getString(catalogKey);
+    var cachedVersion = preferences.getInt(versionKey);
     try {
       if (cached != null) {
         final stored = Map<String, dynamic>.from(jsonDecode(cached) as Map);
@@ -4272,17 +4274,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           await api.serviceAreas(widget.s.token, cachedVersion) as Map);
       if (!mounted) return;
       if (response['unchanged'] != true) {
-        await preferences.setString(
-            'serviceAreasCatalog', jsonEncode(response));
+        await preferences.setString(catalogKey, jsonEncode(response));
         await preferences.setInt(
-            'serviceAreasVersion', (response['version'] as num).toInt());
+            versionKey, (response['version'] as num).toInt());
         serviceAreaCatalog = ServiceAreaCatalog.fromJson(response);
       }
       setState(() {
         selectedOriginArea =
             pickup == null ? null : serviceAreaCatalog?.find(pickup!);
       });
-    } catch (_) {
+    } catch (error) {
+      debugPrint('No se pudo actualizar el catálogo de zonas: $error');
       // El backend mantiene la validación definitiva si la caché no carga.
     }
   }
@@ -5274,8 +5276,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         unawaited(refreshNearbyDrivers(pickup));
       }
       refreshRoute(force: true);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => message = error.message);
+      if (coverageErrorCodes.contains(error.code)) {
+        unawaited(showPassengerCoverageError(
+            error.code ?? 'OUTSIDE_SERVICE_AREA', error.message));
+      }
     } catch (_) {
-      setState(() => message = 'No se pudo buscar la ubicación.');
+      if (mounted) {
+        setState(() => message =
+            'No se pudo consultar Google Places. Inténtalo nuevamente.');
+      }
     }
   }
 
