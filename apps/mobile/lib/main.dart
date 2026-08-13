@@ -896,15 +896,23 @@ Future<void> showCoverageErrorDialog(
   return showDialog<void>(
     context: context,
     builder: (dialogContext) => AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      actionsAlignment: MainAxisAlignment.center,
       icon: Icon(notAuthorized
           ? Icons.admin_panel_settings_outlined
           : Icons.location_off_outlined),
-      title: Text(title),
-      content: Text(message),
+      title: Text(title, textAlign: TextAlign.center),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: Text(message, textAlign: TextAlign.center),
+      ),
       actions: [
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Entendido'),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 18),
+            child: Text('Entendido'),
+          ),
         ),
       ],
     ),
@@ -4357,6 +4365,35 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
   }
 
+  void clearInvalidDestinationsForCoverage() {
+    final catalog = serviceAreaCatalog;
+    final originArea =
+        selectedOriginArea ?? (pickup == null ? null : catalog?.find(pickup!));
+    if (catalog == null || originArea == null) return;
+
+    final invalidIndexes = <int>[];
+    for (var index = 0; index < _destinationPoints.length; index++) {
+      final point = _destinationPoint(index);
+      final area = point == null ? null : catalog.find(point);
+      if (area == null || area.id != originArea.id) invalidIndexes.add(index);
+    }
+    if (invalidIndexes.isEmpty) return;
+
+    setState(() {
+      for (final index in invalidIndexes) {
+        _destinationController(index).clear();
+        _setDestinationPoint(index, null);
+      }
+      routePoints = [];
+      routeDistanceMeters = null;
+      routeDurationSeconds = null;
+      message = invalidIndexes.length == 1
+          ? 'El destino fuera de cobertura fue eliminado.'
+          : 'Los destinos fuera de cobertura fueron eliminados.';
+    });
+    refreshRoute(force: true);
+  }
+
   TextEditingController _destinationController(int index) =>
       index == 0 ? destination : additionalStops[index - 1].controller;
 
@@ -4497,8 +4534,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       actionLabel: cancelled ? 'Cerrar' : 'Ver',
       onTap: cancelled
           ? null
-          : () => openPassengerTripDetail(tripId,
-              notificationId: notificationId),
+          : () =>
+              openPassengerTripDetail(tripId, notificationId: notificationId),
     );
     if (shown && normalizedType == 'DRIVER_ARRIVED' && !kIsWeb) {
       if (defaultTargetPlatform == TargetPlatform.android) {
@@ -6042,8 +6079,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       final text = e.toString();
       setState(() => message = text);
       if (e is ApiException && coverageErrorCodes.contains(e.code)) {
-        unawaited(
-            showPassengerCoverageError(e.code ?? 'OUTSIDE_SERVICE_AREA', text));
+        await showPassengerCoverageError(
+            e.code ?? 'OUTSIDE_SERVICE_AREA', text);
+        if (e.code == 'DESTINATION_OUTSIDE_SERVICE_AREA' ||
+            e.code == 'DIFFERENT_SERVICE_AREAS') {
+          clearInvalidDestinationsForCoverage();
+        }
       }
     }
   }
