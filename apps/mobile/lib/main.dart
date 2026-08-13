@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +29,8 @@ import 'in_app_notification_banner.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
 import 'service_areas.dart';
+
+part 'passenger_experience.dart';
 
 const base = String.fromEnvironment('API_BASE_URL',
     defaultValue: 'https://mototaxi-atacames-api.onrender.com');
@@ -1080,12 +1083,29 @@ class Api {
   Future<Map<String, dynamic>> schedulingSettings(String t) async =>
       Map<String, dynamic>.from(
           await call('GET', '/v1/trips/scheduling-settings', token: t));
+  Future<Map<String, dynamic>> tripsPage(String t,
+          {String status = 'ALL', String? cursor, int limit = 20}) async =>
+      Map<String, dynamic>.from(await call('GET',
+          '/v1/trips/mine?limit=$limit&status=${Uri.encodeQueryComponent(status)}${cursor == null ? '' : '&cursor=${Uri.encodeQueryComponent(cursor)}'}',
+          token: t));
   Future<List<dynamic>> trips(String t) async =>
-      List<dynamic>.from(await call('GET', '/v1/trips/mine', token: t));
+      List<dynamic>.from((await tripsPage(t))['items'] ?? const []);
   Future<dynamic> pendingRating(String t) =>
       call('GET', '/v1/trips/pending-rating', token: t);
-  Future<List<dynamic>> notifications(String t) async =>
-      List<dynamic>.from(await call('GET', '/v1/notifications', token: t));
+  Future<Map<String, dynamic>> notificationsPage(String t,
+          {String? cursor, int limit = 20}) async =>
+      Map<String, dynamic>.from(await call('GET',
+          '/v1/notifications?limit=$limit${cursor == null ? '' : '&cursor=${Uri.encodeQueryComponent(cursor)}'}',
+          token: t));
+  Future<Map<String, dynamic>> activityPage(String t,
+          {String? cursor, int limit = 20}) async =>
+      Map<String, dynamic>.from(await call('GET',
+          '/v1/activity?limit=$limit${cursor == null ? '' : '&cursor=${Uri.encodeQueryComponent(cursor)}'}',
+          token: t));
+  Future<dynamic> markNotificationRead(String t, String id) =>
+      call('PATCH', '/v1/notifications/$id/read', token: t);
+  Future<dynamic> markAllNotificationsRead(String t) =>
+      call('POST', '/v1/notifications/read-all', token: t);
   Future<Map<String, dynamic>> supportConfig(String t) async =>
       Map<String, dynamic>.from(
           await call('GET', '/v1/support/config', token: t));
@@ -3238,12 +3258,15 @@ class _AccountHubState extends State<AccountHub> {
             leading: const Icon(Icons.directions_bike),
             title: const Text('Mis viajes'),
             subtitle: const Text('Viajes en curso e historial'),
-            onTap: () => Navigator.push(
-                c, MaterialPageRoute(builder: (_) => TripsPanel(widget.s)))),
+            onTap: () async {
+              final repeat = await Navigator.push<TripRepeatDraft>(
+                  c, MaterialPageRoute(builder: (_) => TripsPanel(widget.s)));
+              if (repeat != null && c.mounted) Navigator.pop(c, repeat);
+            }),
         ListTile(
-            leading: const Icon(Icons.notifications_outlined),
+            leading: const Icon(Icons.history_rounded),
             title: const Text('Actividad'),
-            subtitle: const Text('Actualizaciones de tus viajes'),
+            subtitle: const Text('Historial de tu actividad'),
             onTap: () => Navigator.push(
                 c, MaterialPageRoute(builder: (_) => ActivityPanel(widget.s)))),
         ListTile(
@@ -3506,8 +3529,11 @@ class _SupportCenterState extends State<SupportCenter> {
 }
 
 class CreateSupportRequest extends StatefulWidget {
-  const CreateSupportRequest(this.session, {super.key});
+  const CreateSupportRequest(this.session,
+      {super.key, this.initialTripId, this.initialCategory});
   final Session session;
+  final String? initialTripId;
+  final String? initialCategory;
   @override
   State<CreateSupportRequest> createState() => _CreateSupportRequestState();
 }
@@ -3525,6 +3551,8 @@ class _CreateSupportRequestState extends State<CreateSupportRequest> {
   @override
   void initState() {
     super.initState();
+    tripId = widget.initialTripId ?? '';
+    category = widget.initialCategory ?? 'TRIP';
     Api().trips(widget.session.token).then((value) {
       if (mounted) setState(() => trips = value);
     }).catchError((_) {
@@ -3972,45 +4000,8 @@ class TripsPanel extends StatefulWidget {
 }
 
 class _TripsPanelState extends State<TripsPanel> {
-  List<dynamic>? data;
   @override
-  void initState() {
-    super.initState();
-    Api().trips(widget.s.token).then((v) {
-      if (mounted) setState(() => data = v);
-    });
-  }
-
-  @override
-  Widget build(BuildContext c) {
-    final trips = data;
-    if (trips == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    return Scaffold(
-        appBar: AppBar(title: const Text('Mis viajes')),
-        body: ListView(
-            padding: const EdgeInsets.all(16),
-            children: trips
-                .map((t) => Card(
-                    child: ListTile(
-                        leading: Icon([
-                          'SEARCHING',
-                          'ASSIGNED',
-                          'DRIVER_EN_ROUTE',
-                          'DRIVER_ARRIVED',
-                          'IN_PROGRESS'
-                        ].contains(t['status'])
-                            ? Icons.directions_bike
-                            : Icons.history),
-                        title: Text(
-                            '${t['originReference'] ?? 'Origen'} → ${t['destinationReference'] ?? 'Destino'}'),
-                        subtitle: Text(
-                            '${estadoViaje(t['status'])} · ${t['passengerName'] ?? t['driverName'] ?? ''}'),
-                        trailing: Text(
-                            '\$${((t['quotedTotalCents'] as num) / 100).toStringAsFixed(2)}'))))
-                .toList()));
-  }
+  Widget build(BuildContext c) => PassengerTripsView(widget.s);
 }
 
 class ActivityPanel extends StatefulWidget {
@@ -4021,46 +4012,13 @@ class ActivityPanel extends StatefulWidget {
 }
 
 class _ActivityPanelState extends State<ActivityPanel> {
-  List<dynamic>? data;
   @override
-  void initState() {
-    super.initState();
-    Api().notifications(widget.s.token).then((v) {
-      if (mounted) setState(() => data = v);
-    });
-  }
-
-  @override
-  Widget build(BuildContext c) {
-    final items = data;
-    if (items == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    return Scaffold(
-        appBar: AppBar(title: const Text('Actividad')),
-        body: ListView(
-            padding: const EdgeInsets.all(16),
-            children: items.isEmpty
-                ? [
-                    const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text('Aún no tienes actualizaciones.'))
-                  ]
-                : items
-                    .map((n) => Card(
-                        child: ListTile(
-                            leading: const Icon(Icons.notifications_outlined),
-                            title: Text(n['message']),
-                            subtitle: Text(DateTime.parse(n['occurredAt'])
-                                .toLocal()
-                                .toString()
-                                .substring(0, 16)))))
-                    .toList()));
-  }
+  Widget build(BuildContext c) => PassengerActivityView(widget.s);
 }
 
-void profile(BuildContext c, Session s) =>
-    Navigator.push(c, MaterialPageRoute(builder: (_) => AccountHub(s)));
+Future<TripRepeatDraft?> profile(BuildContext c, Session s) =>
+    Navigator.push<TripRepeatDraft>(
+        c, MaterialPageRoute(builder: (_) => AccountHub(s)));
 Future<void> rating(
     BuildContext c, Session s, String tripId, VoidCallback done) async {
   int score = 5;
@@ -4223,8 +4181,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
     unawaited(api.registerFcm(widget.s.token));
+    unawaited(PassengerNotificationStore.instance.refresh(widget.s));
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((push) {
+        unawaited(PassengerNotificationStore.instance.refresh(widget.s));
         final type = push.data['type'];
         if (type == 'CHAT_MESSAGE' && !passengerChatOpen) {
           if (!mounted) return;
@@ -4423,6 +4383,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       unawaited(api.registerFcm(widget.s.token));
       unawaited(load());
       unawaited(checkPendingPassengerRating());
+      unawaited(PassengerNotificationStore.instance.refresh(widget.s));
     }
   }
 
@@ -4441,11 +4402,38 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> openPassengerTripDetail(String? tripId,
+      {String? notificationId}) async {
+    if (tripId == null || !mounted) {
+      await load();
+      return;
+    }
+    if (notificationId != null) {
+      try {
+        await api.markNotificationRead(widget.s.token, notificationId);
+        await PassengerNotificationStore.instance.refresh(widget.s);
+      } catch (_) {
+        // Abrir el viaje tiene prioridad si la confirmación de lectura falla.
+      }
+    }
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PassengerTripDetail(widget.s, tripId),
+      ),
+    );
+    if (mounted) await load();
+  }
+
   void handleOpenedPush(RemoteMessage push) {
     if (push.data['type'] == 'CHAT_MESSAGE') {
       unawaited(openPassengerChat(push.data['tripId']));
     } else {
-      unawaited(load());
+      unawaited(openPassengerTripDetail(
+        push.data['tripId'],
+        notificationId: push.data['internalNotificationId'],
+      ));
     }
   }
 
@@ -4485,7 +4473,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       message: body ??
           (cancelled ? 'Solicitud cancelada correctamente.' : fallback[1]),
       actionLabel: cancelled ? 'Cerrar' : 'Ver',
-      onTap: cancelled ? null : load,
+      onTap: cancelled ? null : () => openPassengerTripDetail(tripId),
     );
     if (shown && normalizedType == 'DRIVER_ARRIVED' && !kIsWeb) {
       if (defaultTargetPlatform == TargetPlatform.android) {
@@ -4615,6 +4603,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       return;
     }
     if (type == 'trip:status') {
+      unawaited(PassengerNotificationStore.instance.refresh(widget.s));
       reflectTripStatus(event['status'], event['tripId']);
       showPassengerNotification(event['status']?.toString() ?? 'TRIP_UPDATE',
           event['tripId']?.toString());
@@ -4622,6 +4611,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       return;
     }
     if (type == 'chat:message') {
+      unawaited(PassengerNotificationStore.instance.refresh(widget.s));
       if (passengerChatOpen) return;
       final value = Map<String, dynamic>.from(event['message'] as Map);
       InAppNotificationBanner.show(
@@ -4691,6 +4681,27 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       setState(() => origin.text =
           cleanAddressLabel(result['label'], fallback: 'Mi ubicación actual'));
     } catch (_) {}
+  }
+
+  void applyRepeatDraft(TripRepeatDraft draft) {
+    setState(() {
+      pickup = draft.origin;
+      dropoff = draft.destination;
+      origin.text = draft.originLabel;
+      destination.text = draft.destinationLabel;
+      for (final stop in additionalStops) {
+        stop.dispose();
+      }
+      additionalStops.clear();
+      routePoints = [];
+      routeDistanceMeters = null;
+      routeDurationSeconds = null;
+      scheduledFor = null;
+      editingScheduledTripId = null;
+      message = 'Revisa el viaje anterior y confirma cuando estés listo.';
+    });
+    _movePassengerSheet(.78);
+    unawaited(refreshRoute(force: true));
   }
 
   Future<void> load() async {
@@ -6616,33 +6627,15 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               ),
               Positioned(
                 top: safeTop + 8,
-                left: 12,
-                right: 12,
-                child: Row(children: [
-                  Material(
-                    color: Theme.of(context).colorScheme.surface,
-                    elevation: 3,
-                    shape: const CircleBorder(),
-                    child: IconButton(
-                        tooltip: 'Mi perfil',
-                        onPressed: () => profile(context, widget.s),
-                        icon: const Icon(Icons.person_outline)),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Material(
-                      color: Theme.of(context).colorScheme.surface,
-                      elevation: 3,
-                      borderRadius: BorderRadius.circular(22),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 11),
-                        child: Text('Hola, ${widget.s.name}',
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                      ),
-                    ),
-                  ),
-                ]),
+                left: 28,
+                right: 28,
+                child: PassengerHeaderIsland(
+                  session: widget.s,
+                  onAccount: () async {
+                    final draft = await profile(context, widget.s);
+                    if (draft != null && mounted) applyRepeatDraft(draft);
+                  },
+                ),
               ),
               DraggableScrollableSheet(
                 controller: passengerSheetController,

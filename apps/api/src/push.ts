@@ -5,6 +5,7 @@ import { getMessaging } from "firebase-admin/messaging";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { database } from "./database.js";
 import { captureOperationalError } from "./observability.js";
+import { persistUserNotification } from "./user-notifications.js";
 
 const credentialPath = fileURLToPath(new URL("../secrets/firebase-service-account.json", import.meta.url));
 const firebaseProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
@@ -108,6 +109,16 @@ export function pushConfigurationStatus(clientProjectId?: string): PushConfigura
 export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}): Promise<PushResult> {
   const startedAt = performance.now();
   const eventType = data.type ?? "UNKNOWN";
+  try {
+    const notificationId = await persistUserNotification({ userId, title, message: body, type: eventType, data });
+    if (notificationId) data.internalNotificationId = notificationId;
+  } catch (error) {
+    console.warn("No se pudo guardar la notificación interna.", {
+      type: eventType,
+      code: firebaseErrorCode(error)
+    });
+    captureOperationalError(error, { operation: "internal_notification_persist", eventType });
+  }
   const finish = async (result: PushResult): Promise<PushResult> => {
     await recordPushDelivery({
       userId,

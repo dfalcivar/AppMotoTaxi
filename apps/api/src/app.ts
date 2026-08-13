@@ -108,6 +108,12 @@ const deviceTokenSchema = z.object({
   firebaseProjectId: z.string().trim().min(3).max(200).optional()
 });
 const testPushSchema = z.object({ delaySeconds: z.number().int().min(0).max(15).default(0) });
+const pageQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().datetime({ offset: true }).optional(),
+  status: z.enum(["ALL", "COMPLETED", "CANCELLED", "SCHEDULED"]).default("ALL")
+});
+const inboxQuerySchema = pageQuerySchema.pick({ limit: true, cursor: true });
 const bannerPlacementSchema = z.object({ placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]).default("PASSENGER_HOME") });
 const favoritePlaceSchema = z.object({
   label: z.string().trim().min(2).max(50),
@@ -948,7 +954,7 @@ export async function buildApp() {
           origin_reference, destination_reference, passenger_notes, service_zone,
           pricing_version, pricing_snapshot, quoted_total_cents, scheduled_for,
           schedule_status, estimated_distance_meters, estimated_duration_seconds,
-          service_area_id, service_area_version_id
+          service_area_id, service_area_version_id, route_snapshot
         ) values (
           ${user.id!}, ${input.passengers}, ${input.paymentMethod},
           ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
@@ -958,7 +964,8 @@ export async function buildApp() {
           ${total}, ${scheduledFor ?? null}, ${scheduledFor ? "SCHEDULED" : null},
           ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
-          ${operationalArea.id}::uuid, ${operationalArea.versionId}::uuid
+          ${operationalArea.id}::uuid, ${operationalArea.versionId}::uuid,
+          ${route ? JSON.stringify({ points: route.points, provider: route.provider }) : null}::jsonb
         ) returning id
       `;
       for (let index = 0; index < destinations.length; index++) {
@@ -1052,6 +1059,8 @@ export async function buildApp() {
     const tripId = (request.params as { tripId: string }).tripId;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
+        t.final_total_cents as "finalTotalCents", t.requested_at as "requestedAt", t.assigned_at as "assignedAt",
+        t.started_at as "startedAt", t.completed_at as "completedAt", t.cancelled_at as "cancelledAt",
         t.driver_id::text as "driverId", d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
         coalesce(d.rating, 0)::float8 as "driverRating", (d_user.profile_photo_data is not null) as "driverHasPhoto",
         t.passenger_id::text as "passengerId", p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone",
@@ -1065,6 +1074,8 @@ export async function buildApp() {
         cancellation.reason_code as "cancellationReason", t.scheduled_for as "scheduledFor",
         t.schedule_status as "scheduleStatus", t.estimated_distance_meters as "distanceMeters",
         t.estimated_duration_seconds as "durationSeconds",
+        coalesce(t.route_snapshot->'points', '[]'::jsonb) as "routePoints",
+        (select score from ratings where trip_id=t.id and author_id=${user.id!} limit 1) as "myRating",
         coalesce((select json_agg(json_build_object(
           'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
           'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry),
@@ -1121,16 +1132,30 @@ export async function buildApp() {
 
   app.get("/v1/trips/mine", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
-    return database()`
+    const parsed = pageQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PAGINATION" });
+    const { limit, cursor, status } = parsed.data;
+    const rows = await database()`
       select t.id::text as "tripId", t.status, t.requested_at as "requestedAt",
         t.scheduled_for as "scheduledFor", t.schedule_status as "scheduleStatus",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
-        t.quoted_total_cents as "quotedTotalCents", passenger.full_name as "passengerName", driver.full_name as "driverName"
+        t.quoted_total_cents as "quotedTotalCents", passenger.full_name as "passengerName", driver.full_name as "driverName",
+        ST_Y(t.origin::geometry) as "originLatitude", ST_X(t.origin::geometry) as "originLongitude",
+        ST_Y(t.destination::geometry) as "destinationLatitude", ST_X(t.destination::geometry) as "destinationLongitude",
+        t.estimated_distance_meters as "distanceMeters", t.estimated_duration_seconds as "durationSeconds",
+        (driver.profile_photo_data is not null) as "driverHasPhoto"
       from trips t join users passenger on passenger.id=t.passenger_id
       left join users driver on driver.id=t.driver_id
-      where ${user.id!}=t.passenger_id or ${user.id!}=t.driver_id
-      order by t.requested_at desc limit 30
+      where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
+        and (${cursor ?? null}::timestamptz is null or t.requested_at < ${cursor ?? null}::timestamptz)
+        and (${status}='ALL'
+          or (${status}='SCHEDULED' and t.scheduled_for is not null)
+          or (${status}<>'SCHEDULED' and t.status::text=${status}))
+      order by t.requested_at desc, t.id desc limit ${limit + 1}
     `;
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    return { items, nextCursor: hasMore ? items.at(-1)?.requestedAt ?? null : null };
   });
 
   app.get("/v1/trips/scheduled", async (request, reply) => {
@@ -1212,7 +1237,8 @@ export async function buildApp() {
           estimated_distance_meters=${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
           service_area_id=${operationalArea.id}::uuid,
-          service_area_version_id=${operationalArea.versionId}::uuid
+          service_area_version_id=${operationalArea.versionId}::uuid,
+          route_snapshot=${route ? JSON.stringify({ points: route.points, provider: route.provider }) : null}::jsonb
         where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
           and schedule_status='SCHEDULED' and driver_id is null and scheduled_for > now()
         returning id::text
@@ -1394,22 +1420,66 @@ export async function buildApp() {
     return rows[0] ?? null;
   });
 
+  app.get("/v1/activity", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const parsed = inboxQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PAGINATION" });
+    const { limit, cursor } = parsed.data;
+    const rows = await database()`
+      select e.id::text, t.id::text as "tripId", e.to_status as status, e.reason_code as "reasonCode",
+        e.occurred_at as "occurredAt", t.origin_reference as "originReference",
+        t.destination_reference as "destinationReference", t.quoted_total_cents as "quotedTotalCents",
+        case e.to_status
+          when 'SEARCHING' then case when t.scheduled_for is null then 'Solicitaste un viaje' else 'Programaste un viaje' end
+          when 'ASSIGNED' then 'Conductor asignado'
+          when 'DRIVER_EN_ROUTE' then 'El conductor va en camino'
+          when 'DRIVER_ARRIVED' then 'El conductor llegó al punto de encuentro'
+          when 'IN_PROGRESS' then 'Viaje iniciado'
+          when 'COMPLETED' then 'Viaje completado'
+          when 'CANCELLED' then 'Viaje cancelado'
+          else 'Actualización del viaje' end as message
+      from trip_events e join trips t on t.id=e.trip_id
+      where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
+        and (${cursor ?? null}::timestamptz is null or e.occurred_at < ${cursor ?? null}::timestamptz)
+      order by e.occurred_at desc, e.id desc limit ${limit + 1}
+    `;
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    return { items, nextCursor: hasMore ? items.at(-1)?.occurredAt ?? null : null };
+  });
+
   app.get("/v1/notifications", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
-    return database()`
-      select e.id, t.id::text as "tripId", e.to_status as status, e.occurred_at as "occurredAt",
-        case e.to_status
-          when 'ASSIGNED' then 'Viaje confirmado: conductor asignado.'
-          when 'DRIVER_EN_ROUTE' then 'El conductor va en camino.'
-          when 'DRIVER_ARRIVED' then 'El conductor llegó al punto de encuentro.'
-          when 'IN_PROGRESS' then 'Tu viaje inició.'
-          when 'COMPLETED' then 'Viaje finalizado. Puedes calificarlo.'
-          when 'CANCELLED' then 'El viaje fue cancelado.'
-          else 'Actualización de viaje.' end as message
-      from trip_events e join trips t on t.id=e.trip_id
-      where ${user.id!}=t.passenger_id or ${user.id!}=t.driver_id
-      order by e.occurred_at desc limit 50
+    const parsed = inboxQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PAGINATION" });
+    const { limit, cursor } = parsed.data;
+    const rows = await database()`
+      select id::text, title, message, notification_type as type, entity_type as "entityType",
+        entity_id::text as "entityId", data, read_at as "readAt", created_at as "createdAt"
+      from user_notifications where user_id=${user.id!}
+        and (${cursor ?? null}::timestamptz is null or created_at < ${cursor ?? null}::timestamptz)
+      order by created_at desc, id desc limit ${limit + 1}
     `;
+    const unreadRows = await database()`select count(*)::int count from user_notifications where user_id=${user.id!} and read_at is null`;
+    const unreadCount = Number(unreadRows[0]?.count ?? 0);
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    return { items, unreadCount, nextCursor: hasMore ? items.at(-1)?.createdAt ?? null : null };
+  });
+
+  app.patch("/v1/notifications/:notificationId/read", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const notificationId = (request.params as { notificationId: string }).notificationId;
+    if (!z.string().uuid().safeParse(notificationId).success) return reply.code(400).send({ error: "INVALID_NOTIFICATION" });
+    const [updated] = await database()`update user_notifications set read_at=coalesce(read_at,now()) where id=${notificationId} and user_id=${user.id!} returning id::text, read_at as "readAt"`;
+    if (!updated) return reply.code(404).send({ error: "NOTIFICATION_NOT_FOUND" });
+    return updated;
+  });
+
+  app.post("/v1/notifications/read-all", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    const result = await database()`update user_notifications set read_at=now() where user_id=${user.id!} and read_at is null returning id`;
+    return { updated: result.length, unreadCount: 0 };
   });
 
   app.post("/v1/trips/:tripId/action", async (request, reply) => {

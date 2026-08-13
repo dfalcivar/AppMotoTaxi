@@ -115,6 +115,17 @@ describe("API de cotización", () => {
     expect(incidents.statusCode).toBe(401);
   });
 
+  it("protege viajes, actividad y notificaciones del pasajero", async () => {
+    const requests = await Promise.all([
+      app.inject({ method: "GET", url: "/v1/trips/mine" }),
+      app.inject({ method: "GET", url: "/v1/activity" }),
+      app.inject({ method: "GET", url: "/v1/notifications" }),
+      app.inject({ method: "POST", url: "/v1/notifications/read-all" }),
+      app.inject({ method: "PATCH", url: "/v1/notifications/00000000-0000-4000-8000-000000000000/read" })
+    ]);
+    expect(requests.every(response => response.statusCode === 401)).toBe(true);
+  });
+
   it("cotiza la promoción urbana de tres pasajeros", async () => {
     const response = await app.inject({
       method: "POST",
