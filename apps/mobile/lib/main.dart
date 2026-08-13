@@ -870,6 +870,10 @@ String mensajeApi(dynamic code) =>
           'Esta zona de cobertura está temporalmente deshabilitada.',
       'DIFFERENT_SERVICE_AREAS':
           'El origen y el destino deben estar dentro de la misma zona de cobertura.',
+      'GEOCODER_UNAVAILABLE':
+          'No fue posible consultar las direcciones en este momento. Revisa tu conexión e inténtalo nuevamente.',
+      'INVALID_LOCATION_QUERY':
+          'Escribe al menos tres letras y vuelve a buscar la dirección.',
     }[code] ??
     'No se pudo completar la operación.';
 

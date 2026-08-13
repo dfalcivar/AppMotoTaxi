@@ -118,7 +118,7 @@ export function googlePlacesSearchBody(
     pageSize: placesSearchPageSize(bounds)
   };
   if (bounds) {
-    body.locationRestriction = {
+    body.locationBias = {
       rectangle: {
         low: { latitude: bounds.south, longitude: bounds.west },
         high: { latitude: bounds.north, longitude: bounds.east }
@@ -170,6 +170,47 @@ async function searchGooglePlaces(
       label: cleanLocationLabel([name, address].filter(Boolean).join(" · ")).slice(0, 200),
       latitude,
       longitude
+    }];
+  });
+}
+
+async function searchGoogleGeocoding(
+  query: string,
+  bounds?: SearchBounds
+): Promise<LocationResult[]> {
+  const key = googleMapsKey();
+  if (!key) return [];
+  const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+  url.searchParams.set("address", query);
+  url.searchParams.set("language", "es");
+  url.searchParams.set("region", "ec");
+  url.searchParams.set("components", "country:EC");
+  if (bounds) {
+    url.searchParams.set(
+      "bounds",
+      `${bounds.south},${bounds.west}|${bounds.north},${bounds.east}`
+    );
+  }
+  url.searchParams.set("key", key);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`GOOGLE_GEOCODING_${response.status}`);
+  const payload = (await response.json()) as {
+    status?: string;
+    results?: GoogleGeocodeResult[];
+  };
+  if (payload.status !== "OK" && payload.status !== "ZERO_RESULTS") {
+    throw new Error(`GOOGLE_GEOCODING_${payload.status ?? "UNKNOWN"}`);
+  }
+  return (payload.results ?? []).flatMap(result => {
+    const point = result.geometry?.location;
+    const label = result.formatted_address
+      ? cleanLocationLabel(result.formatted_address)
+      : undefined;
+    if (point?.lat == null || point.lng == null || !label) return [];
+    return [{
+      label: label.slice(0, 200),
+      latitude: point.lat,
+      longitude: point.lng
     }];
   });
 }
@@ -298,6 +339,12 @@ export async function searchLocations(query: string, focus?: FocusPoint, bounds?
     } catch {
       // Mantiene Nominatim como respaldo durante la transición a Google.
     }
+    try {
+      const geocoded = await searchGoogleGeocoding(query, bounds);
+      if (geocoded.length) return geocoded;
+    } catch {
+      // Nominatim remains the final fallback for temporary Google failures.
+    }
   }
   const matchedIntersection = await findIntersection(query, focus);
   if (matchedIntersection) return [matchedIntersection];
@@ -324,7 +371,7 @@ export async function searchLocationsInArea(
   const contextualQuery = areaLabel
     ? `${query}, ${areaLabel}`
     : query;
-  return searchLocations(contextualQuery, focus);
+  return searchLocations(contextualQuery, focus, bounds);
 }
 
 function reverseLabel(item: NominatimReverseItem): string {
