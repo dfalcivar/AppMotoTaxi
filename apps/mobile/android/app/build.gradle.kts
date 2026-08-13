@@ -69,6 +69,11 @@ android {
             // Las pruebas locales conservan firma debug hasta que se configure
             // el almacén privado. El script de producción impide publicar así.
             signingConfig = if (productionSigningConfigured) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            // Navigation SDK hace que R8 consuma varios GB y bloquee la APK
+            // universal de pruebas. La reducción nativa se reserva para el
+            // futuro Android App Bundle firmado para Play Store.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
