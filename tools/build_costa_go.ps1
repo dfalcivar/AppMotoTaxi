@@ -40,7 +40,10 @@ try {
   if ($Target -in @("apk", "all")) {
     & $Flutter build apk --release @defines
     if ($LASTEXITCODE -ne 0) { throw "Falló la compilación APK." }
-    Copy-Item "build\app\outputs\flutter-apk\app-release.apk" (Join-Path $release "Costa-Go-release.apk") -Force
+    $apkSource = "build\app\outputs\flutter-apk\app-release.apk"
+    if (-not (Test-Path $apkSource)) { throw "Flutter terminó sin producir el APK universal esperado." }
+    Copy-Item $apkSource (Join-Path $release "Costa-Go-universal.apk") -Force
+    Copy-Item $apkSource (Join-Path $release "Costa-Go-release.apk") -Force
   }
   if ($Target -in @("appbundle", "all")) {
     & $Flutter build appbundle --release @defines
