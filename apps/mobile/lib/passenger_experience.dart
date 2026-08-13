@@ -25,14 +25,14 @@ class TripRepeatDraft {
       );
 }
 
-class PassengerNotificationStore {
-  PassengerNotificationStore._();
-  static final instance = PassengerNotificationStore._();
+class UserNotificationStore {
+  UserNotificationStore._();
+  static final instance = UserNotificationStore._();
   final unread = ValueNotifier<int>(0);
   bool _loading = false;
 
   Future<void> refresh(Session session) async {
-    if (_loading || session.role != 'PASSENGER') return;
+    if (_loading) return;
     _loading = true;
     try {
       final page = await Api().notificationsPage(session.token, limit: 1);
@@ -47,6 +47,20 @@ class PassengerNotificationStore {
 
 String _money(dynamic cents) =>
     '\$${(((cents as num?)?.toInt() ?? 0) / 100).toStringAsFixed(2).replaceAll('.', ',')}';
+
+String _distance(dynamic meters) {
+  final value = (meters as num?)?.toDouble() ?? 0;
+  return value >= 1000
+      ? '${(value / 1000).toStringAsFixed(1).replaceAll('.', ',')} km'
+      : '${value.round()} m';
+}
+
+String _duration(dynamic seconds) {
+  final minutes = (((seconds as num?)?.toDouble() ?? 0) / 60).round();
+  return minutes >= 60
+      ? '${minutes ~/ 60} h ${minutes % 60} min'
+      : '$minutes min';
+}
 
 String _shortDate(dynamic value) {
   final date = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
@@ -87,8 +101,58 @@ String _dayGroup(dynamic value) {
   return 'Anteriores';
 }
 
-class PassengerHeaderIsland extends StatelessWidget {
-  const PassengerHeaderIsland({
+enum NotificationTarget { chat, activeTrip, tripDetail, support, offers, inbox }
+
+NotificationTarget notificationTargetFor(String? value) {
+  final type = value?.toUpperCase();
+  if (type == 'CHAT_MESSAGE') return NotificationTarget.chat;
+  if (const {
+    'TRIP_OFFER',
+    'TRIP_OFFER_CANCELLED',
+    'SCHEDULED_TRIP_AVAILABLE',
+  }.contains(type)) {
+    return NotificationTarget.offers;
+  }
+  if (const {
+    'TRIP_ASSIGNED',
+    'DRIVER_EN_ROUTE',
+    'DRIVER_ARRIVED',
+    'IN_PROGRESS',
+    'SCHEDULED_TRIP_REMINDER',
+    'SCHEDULED_DRIVER_REMINDER',
+  }.contains(type)) {
+    return NotificationTarget.activeTrip;
+  }
+  if (const {'COMPLETED', 'TRIP_CANCELLED'}.contains(type)) {
+    return NotificationTarget.tripDetail;
+  }
+  if (type?.startsWith('SUPPORT_') == true) {
+    return NotificationTarget.support;
+  }
+  return NotificationTarget.inbox;
+}
+
+Future<void> openNotificationChat(
+    BuildContext context, Session session, String tripId) async {
+  final realtime = RealtimeService(baseUrl: base, token: session.token);
+  realtime.connect();
+  try {
+    await showTripChat(
+      context: context,
+      tripId: tripId,
+      userId: session.id,
+      realtime: realtime,
+      loadHistory: () => Api().messages(session.token, tripId),
+      sendFallback: (clientId, body) =>
+          Api().sendMessage(session.token, tripId, clientId, body),
+    );
+  } finally {
+    realtime.dispose();
+  }
+}
+
+class RoleAwareHeaderIsland extends StatelessWidget {
+  const RoleAwareHeaderIsland({
     super.key,
     required this.session,
     required this.onAccount,
@@ -97,8 +161,8 @@ class PassengerHeaderIsland extends StatelessWidget {
   final Future<void> Function() onAccount;
 
   String get firstName {
-    final value =
-        session.name.trim().split(RegExp(r'\s+')).firstOrNull ?? 'Pasajero';
+    final value = session.name.trim().split(RegExp(r'\s+')).firstOrNull ??
+        (session.role == 'DRIVER' ? 'Conductor' : 'Pasajero');
     return value.length > 18 ? '${value.substring(0, 17)}…' : value;
   }
 
@@ -138,7 +202,7 @@ class PassengerHeaderIsland extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               ValueListenableBuilder<int>(
-                valueListenable: PassengerNotificationStore.instance.unread,
+                valueListenable: UserNotificationStore.instance.unread,
                 builder: (context, unread, _) => Badge(
                   isLabelVisible: unread > 0,
                   label: Text(unread > 99 ? '99+' : '$unread'),
@@ -148,10 +212,8 @@ class PassengerHeaderIsland extends StatelessWidget {
                       await Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (_) =>
-                                  PassengerNotificationsView(session)));
-                      await PassengerNotificationStore.instance
-                          .refresh(session);
+                              builder: (_) => NotificationCenterView(session)));
+                      await UserNotificationStore.instance.refresh(session);
                     },
                     icon: const Icon(Icons.notifications_none_rounded),
                   ),
@@ -175,6 +237,7 @@ class _PassengerTripsViewState extends State<PassengerTripsView> {
   String filter = 'ALL';
   String? cursor, error;
   bool loading = true, loadingMore = false;
+  bool get isDriver => widget.session.role == 'DRIVER';
 
   @override
   void initState() {
@@ -319,8 +382,11 @@ class _PassengerTripsViewState extends State<PassengerTripsView> {
                             children: [
                                 _FeaturedTripCard(
                                     trip: items.first,
+                                    isDriver: isDriver,
                                     onTap: () => openDetail(items.first),
-                                    onRepeat: () => repeat(items.first)),
+                                    onRepeat: isDriver
+                                        ? null
+                                        : () => repeat(items.first)),
                                 if (items.length > 1) ...[
                                   const SizedBox(height: 24),
                                   Text('Anteriores',
@@ -333,8 +399,11 @@ class _PassengerTripsViewState extends State<PassengerTripsView> {
                                   ...items.skip(1).map((trip) =>
                                       _CompactTripTile(
                                           trip: trip,
+                                          isDriver: isDriver,
                                           onTap: () => openDetail(trip),
-                                          onRepeat: () => repeat(trip))),
+                                          onRepeat: isDriver
+                                              ? null
+                                              : () => repeat(trip))),
                                 ],
                                 if (cursor != null)
                                   Center(
@@ -356,9 +425,14 @@ class _PassengerTripsViewState extends State<PassengerTripsView> {
 
 class _FeaturedTripCard extends StatelessWidget {
   const _FeaturedTripCard(
-      {required this.trip, required this.onTap, required this.onRepeat});
+      {required this.trip,
+      required this.onTap,
+      required this.onRepeat,
+      required this.isDriver});
   final Map<String, dynamic> trip;
-  final VoidCallback onTap, onRepeat;
+  final VoidCallback onTap;
+  final VoidCallback? onRepeat;
+  final bool isDriver;
   LatLng? point(String prefix) {
     final lat = (trip['${prefix}Latitude'] as num?)?.toDouble(),
         lng = (trip['${prefix}Longitude'] as num?)?.toDouble();
@@ -416,11 +490,19 @@ class _FeaturedTripCard extends StatelessWidget {
                           const Spacer(),
                           _StatusPill(trip['status'])
                         ]),
-                        const SizedBox(height: 14),
-                        FilledButton.tonalIcon(
-                            onPressed: onRepeat,
-                            icon: const Icon(Icons.refresh_rounded),
-                            label: const Text('Solicitar nuevamente')),
+                        if (isDriver && trip['passengerName'] != null) ...[
+                          const SizedBox(height: 8),
+                          Text('Pasajero: ${trip['passengerName']}',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700)),
+                        ],
+                        if (onRepeat != null) ...[
+                          const SizedBox(height: 14),
+                          FilledButton.tonalIcon(
+                              onPressed: onRepeat,
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text('Solicitar nuevamente')),
+                        ],
                       ])),
             ])));
   }
@@ -428,9 +510,14 @@ class _FeaturedTripCard extends StatelessWidget {
 
 class _CompactTripTile extends StatelessWidget {
   const _CompactTripTile(
-      {required this.trip, required this.onTap, required this.onRepeat});
+      {required this.trip,
+      required this.onTap,
+      required this.onRepeat,
+      required this.isDriver});
   final Map<String, dynamic> trip;
-  final VoidCallback onTap, onRepeat;
+  final VoidCallback onTap;
+  final VoidCallback? onRepeat;
+  final bool isDriver;
   @override
   Widget build(BuildContext context) => InkWell(
       onTap: onTap,
@@ -459,10 +546,11 @@ class _CompactTripTile extends StatelessWidget {
                   Text(_shortDate(trip['scheduledFor'] ?? trip['requestedAt'])),
                   Text(_money(trip['quotedTotalCents']))
                 ])),
-            TextButton.icon(
-                onPressed: onRepeat,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: const Text('Repetir')),
+            if (onRepeat != null)
+              TextButton.icon(
+                  onPressed: onRepeat,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Repetir')),
           ])));
 }
 
@@ -625,16 +713,14 @@ class _ActivityTile extends StatelessWidget {
       ]));
 }
 
-class PassengerNotificationsView extends StatefulWidget {
-  const PassengerNotificationsView(this.session, {super.key});
+class NotificationCenterView extends StatefulWidget {
+  const NotificationCenterView(this.session, {super.key});
   final Session session;
   @override
-  State<PassengerNotificationsView> createState() =>
-      _PassengerNotificationsViewState();
+  State<NotificationCenterView> createState() => _NotificationCenterViewState();
 }
 
-class _PassengerNotificationsViewState
-    extends State<PassengerNotificationsView> {
+class _NotificationCenterViewState extends State<NotificationCenterView> {
   final items = <Map<String, dynamic>>[];
   String? cursor, error;
   bool loading = true, more = false;
@@ -665,7 +751,7 @@ class _PassengerNotificationsViewState
         cursor = page['nextCursor']?.toString();
         loading = false;
         more = false;
-        PassengerNotificationStore.instance.unread.value =
+        UserNotificationStore.instance.unread.value =
             (page['unreadCount'] as num?)?.toInt() ?? 0;
       });
     } catch (_) {
@@ -683,23 +769,39 @@ class _PassengerNotificationsViewState
     if (item['readAt'] == null) {
       await Api().markNotificationRead(widget.session.token, item['id']);
       item['readAt'] = DateTime.now().toIso8601String();
-      PassengerNotificationStore.instance.unread.value =
-          math.max(0, PassengerNotificationStore.instance.unread.value - 1);
+      UserNotificationStore.instance.unread.value =
+          math.max(0, UserNotificationStore.instance.unread.value - 1);
       if (mounted) setState(() {});
     }
-    final type = item['entityType']?.toString(),
-        id = item['entityId']?.toString();
-    if (!mounted || id == null) return;
-    if (type == 'TRIP') {
+    final target = notificationTargetFor(item['type']?.toString());
+    final data = item['data'] is Map
+        ? Map<String, dynamic>.from(item['data'] as Map)
+        : <String, dynamic>{};
+    final id = (data['tripId'] ?? item['entityId'])?.toString();
+    if (!mounted) return;
+    if (target == NotificationTarget.chat && id != null) {
+      await openNotificationChat(context, widget.session, id);
+    } else if (target == NotificationTarget.support) {
+      final incidentId = (data['incidentId'] ?? item['entityId'])?.toString();
+      if (incidentId != null) {
+        await Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) =>
+                    SupportIncidentDetail(widget.session, incidentId)));
+      }
+    } else if (target == NotificationTarget.offers &&
+        widget.session.role == 'DRIVER') {
+      if (mounted) Navigator.pop(context);
+    } else if (const {
+          NotificationTarget.activeTrip,
+          NotificationTarget.tripDetail
+        }.contains(target) &&
+        id != null) {
       await Navigator.push(
           context,
           MaterialPageRoute(
               builder: (_) => PassengerTripDetail(widget.session, id)));
-    } else if (type == 'INCIDENT') {
-      await Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => SupportIncidentDetail(widget.session, id)));
     }
   }
 
@@ -711,7 +813,7 @@ class _PassengerNotificationsViewState
         item['readAt'] ??= DateTime.now().toIso8601String();
       }
     });
-    PassengerNotificationStore.instance.unread.value = 0;
+    UserNotificationStore.instance.unread.value = 0;
   }
 
   @override
@@ -893,7 +995,7 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _driver(context, item),
+                    _participant(context, item),
                     const SizedBox(height: 22),
                     _routeInfo(context, item),
                     const Divider(height: 36),
@@ -914,6 +1016,12 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
                         _money(item['finalTotalCents'] ??
                             item['quotedTotalCents']),
                         strong: true),
+                    if (item['distanceMeters'] != null)
+                      _summaryRow(
+                          'Distancia', _distance(item['distanceMeters'])),
+                    if (item['durationSeconds'] != null)
+                      _summaryRow(
+                          'DuraciÃ³n', _duration(item['durationSeconds'])),
                     if (item['myRating'] != null) ...[
                       const Divider(height: 30),
                       Row(children: [
@@ -940,15 +1048,23 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
         ]));
   }
 
-  Widget _driver(BuildContext context, Map<String, dynamic> item) {
-    final hasDriver = item['driverId'] != null;
-    final hasPhoto = item['driverHasPhoto'] == true;
+  Widget _participant(BuildContext context, Map<String, dynamic> item) {
+    final driverView = widget.session.role == 'DRIVER';
+    final participantId =
+        item[driverView ? 'passengerId' : 'driverId']?.toString();
+    final participantName =
+        item[driverView ? 'passengerName' : 'driverName']?.toString() ??
+            (driverView ? 'Pasajero' : 'Conductor no asignado');
+    final hasPhoto =
+        item[driverView ? 'passengerHasPhoto' : 'driverHasPhoto'] == true;
+    final participantRating =
+        item[driverView ? 'passengerRating' : 'driverRating'] as num?;
     return Row(children: [
       Expanded(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Viaje Costa-Go con'),
+          Text(driverView ? 'Viaje realizado para' : 'Viaje Costa-Go con'),
           Text(
-            item['driverName']?.toString() ?? 'Conductor no asignado',
+            participantName,
             style: Theme.of(context)
                 .textTheme
                 .headlineSmall
@@ -958,17 +1074,23 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
           Text(_shortDate(item['startedAt'] ??
               item['scheduledFor'] ??
               item['requestedAt'])),
-          if (item['vehicle'] != null)
+          if (!driverView && item['vehicle'] != null)
             Text(
                 '${_money(item['finalTotalCents'] ?? item['quotedTotalCents'])} · '
                 '${item['vehicle']}'),
+          if (participantRating != null)
+            Row(children: [
+              const Icon(Icons.star_rounded, size: 18, color: Colors.amber),
+              const SizedBox(width: 4),
+              Text(participantRating.toStringAsFixed(1))
+            ]),
         ]),
       ),
-      if (hasDriver)
+      if (participantId != null)
         ClipOval(
           child: hasPhoto
               ? Image.network(
-                  '$base/v1/users/${item['driverId']}/profile-photo',
+                  '$base/v1/users/$participantId/profile-photo',
                   headers: {'Authorization': 'Bearer ${widget.session.token}'},
                   width: 72,
                   height: 72,

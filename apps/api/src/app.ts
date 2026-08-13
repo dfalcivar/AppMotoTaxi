@@ -472,7 +472,15 @@ export async function buildApp() {
         retryLocations
       ));
       return retryLocations.filter((_, index) => allowedIndexes.has(index));
-    } catch { return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" }); }
+    } catch (error) {
+      request.log.warn({
+        queryLength: parsed.data.q.length,
+        hasFocus: parsed.data.latitude != null,
+        hasServiceArea: Boolean(parsed.data.serviceAreaId),
+        reason: error instanceof Error ? error.message : "unknown"
+      }, "location_search_failed");
+      return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" });
+    }
   });
 
   app.get("/v1/service-areas", async (request, reply) => {
@@ -1138,15 +1146,23 @@ export async function buildApp() {
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.requested_at as "requestedAt",
         t.scheduled_for as "scheduledFor", t.schedule_status as "scheduleStatus",
+        t.assigned_at as "assignedAt", t.started_at as "startedAt",
+        t.completed_at as "completedAt", t.cancelled_at as "cancelledAt",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
-        t.quoted_total_cents as "quotedTotalCents", passenger.full_name as "passengerName", driver.full_name as "driverName",
+        t.quoted_total_cents as "quotedTotalCents", t.final_total_cents as "finalTotalCents",
+        passenger.full_name as "passengerName", driver.full_name as "driverName",
         ST_Y(t.origin::geometry) as "originLatitude", ST_X(t.origin::geometry) as "originLongitude",
         ST_Y(t.destination::geometry) as "destinationLatitude", ST_X(t.destination::geometry) as "destinationLongitude",
         t.estimated_distance_meters as "distanceMeters", t.estimated_duration_seconds as "durationSeconds",
-        (driver.profile_photo_data is not null) as "driverHasPhoto"
+        (driver.profile_photo_data is not null) as "driverHasPhoto",
+        (passenger.profile_photo_data is not null) as "passengerHasPhoto",
+        coalesce((select avg(r.score) from ratings r where r.recipient_id=t.passenger_id), 0)::float8 as "passengerRating",
+        vehicle.identifier as vehicle
       from trips t join users passenger on passenger.id=t.passenger_id
       left join users driver on driver.id=t.driver_id
-      where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
+      left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) vehicle on true
+      where ((${user.role}='DRIVER' and ${user.id!}=t.driver_id)
+        or (${user.role}<>'DRIVER' and ${user.id!}=t.passenger_id))
         and (${cursor ?? null}::timestamptz is null or t.requested_at < ${cursor ?? null}::timestamptz)
         and (${status}='ALL'
           or (${status}='SCHEDULED' and t.scheduled_for is not null)
@@ -1429,6 +1445,7 @@ export async function buildApp() {
       select e.id::text, t.id::text as "tripId", e.to_status as status, e.reason_code as "reasonCode",
         e.occurred_at as "occurredAt", t.origin_reference as "originReference",
         t.destination_reference as "destinationReference", t.quoted_total_cents as "quotedTotalCents",
+        passenger.full_name as "passengerName",
         case e.to_status
           when 'SEARCHING' then case when t.scheduled_for is null then 'Solicitaste un viaje' else 'Programaste un viaje' end
           when 'ASSIGNED' then 'Conductor asignado'
@@ -1439,13 +1456,29 @@ export async function buildApp() {
           when 'CANCELLED' then 'Viaje cancelado'
           else 'Actualización del viaje' end as message
       from trip_events e join trips t on t.id=e.trip_id
-      where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
+      join users passenger on passenger.id=t.passenger_id
+      where ((${user.role}='DRIVER' and ${user.id!}=t.driver_id and e.to_status<>'SEARCHING')
+        or (${user.role}<>'DRIVER' and ${user.id!}=t.passenger_id))
         and (${cursor ?? null}::timestamptz is null or e.occurred_at < ${cursor ?? null}::timestamptz)
       order by e.occurred_at desc, e.id desc limit ${limit + 1}
     `;
     const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    return { items, nextCursor: hasMore ? items.at(-1)?.occurredAt ?? null : null };
+    const pageItems = hasMore ? rows.slice(0, limit) : rows;
+    const driverMessages: Record<string, (name: string) => string> = {
+      ASSIGNED: name => `Se te asign\u00f3 el viaje de ${name}`,
+      DRIVER_EN_ROUTE: name => `Vas en camino a recoger a ${name}`,
+      DRIVER_ARRIVED: () => "Confirmaste tu llegada al punto de encuentro",
+      IN_PROGRESS: name => `Iniciaste el viaje de ${name}`,
+      COMPLETED: () => "Completaste el viaje",
+      CANCELLED: () => "El viaje fue cancelado"
+    };
+    const items = user.role === "DRIVER"
+      ? pageItems.map(item => ({
+          ...item,
+          message: (driverMessages[String(item.status)] ?? (() => "Actualizaci\u00f3n del viaje"))(String(item.passengerName ?? "pasajero"))
+        }))
+      : pageItems;
+    return { items, nextCursor: hasMore ? pageItems.at(-1)?.occurredAt ?? null : null };
   });
 
   app.get("/v1/notifications", async (request, reply) => {

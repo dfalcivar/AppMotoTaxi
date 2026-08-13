@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { cleanLocationLabel, placesSearchPageSize, preciseGoogleAddress } from "./geocoding.js";
+import { cleanLocationLabel, googlePlacesSearchBody, placesSearchPageSize, preciseGoogleAddress } from "./geocoding.js";
 
 describe("Google Places", () => {
   it("solicita más candidatos cuando luego se filtrarán con un polígono", () => {
     expect(placesSearchPageSize()).toBe(8);
     expect(placesSearchPageSize({ west: -80, south: 0.7, east: -79.7, north: 1 })).toBe(20);
+  });
+
+  it("prioriza la zona sin excluir comercios ni puntos de interÃ©s", () => {
+    const body = googlePlacesSearchBody("CrossFit La Jaula", undefined, {
+      west: -79.1, south: -3.0, east: -78.9, north: -2.8
+    });
+    expect(body).toMatchObject({
+      textQuery: "CrossFit La Jaula",
+      locationBias: { rectangle: expect.any(Object) }
+    });
+    expect(body).not.toHaveProperty("locationRestriction");
+    expect(body).not.toHaveProperty("includedType");
   });
 });
 

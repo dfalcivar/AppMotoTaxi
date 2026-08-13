@@ -3,6 +3,22 @@ import 'package:latlong2/latlong.dart';
 import 'package:mototaxi_atacames/main.dart';
 
 void main() {
+  group('NotificationRouter', () {
+    test('el tipo tiene prioridad sobre un tripId presente', () {
+      expect(notificationTargetFor('CHAT_MESSAGE'), NotificationTarget.chat);
+      expect(
+          notificationTargetFor('SUPPORT_UPDATE'), NotificationTarget.support);
+      expect(notificationTargetFor('TEST_PUSH'), NotificationTarget.inbox);
+    });
+
+    test('distingue viaje activo, detalle y ofertas del conductor', () {
+      expect(notificationTargetFor('DRIVER_ARRIVED'),
+          NotificationTarget.activeTrip);
+      expect(notificationTargetFor('COMPLETED'), NotificationTarget.tripDetail);
+      expect(notificationTargetFor('TRIP_OFFER'), NotificationTarget.offers);
+    });
+  });
+
   test('normaliza la cancelación realtime para no mostrar una acción vacía',
       () {
     expect(normalizePassengerTripUpdateType('CANCELLED'), 'TRIP_CANCELLED');

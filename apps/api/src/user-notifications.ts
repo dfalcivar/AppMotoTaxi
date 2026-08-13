@@ -1,6 +1,9 @@
 import { database } from "./database.js";
 
 const persistentTypes = new Set([
+  "TRIP_OFFER",
+  "TRIP_OFFER_CANCELLED",
+  "SCHEDULED_TRIP_AVAILABLE",
   "CHAT_MESSAGE",
   "TRIP_ASSIGNED",
   "DRIVER_EN_ROUTE",
@@ -38,7 +41,7 @@ export async function persistUserNotification(input: {
   if (!process.env.DATABASE_URL || !shouldPersistNotification(input.type)) return undefined;
   const entityId = uuid(input.data?.tripId ?? input.data?.incidentId);
   const entityType = input.data?.tripId ? "TRIP" : input.data?.incidentId ? "INCIDENT" : null;
-  const uniquePart = input.data?.messageId ?? input.data?.eventId ?? input.type;
+  const uniquePart = input.data?.messageId ?? input.data?.eventId ?? input.data?.eventAt ?? input.type;
   const eventKey = entityId ? `${input.type}:${entityId}:${uniquePart}` : undefined;
   const [stored] = await database()`
     insert into user_notifications

@@ -105,24 +105,19 @@ function googleMapsKey(): string | undefined {
   return process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim() || undefined;
 }
 
-async function searchGooglePlaces(
+export function googlePlacesSearchBody(
   query: string,
   focus?: FocusPoint,
   bounds?: SearchBounds
-): Promise<LocationResult[]> {
-  const key = googleMapsKey();
-  if (!key) return [];
+): Record<string, unknown> {
   const body: Record<string, unknown> = {
     textQuery: query,
     languageCode: "es",
     regionCode: "EC",
-    // A ServiceArea can be an irregular polygon inside a much larger bounds
-    // rectangle. Request enough candidates so the polygon filter in the API
-    // does not discard the first eight and incorrectly report no matches.
     pageSize: placesSearchPageSize(bounds)
   };
   if (bounds) {
-    body.locationRestriction = {
+    body.locationBias = {
       rectangle: {
         low: { latitude: bounds.south, longitude: bounds.west },
         high: { latitude: bounds.north, longitude: bounds.east }
@@ -136,6 +131,17 @@ async function searchGooglePlaces(
       }
     };
   }
+  return body;
+}
+
+async function searchGooglePlaces(
+  query: string,
+  focus?: FocusPoint,
+  bounds?: SearchBounds
+): Promise<LocationResult[]> {
+  const key = googleMapsKey();
+  if (!key) return [];
+  const body = googlePlacesSearchBody(query, focus, bounds);
   const response = await fetch(
     "https://places.googleapis.com/v1/places:searchText",
     {
@@ -144,12 +150,12 @@ async function searchGooglePlaces(
         "Content-Type": "application/json",
         "X-Goog-Api-Key": key,
         "X-Goog-FieldMask":
-          "places.displayName,places.formattedAddress,places.location"
+          "places.id,places.displayName,places.formattedAddress,places.location,places.primaryType"
       },
       body: JSON.stringify(body)
     }
   );
-  if (!response.ok) throw new Error("GOOGLE_PLACES_UNAVAILABLE");
+  if (!response.ok) throw new Error(`GOOGLE_PLACES_${response.status}`);
   const payload = (await response.json()) as { places?: GooglePlace[] };
   return (payload.places ?? []).flatMap(place => {
     const latitude = place.location?.latitude;

@@ -4173,6 +4173,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   ServiceArea? selectedOriginArea;
   ServiceArea? pendingSelectionArea;
   bool coverageDialogOpen = false;
+  bool initialPushHandled = false;
   @override
   void initState() {
     super.initState();
@@ -4181,10 +4182,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
     unawaited(api.registerFcm(widget.s.token));
-    unawaited(PassengerNotificationStore.instance.refresh(widget.s));
+    unawaited(UserNotificationStore.instance.refresh(widget.s));
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((push) {
-        unawaited(PassengerNotificationStore.instance.refresh(widget.s));
+        unawaited(UserNotificationStore.instance.refresh(widget.s));
         final type = push.data['type'];
         if (type == 'CHAT_MESSAGE' && !passengerChatOpen) {
           if (!mounted) return;
@@ -4383,7 +4384,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       unawaited(api.registerFcm(widget.s.token));
       unawaited(load());
       unawaited(checkPendingPassengerRating());
-      unawaited(PassengerNotificationStore.instance.refresh(widget.s));
+      unawaited(UserNotificationStore.instance.refresh(widget.s));
     }
   }
 
@@ -4411,7 +4412,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (notificationId != null) {
       try {
         await api.markNotificationRead(widget.s.token, notificationId);
-        await PassengerNotificationStore.instance.refresh(widget.s);
+        await UserNotificationStore.instance.refresh(widget.s);
       } catch (_) {
         // Abrir el viaje tiene prioridad si la confirmación de lectura falla.
       }
@@ -4427,19 +4428,35 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   void handleOpenedPush(RemoteMessage push) {
-    if (push.data['type'] == 'CHAT_MESSAGE') {
-      unawaited(openPassengerChat(push.data['tripId']));
+    final target = notificationTargetFor(push.data['type']);
+    final tripId = push.data['tripId']?.toString();
+    if (target == NotificationTarget.chat) {
+      unawaited(openPassengerChat(tripId));
+    } else if (const {
+      NotificationTarget.activeTrip,
+      NotificationTarget.tripDetail,
+      NotificationTarget.offers
+    }.contains(target)) {
+      unawaited(openPassengerTripDetail(tripId,
+          notificationId: push.data['internalNotificationId']));
+    } else if (target == NotificationTarget.support &&
+        push.data['incidentId'] != null) {
+      unawaited(Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => SupportIncidentDetail(
+                  widget.s, push.data['incidentId'].toString()))));
     } else {
-      unawaited(openPassengerTripDetail(
-        push.data['tripId'],
-        notificationId: push.data['internalNotificationId'],
-      ));
+      unawaited(Navigator.push(context,
+          MaterialPageRoute(builder: (_) => NotificationCenterView(widget.s))));
     }
   }
 
   Future<void> restoreInitialPush() async {
+    if (initialPushHandled) return;
     final push = await FirebaseMessaging.instance.getInitialMessage();
     if (!mounted || push == null) return;
+    initialPushHandled = true;
     handleOpenedPush(push);
   }
 
@@ -4603,7 +4620,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       return;
     }
     if (type == 'trip:status') {
-      unawaited(PassengerNotificationStore.instance.refresh(widget.s));
+      unawaited(UserNotificationStore.instance.refresh(widget.s));
       reflectTripStatus(event['status'], event['tripId']);
       showPassengerNotification(event['status']?.toString() ?? 'TRIP_UPDATE',
           event['tripId']?.toString());
@@ -4611,7 +4628,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       return;
     }
     if (type == 'chat:message') {
-      unawaited(PassengerNotificationStore.instance.refresh(widget.s));
+      unawaited(UserNotificationStore.instance.refresh(widget.s));
       if (passengerChatOpen) return;
       final value = Map<String, dynamic>.from(event['message'] as Map);
       InAppNotificationBanner.show(
@@ -6629,7 +6646,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 top: safeTop + 8,
                 left: 28,
                 right: 28,
-                child: PassengerHeaderIsland(
+                child: RoleAwareHeaderIsland(
                   session: widget.s,
                   onAccount: () async {
                     final draft = await profile(context, widget.s);
@@ -6729,6 +6746,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   bool routePreparing = false;
   String? promptedRatingTripId;
   final Set<String> processingOfferIds = <String>{};
+  bool initialPushHandled = false;
   @override
   void initState() {
     super.initState();
@@ -6736,8 +6754,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
+    unawaited(UserNotificationStore.instance.refresh(widget.s));
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((message) {
+        unawaited(UserNotificationStore.instance.refresh(widget.s));
         if (message.data['type'] == 'CHAT_MESSAGE' && !driverChatOpen) {
           if (!mounted) return;
           InAppNotificationBanner.show(
@@ -6828,18 +6848,31 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   void handleOpenedPush(RemoteMessage push) {
-    if (push.data['type'] == 'CHAT_MESSAGE') {
+    final target = notificationTargetFor(push.data['type']);
+    if (target == NotificationTarget.chat) {
       unawaited(openDriverChat(push.data['tripId']));
+    } else if (target == NotificationTarget.support &&
+        push.data['incidentId'] != null) {
+      unawaited(Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => SupportIncidentDetail(
+                  widget.s, push.data['incidentId'].toString()))));
     } else if (push.data['type'] == 'SCHEDULED_DRIVER_REMINDER') {
       unawaited(syncActivatedScheduledTrip(force: true));
+    } else if (target == NotificationTarget.inbox) {
+      unawaited(Navigator.push(context,
+          MaterialPageRoute(builder: (_) => NotificationCenterView(widget.s))));
     } else {
       unawaited(refresh());
     }
   }
 
   Future<void> restoreInitialPush() async {
+    if (initialPushHandled) return;
     final push = await FirebaseMessaging.instance.getInitialMessage();
     if (!mounted || push == null) return;
+    initialPushHandled = true;
     handleOpenedPush(push);
   }
 
@@ -8381,7 +8414,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 top: safeTop + 8,
                 left: 12,
                 right: 12,
-                child: Row(children: [
+                child: RoleAwareHeaderIsland(
+                  session: widget.s,
+                  onAccount: () async {
+                    await profile(context, widget.s);
+                  },
+                ), /* OLD
                   Expanded(
                     child: Material(
                       color: Theme.of(context).colorScheme.surface,
@@ -8406,7 +8444,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       icon: const Icon(Icons.person_outline),
                     ),
                   ),
-                ]),
+                ] )*/
               ),
               DraggableScrollableSheet(
                 controller: driverSheetController,

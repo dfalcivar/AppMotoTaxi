@@ -9,7 +9,8 @@ describe("notificaciones internas", () => {
   });
 
   it("no llena el buzón con ofertas operativas del conductor", () => {
-    expect(shouldPersistNotification("TRIP_OFFER")).toBe(false);
+    expect(shouldPersistNotification("TRIP_OFFER")).toBe(true);
+    expect(shouldPersistNotification("SCHEDULED_TRIP_AVAILABLE")).toBe(true);
     expect(shouldPersistNotification("DRIVER_AVAILABILITY")).toBe(false);
   });
 });
