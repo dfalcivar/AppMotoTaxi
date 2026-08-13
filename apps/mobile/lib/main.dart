@@ -4197,7 +4197,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 'Tienes un nuevo mensaje sobre tu viaje.',
             actionLabel: 'Abrir',
             icon: Icons.chat_bubble_outline,
-            onTap: () => openPassengerChat(push.data['tripId']),
+            onTap: () => openPassengerChat(push.data['tripId'],
+                notificationId: push.data['internalNotificationId']),
           );
         }
         if (const {
@@ -4215,6 +4216,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             push.data['tripId']?.toString(),
             title: push.notification?.title,
             body: push.notification?.body,
+            notificationId: push.data['internalNotificationId'],
           );
           load();
         }
@@ -4431,7 +4433,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final target = notificationTargetFor(push.data['type']);
     final tripId = push.data['tripId']?.toString();
     if (target == NotificationTarget.chat) {
-      unawaited(openPassengerChat(tripId));
+      unawaited(openPassengerChat(tripId,
+          notificationId: push.data['internalNotificationId']));
     } else if (const {
       NotificationTarget.activeTrip,
       NotificationTarget.tripDetail,
@@ -4461,7 +4464,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   void showPassengerNotification(String type, String? tripId,
-      {String? title, String? body}) {
+      {String? title, String? body, String? notificationId}) {
     if (!mounted) return;
     final normalizedType = normalizePassengerTripUpdateType(type);
     final defaults = <String, List<String>>{
@@ -4490,7 +4493,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       message: body ??
           (cancelled ? 'Solicitud cancelada correctamente.' : fallback[1]),
       actionLabel: cancelled ? 'Cerrar' : 'Ver',
-      onTap: cancelled ? null : () => openPassengerTripDetail(tripId),
+      onTap: cancelled
+          ? null
+          : () => openPassengerTripDetail(tripId,
+              notificationId: notificationId),
     );
     if (shown && normalizedType == 'DRIVER_ARRIVED' && !kIsWeb) {
       if (defaultTargetPlatform == TargetPlatform.android) {
@@ -4523,9 +4529,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> openPassengerChat([String? requestedTripId]) async {
+  Future<void> openPassengerChat(String? requestedTripId,
+      {String? notificationId}) async {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     if (passengerChatOpen) return;
+    if (notificationId != null) {
+      try {
+        await api.markNotificationRead(widget.s.token, notificationId);
+        await UserNotificationStore.instance.refresh(widget.s);
+      } catch (_) {
+        // El chat debe abrir aunque la confirmacion de lectura falle.
+      }
+    }
     if (active == null) await load();
     if (!mounted) return;
     final tripId = requestedTripId ?? active?['tripId']?.toString();
@@ -4633,13 +4648,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       final value = Map<String, dynamic>.from(event['message'] as Map);
       InAppNotificationBanner.show(
         context,
-        id: 'chat-${value['messageId'] ?? value['clientMessageId'] ?? DateTime.now().millisecondsSinceEpoch}',
+        id: 'chat-${value['id'] ?? value['messageId'] ?? value['clientMessageId'] ?? DateTime.now().millisecondsSinceEpoch}',
         title: 'Nuevo mensaje del conductor',
         message: value['body']?.toString() ??
             'Tienes un nuevo mensaje sobre tu viaje.',
         actionLabel: 'Abrir',
         icon: Icons.chat_bubble_outline,
-        onTap: () => openPassengerChat(value['tripId']?.toString()),
+        onTap: () => openPassengerChat(value['tripId']?.toString(),
+            notificationId: value['notificationId']?.toString()),
       );
     }
   }
@@ -6230,7 +6246,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           const SizedBox(width: 10),
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: openPassengerChat,
+              onPressed: () => openPassengerChat(null),
               icon: const Icon(Icons.chat_bubble_outline),
               label: const Text('Mensaje'),
             ),
@@ -6768,7 +6784,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 'Tienes un nuevo mensaje sobre tu viaje.',
             actionLabel: 'Abrir',
             icon: Icons.chat_bubble_outline,
-            onTap: () => openDriverChat(message.data['tripId']),
+            onTap: () => openDriverChat(message.data['tripId'],
+                notificationId: message.data['internalNotificationId']),
           );
         }
         if (message.data['type'] == 'TRIP_OFFER') {
@@ -6850,7 +6867,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   void handleOpenedPush(RemoteMessage push) {
     final target = notificationTargetFor(push.data['type']);
     if (target == NotificationTarget.chat) {
-      unawaited(openDriverChat(push.data['tripId']));
+      unawaited(openDriverChat(push.data['tripId'],
+          notificationId: push.data['internalNotificationId']));
     } else if (target == NotificationTarget.support &&
         push.data['incidentId'] != null) {
       unawaited(Navigator.push(
@@ -6931,9 +6949,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> openDriverChat([String? requestedTripId]) async {
+  Future<void> openDriverChat(String? requestedTripId,
+      {String? notificationId}) async {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     if (driverChatOpen) return;
+    if (notificationId != null) {
+      try {
+        await api.markNotificationRead(widget.s.token, notificationId);
+        await UserNotificationStore.instance.refresh(widget.s);
+      } catch (_) {
+        // El chat debe abrir aunque la confirmacion de lectura falle.
+      }
+    }
     if (active == null) await refresh();
     if (!mounted) return;
     final tripId = requestedTripId ?? active?['tripId']?.toString();
@@ -6992,13 +7019,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       final value = Map<String, dynamic>.from(event['message'] as Map);
       InAppNotificationBanner.show(
         context,
-        id: 'chat-${value['messageId'] ?? value['clientMessageId'] ?? DateTime.now().millisecondsSinceEpoch}',
+        id: 'chat-${value['id'] ?? value['messageId'] ?? value['clientMessageId'] ?? DateTime.now().millisecondsSinceEpoch}',
         title: 'Nuevo mensaje del pasajero',
         message: value['body']?.toString() ??
             'Tienes un nuevo mensaje sobre tu viaje.',
         actionLabel: 'Abrir',
         icon: Icons.chat_bubble_outline,
-        onTap: () => openDriverChat(value['tripId']?.toString()),
+        onTap: () => openDriverChat(value['tripId']?.toString(),
+            notificationId: value['notificationId']?.toString()),
       );
     }
   }
@@ -7936,6 +7964,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Future<bool> _respondToOffer(dynamic offer,
       {required bool accept, bool confirmReject = false}) async {
     final offerId = offer['offerId']?.toString();
+    final tripId = offer['tripId']?.toString();
     if (offerId == null || processingOfferIds.contains(offerId)) return false;
     if (!accept && confirmReject) {
       final confirmed = await showDialog<bool>(
@@ -7962,6 +7991,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await api.respond(widget.s.token, offerId, accept: accept);
       if (!mounted) return true;
       if (accept) {
+        if (!kIsWeb &&
+            defaultTargetPlatform == TargetPlatform.android &&
+            tripId != null) {
+          unawaited(nativeActions.invokeMethod<void>(
+              'stopTripOfferAlert', {'tripId': tripId}).catchError((_) {}));
+        }
         await restore();
         await refresh();
       } else {
@@ -8290,7 +8325,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             const SizedBox(width: 10),
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: openDriverChat,
+                onPressed: () => openDriverChat(null),
                 icon: const Icon(Icons.chat_bubble_outline),
                 label: const Text('Mensaje'),
               ),

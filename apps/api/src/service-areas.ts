@@ -242,7 +242,8 @@ export async function filterLocationsToArea(areaId: string, userId: string, loca
 
 export async function serviceAreaBounds(areaId: string, userId: string) {
   const [row] = await database()`
-    select ST_XMin(ST_Envelope(v.geometry)) west, ST_YMin(ST_Envelope(v.geometry)) south,
+    select a.name as label,
+      ST_XMin(ST_Envelope(v.geometry)) west, ST_YMin(ST_Envelope(v.geometry)) south,
       ST_XMax(ST_Envelope(v.geometry)) east, ST_YMax(ST_Envelope(v.geometry)) north
     from service_areas a join service_area_versions v on v.id=a.current_version_id
     where a.id=${areaId}::uuid and a.enabled and (
@@ -256,5 +257,5 @@ export async function serviceAreaBounds(areaId: string, userId: string) {
       ))
     )
   `;
-  return row as { west: number; south: number; east: number; north: number } | undefined;
+  return row as { label: string; west: number; south: number; east: number; north: number } | undefined;
 }

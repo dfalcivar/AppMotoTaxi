@@ -159,10 +159,11 @@ async function createMessage(user: SessionUser, input: ChatInput) {
     on conflict (trip_id, sender_id, client_message_id)
       do update set body=trip_messages.body
     returning id::text, trip_id::text as "tripId", sender_id::text as "senderId",
-      body, created_at as "createdAt", read_at as "readAt"
+      (xmax = 0) as "created", body, created_at as "createdAt", read_at as "readAt"
   `;
   return {
     ...message,
+    created: Boolean((message as Record<string, unknown>).created),
     mine: true,
     senderName: user.name,
     recipientId: user.id === trip.passengerId ? trip.driverId : trip.passengerId
@@ -302,12 +303,17 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
           if (event.type === "chat:send") {
             try {
               const message = await createMessage(user, event);
-              broadcastTrip(event.tripId, { type: "chat:message", message: { ...message, mine: undefined, recipientId: undefined } });
               send(socket, { type: "chat:ack", clientMessageId: event.clientMessageId, message });
-              const push = await sendPush(String(message.recipientId), `Mensaje de ${user.name}`, event.body, {
+              const pushData: Record<string, string> = {
                 type: "CHAT_MESSAGE",
                 tripId: event.tripId,
                 messageId: String((message as Record<string, unknown>).id ?? event.clientMessageId)
+              };
+              const push = message.created ? await sendPush(String(message.recipientId), `Mensaje de ${user.name}`, event.body, pushData) : { sent: 1, failed: 0 };
+              if (message.created) broadcastTrip(event.tripId, {
+                type: "chat:message",
+                message: { ...message, mine: undefined, recipientId: undefined, created: undefined,
+                  notificationId: pushData.internalNotificationId }
               });
               if (push.sent === 0) app.log.warn({
                 type: "CHAT_MESSAGE", tripId: event.tripId,
@@ -367,11 +373,16 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
     const tripId = (request.params as { tripId: string }).tripId;
     try {
       const message = await createMessage(user, { tripId, ...parsed.data });
-      broadcastTrip(tripId, { type: "chat:message", message: { ...message, mine: undefined, recipientId: undefined } });
-      const push = await sendPush(String(message.recipientId), `Mensaje de ${user.name}`, parsed.data.body, {
+      const pushData: Record<string, string> = {
         type: "CHAT_MESSAGE",
         tripId,
         messageId: String((message as Record<string, unknown>).id ?? parsed.data.clientMessageId)
+      };
+      const push = message.created ? await sendPush(String(message.recipientId), `Mensaje de ${user.name}`, parsed.data.body, pushData) : { sent: 1, failed: 0 };
+      if (message.created) broadcastTrip(tripId, {
+        type: "chat:message",
+        message: { ...message, mine: undefined, recipientId: undefined, created: undefined,
+          notificationId: pushData.internalNotificationId }
       });
       if (push.sent === 0) request.log.warn({
         type: "CHAT_MESSAGE", tripId,

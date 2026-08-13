@@ -71,6 +71,11 @@ class MainActivity : FlutterFragmentActivity() {
                         val tripId = call.argument<String>("tripId")?.trim().orEmpty()
                         result.success(showForegroundTripOffer(title, body, tripId))
                     }
+                    "stopTripOfferAlert" -> {
+                        val tripId = call.argument<String>("tripId")?.trim().orEmpty()
+                        stopTripOfferAlert(tripId)
+                        result.success(null)
+                    }
                     "playDriverArrivalAlert" -> {
                         playDriverArrivalAlert()
                         result.success(null)
@@ -121,13 +126,18 @@ class MainActivity : FlutterFragmentActivity() {
         return true
     }
 
+    private fun stopTripOfferAlert(tripId: String) {
+        if (tripId.isBlank()) return
+        getSystemService(NotificationManager::class.java).cancel(tripId.hashCode())
+    }
+
     private fun playDriverArrivalAlert() {
         val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
-        tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 170)
+        tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 220)
         Handler(Looper.getMainLooper()).postDelayed({
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 170)
-        }, 280)
-        Handler(Looper.getMainLooper()).postDelayed({ tone.release() }, 650)
+            tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 220)
+        }, 330)
+        Handler(Looper.getMainLooper()).postDelayed({ tone.release() }, 720)
     }
 
     @Suppress("DEPRECATION")

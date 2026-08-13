@@ -13,9 +13,9 @@ describe("Google Places", () => {
     });
     expect(body).toMatchObject({
       textQuery: "CrossFit La Jaula",
-      locationBias: { rectangle: expect.any(Object) }
+      locationRestriction: { rectangle: expect.any(Object) }
     });
-    expect(body).not.toHaveProperty("locationRestriction");
+    expect(body).not.toHaveProperty("locationBias");
     expect(body).not.toHaveProperty("includedType");
   });
 });

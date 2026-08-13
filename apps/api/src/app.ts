@@ -10,7 +10,7 @@ import { database } from "./database.js";
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
-import { reverseLocation, searchLocations } from "./geocoding.js";
+import { reverseLocation, searchLocations, searchLocationsInArea } from "./geocoding.js";
 import { computeRoute } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
 import { captureOperationalError } from "./observability.js";
@@ -465,7 +465,9 @@ export async function buildApp() {
       // Irregular polygons can occupy only part of their rectangular bounds.
       // If Google ranks only candidates in one of the excluded corners, retry
       // with a location bias and apply the exact same polygon validation.
-      const retryLocations = await searchLocations(parsed.data.q, focus);
+      const retryLocations = bounds
+        ? await searchLocationsInArea(parsed.data.q, focus, bounds)
+        : await searchLocations(parsed.data.q, focus);
       allowedIndexes = new Set(await filterLocationsToArea(
         parsed.data.serviceAreaId,
         user.id!,

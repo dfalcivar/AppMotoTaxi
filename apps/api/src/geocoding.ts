@@ -8,6 +8,7 @@ export interface SearchBounds {
   south: number;
   east: number;
   north: number;
+  label?: string;
 }
 
 interface GooglePlace {
@@ -117,7 +118,7 @@ export function googlePlacesSearchBody(
     pageSize: placesSearchPageSize(bounds)
   };
   if (bounds) {
-    body.locationBias = {
+    body.locationRestriction = {
       rectangle: {
         low: { latitude: bounds.south, longitude: bounds.west },
         high: { latitude: bounds.north, longitude: bounds.east }
@@ -312,6 +313,18 @@ export async function searchLocations(query: string, focus?: FocusPoint, bounds?
     latitude: Number(item.lat),
     longitude: Number(item.lon)
   }));
+}
+
+export async function searchLocationsInArea(
+  query: string,
+  focus: FocusPoint | undefined,
+  bounds: SearchBounds
+): Promise<LocationResult[]> {
+  const areaLabel = bounds.label?.split(" - ")[0]?.trim();
+  const contextualQuery = areaLabel
+    ? `${query}, ${areaLabel}`
+    : query;
+  return searchLocations(contextualQuery, focus, bounds);
 }
 
 function reverseLabel(item: NominatimReverseItem): string {
