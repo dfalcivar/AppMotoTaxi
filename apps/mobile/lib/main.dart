@@ -5284,10 +5284,25 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     try {
       setState(() => message = 'Buscando direcciones cercanas...');
-      final results = await api.search(
-          widget.s.token, field.text, pickup, selectedOriginArea?.id);
+      final providerResults =
+          await api.search(widget.s.token, field.text, pickup);
+      final targetArea = selectedOriginArea ??
+          (pickup == null ? null : serviceAreaCatalog?.find(pickup!));
+      final results = targetArea == null || serviceAreaCatalog == null
+          ? providerResults
+          : providerResults.where((result) {
+              final latitude = (result['latitude'] as num?)?.toDouble();
+              final longitude = (result['longitude'] as num?)?.toDouble();
+              if (latitude == null || longitude == null) return false;
+              return serviceAreaCatalog!
+                      .find(LatLng(latitude, longitude))
+                      ?.id ==
+                  targetArea.id;
+            }).toList();
       if (results.isEmpty) {
-        setState(() => message = 'No se encontraron ubicaciones cercanas.');
+        setState(() => message = targetArea == null
+            ? 'No se encontraron ubicaciones cercanas.'
+            : 'No se encontraron ubicaciones dentro de ${targetArea.name}.');
         return;
       }
       if (!mounted) return;
