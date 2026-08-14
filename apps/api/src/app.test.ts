@@ -100,6 +100,26 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("protege la eliminación de cuenta dentro de la app", async () => {
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/v1/profile/account",
+      payload: { password: "ClaveSegura2026!" }
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("valida solicitudes públicas de recuperación y eliminación", async () => {
+    const [recovery, deletion, confirmation] = await Promise.all([
+      app.inject({ method: "POST", url: "/v1/auth/password-reset/request", payload: { email: "incorrecto" } }),
+      app.inject({ method: "POST", url: "/v1/account-deletion/request", payload: { email: "incorrecto" } }),
+      app.inject({ method: "POST", url: "/v1/account-deletion/confirm", payload: { token: "corto" } })
+    ]);
+    expect(recovery.statusCode).toBe(400);
+    expect(deletion.statusCode).toBe(400);
+    expect(confirmation.statusCode).toBe(400);
+  });
+
   it("protege la administración de banners", async () => {
     const response = await app.inject({
       method: "GET",

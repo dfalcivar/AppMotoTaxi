@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
@@ -14,6 +14,7 @@ import { reverseLocation, searchLocations, searchLocationsInArea } from "./geoco
 import { computeRoute } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
 import { captureOperationalError } from "./observability.js";
+import { sendTransactionalEmail } from "./email.js";
 import {
   authorizedServiceAreas,
   filterLocationsToArea,
@@ -42,6 +43,15 @@ const changePasswordSchema = z.object({
   currentPassword: z.string().min(8).max(100).optional(),
   password: z.string().min(8).max(100)
 });
+const passwordResetRequestSchema = z.object({ email: z.string().email() });
+const passwordResetConfirmSchema = z.object({
+  email: z.string().email(),
+  code: z.string().regex(/^\d{6}$/),
+  password: z.string().min(8).max(100)
+});
+const accountDeletionSchema = z.object({ password: z.string().min(8).max(100) });
+const externalDeletionRequestSchema = z.object({ email: z.string().email() });
+const externalDeletionConfirmSchema = z.object({ token: z.string().min(32).max(200) });
 const registrationSchema = z.object({
   fullName: z.string().trim().min(3).max(120),
   email: z.string().email(),
@@ -140,6 +150,70 @@ function decodeImage(fileBase64: string, fileMime: "image/jpeg" | "image/png" | 
   const valid = fileMime === "image/jpeg" ? jpeg : fileMime === "image/png" ? png : webp;
   if (!valid || data.length < 100 || data.length > 2_500_000) throw new Error("INVALID_IMAGE_FILE");
   return data;
+}
+
+function privateTokenHash(value: string): string {
+  const pepper = process.env.ADMIN_SESSION_SECRET ?? "costa-go-local-development";
+  return createHash("sha256").update(`${pepper}:${value}`).digest("hex");
+}
+
+async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRIP"> {
+  const sql = database();
+  const [activeTrip] = await sql`
+    select id from trips
+    where (passenger_id=${userId} or driver_id=${userId})
+      and status not in ('COMPLETED','CANCELLED','NO_DRIVER')
+    limit 1
+  `;
+  if (activeTrip) return "ACTIVE_TRIP";
+  await sql.begin(async tx => {
+    const trips = await tx`select id from trips where passenger_id=${userId} or driver_id=${userId}`;
+    const tripIds = trips.map(row => row.id as string);
+    if (tripIds.length) {
+      await tx`delete from trip_messages where trip_id in ${tx(tripIds)}`;
+      await tx`delete from trip_live_locations where trip_id in ${tx(tripIds)}`;
+      await tx`delete from trip_location_history where trip_id in ${tx(tripIds)}`;
+      await tx`update trip_stops set location=null, reference='Datos eliminados' where trip_id in ${tx(tripIds)}`;
+      await tx`update trips set origin=null, destination=null, origin_reference=null,
+        destination_reference=null, passenger_notes=null, route_snapshot=null
+        where id in ${tx(tripIds)}`;
+    }
+    await tx`delete from device_tokens where user_id=${userId}`;
+    await tx`delete from favorite_places where user_id=${userId}`;
+    await tx`delete from user_notifications where user_id=${userId}`;
+    await tx`delete from password_reset_tokens where user_id=${userId}`;
+    await tx`delete from admin_sessions where user_id=${userId}`;
+    await tx`delete from service_area_user_access where user_id=${userId}`;
+    await tx`delete from user_permissions where user_id=${userId}`;
+    await tx`delete from driver_documents where driver_id=${userId}`;
+    await tx`delete from support_incident_attachments where uploaded_by=${userId}`;
+    await tx`update support_incident_messages set author_id=null,
+      body='Contenido eliminado por solicitud del usuario' where author_id=${userId}`;
+    await tx`update incidents set reported_by=null, related_user_id=null,
+      subject='Solicitud anonimizada', description='Contenido eliminado por solicitud del usuario',
+      evidence='[]'::jsonb where reported_by=${userId} or related_user_id=${userId}`;
+    await tx`update ratings set comment=null, tags='{}'::text[] where author_id=${userId} or recipient_id=${userId}`;
+    await tx`update drivers set is_available=false, last_location=null,
+      last_location_at=null where user_id=${userId}`;
+    await tx`update vehicles set identifier='DELETED-' || id::text where driver_id=${userId}`;
+    await tx`update users set
+      full_name='Cuenta eliminada',
+      email=${`deleted+${userId}@deleted.invalid`},
+      phone_e164=${`deleted:${userId}`},
+      password_hash=crypt(${randomBytes(32).toString("hex")}, gen_salt('bf')),
+      profile_photo_data=null,
+      profile_photo_mime=null,
+      profile_photo_updated_at=null,
+      cooperative_id=null,
+      active_session_id=null,
+      status='SUSPENDED',
+      deleted_at=now(),
+      updated_at=now()
+      where id=${userId}`;
+    await tx`insert into audit_log(action,entity_type,entity_id,next_value,reason)
+      values ('ACCOUNT_DELETED','USER',${userId},'{"anonymized":true}'::jsonb,'Solicitud del titular')`;
+  });
+  return "DELETED";
 }
 
 async function configuredSearchRadius(): Promise<number> {
@@ -542,6 +616,113 @@ export async function buildApp() {
     }
   });
 
+  app.post("/v1/auth/password-reset/request", async (request, reply) => {
+    const parsed = passwordResetRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_EMAIL" });
+    const normalizedEmail = parsed.data.email.trim().toLowerCase();
+    const [account] = await database()`
+      select id, email from users
+      where lower(email)=lower(${normalizedEmail}) and role in ('PASSENGER','DRIVER')
+        and deleted_at is null
+      limit 1
+    `;
+    if (account) {
+      const [recent] = await database()`
+        select 1 from password_reset_tokens
+        where user_id=${account.id} and created_at > now() - interval '60 seconds'
+        limit 1
+      `;
+      if (!recent) {
+        const code = randomInt(100000, 1000000).toString();
+        await database().begin(async tx => {
+          await tx`update password_reset_tokens set used_at=coalesce(used_at,now())
+            where user_id=${account.id} and used_at is null`;
+          await tx`insert into password_reset_tokens(user_id,code_hash,expires_at)
+            values (${account.id},${privateTokenHash(`${normalizedEmail}:${code}`)},now()+interval '15 minutes')`;
+        });
+        const delivered = await sendTransactionalEmail({
+          to: account.email as string,
+          subject: "Código para recuperar tu cuenta Costa-Go",
+          text: `Tu código de recuperación es ${code}. Caduca en 15 minutos. Si no solicitaste este cambio, ignora este mensaje.`,
+          html: `<p>Tu código de recuperación de Costa-Go es:</p><p style="font-size:28px;font-weight:700;letter-spacing:5px">${code}</p><p>Caduca en 15 minutos. Si no solicitaste este cambio, ignora este mensaje.</p>`
+        });
+        request.log.info({ delivered }, "password_reset_requested");
+      }
+    }
+    return reply.code(202).send({ accepted: true });
+  });
+
+  app.post("/v1/auth/password-reset/confirm", async (request, reply) => {
+    const parsed = passwordResetConfirmSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PASSWORD_RESET" });
+    const email = parsed.data.email.trim().toLowerCase();
+    const hash = privateTokenHash(`${email}:${parsed.data.code}`);
+    const [token] = await database()`
+      select reset.id, reset.user_id as "userId"
+      from password_reset_tokens reset join users u on u.id=reset.user_id
+      where lower(u.email)=lower(${email}) and reset.code_hash=${hash}
+        and reset.used_at is null and reset.expires_at > now() and reset.attempts < 5
+        and u.deleted_at is null
+      order by reset.created_at desc limit 1
+    `;
+    if (!token) {
+      await database()`update password_reset_tokens set attempts=attempts+1
+        where id=(select reset.id from password_reset_tokens reset join users u on u.id=reset.user_id
+          where lower(u.email)=lower(${email}) and reset.used_at is null
+          order by reset.created_at desc limit 1)`;
+      return reply.code(400).send({ error: "INVALID_OR_EXPIRED_RESET_CODE" });
+    }
+    const [samePassword] = await database()`select 1 from users
+      where id=${token.userId} and password_hash=crypt(${parsed.data.password},password_hash)`;
+    if (samePassword) return reply.code(409).send({ error: "PASSWORD_REUSED" });
+    await database().begin(async tx => {
+      await tx`update users set password_hash=crypt(${parsed.data.password},gen_salt('bf')),
+        must_change_password=false, active_session_id=null, updated_at=now()
+        where id=${token.userId}`;
+      await tx`update password_reset_tokens set used_at=now() where id=${token.id}`;
+      await tx`delete from device_tokens where user_id=${token.userId}`;
+      await tx`update drivers set is_available=false where user_id=${token.userId}`;
+    });
+    return { changed: true };
+  });
+
+  app.post("/v1/account-deletion/request", async (request, reply) => {
+    const parsed = externalDeletionRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_EMAIL" });
+    const email = parsed.data.email.trim().toLowerCase();
+    const [account] = await database()`select id,email from users
+      where lower(email)=lower(${email}) and role in ('PASSENGER','DRIVER') and deleted_at is null limit 1`;
+    if (account) {
+      const token = randomBytes(32).toString("hex");
+      await database()`insert into account_deletion_requests(user_id,requested_email,token_hash,expires_at)
+        values (${account.id},${email},${privateTokenHash(token)},now()+interval '24 hours')`;
+      const webBase = (process.env.PUBLIC_WEB_BASE_URL ?? "https://mototaxi-atacames-admin.onrender.com").replace(/\/$/, "");
+      const url = `${webBase}/account-deletion.html?token=${encodeURIComponent(token)}`;
+      const delivered = await sendTransactionalEmail({
+        to: account.email as string,
+        subject: "Confirma la eliminación de tu cuenta Costa-Go",
+        text: `Confirma la eliminación de tu cuenta dentro de las próximas 24 horas: ${url}`,
+        html: `<p>Solicitaste eliminar tu cuenta Costa-Go y sus datos asociados.</p><p><a href="${url}">Confirmar eliminación de cuenta</a></p><p>El enlace caduca en 24 horas. Si no fuiste tú, ignora este mensaje.</p>`
+      });
+      request.log.info({ delivered }, "external_account_deletion_requested");
+    }
+    return reply.code(202).send({ accepted: true });
+  });
+
+  app.post("/v1/account-deletion/confirm", async (request, reply) => {
+    const parsed = externalDeletionConfirmSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_DELETION_TOKEN" });
+    const [deletion] = await database()`select id,user_id as "userId"
+      from account_deletion_requests where token_hash=${privateTokenHash(parsed.data.token)}
+        and confirmed_at is null and completed_at is null and expires_at > now() limit 1`;
+    if (!deletion?.userId) return reply.code(400).send({ error: "INVALID_DELETION_TOKEN" });
+    const result = await eraseUserAccount(deletion.userId as string);
+    if (result === "ACTIVE_TRIP") return reply.code(409).send({ error: "ACCOUNT_DELETION_BLOCKED_ACTIVE_TRIP" });
+    await database()`update account_deletion_requests set confirmed_at=now(),completed_at=now(),user_id=null
+      where id=${deletion.id}`;
+    return { deleted: true };
+  });
+
   app.post("/v1/auth/session", async (request, reply) => {
     const parsed = mobileLoginSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOGIN" });
@@ -556,6 +737,7 @@ export async function buildApp() {
       where lower(email) = lower(${parsed.data.email})
         and password_hash = crypt(${parsed.data.password}, password_hash)
         and role in ('PASSENGER', 'DRIVER')
+        and deleted_at is null
     `;
     const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string; mustChangePassword: boolean; approvalStatus?: string } | undefined;
     if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
@@ -751,6 +933,18 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     if (user.role === "DRIVER") return reply.code(409).send({ error: "DRIVER_PHOTO_REQUIRED" });
     await database()`update users set profile_photo_data=null, profile_photo_mime=null, profile_photo_updated_at=null, updated_at=now() where id=${user.id!}`;
+    return { deleted: true };
+  });
+
+  app.delete("/v1/profile/account", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
+    const parsed = accountDeletionSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PASSWORD" });
+    const [verified] = await database()`select 1 from users where id=${user.id!}
+      and password_hash=crypt(${parsed.data.password},password_hash) and deleted_at is null`;
+    if (!verified) return reply.code(401).send({ error: "INVALID_CURRENT_PASSWORD" });
+    const result = await eraseUserAccount(user.id!);
+    if (result === "ACTIVE_TRIP") return reply.code(409).send({ error: "ACCOUNT_DELETION_BLOCKED_ACTIVE_TRIP" });
     return { deleted: true };
   });
 

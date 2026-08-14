@@ -590,10 +590,68 @@ Future<void> warmApi() async {
   }
 }
 
-Future<Position> currentGpsPosition() async {
+const privacyPolicyUrl =
+    'https://mototaxi-atacames-admin.onrender.com/privacy.html';
+const accountDeletionUrl =
+    'https://mototaxi-atacames-admin.onrender.com/account-deletion.html';
+const locationDisclosureVersion = 1;
+
+Future<void> openExternalPage(BuildContext context, String value) async {
+  final uri = Uri.parse(value);
+  if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+      context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir el enlace.')));
+  }
+}
+
+Future<bool> ensureLocationDisclosure(BuildContext context) async {
+  final preferences = await SharedPreferences.getInstance();
+  if (preferences.getInt('location_disclosure_version') ==
+      locationDisclosureVersion) {
+    return true;
+  }
+  if (!context.mounted) return false;
+  final accepted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          icon: const Icon(Icons.location_on_outlined),
+          title: const Text('Cómo usamos tu ubicación'),
+          content: const SingleChildScrollView(
+            child: Text(
+                'Costa-Go recopila datos de ubicación para seleccionar el punto de recogida, encontrar viajes o conductores cercanos, mantener el seguimiento y guiar al conductor durante un viaje, incluso cuando la aplicación está cerrada o no está en uso.\n\nDurante un viaje, la ubicación necesaria se comparte con la otra persona asignada y con los servicios de Costa-Go. No se utiliza para publicidad.'),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () =>
+                    openExternalPage(dialogContext, privacyPolicyUrl),
+                child: const Text('Política de privacidad')),
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Ahora no')),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Continuar')),
+          ],
+        ),
+      ) ??
+      false;
+  if (accepted) {
+    await preferences.setInt(
+        'location_disclosure_version', locationDisclosureVersion);
+  }
+  return accepted;
+}
+
+Future<Position> currentGpsPosition(BuildContext context) async {
   if (!await Geolocator.isLocationServiceEnabled()) {
     throw const ApiException(
         'Activa la ubicación GPS del teléfono para continuar.');
+  }
+  if (!context.mounted || !await ensureLocationDisclosure(context)) {
+    throw const ApiException(
+        'Necesitamos tu autorización para usar la ubicación.');
   }
   var permission = await Geolocator.checkPermission();
   if (permission == LocationPermission.denied) {
@@ -846,6 +904,15 @@ String mensajeApi(dynamic code) =>
           'La nueva contraseña debe ser diferente a la temporal.',
       'INVALID_PASSWORD': 'La contraseña debe tener al menos 8 caracteres.',
       'INVALID_CURRENT_PASSWORD': 'La contraseña actual no es correcta.',
+      'INVALID_EMAIL': 'Ingresa un correo electrónico válido.',
+      'INVALID_PASSWORD_RESET':
+          'Revisa el correo, el código y la nueva contraseña.',
+      'INVALID_OR_EXPIRED_RESET_CODE':
+          'El código es incorrecto o ya caducó. Solicita uno nuevo.',
+      'ACCOUNT_DELETION_BLOCKED_ACTIVE_TRIP':
+          'Finaliza o cancela el viaje pendiente antes de eliminar tu cuenta.',
+      'INVALID_DELETION_TOKEN':
+          'El enlace de eliminación es inválido o ya caducó.',
       'INVALID_DRIVER_DOCUMENT':
           'La imagen no es válida o supera el tamaño permitido.',
       'INVALID_PROFILE_PHOTO':
@@ -1089,6 +1156,18 @@ class Api {
 
   Future<dynamic> register(Map<String, dynamic> body) =>
       call('POST', '/v1/auth/register', body: body);
+  Future<dynamic> requestPasswordReset(String email) =>
+      call('POST', '/v1/auth/password-reset/request', body: {'email': email});
+  Future<dynamic> confirmPasswordReset(
+          String email, String code, String password) =>
+      call('POST', '/v1/auth/password-reset/confirm', body: {
+        'email': email,
+        'code': code,
+        'password': password,
+      });
+  Future<dynamic> deleteAccount(String token, String password) =>
+      call('DELETE', '/v1/profile/account',
+          token: token, body: {'password': password});
   Future<List<dynamic>> cooperatives() async =>
       List<dynamic>.from(await call('GET', '/v1/cooperatives'));
   Future<dynamic> active(String t) => call('GET', '/v1/trips/active', token: t);
@@ -1999,22 +2078,171 @@ class _LoginState extends State<Login> {
   }
 }
 
-class Recovery extends StatelessWidget {
+class Recovery extends StatefulWidget {
   const Recovery({super.key});
   @override
-  Widget build(BuildContext c) => Scaffold(
-      appBar: AppBar(title: const Text('Recuperar contraseña')),
-      body: const Padding(
-          padding: EdgeInsets.all(24),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Recuperación de cuenta'),
-            SizedBox(height: 12),
-            Text(
-                'En esta versión piloto la recuperación se gestiona por soporte. Indica tu correo registrado y el equipo administrativo podrá restablecer tu acceso.'),
-            SizedBox(height: 20),
-            Text('Próximo paso: envío de enlace seguro al correo registrado.')
-          ])));
+  State<Recovery> createState() => _RecoveryState();
+}
+
+class _RecoveryState extends State<Recovery> {
+  final email = TextEditingController();
+  final code = TextEditingController();
+  final password = TextEditingController();
+  final confirmation = TextEditingController();
+  bool codeRequested = false, busy = false, hidePassword = true;
+  String? message;
+
+  @override
+  void dispose() {
+    email.dispose();
+    code.dispose();
+    password.dispose();
+    confirmation.dispose();
+    super.dispose();
+  }
+
+  Future<void> requestCode() async {
+    if (!email.text.contains('@')) {
+      setState(() => message = 'Ingresa el correo registrado.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await Api().requestPasswordReset(email.text.trim());
+      if (mounted) {
+        setState(() {
+          codeRequested = true;
+          message =
+              'Si el correo está registrado, recibirás un código válido por 15 minutos.';
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> confirm() async {
+    if (code.text.trim().length != 6) {
+      setState(() => message = 'Ingresa el código de seis dígitos.');
+      return;
+    }
+    if (password.text.length < 8) {
+      setState(() =>
+          message = 'La nueva contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (password.text != confirmation.text) {
+      setState(() => message = 'Las contraseñas no coinciden.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await Api().confirmPasswordReset(
+          email.text.trim(), code.text.trim(), password.text);
+      await BiometricSessionStore.clear();
+      if (!mounted) return;
+      await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+                icon: const Icon(Icons.check_circle_outline),
+                title: const Text('Contraseña actualizada'),
+                content:
+                    const Text('Ya puedes ingresar con tu nueva contraseña.'),
+                actions: [
+                  FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('Continuar'))
+                ],
+              ));
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Recuperar contraseña')),
+        body: ListView(padding: const EdgeInsets.all(24), children: [
+          const Icon(Icons.lock_reset_outlined, size: 68),
+          const SizedBox(height: 12),
+          Text('Recupera tu cuenta',
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          const Text('Te enviaremos un código al correo registrado.',
+              textAlign: TextAlign.center),
+          const SizedBox(height: 24),
+          TextField(
+              controller: email,
+              enabled: !codeRequested && !busy,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                  labelText: 'Correo electrónico',
+                  prefixIcon: Icon(Icons.alternate_email))),
+          if (codeRequested) ...[
+            const SizedBox(height: 14),
+            TextField(
+                controller: code,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: const InputDecoration(
+                    labelText: 'Código de seis dígitos',
+                    prefixIcon: Icon(Icons.pin_outlined))),
+            const SizedBox(height: 6),
+            TextField(
+                controller: password,
+                obscureText: hidePassword,
+                decoration: const InputDecoration(
+                    labelText: 'Nueva contraseña',
+                    prefixIcon: Icon(Icons.password_outlined))),
+            const SizedBox(height: 14),
+            TextField(
+                controller: confirmation,
+                obscureText: hidePassword,
+                decoration: InputDecoration(
+                    labelText: 'Confirmar nueva contraseña',
+                    prefixIcon: const Icon(Icons.password_outlined),
+                    suffixIcon: IconButton(
+                        onPressed: () =>
+                            setState(() => hidePassword = !hidePassword),
+                        icon: Icon(hidePassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined)))),
+          ],
+          if (message != null)
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Text(message!, textAlign: TextAlign.center)),
+          FilledButton.icon(
+              onPressed: busy ? null : (codeRequested ? confirm : requestCode),
+              icon: Icon(codeRequested
+                  ? Icons.check_circle_outline
+                  : Icons.mail_outline),
+              label: Text(busy
+                  ? 'Procesando…'
+                  : codeRequested
+                      ? 'Cambiar contraseña'
+                      : 'Enviar código')),
+          if (codeRequested)
+            TextButton(
+                onPressed: busy ? null : requestCode,
+                child: const Text('Enviar un código nuevo')),
+        ]),
+      );
 }
 
 class ChangeTemporaryPassword extends StatefulWidget {
@@ -2162,7 +2390,7 @@ class _RegisterState extends State<Register> {
   String cooperativeSelection = 'INDIVIDUAL';
   List<dynamic> cooperatives = [];
   bool loadingCooperatives = false;
-  bool busy = false, submitted = false;
+  bool busy = false, submitted = false, acceptedPolicies = false;
   XFile? profilePhoto;
   Uint8List? profilePhotoBytes;
   String? profilePhotoMime;
@@ -2236,6 +2464,11 @@ class _RegisterState extends State<Register> {
 
   bool validateAndFocus() {
     final valid = formKey.currentState?.validate() ?? false;
+    if (!acceptedPolicies) {
+      setState(() =>
+          message = 'Lee y acepta los Términos y la Política de privacidad.');
+      return false;
+    }
     if (valid && (role != 'DRIVER' || profilePhotoBytes != null)) return true;
     if (role == 'DRIVER' && profilePhotoBytes == null) {
       setState(() => message =
@@ -2443,6 +2676,26 @@ class _RegisterState extends State<Register> {
                   decoration: const InputDecoration(
                       labelText: 'Placa o identificador de mototaxi *')),
             ],
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: acceptedPolicies,
+              onChanged: submitted
+                  ? null
+                  : (value) => setState(() => acceptedPolicies = value == true),
+              title: const Text(
+                  'He leído la Política de privacidad y acepto crear mi cuenta'),
+              subtitle: Wrap(children: [
+                const Text('Consulta cómo Costa-Go usa y protege tus datos. '),
+                InkWell(
+                  onTap: () => openExternalPage(c, privacyPolicyUrl),
+                  child: Text('Leer política',
+                      style: TextStyle(
+                          color: Theme.of(c).colorScheme.primary,
+                          decoration: TextDecoration.underline)),
+                ),
+              ]),
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
             if (message.isNotEmpty)
               Padding(padding: const EdgeInsets.all(12), child: Text(message)),
             if (submitted)
@@ -3289,6 +3542,13 @@ class _AccountHubState extends State<AccountHub> {
             onTap: () => Navigator.push(
                 c, MaterialPageRoute(builder: (_) => SupportCenter(widget.s)))),
         ListTile(
+            leading: const Icon(Icons.privacy_tip_outlined),
+            title: const Text('Privacidad y datos'),
+            subtitle: const Text('Ubicación, política y eliminación de cuenta'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(c,
+                MaterialPageRoute(builder: (_) => PrivacyAndData(widget.s)))),
+        ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('Acerca de'),
             onTap: () => Navigator.push(
@@ -3312,6 +3572,171 @@ class _AccountHubState extends State<AccountHub> {
                 : null,
             onTap: () => logout(c))
       ]));
+}
+
+class PrivacyAndData extends StatelessWidget {
+  const PrivacyAndData(this.session, {super.key});
+  final Session session;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Privacidad y datos')),
+        body: ListView(padding: const EdgeInsets.all(20), children: [
+          const Icon(Icons.shield_outlined, size: 68),
+          const SizedBox(height: 12),
+          Text('Tu información, bajo tu control',
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 20),
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.location_on_outlined),
+              title: Text('Uso de ubicación'),
+              subtitle: Text(
+                  'La ubicación permite elegir el punto de recogida, encontrar unidades cercanas y mantener el seguimiento del viaje. Para el conductor puede continuar en segundo plano durante la disponibilidad o un viaje activo.'),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.policy_outlined),
+              title: const Text('Política de privacidad'),
+              subtitle: const Text(
+                  'Consulta qué datos se recopilan, para qué se usan y cuánto tiempo se conservan.'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () => openExternalPage(context, privacyPolicyUrl),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.public_outlined),
+              title: const Text('Solicitud desde la web'),
+              subtitle: const Text(
+                  'La eliminación también puede solicitarse sin ingresar a la aplicación.'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () => openExternalPage(context, accountDeletionUrl),
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => DeleteAccount(session))),
+            icon: const Icon(Icons.delete_forever_outlined),
+            label: const Text('Eliminar mi cuenta'),
+          ),
+        ]),
+      );
+}
+
+class DeleteAccount extends StatefulWidget {
+  const DeleteAccount(this.session, {super.key});
+  final Session session;
+  @override
+  State<DeleteAccount> createState() => _DeleteAccountState();
+}
+
+class _DeleteAccountState extends State<DeleteAccount> {
+  final password = TextEditingController();
+  bool confirmed = false, busy = false, hidden = true;
+  String? message;
+
+  @override
+  void dispose() {
+    password.dispose();
+    super.dispose();
+  }
+
+  Future<void> remove() async {
+    if (!confirmed || password.text.length < 8) {
+      setState(() => message = 'Confirma la decisión e ingresa tu contraseña.');
+      return;
+    }
+    final proceed = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+                  icon: const Icon(Icons.warning_amber_rounded,
+                      color: Colors.red),
+                  title: const Text('¿Eliminar definitivamente?'),
+                  content: const Text(
+                      'Perderás el acceso, tus datos personales y el historial visible en la app. Esta acción no se puede deshacer.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('Cancelar')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('Eliminar')),
+                  ],
+                )) ??
+        false;
+    if (!proceed) return;
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await Api().deleteAccount(widget.session.token, password.text);
+      await clearLocalSession();
+      await BiometricSessionStore.clear();
+      if (sentryDsn.isNotEmpty) {
+        await Sentry.configureScope((scope) => scope.setUser(null));
+      }
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Eliminar mi cuenta')),
+        body: ListView(padding: const EdgeInsets.all(20), children: [
+          const Icon(Icons.delete_forever_outlined,
+              color: Colors.red, size: 68),
+          const SizedBox(height: 12),
+          const Text(
+              'Se eliminarán tus datos personales, fotos, documentos, favoritos, mensajes, tokens y ubicaciones precisas. Los registros mínimos que deban conservarse por seguridad, fraude o cumplimiento quedarán anonimizados.'),
+          const SizedBox(height: 18),
+          TextField(
+              controller: password,
+              obscureText: hidden,
+              decoration: InputDecoration(
+                  labelText: 'Contraseña actual',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                      onPressed: () => setState(() => hidden = !hidden),
+                      icon: Icon(hidden
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined)))),
+          const SizedBox(height: 12),
+          CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: confirmed,
+              onChanged: busy
+                  ? null
+                  : (value) => setState(() => confirmed = value == true),
+              title: const Text('Entiendo que esta acción es permanente')),
+          if (message != null)
+            Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(message!,
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error))),
+          FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: busy ? null : remove,
+              icon: const Icon(Icons.delete_forever_outlined),
+              label: Text(busy ? 'Eliminando…' : 'Eliminar definitivamente')),
+        ]),
+      );
 }
 
 const supportCategoryLabels = <String, String>{
@@ -4726,7 +5151,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Future<void> resetAfterCompletedTrip() async {
     var point = currentLocation ?? dropoff ?? pickup;
     try {
-      final position = await currentGpsPosition();
+      final position = await currentGpsPosition(context);
       point = LatLng(position.latitude, position.longitude);
     } catch (_) {
       // Si el GPS falla, el destino del viaje es el mejor punto disponible.
@@ -4895,7 +5320,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (active != null) return;
     final gpsRequestRevision = originSelectionGuard.startGpsRequest();
     try {
-      final position = await currentGpsPosition();
+      final position = await currentGpsPosition(context);
       if (!mounted || active != null) return;
       final point = LatLng(position.latitude, position.longitude);
       final applyAsOrigin = explicit
@@ -4944,7 +5369,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<LatLng?> centerPassengerCurrentLocation() async {
     try {
-      final position = await currentGpsPosition();
+      final position = await currentGpsPosition(context);
       if (!mounted) return null;
       final point = LatLng(position.latitude, position.longitude);
       setState(() => currentLocation = point);
@@ -7125,7 +7550,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       LatLng(position.latitude, position.longitude);
 
   Future<void> startGpsTracking({required bool markAvailable}) async {
-    final position = await currentGpsPosition();
+    final position = await currentGpsPosition(context);
     if (markAvailable) {
       await api.available(widget.s.token, true, pointFrom(position));
     }
@@ -7155,7 +7580,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<LatLng?> centerDriverCurrentLocation() async {
     try {
-      final position = await currentGpsPosition();
+      final position = await currentGpsPosition(context);
       final point = pointFrom(position);
       if (!mounted) return null;
       setState(() {
@@ -7773,7 +8198,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     var current = currentDriverPosition;
     if (current == null) {
       try {
-        current = pointFrom(await currentGpsPosition());
+        current = pointFrom(await currentGpsPosition(context));
       } catch (_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
