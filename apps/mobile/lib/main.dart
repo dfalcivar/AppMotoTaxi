@@ -380,6 +380,26 @@ String supportTripIdentifier(dynamic trip) {
       : '';
 }
 
+Uri? firstWebUrl(String text) {
+  final match = RegExp(r'https?://[^\s]+').firstMatch(text);
+  if (match == null) return null;
+  final raw = match.group(0)!.replaceFirst(RegExp(r'[.,;:!?]+$'), '');
+  final uri = Uri.tryParse(raw);
+  return uri != null && (uri.scheme == 'https' || uri.scheme == 'http')
+      ? uri
+      : null;
+}
+
+String answerWithoutWebUrl(String text) {
+  final uri = firstWebUrl(text);
+  if (uri == null) return text;
+  return text
+      .replaceFirst(uri.toString(), '')
+      .replaceAllMapped(RegExp(r'\s+([.,;:])'), (match) => match.group(1)!)
+      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .trim();
+}
+
 class BiometricAccess {
   const BiometricAccess(this.credential, this.role, this.name, this.id,
       {this.approvalStatus, this.availableRoles = const ['PASSENGER']});
@@ -3290,6 +3310,18 @@ class _ProfileState extends State<Profile> {
           ),
           Card(
               child: ListTile(
+            leading: const Icon(Icons.directions_bike_outlined),
+            title: const Text('Mis viajes'),
+            subtitle: const Text('Viajes en curso e historial'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final repeat = await Navigator.push<TripRepeatDraft>(
+                  c, MaterialPageRoute(builder: (_) => TripsPanel(widget.s)));
+              if (repeat != null && c.mounted) Navigator.pop(c, repeat);
+            },
+          )),
+          Card(
+              child: ListTile(
                   leading: const Icon(Icons.star, color: Colors.amber),
                   title:
                       Text('${(p['rating'] as num).toStringAsFixed(1)} de 5'),
@@ -4125,19 +4157,14 @@ class _AccountHubState extends State<AccountHub> {
             leading: const Icon(Icons.person_outline),
             title: const Text('Mi perfil'),
             onTap: () async {
-              await Navigator.push(
+              final repeat = await Navigator.push<TripRepeatDraft>(
                   c, MaterialPageRoute(builder: (_) => Profile(widget.s)));
+              if (repeat != null && c.mounted) {
+                Navigator.pop(c, repeat);
+                return;
+              }
               await loadAccountProfile();
               await loadBiometricState();
-            }),
-        ListTile(
-            leading: const Icon(Icons.directions_bike),
-            title: const Text('Mis viajes'),
-            subtitle: const Text('Viajes en curso e historial'),
-            onTap: () async {
-              final repeat = await Navigator.push<TripRepeatDraft>(
-                  c, MaterialPageRoute(builder: (_) => TripsPanel(widget.s)));
-              if (repeat != null && c.mounted) Navigator.pop(c, repeat);
             }),
         ListTile(
             leading: const Icon(Icons.history_rounded),
@@ -4502,19 +4529,44 @@ class _SupportCenterState extends State<SupportCenter> {
                     child: Text(
                         'No encontramos una respuesta. Puedes crear una solicitud de soporte.')))
           else
-            ...visibleFaqs.map((faq) => Card(
-                    child: ExpansionTile(
-                  leading: const Icon(Icons.help_outline),
-                  title: Text(faq['question']),
-                  subtitle: Text(faq['category']),
-                  children: [
-                    Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                        child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(faq['answer'])))
-                  ],
-                ))),
+            ...visibleFaqs.map((faq) {
+              final answer = faq['answer']?.toString() ?? '';
+              final link = firstWebUrl(answer);
+              return Card(
+                  child: ExpansionTile(
+                leading: const Icon(Icons.help_outline),
+                title: Text(faq['question']),
+                subtitle: Text(faq['category']),
+                children: [
+                  Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                      child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(answerWithoutWebUrl(answer)),
+                                if (link != null) ...[
+                                  const SizedBox(height: 10),
+                                  OutlinedButton.icon(
+                                      onPressed: () async {
+                                        if (!await launchUrl(link,
+                                                mode: LaunchMode
+                                                    .externalApplication) &&
+                                            context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(const SnackBar(
+                                                  content: Text(
+                                                      'No se pudo abrir el enlace.')));
+                                        }
+                                      },
+                                      icon: const Icon(Icons.open_in_new),
+                                      label: const Text('Consultar tarifario')),
+                                ]
+                              ])))
+                ],
+              ));
+            }),
           const SizedBox(height: 18),
           FilledButton.icon(
             onPressed: () async {

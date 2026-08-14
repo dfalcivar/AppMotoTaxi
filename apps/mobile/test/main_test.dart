@@ -3,6 +3,22 @@ import 'package:latlong2/latlong.dart';
 import 'package:mototaxi_atacames/main.dart';
 
 void main() {
+  group('enlaces de preguntas frecuentes', () {
+    test('detecta un enlace web seguro dentro de la respuesta', () {
+      final uri = firstWebUrl(
+          'Consulta el tarifario en https://mototaxi-atacames-admin.onrender.com/fares.html.');
+      expect(uri?.toString(),
+          'https://mototaxi-atacames-admin.onrender.com/fares.html');
+    });
+
+    test('separa la URL del texto que se presenta al usuario', () {
+      expect(
+          answerWithoutWebUrl(
+              'Consulta aquí https://mototaxi-atacames-admin.onrender.com/fares.html. Antes de viajar.'),
+          'Consulta aquí. Antes de viajar.');
+    });
+  });
+
   group('NotificationRouter', () {
     test('el tipo tiene prioridad sobre un tripId presente', () {
       expect(notificationTargetFor('CHAT_MESSAGE'), NotificationTarget.chat);
