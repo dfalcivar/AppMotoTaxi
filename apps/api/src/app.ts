@@ -273,7 +273,11 @@ export async function buildApp() {
   app.get("/health", async () => ({
     status: "ok",
     service: "costa-go-api",
-    uptimeSeconds: Math.round(process.uptime())
+    uptimeSeconds: Math.round(process.uptime()),
+    providers: {
+      googleMaps: Boolean(process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim()),
+      openRouteService: Boolean(process.env.ORS_API_KEY?.trim())
+    }
   }));
 
   app.get("/v1/pricing/config", async () => initialPricingConfig);

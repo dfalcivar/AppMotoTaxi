@@ -17,6 +17,18 @@ interface GooglePlace {
   location?: { latitude?: number; longitude?: number };
 }
 
+interface OrsGeocodingFeature {
+  geometry?: { coordinates?: unknown };
+  properties?: {
+    label?: string;
+    name?: string;
+    street?: string;
+    housenumber?: string;
+    locality?: string;
+    region?: string;
+  };
+}
+
 interface GoogleGeocodeResult {
   formatted_address?: string;
   types?: string[];
@@ -106,6 +118,10 @@ function googleMapsKey(): string | undefined {
   return process.env.GOOGLE_MAPS_SERVER_API_KEY?.trim() || undefined;
 }
 
+function openRouteServiceKey(): string | undefined {
+  return process.env.ORS_API_KEY?.trim() || undefined;
+}
+
 export function googlePlacesSearchBody(
   query: string,
   focus?: FocusPoint,
@@ -171,6 +187,56 @@ async function searchGooglePlaces(
       latitude,
       longitude
     }];
+  });
+}
+
+export function openRouteServiceSearchUrl(
+  query: string,
+  focus?: FocusPoint
+): URL {
+  const url = new URL("https://api.openrouteservice.org/geocode/search");
+  url.searchParams.set("text", query);
+  url.searchParams.set("size", "12");
+  url.searchParams.set("boundary.country", "ECU");
+  url.searchParams.set("lang", "es");
+  if (focus) {
+    url.searchParams.set("focus.point.lat", String(focus.latitude));
+    url.searchParams.set("focus.point.lon", String(focus.longitude));
+  }
+  return url;
+}
+
+async function searchOpenRouteService(
+  query: string,
+  focus?: FocusPoint
+): Promise<LocationResult[]> {
+  const key = openRouteServiceKey();
+  if (!key) return [];
+  const response = await fetch(openRouteServiceSearchUrl(query, focus), {
+    headers: { Authorization: key, Accept: "application/json" }
+  });
+  if (!response.ok) throw new Error(`ORS_GEOCODING_${response.status}`);
+  const payload = (await response.json()) as {
+    features?: OrsGeocodingFeature[];
+  };
+  return (payload.features ?? []).flatMap(feature => {
+    const coordinates = feature.geometry?.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+    const longitude = Number(coordinates[0]);
+    const latitude = Number(coordinates[1]);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+    const properties = feature.properties ?? {};
+    const street = [properties.street, properties.housenumber]
+      .filter(Boolean)
+      .join(" ");
+    const label = cleanLocationLabel(
+      properties.label ??
+        [properties.name, street, properties.locality, properties.region]
+          .filter(Boolean)
+          .join(", ")
+    );
+    if (!label) return [];
+    return [{ label: label.slice(0, 200), latitude, longitude }];
   });
 }
 
@@ -291,28 +357,46 @@ async function findIntersection(query: string, focus?: FocusPoint): Promise<Loca
 }
 
 export async function searchLocations(query: string, focus?: FocusPoint, bounds?: SearchBounds): Promise<LocationResult[]> {
+  const providerErrors: string[] = [];
   if (googleMapsKey()) {
     try {
       const places = await searchGooglePlaces(query, focus, bounds);
       if (places.length) return places;
-    } catch {
-      // Mantiene Nominatim como respaldo durante la transición a Google.
+    } catch (error) {
+      providerErrors.push(error instanceof Error ? error.message : "GOOGLE_PLACES_UNKNOWN");
     }
   }
-  const matchedIntersection = await findIntersection(query, focus);
-  if (matchedIntersection) return [matchedIntersection];
-  const url = baseUrl();
-  url.searchParams.set("q", `${query}, Ecuador`);
-  url.searchParams.set("limit", "8");
-  addViewbox(url, focus, Boolean(bounds), bounds);
-  const response = await fetch(url, { headers });
-  if (!response.ok) throw new Error("GEOCODER_UNAVAILABLE");
-  const items = await response.json() as NominatimItem[];
-  return items.map(item => ({
-    label: cleanLocationLabel(item.display_name),
-    latitude: Number(item.lat),
-    longitude: Number(item.lon)
-  }));
+  if (openRouteServiceKey()) {
+    try {
+      const locations = await searchOpenRouteService(query, focus);
+      if (locations.length) return locations;
+    } catch (error) {
+      providerErrors.push(error instanceof Error ? error.message : "ORS_GEOCODING_UNKNOWN");
+    }
+  }
+  try {
+    const matchedIntersection = await findIntersection(query, focus);
+    if (matchedIntersection) return [matchedIntersection];
+  } catch (error) {
+    providerErrors.push(error instanceof Error ? error.message : "NOMINATIM_INTERSECTION_UNKNOWN");
+  }
+  try {
+    const url = baseUrl();
+    url.searchParams.set("q", `${query}, Ecuador`);
+    url.searchParams.set("limit", "8");
+    addViewbox(url, focus, Boolean(bounds), bounds);
+    const response = await fetch(url, { headers });
+    if (!response.ok) throw new Error(`NOMINATIM_${response.status}`);
+    const items = await response.json() as NominatimItem[];
+    return items.map(item => ({
+      label: cleanLocationLabel(item.display_name),
+      latitude: Number(item.lat),
+      longitude: Number(item.lon)
+    }));
+  } catch (error) {
+    providerErrors.push(error instanceof Error ? error.message : "NOMINATIM_UNKNOWN");
+    throw new Error(`GEOCODER_PROVIDERS_FAILED:${providerErrors.join("|")}`);
+  }
 }
 
 export async function searchLocationsInArea(

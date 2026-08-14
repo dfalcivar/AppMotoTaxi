@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { cleanLocationLabel, googlePlacesSearchBody, placesSearchPageSize, preciseGoogleAddress } from "./geocoding.js";
+import {
+  cleanLocationLabel,
+  googlePlacesSearchBody,
+  openRouteServiceSearchUrl,
+  placesSearchPageSize,
+  preciseGoogleAddress
+} from "./geocoding.js";
 
 describe("Google Places", () => {
   it("solicita más candidatos cuando luego se filtrarán con un polígono", () => {
@@ -17,6 +23,20 @@ describe("Google Places", () => {
     });
     expect(body).not.toHaveProperty("locationBias");
     expect(body).not.toHaveProperty("includedType");
+  });
+});
+
+describe("OpenRouteService geocoding", () => {
+  it("prioriza la ubicacion actual sin reemplazar el filtro por poligono", () => {
+    const url = openRouteServiceSearchUrl("La Jaula", {
+      latitude: -2.9,
+      longitude: -79.0
+    });
+    expect(url.origin).toBe("https://api.openrouteservice.org");
+    expect(url.searchParams.get("text")).toBe("La Jaula");
+    expect(url.searchParams.get("boundary.country")).toBe("ECU");
+    expect(url.searchParams.get("focus.point.lat")).toBe("-2.9");
+    expect(url.searchParams.get("focus.point.lon")).toBe("-79");
   });
 });
 

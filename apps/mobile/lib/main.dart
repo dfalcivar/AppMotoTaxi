@@ -4987,6 +4987,25 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     _movePassengerSheet(.24);
   }
 
+  void clearDestination(int destinationIndex) {
+    setState(() {
+      _destinationController(destinationIndex).clear();
+      _setDestinationPoint(destinationIndex, null);
+      if (mapSelection == MapPointSelection.destination &&
+          selectedDestinationIndex == destinationIndex) {
+        mapSelection = null;
+        pendingMapPoint = null;
+        selectionResolving = false;
+        selectionMoving = false;
+      }
+      routePoints = [];
+      routeDistanceMeters = null;
+      routeDurationSeconds = null;
+      message = null;
+    });
+    unawaited(refreshRoute(force: true));
+  }
+
   void beginMapSelection(MapPointSelection selection,
       {int destinationIndex = 0}) {
     FocusManager.instance.primaryFocus?.unfocus();
@@ -6456,8 +6475,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   IconButton(
                       tooltip: 'Borrar destino',
                       icon: const Icon(Icons.close),
-                      onPressed: () =>
-                          clearPoint(false, destinationIndex: index)),
+                      onPressed: () => clearDestination(index)),
                 IconButton(
                     tooltip: 'Ajustar en el mapa',
                     icon: const Icon(Icons.edit_location_alt_outlined),
