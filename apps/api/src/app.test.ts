@@ -191,11 +191,11 @@ describe("API de cotización", () => {
     });
   });
 
-  it("aplica la noche desde las 20:00", async () => {
+  it("aplica la noche desde las 22:00", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/quotes",
-      payload: { zone: "URBAN", passengers: 3, localTime: "20:00" }
+      payload: { zone: "URBAN", passengers: 3, localTime: "22:00" }
     });
     expect(response.json()).toMatchObject({
       totalCents: 300,

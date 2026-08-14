@@ -21,6 +21,7 @@ import {
   type PermissionOverride
 } from "./permissions.js";
 import { sendPush } from "./push.js";
+import { notifyDriverApproved } from "./approval-notifications.js";
 import { dashboardFilters } from "./dashboard-filters.js";
 import { dashboardAnalytics, driverDashboardProfile } from "./dashboard-analytics.js";
 import { serviceAreaPublishSchema, serviceAreaRoleSchema } from "./service-areas.js";
@@ -38,13 +39,14 @@ export interface SessionUser {
   sessionId?: string;
   mustChangePassword?: boolean;
   driverApprovalStatus?: string;
+  availableRoles?: Array<"PASSENGER" | "DRIVER">;
   permissions?: Permission[];
   cooperativeId?: string;
   expiresAt?: number;
 }
 interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
 interface Passenger { id: string; name: string; email?: string; phone: string; status: "ACTIVE" | "SUSPENDED"; trips: number; lastTrip: string }
-interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; stopSurchargeCents: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; activeUntil?: string; status: "ACTIVE" | "SCHEDULED" | "FINALIZED" }
+interface PricingVersion { id: string; version: number; urbanDayCents: number; nightCents: number; extendedCents: number; stopSurchargeCents: number; platformCommissionCentsPerLeg: number; promotionPassengers: number; promotionTotalCents: number; activeFrom: string; activeUntil?: string; status: "ACTIVE" | "SCHEDULED" | "FINALIZED" }
 interface Incident { id: string; trip: string; category: string; description: string; status: IncidentStatus; assignedTo: string; createdAt: string }
 interface AuditEntry { id: string; actor: string; action: string; entity: string; createdAt: string; detail: string }
 
@@ -59,7 +61,7 @@ const passengers: Passenger[] = [
   { id: "PAS-003", name: "Pedro Angulo", phone: "+593 96 143 9082", status: "SUSPENDED", trips: 3, lastTrip: "24 jul, 10:40" }
 ];
 const pricing: PricingVersion[] = [
-  { id: "PRICE-1", version: 1, urbanDayCents: 50, nightCents: 100, extendedCents: 100, stopSurchargeCents: 0, promotionPassengers: 3, promotionTotalCents: 100, activeFrom: "2026-07-27T00:00:00-05:00", status: "ACTIVE" }
+  { id: "PRICE-1", version: 1, urbanDayCents: 50, nightCents: 100, extendedCents: 100, stopSurchargeCents: 25, platformCommissionCentsPerLeg: 5, promotionPassengers: 3, promotionTotalCents: 100, activeFrom: "2026-07-27T00:00:00-05:00", status: "ACTIVE" }
 ];
 const incidents: Incident[] = [
   { id: "INC-001", trip: "TRIP-1042", category: "Objeto olvidado", description: "Pasajera reporta una mochila azul.", status: "NUEVO", assignedTo: "Soporte", createdAt: "2026-07-29T08:10:00-05:00" },
@@ -89,22 +91,40 @@ const documentReviewSchema = z.object({
 });
 const adminDocumentSchema = z.object({
   documentType: z.enum(["PROFILE_PHOTO", "IDENTIFICATION", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
-  fileBase64: z.string().min(100).max(3_500_000),
-  fileMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  fileBase64: z.string().min(100).max(7_000_000),
+  fileMime: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]),
   expiresAt: z.string().date().optional().or(z.literal(""))
 });
 
-function decodeAdminImage(value: z.infer<typeof adminDocumentSchema>): Buffer {
+function decodeAdminDocument(value: z.infer<typeof adminDocumentSchema>): Buffer {
   const data = Buffer.from(value.fileBase64, "base64");
   const jpeg = data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
   const png = data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   const webp = data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
-  if (data.length > 2_500_000 || !(value.fileMime === "image/jpeg" ? jpeg : value.fileMime === "image/png" ? png : webp)) {
-    throw new Error("INVALID_IMAGE_FILE");
-  }
+  const imageValid=value.fileMime === "image/jpeg" ? jpeg : value.fileMime === "image/png" ? png : value.fileMime === "image/webp" ? webp : false;
+  if(value.fileMime.startsWith("image/")){if(data.length<100||data.length>2_500_000||!imageValid)throw new Error("INVALID_IMAGE_FILE");return data;}
+  if(value.documentType!=="OPERATING_PERMIT")throw new Error("DOCUMENT_FORMAT_NOT_ALLOWED");
+  const pdf=value.fileMime==="application/pdf"&&data.subarray(0,5).toString("ascii")==="%PDF-";
+  const doc=value.fileMime==="application/msword"&&data.length>=8&&data.subarray(0,8).equals(Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]));
+  const docx=value.fileMime==="application/vnd.openxmlformats-officedocument.wordprocessingml.document"&&data.length>=4&&data[0]===0x50&&data[1]===0x4b&&data[2]===0x03&&data[3]===0x04;
+  if(data.length<100||data.length>5_000_000||(!pdf&&!doc&&!docx))throw new Error("INVALID_DOCUMENT_FILE");
   return data;
 }
-const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), stopSurchargeCents: z.number().int().nonnegative(), promotionPassengers: z.number().int().positive(), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
+const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), stopSurchargeCents: z.number().int().nonnegative(), platformCommissionCentsPerLeg: z.number().int().nonnegative().max(10000).default(5), promotionPassengers: z.number().int().min(1).max(3), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
+const fareSectorSchema = z.object({
+  id: z.string().uuid().optional(), serviceAreaId: z.string().uuid(),
+  code: z.string().trim().min(3).max(60).regex(/^[A-Z0-9_]+$/),
+  name: z.string().trim().min(3).max(120), description: z.string().trim().max(500).optional().default(""),
+  geometry: serviceAreaPublishSchema.shape.geometry, priority: z.number().int().min(-1000).max(1000).default(0),
+  enabled: z.boolean().default(false)
+});
+const fareRuleSchema = z.object({
+  id: z.string().uuid().optional(), serviceAreaId: z.string().uuid(),
+  originSectorId: z.string().uuid(), destinationSectorId: z.string().uuid(),
+  minimumPassengers: z.number().int().min(1).max(3), maximumPassengers: z.number().int().min(1).max(3),
+  dayTotalCents: z.number().int().nonnegative(), nightTotalCents: z.number().int().nonnegative(),
+  bidirectional: z.boolean().default(true), enabled: z.boolean().default(false)
+}).refine(value => value.maximumPassengers >= value.minimumPassengers, { message: "INVALID_PASSENGER_RANGE" });
 const serviceAreaStatusSchema = z.object({ enabled: z.boolean() });
 const serviceAreaAccessSchema = z.object({ userId: z.string().uuid(), expiresAt: z.string().datetime({ offset: true }).nullable().optional() });
 const serviceAreaValidationSchema = z.object({
@@ -712,22 +732,23 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const driverId=(request.params as {id:string}).id;
     const required=["PROFILE_PHOTO","IDENTIFICATION","LICENSE","REGISTRATION","OPERATING_PERMIT"];
     const result=await database().begin(async tx=>{
-      const [current]=await tx`select d.approval_status,u.full_name from drivers d join users u on u.id=d.user_id where d.user_id=${driverId} for update`;
+      const [current]=await tx`select d.approval_status,u.full_name,u.email from drivers d join users u on u.id=d.user_id where d.user_id=${driverId} for update`;
       if(!current)return undefined;
       if(body.decision==="APPROVE") {
         const [documents]=await tx`select count(distinct document_type)::int count from driver_documents where driver_id=${driverId} and document_type in ${tx(required)} and status='ACTIVE'`;
         if(Number(documents?.count)!==required.length)throw new Error("DRIVER_DOCUMENTS_NOT_APPROVED");
       }
       const next={APPROVE:"APROBADO",REJECT:"RECHAZADO",OBSERVE:"OBSERVADO",REQUEST_CORRECTIONS:"OBSERVADO",SUSPEND:"SUSPENDIDO"}[body.decision];
-      const accountStatus={APPROVE:"ACTIVE",REJECT:"REJECTED",OBSERVE:"PENDING",REQUEST_CORRECTIONS:"PENDING",SUSPEND:"SUSPENDED"}[body.decision];
+      const accountStatus="ACTIVE";
+      const vehicleStatus={APPROVE:"ACTIVE",REJECT:"REJECTED",OBSERVE:"PENDING",REQUEST_CORRECTIONS:"PENDING",SUSPEND:"SUSPENDED"}[body.decision];
       await tx`update drivers set approval_status=${next},approval_observation=${body.observation||null},approval_updated_at=now(),
         approval_note=${body.observation||'Documentación completa'},approved_at=case when ${body.decision}='APPROVE' then now() else approved_at end,
         approved_by=case when ${body.decision}='APPROVE' then ${actor.id!} else approved_by end,is_available=false where user_id=${driverId}`;
       await tx`update users set status=${accountStatus},updated_at=now() where id=${driverId}`;
-      await tx`update vehicles set status=${accountStatus} where driver_id=${driverId}`;
+      await tx`update vehicles set status=${vehicleStatus} where driver_id=${driverId}`;
       await tx`insert into driver_approval_reviews(driver_id,reviewer_id,previous_status,next_status,decision,observation)
         values(${driverId},${actor.id!},${current.approval_status},${next},${body.decision},${body.observation||null})`;
-      return {name:String(current.full_name),approvalStatus:next,accountStatus};
+      return {name:String(current.full_name),email:String(current.email),approvalStatus:next,accountStatus};
     });
     if(!result)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(actor,"DRIVER_APPROVAL_DECISION","DRIVER",driverId,`${body.decision}: ${body.observation||'Sin observación'}`);
@@ -735,6 +756,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if(pushSettings?.push_enabled!==false) {
       const messages:Record<string,[string,string]>={APPROVE:["Solicitud aprobada","Tu perfil de conductor fue aprobado. Ya puedes recibir viajes."],REJECT:["Solicitud rechazada",body.observation],OBSERVE:["Solicitud observada",body.observation],REQUEST_CORRECTIONS:["Correcciones requeridas",body.observation],SUSPEND:["Cuenta suspendida",body.observation]};
       const message=messages[body.decision]; if(message)void sendPush(driverId,message[0],message[1],{type:"DRIVER_APPROVAL",status:result.approvalStatus}).catch(()=>undefined);
+    }
+    if(body.decision==="APPROVE") {
+      try { const delivered=await notifyDriverApproved(result.email,result.name); if(!delivered)request.log.warn({driverId},"driver_approval_email_not_delivered"); }
+      catch(error) { request.log.error({err:error,driverId},"driver_approval_email_failed"); }
     }
     return result;
   } catch(e) {
@@ -780,7 +805,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!process.env.DATABASE_URL) return reply.code(201).send({ ok: true });
     const id=(request.params as { id: string }).id;
     let data: Buffer;
-    try { data=decodeAdminImage(body); } catch { return reply.code(400).send({error:"INVALID_DRIVER_DOCUMENT"}); }
+    try { data=decodeAdminDocument(body); } catch { return reply.code(400).send({error:"INVALID_DRIVER_DOCUMENT"}); }
     const [document]=await database()`
       insert into driver_documents (driver_id, document_type, file_url, file_data, file_mime, expires_at, status)
       values (${id}, ${body.documentType}, 'database', ${data}, ${body.fileMime}, ${body.expiresAt || null}, 'PENDING')
@@ -860,7 +885,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,
         count(t.id)::int as trips, max(t.requested_at)::text as "lastTrip"
       from users u left join trips t on t.passenger_id = u.id
-      where u.role='PASSENGER'
+      where exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role='PASSENGER')
       group by u.id order by u.created_at
     `;
   } catch(e){return guardError(e,reply);} });
@@ -868,7 +893,9 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const user=requirePermission(request, "passengers:manage"); const body=passengerSchema.parse(request.body);
     if (!process.env.DATABASE_URL) { const item=passengers.find(p=>p.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"PASSENGER_STATUS",item.id,body.reason); return item; }
     const id=(request.params as { id: string }).id;
-    const rows=await database()`update users set status=${body.status}, updated_at=now() where id=${id} and role='PASSENGER' returning id, full_name as name, phone_e164 as phone, status`;
+    const rows=await database()`update users set status=${body.status},updated_at=now() where id=${id}
+      and exists(select 1 from mobile_account_roles mar where mar.user_id=users.id and mar.role='PASSENGER')
+      returning id,full_name as name,phone_e164 as phone,status`;
     const item=rows[0]; if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,"PASSENGER_STATUS","PASSENGER",id,body.reason);
     return item;
@@ -882,6 +909,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         night_cents_per_passenger as "nightCents",
         extended_cents_per_passenger as "extendedCents",
         stop_surcharge_cents as "stopSurchargeCents",
+        coalesce(platform_commission_cents_per_leg,5) as "platformCommissionCentsPerLeg",
         group_promotion_passengers as "promotionPassengers",
         group_promotion_total_cents as "promotionTotalCents",
         active_from as "activeFrom",
@@ -913,16 +941,17 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         const [item] = await sql`
           insert into pricing_versions (
             version, day_starts_at, night_starts_at, urban_day_cents_per_passenger,
-            night_cents_per_passenger, extended_cents_per_passenger, stop_surcharge_cents,
+            night_cents_per_passenger, extended_cents_per_passenger, stop_surcharge_cents, platform_commission_cents_per_leg,
             group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents,
             maximum_passengers, active_from, created_by
           ) values (
-            ${version}, '06:00', '20:00', ${body.urbanDayCents}, ${body.nightCents},
-            ${body.extendedCents}, ${body.stopSurchargeCents}, true,
-            ${body.promotionPassengers}, ${body.promotionTotalCents}, 4, ${body.activeFrom}, ${user.id!}
+            ${version}, '06:00', '22:00', ${body.urbanDayCents}, ${body.nightCents},
+            ${body.extendedCents}, ${body.stopSurchargeCents}, ${body.platformCommissionCentsPerLeg}, true,
+            ${body.promotionPassengers}, ${body.promotionTotalCents}, 3, ${body.activeFrom}, ${user.id!}
           ) returning id::text, version, urban_day_cents_per_passenger as "urbanDayCents",
             night_cents_per_passenger as "nightCents", extended_cents_per_passenger as "extendedCents",
             stop_surcharge_cents as "stopSurchargeCents",
+            platform_commission_cents_per_leg as "platformCommissionCentsPerLeg",
             group_promotion_passengers as "promotionPassengers",
             group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"
         `;
@@ -1165,7 +1194,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         where active_from <= ${startsAt}
           and (active_until is null or active_until > ${startsAt})
       `;
-      const [item] = await sql`insert into pricing_versions (version, day_starts_at, night_starts_at, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, stop_surcharge_cents, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, maximum_passengers, active_from, created_by) values (${version}, '06:00', '20:00', ${body.urbanDayCents}, ${body.nightCents}, ${body.extendedCents}, ${body.stopSurchargeCents}, true, ${body.promotionPassengers}, ${body.promotionTotalCents}, 4, ${body.activeFrom}, ${user.id!}) returning id::text, version, urban_day_cents_per_passenger as "urbanDayCents", night_cents_per_passenger as "nightCents", extended_cents_per_passenger as "extendedCents", stop_surcharge_cents as "stopSurchargeCents", group_promotion_passengers as "promotionPassengers", group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"`;
+      const [item] = await sql`insert into pricing_versions (version, day_starts_at, night_starts_at, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, stop_surcharge_cents, platform_commission_cents_per_leg, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, maximum_passengers, active_from, created_by) values (${version}, '06:00', '22:00', ${body.urbanDayCents}, ${body.nightCents}, ${body.extendedCents}, ${body.stopSurchargeCents}, ${body.platformCommissionCentsPerLeg}, true, ${body.promotionPassengers}, ${body.promotionTotalCents}, 3, ${body.activeFrom}, ${user.id!}) returning id::text, version, urban_day_cents_per_passenger as "urbanDayCents", night_cents_per_passenger as "nightCents", extended_cents_per_passenger as "extendedCents", stop_surcharge_cents as "stopSurchargeCents", platform_commission_cents_per_leg as "platformCommissionCentsPerLeg", group_promotion_passengers as "promotionPassengers", group_promotion_total_cents as "promotionTotalCents", active_from as "activeFrom"`;
       if (nextScheduled?.activeFrom) await sql`
         update pricing_versions set active_until=${nextScheduled.activeFrom}
         where id=${item!.id}
@@ -1175,6 +1204,59 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     await persistAudit(user, "PRICING_PUBLISHED", "PRICING", next.id, `Version ${next.version}`);
     return reply.code(201).send({ ...next, status: new Date(next.activeFrom) > new Date() ? "SCHEDULED" : "ACTIVE" });
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
+  app.get("/v1/admin/fare-sectors", async (request, reply) => { try {
+    requirePermission(request, "pricing:view");
+    return database()`select s.id::text,s.service_area_id::text as "serviceAreaId",a.code as "serviceAreaCode",
+      s.code,s.name,s.description,s.priority,s.enabled,ST_AsGeoJSON(s.boundary::geometry,6)::jsonb geometry,
+      s.updated_at as "updatedAt"
+      from fare_sectors s join operational_service_areas a on a.id=s.service_area_id
+      order by a.code,s.priority desc,s.name`;
+  } catch(e) { return guardError(e,reply); } });
+  app.post("/v1/admin/fare-sectors", async (request, reply) => { try {
+    const user=requirePermission(request,"pricing:manage");const body=fareSectorSchema.parse(request.body);
+    const geometry=JSON.stringify(body.geometry);
+    const [validation]=await database()`select ST_IsValid(value.geometry) valid,ST_IsEmpty(value.geometry) empty
+      from (select ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326) geometry) value`;
+    if(!validation?.valid||validation?.empty)return reply.code(422).send({error:"INVALID_FARE_SECTOR_GEOMETRY"});
+    const [item]=body.id
+      ? await database()`update fare_sectors set service_area_id=${body.serviceAreaId}::uuid,code=${body.code},name=${body.name},
+          description=${body.description||null},boundary=ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326))::geography,
+          priority=${body.priority},enabled=${body.enabled},updated_by=${user.id!},updated_at=now()
+          where id=${body.id}::uuid returning id::text,code,name,enabled`
+      : await database()`insert into fare_sectors(service_area_id,code,name,description,boundary,priority,enabled,created_by,updated_by)
+          values(${body.serviceAreaId}::uuid,${body.code},${body.name},${body.description||null},
+          ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326))::geography,${body.priority},false,${user.id!},${user.id!})
+          returning id::text,code,name,enabled`;
+    if(!item)return reply.code(404).send({error:"NOT_FOUND"});
+    await persistAudit(user,body.id?"FARE_SECTOR_UPDATED":"FARE_SECTOR_CREATED","FARE_SECTOR",item.id,item.code);
+    return reply.code(body.id?200:201).send(item);
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_FARE_SECTOR"});return guardError(e,reply); } });
+  app.get("/v1/admin/fare-rules", async (request, reply) => { try {
+    requirePermission(request,"pricing:view");
+    return database()`select r.id::text,r.service_area_id::text as "serviceAreaId",r.origin_sector_id::text as "originSectorId",
+      origin.name as "originSector",r.destination_sector_id::text as "destinationSectorId",destination.name as "destinationSector",
+      r.minimum_passengers as "minimumPassengers",r.maximum_passengers as "maximumPassengers",
+      r.day_total_cents as "dayTotalCents",r.night_total_cents as "nightTotalCents",r.bidirectional,r.enabled
+      from fare_route_rules r join fare_sectors origin on origin.id=r.origin_sector_id
+      join fare_sectors destination on destination.id=r.destination_sector_id order by origin.name,destination.name,r.minimum_passengers`;
+  } catch(e) { return guardError(e,reply); } });
+  app.post("/v1/admin/fare-rules", async (request, reply) => { try {
+    const user=requirePermission(request,"pricing:manage");const body=fareRuleSchema.parse(request.body);
+    const [valid]=await database()`select count(*)::int count from fare_sectors where id in (${body.originSectorId}::uuid,${body.destinationSectorId}::uuid) and service_area_id=${body.serviceAreaId}::uuid`;
+    if(Number(valid?.count)!==2)return reply.code(400).send({error:"FARE_SECTORS_MUST_SHARE_SERVICE_AREA"});
+    const [item]=body.id
+      ? await database()`update fare_route_rules set origin_sector_id=${body.originSectorId}::uuid,destination_sector_id=${body.destinationSectorId}::uuid,
+          minimum_passengers=${body.minimumPassengers},maximum_passengers=${body.maximumPassengers},day_total_cents=${body.dayTotalCents},
+          night_total_cents=${body.nightTotalCents},bidirectional=${body.bidirectional},enabled=${body.enabled},updated_by=${user.id!},updated_at=now()
+          where id=${body.id}::uuid returning id::text`
+      : await database()`insert into fare_route_rules(service_area_id,origin_sector_id,destination_sector_id,minimum_passengers,maximum_passengers,
+          day_total_cents,night_total_cents,bidirectional,enabled,created_by,updated_by)
+          values(${body.serviceAreaId}::uuid,${body.originSectorId}::uuid,${body.destinationSectorId}::uuid,${body.minimumPassengers},${body.maximumPassengers},
+          ${body.dayTotalCents},${body.nightTotalCents},${body.bidirectional},false,${user.id!},${user.id!}) returning id::text`;
+    if(!item)return reply.code(404).send({error:"NOT_FOUND"});
+    await persistAudit(user,body.id?"FARE_RULE_UPDATED":"FARE_RULE_CREATED","FARE_RULE",item.id,`${body.dayTotalCents}/${body.nightTotalCents}`);
+    return reply.code(body.id?200:201).send(item);
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_FARE_RULE"});return guardError(e,reply); } });
   app.patch("/v1/admin/incidents/:id/persist", async (request, reply) => { try {
     const user = requirePermission(request, "incidents:manage"); const body = incidentSchema.parse(request.body); const id = (request.params as { id: string }).id;
     const [item] = await database()`update incidents set status=${body.status},

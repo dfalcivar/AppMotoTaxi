@@ -43,7 +43,7 @@ export const initialPricingConfig: PricingConfig = {
   currency: "USD",
   timezone: "America/Guayaquil",
   dayStartsAtMinute: 6 * 60,
-  nightStartsAtMinute: 20 * 60,
+  nightStartsAtMinute: 22 * 60,
   urbanDayCentsPerPassenger: 50,
   nightCentsPerPassenger: 100,
   extendedCentsPerPassenger: 100,
@@ -52,7 +52,7 @@ export const initialPricingConfig: PricingConfig = {
     passengers: 3,
     totalCents: 100
   },
-  maximumPassengers: 4,
+  maximumPassengers: 3,
   version: 1
 };
 

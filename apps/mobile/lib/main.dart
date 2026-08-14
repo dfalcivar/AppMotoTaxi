@@ -18,6 +18,7 @@ import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platf
     as maps_platform;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -391,6 +392,8 @@ class BiometricSessionStore {
         'role': session.role,
         'name': session.name,
         'id': session.id,
+        'approvalStatus': session.approvalStatus,
+        'availableRoles': session.availableRoles,
       }));
 
   static Future<void> clear() => secureStorage.delete(key: _key);
@@ -400,7 +403,10 @@ class BiometricSessionStore {
       final value = await secureStorage.read(key: _key);
       if (value == null) return null;
       final data = jsonDecode(value) as Map<String, dynamic>;
-      return Session(data['token'], data['role'], data['name'], data['id']);
+      return Session(data['token'], data['role'], data['name'], data['id'],
+          approvalStatus: data['approvalStatus']?.toString(),
+          availableRoles: List<String>.from(
+              data['availableRoles'] ?? <String>[data['role']]));
     } catch (_) {
       try {
         await clear();
@@ -454,6 +460,7 @@ class AppSessionStore {
         'id': session.id,
         'mustChangePassword': session.mustChangePassword,
         'approvalStatus': session.approvalStatus,
+        'availableRoles': session.availableRoles,
       }));
 
   static Future<Session?> saved() async {
@@ -468,6 +475,8 @@ class AppSessionStore {
         data['id'],
         mustChangePassword: data['mustChangePassword'] == true,
         approvalStatus: data['approvalStatus']?.toString(),
+        availableRoles: List<String>.from(
+            data['availableRoles'] ?? <String>[data['role']]),
       );
     } catch (_) {
       try {
@@ -478,6 +487,11 @@ class AppSessionStore {
   }
 
   static Future<void> clear() => secureStorage.delete(key: _key);
+}
+
+Future<void> refreshBiometricSessionIfEnabled(Session session) async {
+  final biometric = await BiometricSessionStore.saved();
+  if (biometric?.id == session.id) await BiometricSessionStore.enable(session);
 }
 
 Future<void> clearLocalSession() async {
@@ -847,10 +861,13 @@ class TripStatusPanel extends StatelessWidget {
 
 class Session {
   const Session(this.token, this.role, this.name, this.id,
-      {this.mustChangePassword = false, this.approvalStatus});
+      {this.mustChangePassword = false,
+      this.approvalStatus,
+      this.availableRoles = const ['PASSENGER']});
   final String token, role, name, id;
   final bool mustChangePassword;
   final String? approvalStatus;
+  final List<String> availableRoles;
 }
 
 class ApiException implements Exception {
@@ -865,6 +882,14 @@ class ApiException implements Exception {
 String mensajeApi(dynamic code) =>
     const {
       'INVALID_CREDENTIALS': 'Correo o contraseña incorrectos.',
+      'EMAIL_NOT_FOUND': 'No existe una cuenta registrada con ese correo.',
+      'ROLE_NOT_AVAILABLE': 'Este modo todavía no está habilitado en tu cuenta.',
+      'ROLE_SWITCH_BLOCKED_ACTIVE_TRIP':
+          'Finaliza o cancela el viaje activo antes de cambiar de modo.',
+      'DRIVER_PROFILE_ALREADY_EXISTS':
+          'Tu cuenta ya tiene un perfil de conductor.',
+      'INVALID_DRIVER_ENROLLMENT':
+          'Completa la fotografía y los datos de la mototaxi.',
       'DRIVER_PENDING_APPROVAL':
           'Tu perfil de conductor está pendiente de aprobación.',
       'DRIVER_NOT_APPROVED':
@@ -1138,13 +1163,15 @@ class Api {
         'No se pudo conectar. Revisa Internet e intenta nuevamente.');
   }
 
-  Future<Session> login(String e, String p) async {
+  Future<Session> login(String e, String p, {String? role}) async {
     final d = await call('POST', '/v1/auth/session',
-        body: {'email': e, 'password': p});
+        body: {'email': e, 'password': p, if (role != null) 'role': role});
     final s = Session(
         d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
         mustChangePassword: d['user']['mustChangePassword'] == true,
-        approvalStatus: d['user']['driverApprovalStatus']);
+        approvalStatus: d['user']['driverApprovalStatus'],
+        availableRoles:
+            List<String>.from(d['user']['availableRoles'] ?? [d['user']['role']]));
     await AppSessionStore.save(s);
     await registerFcm(s.token);
     return s;
@@ -1245,7 +1272,9 @@ class Api {
         body: {'email': email, 'code': code});
     final s = Session(
         d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
-        approvalStatus: d['user']['driverApprovalStatus']);
+        approvalStatus: d['user']['driverApprovalStatus'],
+        availableRoles:
+            List<String>.from(d['user']['availableRoles'] ?? [d['user']['role']]));
     await AppSessionStore.save(s);
     await registerFcm(s.token);
     return s;
@@ -1253,6 +1282,25 @@ class Api {
 
   Future<dynamic> requestPasswordReset(String email) =>
       call('POST', '/v1/auth/password-reset/request', body: {'email': email});
+  Future<Session> switchRole(String token, String role) async {
+    final d = await call('POST', '/v1/auth/switch-role',
+        token: token, body: {'role': role});
+    return Session(d['token'], d['user']['role'], d['user']['name'],
+        d['user']['id'],
+        mustChangePassword: d['user']['mustChangePassword'] == true,
+        approvalStatus: d['user']['driverApprovalStatus'],
+        availableRoles:
+            List<String>.from(d['user']['availableRoles'] ?? [role]));
+  }
+  Future<Session> enrollDriver(String token, Map<String, dynamic> body) async {
+    final d = await call('POST', '/v1/profile/driver-enrollment',
+        token: token, body: body);
+    return Session(d['token'], d['user']['role'], d['user']['name'],
+        d['user']['id'],
+        approvalStatus: d['user']['driverApprovalStatus'],
+        availableRoles: List<String>.from(
+            d['user']['availableRoles'] ?? ['PASSENGER', 'DRIVER']));
+  }
   Future<dynamic> confirmPasswordReset(
           String email, String code, String password) =>
       call('POST', '/v1/auth/password-reset/confirm', body: {
@@ -1876,7 +1924,7 @@ class _LoginState extends State<Login> {
       error = null;
     });
     try {
-      final s = await Api().login(email.text, password.text);
+      final s = await Api().login(email.text, password.text, role: widget.role);
       if (sentryDsn.isNotEmpty) {
         await Sentry.configureScope((scope) => scope.setUser(
             SentryUser(id: s.id, username: s.name, data: {'role': s.role})));
@@ -2517,7 +2565,8 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
       if (!mounted) return;
       final session = Session(widget.session.token, widget.session.role,
           widget.session.name, widget.session.id,
-          approvalStatus: widget.session.approvalStatus);
+          approvalStatus: widget.session.approvalStatus,
+          availableRoles: widget.session.availableRoles);
       await AppSessionStore.save(session);
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
@@ -3395,7 +3444,8 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
       if (mounted && value?['approvalStatus'] == 'APROBADO') {
         final approved = Session(widget.session.token, widget.session.role,
             widget.session.name, widget.session.id,
-            approvalStatus: 'APROBADO');
+            approvalStatus: 'APROBADO',
+            availableRoles: widget.session.availableRoles);
         await AppSessionStore.save(approved);
         if (!mounted) return;
         Navigator.pushReplacement(
@@ -3416,6 +3466,20 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(context,
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
+  }
+
+  Future<void> usePassengerMode() async {
+    try {
+      final session=await Api().switchRole(widget.session.token,'PASSENGER');
+      await AppSessionStore.save(session);
+      await refreshBiometricSessionIfEnabled(session);
+      unawaited(Api().registerFcm(session.token));
+      if(!mounted)return;
+      Navigator.pushAndRemoveUntil(context,
+          MaterialPageRoute(builder:(_)=>Passenger(session)),(_)=>false);
+    } catch(reason) {
+      if(mounted)setState(()=>error=reason.toString());
+    }
   }
 
   String statusText(String? value) =>
@@ -3493,6 +3557,11 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
                       onPressed: load,
                       icon: const Icon(Icons.refresh),
                       label: const Text('Actualizar estado')),
+                  if(widget.session.availableRoles.contains('PASSENGER'))
+                    OutlinedButton.icon(
+                        onPressed: usePassengerMode,
+                        icon: const Icon(Icons.person_pin_circle_outlined),
+                        label: const Text('Continuar como pasajero')),
                   TextButton(
                       onPressed: logout, child: const Text('Cerrar sesión')),
                 ]),
@@ -3539,7 +3608,7 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
   }
 
   Future<void> upload(String type) async {
-    final source = await showModalBottomSheet<ImageSource>(
+    final action = await showModalBottomSheet<String>(
         context: context,
         showDragHandle: true,
         builder: (sheetContext) => SafeArea(
@@ -3547,33 +3616,60 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
               ListTile(
                   leading: const Icon(Icons.camera_alt_outlined),
                   title: const Text('Tomar fotografía'),
-                  onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
+                  onTap: () => Navigator.pop(sheetContext, 'CAMERA')),
               ListTile(
                   leading: const Icon(Icons.photo_library_outlined),
                   title: const Text('Elegir de galería'),
-                  onTap: () =>
-                      Navigator.pop(sheetContext, ImageSource.gallery)),
+                  onTap: () => Navigator.pop(sheetContext, 'GALLERY')),
+              if (type == 'OPERATING_PERMIT')
+                ListTile(
+                    leading: const Icon(Icons.attach_file_outlined),
+                    title: const Text('Elegir PDF o documento Word'),
+                    subtitle: const Text('PDF, DOC o DOCX · máximo 5 MB'),
+                    onTap: () => Navigator.pop(sheetContext, 'DOCUMENT')),
             ])));
-    if (source == null) return;
-    final file = await picker.pickImage(
-        source: source, imageQuality: 72, maxWidth: 1400, maxHeight: 1400);
-    if (file == null) return;
+    if (action == null) return;
+    Uint8List bytes;
+    String mime;
+    if (action == 'DOCUMENT') {
+      final selected = await FilePicker.pickFile(type: FileType.custom,
+          allowedExtensions: const ['pdf', 'doc', 'docx']);
+      if (selected == null) return;
+      bytes = await selected.readAsBytes();
+      final extension = selected.name.contains('.')
+          ? selected.name.split('.').last.toLowerCase()
+          : '';
+      mime = extension == 'pdf'
+          ? 'application/pdf'
+          : extension == 'doc'
+              ? 'application/msword'
+              : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      if (bytes.length > 5000000) {
+        setState(() => message = 'El documento no puede superar 5 MB.');
+        return;
+      }
+    } else {
+      final file = await picker.pickImage(
+          source: action == 'CAMERA' ? ImageSource.camera : ImageSource.gallery,
+          imageQuality: 72, maxWidth: 1400, maxHeight: 1400);
+      if (file == null) return;
+      bytes = await file.readAsBytes();
+      final extension = file.name.toLowerCase();
+      mime = extension.endsWith('.png')
+          ? 'image/png'
+          : extension.endsWith('.webp')
+              ? 'image/webp'
+              : 'image/jpeg';
+    }
     setState(() {
       busyType = type;
       message = null;
     });
     try {
-      final bytes = await file.readAsBytes();
-      final extension = file.name.toLowerCase();
-      final mime = extension.endsWith('.png')
-          ? 'image/png'
-          : extension.endsWith('.webp')
-              ? 'image/webp'
-              : 'image/jpeg';
       await Api().uploadDriverDocument(
           widget.session.token, type, base64Encode(bytes), mime, '');
       await load();
-      if (mounted) setState(() => message = 'Imagen enviada para revisión.');
+      if (mounted) setState(() => message = 'Documento enviado para revisión.');
     } catch (error) {
       if (mounted) setState(() => message = error.toString());
     } finally {
@@ -3601,7 +3697,7 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
                           const SizedBox(width: 12),
                           const Expanded(
                               child: Text(
-                                  'Toma fotografías claras, completas y sin reflejos. Cada actualización vuelve a revisión administrativa.')),
+                                  'Carga imágenes claras y completas. El permiso de operación también admite PDF, DOC o DOCX. Cada actualización vuelve a revisión administrativa.')),
                         ]))),
                 ...labels.entries.map((entry) {
                   final item = document(entry.key);
@@ -3637,6 +3733,98 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
       );
 }
 
+class DriverEnrollmentScreen extends StatefulWidget {
+  const DriverEnrollmentScreen(this.session, {super.key});
+  final Session session;
+  @override
+  State<DriverEnrollmentScreen> createState() => _DriverEnrollmentScreenState();
+}
+
+class _DriverEnrollmentScreenState extends State<DriverEnrollmentScreen> {
+  final vehicle = TextEditingController();
+  List<dynamic> cooperatives = [];
+  String cooperative = 'INDIVIDUAL';
+  Uint8List? photo;
+  String? photoMime;
+  bool busy = false;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    Api().cooperatives().then((value) {
+      if (mounted) setState(() => cooperatives = value);
+    }).catchError((_) {});
+  }
+
+  @override
+  void dispose() { vehicle.dispose(); super.dispose(); }
+
+  Future<void> pickPhoto() async {
+    final file = await ImagePicker().pickImage(source: ImageSource.gallery,
+        imageQuality: 68,maxWidth: 1024,maxHeight: 1024);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    final mime = supportedImageMime(bytes);
+    if (bytes.length > 1200000 || mime == null) {
+      setState(() => error = 'Usa una fotografía JPG, PNG o WEBP de máximo 1,2 MB.');
+      return;
+    }
+    setState(() { photo=bytes; photoMime=mime; error=null; });
+  }
+
+  Future<void> submit() async {
+    if (vehicle.text.trim().length < 3 || photo == null || photoMime == null) {
+      setState(() => error='Ingresa la placa y selecciona una fotografía frontal clara.');
+      return;
+    }
+    setState(() { busy=true; error=null; });
+    try {
+      final session=await Api().enrollDriver(widget.session.token,{
+        'vehicleIdentifier':vehicle.text.trim(),
+        'cooperativeId':cooperative=='INDIVIDUAL' ? null : cooperative,
+        'profilePhotoBase64':base64Encode(photo!),
+        'profilePhotoMime':photoMime,
+      });
+      await AppSessionStore.save(session);
+      await refreshBiometricSessionIfEnabled(session);
+      unawaited(Api().registerFcm(session.token));
+      if(!mounted)return;
+      Navigator.pushAndRemoveUntil(context,
+          MaterialPageRoute(builder:(_)=>DriverApprovalScreen(session)),(_)=>false);
+    } catch(reason) { if(mounted)setState(()=>error=reason.toString()); }
+    finally { if(mounted)setState(()=>busy=false); }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Quiero conducir')),
+    body: ListView(padding: const EdgeInsets.all(20),children:[
+      Text('Activa tu perfil de conductor',style:Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight:FontWeight.w800)),
+      const SizedBox(height:8),
+      const Text('Tu correo, teléfono y contraseña seguirán siendo los mismos. Solo debes completar la información habilitante.'),
+      const SizedBox(height:20),
+      DropdownButtonFormField<String>(initialValue:cooperative,
+        decoration:const InputDecoration(labelText:'Cooperativa'),items:[
+          const DropdownMenuItem(value:'INDIVIDUAL',child:Text('Conductor independiente')),
+          ...cooperatives.map((item)=>DropdownMenuItem<String>(value:item['id']?.toString(),child:Text(item['name']?.toString()??'Cooperativa')))
+        ],onChanged:busy?null:(value)=>setState(()=>cooperative=value??'INDIVIDUAL')),
+      const SizedBox(height:14),
+      TextField(controller:vehicle,textCapitalization:TextCapitalization.characters,
+        decoration:const InputDecoration(labelText:'Placa o identificador *',prefixIcon:Icon(Icons.badge_outlined))),
+      const SizedBox(height:16),
+      Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(children:[
+        if(photo!=null) ClipOval(child:Image.memory(photo!,width:112,height:112,fit:BoxFit.cover))
+        else const CircleAvatar(radius:56,child:Icon(Icons.person_outline,size:52)),
+        const SizedBox(height:10),
+        const Text('Fotografía frontal, clara y con el rostro visible *',textAlign:TextAlign.center),
+        OutlinedButton.icon(onPressed:busy?null:pickPhoto,icon:const Icon(Icons.add_a_photo_outlined),label:Text(photo==null?'Seleccionar fotografía':'Cambiar fotografía')),
+      ]))),
+      if(error!=null) Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(error!,style:TextStyle(color:Theme.of(context).colorScheme.error))),
+      FilledButton.icon(onPressed:busy?null:submit,icon:const Icon(Icons.send_outlined),label:Text(busy?'Enviando…':'Crear perfil de conductor')),
+    ]));
+}
+
 class AccountHub extends StatefulWidget {
   const AccountHub(this.s, {super.key});
   final Session s;
@@ -3648,6 +3836,7 @@ class _AccountHubState extends State<AccountHub> {
   dynamic pending;
   dynamic accountProfile;
   bool biometricEnabled = false;
+  bool switchingMode = false;
 
   @override
   void initState() {
@@ -3712,6 +3901,26 @@ class _AccountHubState extends State<AccountHub> {
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
   }
 
+  Future<void> switchMode(String role) async {
+    setState(() => switchingMode = true);
+    try {
+      final session = await Api().switchRole(widget.s.token, role);
+      await AppSessionStore.save(session);
+      await refreshBiometricSessionIfEnabled(session);
+      unawaited(Api().registerFcm(session.token));
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(context,
+          MaterialPageRoute(builder: (_) => homeForSession(session)), (_) => false);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => switchingMode = false);
+    }
+  }
+
   @override
   Widget build(BuildContext c) => Scaffold(
       appBar: AppBar(title: const Text('Mi cuenta')),
@@ -3750,6 +3959,31 @@ class _AccountHubState extends State<AccountHub> {
                 .titleMedium
                 ?.copyWith(fontWeight: FontWeight.w800)),
         const SizedBox(height: 6),
+        if (widget.s.availableRoles.contains('DRIVER'))
+          ListTile(
+              leading: Icon(widget.s.role == 'DRIVER'
+                  ? Icons.person_pin_circle_outlined
+                  : Icons.directions_bike_outlined),
+              title: Text(widget.s.role == 'DRIVER'
+                  ? 'Cambiar a modo pasajero'
+                  : 'Cambiar a modo conductor'),
+              subtitle: const Text('Usa la misma cuenta y conserva tus datos'),
+              trailing: switchingMode
+                  ? const SizedBox.square(
+                      dimension: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.swap_horiz_rounded),
+              onTap: switchingMode
+                  ? null
+                  : () => switchMode(
+                      widget.s.role == 'DRIVER' ? 'PASSENGER' : 'DRIVER'))
+        else
+          ListTile(
+              leading: const Icon(Icons.directions_bike_outlined),
+              title: const Text('Quiero conducir con Costa-Go'),
+              subtitle: const Text('Completa tu perfil sin crear otra cuenta'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => DriverEnrollmentScreen(widget.s)))),
         ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('Mi perfil'),
@@ -6356,8 +6590,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                           'Distancia: ${(((preview['distanceMeters'] as num?) ?? 0) / 1000).toStringAsFixed(1)} km'),
                       Text(
                           'Tiempo estimado: ${(((preview['durationSeconds'] as num?) ?? 0) / 60).ceil()} min'),
+                      ...List<dynamic>.from(preview['fareLegs'] ?? const [])
+                          .map((leg) => Text(
+                              'Destino ${leg['order']}: \$${(((leg['totalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}${leg['suggested'] == true ? ' · sugerido' : ''}')),
                       Text(
-                          'Tarifa estimada: \$${(((preview['quotedTotalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
+                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido' : 'Tarifa'} total: \$${(((preview['quotedTotalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
                       if ((preview['stopSurchargeCents'] as num?) != null)
                         Text(
                             'Adicional por paradas: \$${((preview['stopSurchargeCents'] as num) / 100).toStringAsFixed(2)}'),
@@ -7308,7 +7545,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   ),
           ),
         ),
-        Text('Número de pasajeros (máximo 4)',
+        Text('Número de pasajeros (máximo 3)',
             style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
         SegmentedButton<int>(
@@ -7316,7 +7553,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             ButtonSegment(value: 1, label: Text('1')),
             ButtonSegment(value: 2, label: Text('2')),
             ButtonSegment(value: 3, label: Text('3')),
-            ButtonSegment(value: 4, label: Text('4')),
           ],
           selected: {people},
           onSelectionChanged: (value) => setState(() => people = value.first),

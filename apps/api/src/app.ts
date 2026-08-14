@@ -3,6 +3,7 @@ import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
+import { calculateTerritorialFare } from "./fare-engine.js";
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
@@ -44,8 +45,10 @@ const quoteSchema = z.object({
 
 const mobileLoginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8)
+  password: z.string().min(8),
+  role: z.enum(["PASSENGER", "DRIVER"]).optional()
 });
+const switchMobileRoleSchema = z.object({ role: z.enum(["PASSENGER", "DRIVER"]) });
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(8).max(100).optional(),
   password: strongPasswordSchema
@@ -82,6 +85,12 @@ const registrationSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["profilePhotoBase64"], message: "INCOMPLETE_PROFILE_PHOTO" });
   }
 });
+const driverEnrollmentSchema = z.object({
+  vehicleIdentifier: z.string().trim().min(3).max(30),
+  cooperativeId: z.string().uuid().nullable().optional(),
+  profilePhotoBase64: z.string().min(100).max(3_500_000),
+  profilePhotoMime: z.enum(["image/jpeg", "image/png", "image/webp"])
+});
 const pointSchema = z.object({ longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) });
 const availabilitySchema = z.object({ available: z.boolean(), location: pointSchema.optional() });
 const tripDestinationSchema = z.object({
@@ -92,7 +101,7 @@ const tripRequestSchema = z.object({
   origin: pointSchema,
   destination: pointSchema.optional(),
   destinations: z.array(tripDestinationSchema).min(1).max(3).optional(),
-  passengers: z.number().int().min(1).max(4),
+  passengers: z.number().int().min(1).max(3),
   paymentMethod: z.enum(['CASH','DEUNA']).default('CASH'),
   originReference: z.string().max(200).optional(),
   destinationReference: z.string().max(200).optional(),
@@ -144,8 +153,8 @@ const favoritePlaceSchema = z.object({
 });
 const driverDocumentSchema = z.object({
   documentType: z.enum(["PROFILE_PHOTO", "IDENTIFICATION", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
-  fileBase64: z.string().min(100).max(3_500_000),
-  fileMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  fileBase64: z.string().min(100).max(7_000_000),
+  fileMime: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]),
   expiresAt: z.string().date().optional().or(z.literal(""))
 });
 
@@ -161,6 +170,17 @@ function decodeImage(fileBase64: string, fileMime: "image/jpeg" | "image/png" | 
   const webp = data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
   const valid = fileMime === "image/jpeg" ? jpeg : fileMime === "image/png" ? png : webp;
   if (!valid || data.length < 100 || data.length > 2_500_000) throw new Error("INVALID_IMAGE_FILE");
+  return data;
+}
+
+function decodeDriverDocument(value: z.infer<typeof driverDocumentSchema>): Buffer {
+  if (value.fileMime.startsWith("image/")) return decodeImage(value.fileBase64, value.fileMime as "image/jpeg" | "image/png" | "image/webp");
+  if (value.documentType !== "OPERATING_PERMIT") throw new Error("DOCUMENT_FORMAT_NOT_ALLOWED");
+  const data = Buffer.from(value.fileBase64, "base64");
+  const pdf = value.fileMime === "application/pdf" && data.subarray(0, 5).toString("ascii") === "%PDF-";
+  const doc = value.fileMime === "application/msword" && data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]));
+  const docx = value.fileMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && data.length >= 4 && data[0] === 0x50 && data[1] === 0x4b && data[2] === 0x03 && data[3] === 0x04;
+  if (data.length < 100 || data.length > 5_000_000 || (!pdf && !doc && !docx)) throw new Error("INVALID_DOCUMENT_FILE");
   return data;
 }
 
@@ -290,7 +310,7 @@ export function tripTotalCents(
   const hour = Number(new Intl.DateTimeFormat("en-GB", {
     timeZone: "America/Guayaquil", hour: "2-digit", hour12: false
   }).format(travelAt));
-  const baseCents = hour >= 20 || hour < 6
+  const baseCents = hour >= 22 || hour < 6
     ? Number(price.night_cents_per_passenger) * passengers
     : zone === "EXTENDED"
       ? Number(price.extended_cents_per_passenger) * passengers
@@ -305,11 +325,16 @@ async function authenticatedUser(request: { headers: Record<string, string | str
   const user = userFrom(request as never);
   if (!user?.id || !user.sessionId) { reply.code(401).send({ error: "UNAUTHORIZED" }); return; }
   const active = await database()`
-    select must_change_password as "mustChangePassword", role, status from users
-    where id=${user.id} and active_session_id=${user.sessionId}::uuid
+    select u.must_change_password as "mustChangePassword",u.status,
+      d.approval_status as "approvalStatus",
+      exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role=${user.role}) as "roleAllowed"
+    from users u left join drivers d on d.user_id=u.id
+    where u.id=${user.id} and u.active_session_id=${user.sessionId}::uuid and u.deleted_at is null
   `;
   if (!active.length) { reply.code(401).send({ error: "SESSION_REPLACED" }); return; }
-  if (active[0]?.role === "DRIVER" && active[0]?.status !== "ACTIVE" && !options.allowPendingDriver) {
+  if (!active[0]?.roleAllowed) { reply.code(403).send({ error: "ROLE_NOT_AVAILABLE" }); return; }
+  if (active[0]?.status !== "ACTIVE") { reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" }); return; }
+  if (user.role === "DRIVER" && active[0]?.approvalStatus !== "APROBADO" && !options.allowPendingDriver) {
     reply.code(403).send({ error: "DRIVER_NOT_APPROVED" });
     return;
   }
@@ -342,7 +367,7 @@ async function refreshDriverApprovalState(driverId: string, driverName: string) 
 }
 
 export async function buildApp() {
-  const app = Fastify({ logger: true, bodyLimit: 4 * 1024 * 1024 });
+  const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
   await app.register(cors, {
     origin: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -652,7 +677,8 @@ export async function buildApp() {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_EMAIL" });
     const email = normalizeEmail(parsed.data.email);
     const [account] = await database()`select id::text,email,email_verified_at as "verifiedAt"
-      from users where lower(email)=lower(${email}) and role in ('PASSENGER','DRIVER') and deleted_at is null limit 1`;
+      from users where lower(email)=lower(${email}) and deleted_at is null
+        and exists(select 1 from mobile_account_roles where user_id=users.id) limit 1`;
     if (account && !account.verifiedAt) {
       const delivered = await issueEmailVerificationCode(String(account.id), String(account.email));
       request.log.info({ delivered }, "email_verification_requested");
@@ -666,7 +692,8 @@ export async function buildApp() {
     const email = normalizeEmail(parsed.data.email);
     const hash = privateTokenHash(`${email}:${parsed.data.code}`);
     const [verification] = await database()`select verification.id,verification.user_id as "userId",
-        users.full_name as name,users.role,drivers.approval_status as "approvalStatus"
+        users.full_name as name,coalesce(users.last_mobile_role,users.role::text) role,drivers.approval_status as "approvalStatus",
+        array(select mar.role from mobile_account_roles mar where mar.user_id=users.id order by mar.role) roles
       from email_verification_codes verification
       join users on users.id=verification.user_id
       left join drivers on drivers.user_id=users.id
@@ -684,8 +711,7 @@ export async function buildApp() {
     const sessionId = randomUUID();
     await database().begin(async tx => {
       await tx`update email_verification_codes set used_at=now() where id=${verification.id}`;
-      await tx`update users set email_verified_at=now(),
-          status=case when role='PASSENGER' then 'ACTIVE'::account_status else status end,
+      await tx`update users set email_verified_at=now(),status='ACTIVE',
           active_session_id=${sessionId},updated_at=now() where id=${verification.userId}`;
     });
     const user: SessionUser = {
@@ -696,6 +722,7 @@ export async function buildApp() {
       sessionId,
       mustChangePassword: false,
       driverApprovalStatus: verification.approvalStatus ? String(verification.approvalStatus) : undefined
+      ,availableRoles: (verification.roles as Array<"PASSENGER" | "DRIVER">) ?? [verification.role as "PASSENGER" | "DRIVER"]
     };
     return {
       verified: true,
@@ -711,11 +738,13 @@ export async function buildApp() {
     const normalizedEmail = parsed.data.email.trim().toLowerCase();
     const [account] = await database()`
       select id, email from users
-      where lower(email)=lower(${normalizedEmail}) and role in ('PASSENGER','DRIVER')
+      where lower(email)=lower(${normalizedEmail})
+        and exists(select 1 from mobile_account_roles where user_id=users.id)
         and deleted_at is null
       limit 1
     `;
-    if (account) {
+    if (!account) return reply.code(404).send({ error: "EMAIL_NOT_FOUND" });
+    {
       const [recent] = await database()`
         select 1 from password_reset_tokens
         where user_id=${account.id} and created_at > now() - interval '60 seconds'
@@ -767,7 +796,7 @@ export async function buildApp() {
     await database().begin(async tx => {
       await tx`update users set password_hash=crypt(${parsed.data.password},gen_salt('bf')),
         must_change_password=false, email_verified_at=coalesce(email_verified_at,now()),
-        status=case when role='PASSENGER' then 'ACTIVE'::account_status else status end,
+        status='ACTIVE',
         active_session_id=null, updated_at=now()
         where id=${token.userId}`;
       await tx`update password_reset_tokens set used_at=now() where id=${token.id}`;
@@ -782,7 +811,8 @@ export async function buildApp() {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_EMAIL" });
     const email = parsed.data.email.trim().toLowerCase();
     const [account] = await database()`select id,email from users
-      where lower(email)=lower(${email}) and role in ('PASSENGER','DRIVER') and deleted_at is null limit 1`;
+      where lower(email)=lower(${email}) and deleted_at is null
+        and exists(select 1 from mobile_account_roles where user_id=users.id) limit 1`;
     if (account) {
       const token = randomBytes(32).toString("hex");
       await database()`insert into account_deletion_requests(user_id,requested_email,token_hash,expires_at)
@@ -822,26 +852,29 @@ export async function buildApp() {
     }
 
     const rows = await database()`
-      select u.id, u.email, u.full_name, u.role, u.status, u.email_verified_at as "emailVerifiedAt",
-        u.must_change_password as "mustChangePassword",
-        d.approval_status as "approvalStatus"
+      select u.id,u.email,u.full_name,u.role,u.last_mobile_role as "lastMobileRole",u.status,
+        u.email_verified_at as "emailVerifiedAt",u.must_change_password as "mustChangePassword",
+        d.approval_status as "approvalStatus",
+        array(select mar.role from mobile_account_roles mar where mar.user_id=u.id order by mar.role) roles
       from users u left join drivers d on d.user_id=u.id
       where lower(email) = lower(${parsed.data.email})
         and password_hash = crypt(${parsed.data.password}, password_hash)
         and role in ('PASSENGER', 'DRIVER')
         and deleted_at is null
     `;
-    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string; emailVerifiedAt?: Date; mustChangePassword: boolean; approvalStatus?: string } | undefined;
+    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; lastMobileRole?: "PASSENGER" | "DRIVER"; roles: Array<"PASSENGER" | "DRIVER">; status: string; emailVerifiedAt?: Date; mustChangePassword: boolean; approvalStatus?: string } | undefined;
     if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
     if (!account.emailVerifiedAt) return reply.code(403).send({ error: "EMAIL_VERIFICATION_REQUIRED" });
-    if (account.role === "DRIVER" && account.approvalStatus === "RECHAZADO") return reply.code(403).send({ error: "DRIVER_REJECTED" });
-    if (account.role === "DRIVER" && account.approvalStatus === "SUSPENDIDO") return reply.code(403).send({ error: "DRIVER_SUSPENDED" });
-    if (account.role !== "DRIVER" && account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
+    if (account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
+    const activeRole = parsed.data.role ?? account.lastMobileRole ?? account.role;
+    if (!account.roles.includes(activeRole)) return reply.code(403).send({ error: "ROLE_NOT_AVAILABLE" });
+    if (activeRole === "DRIVER" && account.approvalStatus === "RECHAZADO") return reply.code(403).send({ error: "DRIVER_REJECTED" });
+    if (activeRole === "DRIVER" && account.approvalStatus === "SUSPENDIDO") return reply.code(403).send({ error: "DRIVER_SUSPENDED" });
 
     const sessionId = randomUUID();
-    await database()`update users set active_session_id=${sessionId} where id=${account.id}`;
-    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: account.mustChangePassword, driverApprovalStatus: account.approvalStatus };
-    return { token: tokenFor(user), user, restricted: account.role === "DRIVER" && account.status !== "ACTIVE" };
+    await database()`update users set active_session_id=${sessionId},last_mobile_role=${activeRole} where id=${account.id}`;
+    const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: activeRole, sessionId, mustChangePassword: account.mustChangePassword, driverApprovalStatus: account.approvalStatus, availableRoles: account.roles };
+    return { token: tokenFor(user), user, restricted: activeRole === "DRIVER" && account.approvalStatus !== "APROBADO" };
   });
 
   app.post("/v1/auth/change-password", async (request, reply) => {
@@ -912,13 +945,16 @@ export async function buildApp() {
             ${profilePhoto}, ${input.profilePhotoMime ?? null}, ${profilePhoto ? new Date() : null})
           returning id, email, full_name, role, status
         `;
+        await tx`insert into mobile_account_roles(user_id,role) values (${user!.id},'PASSENGER') on conflict do nothing`;
         if (input.role === "DRIVER") {
+          await tx`insert into mobile_account_roles(user_id,role) values (${user!.id},'DRIVER') on conflict do nothing`;
           await tx`insert into drivers (user_id, is_available, approval_status) values (${user!.id}, false, 'PENDIENTE_DOCUMENTOS')`;
-          await tx`insert into vehicles (driver_id, identifier, maximum_passengers, status) values (${user!.id}, ${input.vehicleIdentifier!}, 4, 'PENDING')`;
+          await tx`insert into vehicles (driver_id, identifier, maximum_passengers, status) values (${user!.id}, ${input.vehicleIdentifier!}, 3, 'PENDING')`;
           await tx`insert into driver_documents
             (driver_id, document_type, file_url, file_data, file_mime, status)
             values (${user!.id}, 'PROFILE_PHOTO', 'database', ${profilePhoto!}, ${input.profilePhotoMime!}, 'PENDING')`;
         }
+        await tx`update users set last_mobile_role=${input.role} where id=${user!.id}`;
         return user!;
       });
       const delivered = await issueEmailVerificationCode(String(account.id), String(account.email));
@@ -944,6 +980,63 @@ export async function buildApp() {
       }
       throw error;
     }
+  });
+
+  app.post("/v1/auth/switch-role", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
+    const parsed = switchMobileRoleSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_ROLE" });
+    const targetRole = parsed.data.role;
+    const [capability] = await database()`select 1 from mobile_account_roles where user_id=${user.id!} and role=${targetRole}`;
+    if (!capability) return reply.code(403).send({ error: "ROLE_NOT_AVAILABLE" });
+    const [activeTrip] = await database()`select id::text from trips where status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+      and ((${targetRole}='DRIVER' and passenger_id=${user.id!}) or (${targetRole}='PASSENGER' and driver_id=${user.id!})) limit 1`;
+    if (activeTrip) return reply.code(409).send({ error: "ROLE_SWITCH_BLOCKED_ACTIVE_TRIP" });
+    const [account] = await database()`select u.email,u.full_name,d.approval_status as "approvalStatus",
+      array(select mar.role from mobile_account_roles mar where mar.user_id=u.id order by mar.role) roles
+      from users u left join drivers d on d.user_id=u.id where u.id=${user.id!}`;
+    if (!account) return reply.code(404).send({ error: "NOT_FOUND" });
+    if (user.role === "DRIVER") await database()`update drivers set is_available=false where user_id=${user.id!}`;
+    const nextSessionId=randomUUID();
+    await database()`update users set last_mobile_role=${targetRole},active_session_id=${nextSessionId} where id=${user.id!}`;
+    const next: SessionUser = { id:user.id,email:String(account.email),name:String(account.full_name),role:targetRole,
+      sessionId:nextSessionId,mustChangePassword:user.mustChangePassword,driverApprovalStatus:account.approvalStatus ? String(account.approvalStatus) : undefined,
+      availableRoles:account.roles as Array<"PASSENGER" | "DRIVER"> };
+    return { token:tokenFor(next),user:next,restricted:targetRole==="DRIVER" && account.approvalStatus!=="APROBADO" };
+  });
+
+  app.post("/v1/profile/driver-enrollment", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
+    const parsed = driverEnrollmentSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error:"INVALID_DRIVER_ENROLLMENT",details:parsed.error.issues });
+    let photo: Buffer;
+    try { photo=decodeImage(parsed.data.profilePhotoBase64,parsed.data.profilePhotoMime); }
+    catch { return reply.code(400).send({ error:"INVALID_PROFILE_PHOTO" }); }
+    const nextSessionId=randomUUID();
+    try {
+      await database().begin(async tx=>{
+        const existing=await tx`select 1 from drivers where user_id=${user.id!}`;
+        if(existing.length)throw new Error("DRIVER_PROFILE_ALREADY_EXISTS");
+        const vehicle=await tx`select 1 from vehicles where lower(identifier)=lower(${parsed.data.vehicleIdentifier})`;
+        if(vehicle.length)throw new Error("VEHICLE_ALREADY_EXISTS");
+        if(parsed.data.cooperativeId){const coop=await tx`select 1 from cooperatives where id=${parsed.data.cooperativeId} and status='ACTIVE'`;if(!coop.length)throw new Error("INVALID_COOPERATIVE");}
+        await tx`update users set cooperative_id=${parsed.data.cooperativeId??null},profile_photo_data=${photo},profile_photo_mime=${parsed.data.profilePhotoMime},profile_photo_updated_at=now(),last_mobile_role='DRIVER',active_session_id=${nextSessionId},updated_at=now() where id=${user.id!}`;
+        await tx`insert into mobile_account_roles(user_id,role) values (${user.id!},'DRIVER')`;
+        await tx`insert into drivers(user_id,is_available,approval_status) values (${user.id!},false,'PENDIENTE_DOCUMENTOS')`;
+        await tx`insert into vehicles(driver_id,identifier,maximum_passengers,status) values (${user.id!},${parsed.data.vehicleIdentifier},3,'PENDING')`;
+        await tx`insert into driver_documents(driver_id,document_type,file_url,file_data,file_mime,status) values (${user.id!},'PROFILE_PHOTO','database',${photo},${parsed.data.profilePhotoMime},'PENDING')`;
+      });
+    } catch(error) {
+      const code=error instanceof Error ? error.message : "INVALID_DRIVER_ENROLLMENT";
+      if(["DRIVER_PROFILE_ALREADY_EXISTS","VEHICLE_ALREADY_EXISTS"].includes(code))return reply.code(409).send({error:code});
+      if(code==="INVALID_COOPERATIVE")return reply.code(400).send({error:code});
+      throw error;
+    }
+    const [account]=await database()`select email,full_name from users where id=${user.id!}`;
+    if(!account)return reply.code(404).send({error:"NOT_FOUND"});
+    const next:SessionUser={id:user.id,email:String(account.email),name:String(account.full_name),role:"DRIVER",sessionId:nextSessionId,
+      mustChangePassword:user.mustChangePassword,driverApprovalStatus:"PENDIENTE_DOCUMENTOS",availableRoles:["PASSENGER","DRIVER"]};
+    return reply.code(201).send({token:tokenFor(next),user:next,restricted:true});
   });
 
   app.post("/v1/auth/logout", async (request, reply) => {
@@ -1015,7 +1108,8 @@ export async function buildApp() {
   app.get("/v1/profile", async (request, reply) => {
     const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
     const [profile] = await database()`
-      select u.id::text, u.full_name as name, u.email, u.role, u.phone_e164 as phone,
+      select u.id::text,u.full_name as name,u.email,${user.role}::text as role,u.phone_e164 as phone,
+        array(select mar.role from mobile_account_roles mar where mar.user_id=u.id order by mar.role) roles,
         coalesce(d.rating, (select avg(score)::numeric(3,2) from ratings where recipient_id=u.id), 0)::float8 as rating,
         (select count(*)::int from ratings where recipient_id=u.id) as "ratingCount",
         v.identifier as vehicle,
@@ -1045,7 +1139,8 @@ export async function buildApp() {
     catch { return reply.code(400).send({ error: "INVALID_PROFILE_PHOTO" }); }
     await database().begin(async tx => {
       await tx`update users set profile_photo_data=${data}, profile_photo_mime=${parsed.data.fileMime}, profile_photo_updated_at=now(), updated_at=now() where id=${user.id!}`;
-      if (user.role === "DRIVER") await tx`
+      const driverProfile=await tx`select 1 from drivers where user_id=${user.id!}`;
+      if (driverProfile.length) await tx`
         insert into driver_documents (driver_id, document_type, file_url, file_data, file_mime, status)
         values (${user.id!}, 'PROFILE_PHOTO', 'database', ${data}, ${parsed.data.fileMime}, 'PENDING')
         on conflict (driver_id, document_type) do update set file_data=excluded.file_data,
@@ -1053,13 +1148,15 @@ export async function buildApp() {
           review_note=null, created_at=now()
       `;
     });
-    const approvalStatus = user.role === "DRIVER" ? await refreshDriverApprovalState(user.id!, user.name) : undefined;
+    const [driverProfile]=await database()`select 1 from drivers where user_id=${user.id!}`;
+    const approvalStatus = driverProfile ? await refreshDriverApprovalState(user.id!, user.name) : undefined;
     return { updated: true, approvalStatus };
   });
 
   app.delete("/v1/profile/photo", async (request, reply) => {
     const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
-    if (user.role === "DRIVER") return reply.code(409).send({ error: "DRIVER_PHOTO_REQUIRED" });
+    const [driverProfile]=await database()`select 1 from drivers where user_id=${user.id!}`;
+    if (driverProfile) return reply.code(409).send({ error: "DRIVER_PHOTO_REQUIRED" });
     await database()`update users set profile_photo_data=null, profile_photo_mime=null, profile_photo_updated_at=null, updated_at=now() where id=${user.id!}`;
     return { deleted: true };
   });
@@ -1122,7 +1219,7 @@ export async function buildApp() {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" });
     const input = parsed.data;
     let data: Buffer;
-    try { data = decodeImage(input.fileBase64, input.fileMime); }
+    try { data = decodeDriverDocument(input); }
     catch { return reply.code(400).send({ error: "INVALID_DRIVER_DOCUMENT" }); }
     const [document] = await database()`
       insert into driver_documents
@@ -1230,9 +1327,12 @@ export async function buildApp() {
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const [price] = await sql`select version, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, stop_surcharge_cents from pricing_versions where active_from <= now() and (active_until is null or active_until > now()) order by active_from desc, version desc limit 1`;
-    if (!price) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
-    const fare = tripTotalCents(price, input.passengers, destinations.length, zone, scheduledFor ?? new Date());
+    const fare = await calculateTerritorialFare({
+      serviceAreaId: operationalArea.id, origin: input.origin,
+      destinations: destinations.map(stop => stop.location), passengers: input.passengers,
+      travelAt: scheduledFor ?? new Date()
+    }).catch(error => error instanceof Error && error.message === "PRICING_UNAVAILABLE" ? undefined : Promise.reject(error));
+    if (!fare) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
     const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location));
     return {
       scheduledFor: scheduledFor?.toISOString() ?? null,
@@ -1244,6 +1344,8 @@ export async function buildApp() {
       quotedTotalCents: fare.totalCents,
       baseFareCents: fare.baseCents,
       stopSurchargeCents: fare.stopSurchargeCents,
+      fareIsSuggested: fare.suggested,
+      fareLegs: fare.legs.map(leg => ({ order: leg.order, totalCents: leg.fareCents + leg.commissionCents, suggested: leg.suggested })),
       distanceMeters: route.distanceMeters,
       durationSeconds: route.durationSeconds,
       routePoints: route.points
@@ -1278,9 +1380,12 @@ export async function buildApp() {
     const searchRadius = await configuredSearchRadius();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const prices = await sql`select version, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, stop_surcharge_cents from pricing_versions where active_from <= now() and (active_until is null or active_until > now()) order by active_from desc, version desc limit 1`;
-    const price = prices[0]; if (!price) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
-    const fare = tripTotalCents(price, input.passengers, destinations.length, zone, scheduledFor ?? new Date());
+    const fare = await calculateTerritorialFare({
+      serviceAreaId: operationalArea.id, origin: input.origin,
+      destinations: destinations.map(stop => stop.location), passengers: input.passengers,
+      travelAt: scheduledFor ?? new Date()
+    }).catch(error => error instanceof Error && error.message === "PRICING_UNAVAILABLE" ? undefined : Promise.reject(error));
+    if (!fare) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
     const total = fare.totalCents;
     const route = await computeRoute(
       input.origin,
@@ -1300,7 +1405,7 @@ export async function buildApp() {
           ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
           ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           ${input.originReference ?? null}, ${finalDestination.reference}, ${input.notes || null}, ${zone},
-           ${price.version}, ${JSON.stringify({ version: price.version, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents })}::jsonb,
+           ${fare.pricingVersion}, ${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, legs: fare.legs })}::jsonb,
           ${total}, ${scheduledFor ?? null}, ${scheduledFor ? "SCHEDULED" : null},
           ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
@@ -1346,6 +1451,7 @@ export async function buildApp() {
       scheduledFor: scheduledFor?.toISOString() ?? null,
       offers: scheduledFor ? 0 : trip.offers,
       quotedTotalCents: total,
+      fareIsSuggested: fare.suggested,
       distanceMeters: route?.distanceMeters ?? null,
       durationSeconds: route?.durationSeconds ?? null,
       stops: destinations,
@@ -1567,9 +1673,12 @@ export async function buildApp() {
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const [price] = await sql`select version, urban_day_cents_per_passenger, night_cents_per_passenger, extended_cents_per_passenger, group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents, stop_surcharge_cents from pricing_versions where active_from <= now() and (active_until is null or active_until > now()) order by active_from desc, version desc limit 1`;
-    if (!price) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
-    const fare = tripTotalCents(price, input.passengers, destinations.length, zone, scheduledFor);
+    const fare = await calculateTerritorialFare({
+      serviceAreaId: operationalArea.id, origin: input.origin,
+      destinations: destinations.map(stop => stop.location), passengers: input.passengers,
+      travelAt: scheduledFor
+    }).catch(error => error instanceof Error && error.message === "PRICING_UNAVAILABLE" ? undefined : Promise.reject(error));
+    if (!fare) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
     const total = fare.totalCents;
     const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location)).catch(() => undefined);
     const tripId = (request.params as { tripId: string }).tripId;
@@ -1579,8 +1688,8 @@ export async function buildApp() {
           origin=ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
           destination=ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           origin_reference=${input.originReference ?? null}, destination_reference=${finalDestination.reference},
-          passenger_notes=${input.notes || null}, service_zone=${zone}, pricing_version=${price.version},
-          pricing_snapshot=${JSON.stringify({ version: price.version, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents })}::jsonb,
+          passenger_notes=${input.notes || null}, service_zone=${zone}, pricing_version=${fare.pricingVersion},
+          pricing_snapshot=${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, legs: fare.legs })}::jsonb,
           quoted_total_cents=${total}, scheduled_for=${scheduledFor},
           estimated_distance_meters=${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
@@ -1604,7 +1713,7 @@ export async function buildApp() {
       return trip;
     });
     if (!updated) return reply.code(409).send({ error: "SCHEDULED_TRIP_NOT_EDITABLE" });
-    return { tripId, scheduledFor: scheduledFor.toISOString(), quotedTotalCents: total, stops: destinations };
+    return { tripId, scheduledFor: scheduledFor.toISOString(), quotedTotalCents: total, fareIsSuggested: fare.suggested, stops: destinations };
   });
 
   app.get("/v1/driver/scheduled-offers", async (request, reply) => {
