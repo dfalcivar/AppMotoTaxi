@@ -1209,7 +1209,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return database()`select s.id::text,s.service_area_id::text as "serviceAreaId",a.code as "serviceAreaCode",
       s.code,s.name,s.description,s.priority,s.enabled,ST_AsGeoJSON(s.boundary::geometry,6)::jsonb geometry,
       s.updated_at as "updatedAt"
-      from fare_sectors s join operational_service_areas a on a.id=s.service_area_id
+      from fare_sectors s join service_areas a on a.id=s.service_area_id
       order by a.code,s.priority desc,s.name`;
   } catch(e) { return guardError(e,reply); } });
   app.post("/v1/admin/fare-sectors", async (request, reply) => { try {

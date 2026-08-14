@@ -9,7 +9,7 @@ WHERE active_until IS NULL;
 
 CREATE TABLE IF NOT EXISTS fare_sectors (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  service_area_id uuid NOT NULL REFERENCES operational_service_areas(id),
+  service_area_id uuid NOT NULL REFERENCES service_areas(id),
   code text NOT NULL,
   name text NOT NULL,
   description text,
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS fare_sectors_area_enabled_idx ON fare_sectors(service
 
 CREATE TABLE IF NOT EXISTS fare_route_rules (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  service_area_id uuid NOT NULL REFERENCES operational_service_areas(id),
+  service_area_id uuid NOT NULL REFERENCES service_areas(id),
   origin_sector_id uuid NOT NULL REFERENCES fare_sectors(id),
   destination_sector_id uuid NOT NULL REFERENCES fare_sectors(id),
   minimum_passengers smallint NOT NULL CHECK (minimum_passengers BETWEEN 1 AND 3),
