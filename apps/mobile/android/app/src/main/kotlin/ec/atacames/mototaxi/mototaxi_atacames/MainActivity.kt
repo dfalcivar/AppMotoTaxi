@@ -8,12 +8,14 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.RingtoneManager
 import android.media.ToneGenerator
 import android.hardware.fingerprint.FingerprintManager
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.app.Notification
 import android.os.Build
 import android.os.Bundle
@@ -27,6 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : FlutterFragmentActivity() {
     private val nativeChannel = "ec.atacames.mototaxi/native"
+    private val documentRequestCode = 8417
+    private var pendingDocumentResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -80,10 +84,72 @@ class MainActivity : FlutterFragmentActivity() {
                         playDriverArrivalAlert()
                         result.success(null)
                     }
+                    "pickDocument" -> pickDocument(result)
                     "authenticateFingerprintLegacy" -> authenticateFingerprintLegacy(result)
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun pickDocument(result: MethodChannel.Result) {
+        if (pendingDocumentResult != null) {
+            result.error("DOCUMENT_PICKER_BUSY", "Ya hay un selector de documentos abierto.", null)
+            return
+        }
+        pendingDocumentResult = result
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf(
+                    "application/pdf",
+                    "application/msword",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+            )
+        }
+        runCatching { startActivityForResult(intent, documentRequestCode) }
+            .onFailure {
+                pendingDocumentResult = null
+                result.error("DOCUMENT_PICKER_UNAVAILABLE", "No se pudo abrir el selector de documentos.", null)
+            }
+    }
+
+    @Deprecated("Deprecated in Android; required for the document picker compatibility flow")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != documentRequestCode) return
+        val result = pendingDocumentResult ?: return
+        pendingDocumentResult = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) {
+            result.success(null)
+            return
+        }
+        runCatching {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: error("EMPTY_DOCUMENT")
+            val name = queryDisplayName(uri)
+            val mime = contentResolver.getType(uri).orEmpty()
+            mapOf("name" to name, "mime" to mime, "bytes" to bytes)
+        }.onSuccess(result::success).onFailure {
+            result.error("DOCUMENT_READ_FAILED", "No se pudo leer el documento seleccionado.", null)
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String {
+        var cursor: Cursor? = null
+        return try {
+            cursor = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            if (cursor != null && cursor.moveToFirst()) {
+                cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)).orEmpty()
+            } else "documento"
+        } catch (_: Exception) {
+            uri.lastPathSegment ?: "documento"
+        } finally {
+            cursor?.close()
+        }
     }
 
     private fun showForegroundTripOffer(title: String, body: String, tripId: String): Boolean {

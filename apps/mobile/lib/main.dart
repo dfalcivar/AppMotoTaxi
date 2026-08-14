@@ -18,7 +18,6 @@ import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platf
     as maps_platform;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -3632,14 +3631,24 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
     Uint8List bytes;
     String mime;
     if (action == 'DOCUMENT') {
-      final selected = await FilePicker.pickFile(type: FileType.custom,
-          allowedExtensions: const ['pdf', 'doc', 'docx']);
+      final selected = await nativeActions.invokeMapMethod<String, dynamic>(
+          'pickDocument', const {
+        'extensions': ['pdf', 'doc', 'docx']
+      });
       if (selected == null) return;
-      bytes = await selected.readAsBytes();
-      final extension = selected.name.contains('.')
-          ? selected.name.split('.').last.toLowerCase()
+      final rawBytes = selected['bytes'];
+      if (rawBytes is! Uint8List) {
+        setState(() => message = 'No se pudo leer el documento seleccionado.');
+        return;
+      }
+      bytes = rawBytes;
+      final name = (selected['name'] as String? ?? '').trim();
+      final extension = name.contains('.')
+          ? name.split('.').last.toLowerCase()
           : '';
-      mime = extension == 'pdf'
+      mime = (selected['mime'] as String?)?.trim().isNotEmpty == true
+          ? (selected['mime'] as String).trim()
+          : extension == 'pdf'
           ? 'application/pdf'
           : extension == 'doc'
               ? 'application/msword'
