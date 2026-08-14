@@ -42,6 +42,38 @@ describe("API de cotización", () => {
     expect(response.json()).toEqual([]);
   });
 
+  it("rechaza contraseñas débiles antes de crear una cuenta", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        fullName: "Usuario de prueba",
+        email: "registro@example.com",
+        phone: "0991234567",
+        password: "12345678",
+        role: "PASSENGER"
+      }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("WEAK_PASSWORD");
+  });
+
+  it("rechaza teléfonos que no pueden normalizarse", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        fullName: "Usuario de prueba",
+        email: "registro@example.com",
+        phone: "12345",
+        password: "CostaGo2026!",
+        role: "PASSENGER"
+      }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("INVALID_REGISTRATION");
+  });
+
   it("protege el listado de mototaxis cercanas", async () => {
     const response = await app.inject({
       method: "GET",

@@ -876,6 +876,12 @@ String mensajeApi(dynamic code) =>
       'ACCOUNT_NOT_ACTIVE': 'Tu cuenta no está activa. Contacta a soporte.',
       'INVALID_LOGIN': 'Completa el correo y la contraseña.',
       'ACCOUNT_ALREADY_EXISTS': 'Ya existe una cuenta con estos datos.',
+      'EMAIL_ALREADY_EXISTS': 'Este correo ya está registrado.',
+      'PHONE_ALREADY_EXISTS': 'Este número de teléfono ya está registrado.',
+      'VEHICLE_ALREADY_EXISTS':
+          'Esta placa o identificador ya está registrado.',
+      'INVALID_PHONE':
+          'Ingresa un teléfono válido, por ejemplo 0991234567 o +593991234567.',
       'INVALID_REGISTRATION':
           'Revisa los campos obligatorios e intenta nuevamente.',
       'VEHICLE_REQUIRED': 'Ingresa la placa o el identificador de la mototaxi.',
@@ -902,9 +908,18 @@ String mensajeApi(dynamic code) =>
           'Debes cambiar la contraseña temporal para continuar.',
       'PASSWORD_REUSED':
           'La nueva contraseña debe ser diferente a la temporal.',
-      'INVALID_PASSWORD': 'La contraseña debe tener al menos 8 caracteres.',
+      'INVALID_PASSWORD':
+          'Usa al menos 10 caracteres con mayúscula, minúscula, número y símbolo.',
+      'WEAK_PASSWORD':
+          'Usa al menos 10 caracteres con mayúscula, minúscula, número y símbolo.',
       'INVALID_CURRENT_PASSWORD': 'La contraseña actual no es correcta.',
       'INVALID_EMAIL': 'Ingresa un correo electrónico válido.',
+      'EMAIL_VERIFICATION_REQUIRED':
+          'Verifica tu correo electrónico para continuar.',
+      'INVALID_EMAIL_VERIFICATION':
+          'Revisa el correo y el código de verificación.',
+      'INVALID_OR_EXPIRED_EMAIL_CODE':
+          'El código es incorrecto o ya caducó. Solicita uno nuevo.',
       'INVALID_PASSWORD_RESET':
           'Revisa el correo, el código y la nueva contraseña.',
       'INVALID_OR_EXPIRED_RESET_CODE':
@@ -943,6 +958,72 @@ String mensajeApi(dynamic code) =>
           'Escribe al menos tres letras y vuelve a buscar la dirección.',
     }[code] ??
     'No se pudo completar la operación.';
+
+String? strongPasswordError(String? value) {
+  final password = value ?? '';
+  if (password.length < 10 || password.length > 100) {
+    return 'Usa entre 10 y 100 caracteres.';
+  }
+  if (!RegExp(r'[a-z]').hasMatch(password) ||
+      !RegExp(r'[A-Z]').hasMatch(password)) {
+    return 'Incluye una letra mayúscula y una minúscula.';
+  }
+  if (!RegExp(r'\d').hasMatch(password)) {
+    return 'Incluye al menos un número.';
+  }
+  if (!RegExp(r'[^A-Za-z0-9\s]').hasMatch(password)) {
+    return 'Incluye al menos un símbolo, por ejemplo ! o @.';
+  }
+  if (RegExp(r'\s').hasMatch(password)) {
+    return 'La contraseña no puede contener espacios.';
+  }
+  return null;
+}
+
+int passwordStrength(String value) {
+  var score = 0;
+  if (value.length >= 10) score++;
+  if (value.length >= 14) score++;
+  if (RegExp(r'[a-z]').hasMatch(value) && RegExp(r'[A-Z]').hasMatch(value)) {
+    score++;
+  }
+  if (RegExp(r'\d').hasMatch(value)) score++;
+  if (RegExp(r'[^A-Za-z0-9\s]').hasMatch(value)) score++;
+  return score.clamp(0, 5);
+}
+
+class PasswordStrengthIndicator extends StatelessWidget {
+  const PasswordStrengthIndicator({super.key, required this.password});
+  final String password;
+
+  @override
+  Widget build(BuildContext context) {
+    if (password.isEmpty) return const SizedBox.shrink();
+    final score = passwordStrength(password);
+    final valid = strongPasswordError(password) == null;
+    final label = valid
+        ? (score >= 5 ? 'Contraseña fuerte' : 'Contraseña segura')
+        : 'Contraseña débil';
+    final color =
+        valid ? (score >= 5 ? Colors.green : Colors.blue) : Colors.orange;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        LinearProgressIndicator(
+          value: score / 5,
+          minHeight: 5,
+          borderRadius: BorderRadius.circular(8),
+          color: color,
+          backgroundColor: color.withValues(alpha: .15),
+        ),
+        const SizedBox(height: 5),
+        Text('$label · 10+ caracteres, mayúscula, minúscula, número y símbolo',
+            style:
+                Theme.of(context).textTheme.bodySmall?.copyWith(color: color)),
+      ]),
+    );
+  }
+}
 
 const coverageErrorCodes = <String>{
   'ORIGIN_OUTSIDE_SERVICE_AREA',
@@ -1156,6 +1237,20 @@ class Api {
 
   Future<dynamic> register(Map<String, dynamic> body) =>
       call('POST', '/v1/auth/register', body: body);
+  Future<void> requestEmailVerification(String email) =>
+      call('POST', '/v1/auth/email-verification/request',
+          body: {'email': email});
+  Future<Session> confirmEmailVerification(String email, String code) async {
+    final d = await call('POST', '/v1/auth/email-verification/confirm',
+        body: {'email': email, 'code': code});
+    final s = Session(
+        d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
+        approvalStatus: d['user']['driverApprovalStatus']);
+    await AppSessionStore.save(s);
+    await registerFcm(s.token);
+    return s;
+  }
+
   Future<dynamic> requestPasswordReset(String email) =>
       call('POST', '/v1/auth/password-reset/request', body: {'email': email});
   Future<dynamic> confirmPasswordReset(
@@ -1800,7 +1895,17 @@ class _LoginState extends State<Login> {
                         : Passenger(s)));
       }
     } catch (e) {
-      if (mounted) setState(() => error = e.toString());
+      if (mounted &&
+          e is ApiException &&
+          e.code == 'EMAIL_VERIFICATION_REQUIRED') {
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) =>
+                    EmailVerificationScreen(email: email.text.trim())));
+      } else if (mounted) {
+        setState(() => error = e.toString());
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -2131,9 +2236,9 @@ class _RecoveryState extends State<Recovery> {
       setState(() => message = 'Ingresa el código de seis dígitos.');
       return;
     }
-    if (password.text.length < 8) {
-      setState(() =>
-          message = 'La nueva contraseña debe tener al menos 8 caracteres.');
+    final validationError = strongPasswordError(password.text);
+    if (validationError != null) {
+      setState(() => message = validationError);
       return;
     }
     if (password.text != confirmation.text) {
@@ -2206,9 +2311,11 @@ class _RecoveryState extends State<Recovery> {
             TextField(
                 controller: password,
                 obscureText: hidePassword,
+                onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
                     labelText: 'Nueva contraseña',
                     prefixIcon: Icon(Icons.password_outlined))),
+            PasswordStrengthIndicator(password: password.text),
             const SizedBox(height: 14),
             TextField(
                 controller: confirmation,
@@ -2245,6 +2352,128 @@ class _RecoveryState extends State<Recovery> {
       );
 }
 
+class EmailVerificationScreen extends StatefulWidget {
+  const EmailVerificationScreen(
+      {super.key, required this.email, this.initialMessage});
+  final String email;
+  final String? initialMessage;
+
+  @override
+  State<EmailVerificationScreen> createState() =>
+      _EmailVerificationScreenState();
+}
+
+class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
+  final code = TextEditingController();
+  bool busy = false;
+  String? message;
+
+  @override
+  void initState() {
+    super.initState();
+    message = widget.initialMessage;
+  }
+
+  @override
+  void dispose() {
+    code.dispose();
+    super.dispose();
+  }
+
+  Future<void> resend() async {
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await Api().requestEmailVerification(widget.email);
+      if (mounted) {
+        setState(() => message =
+            'Si la cuenta está pendiente, enviamos un código nuevo. Revisa también spam.');
+      }
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> confirm() async {
+    if (!RegExp(r'^\d{6}$').hasMatch(code.text.trim())) {
+      setState(() => message = 'Ingresa el código de seis dígitos.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      final session =
+          await Api().confirmEmailVerification(widget.email, code.text.trim());
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+              builder: (_) => session.role == 'DRIVER'
+                  ? DriverApprovalScreen(session)
+                  : Passenger(session)),
+          (_) => false);
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Verifica tu correo')),
+        body: ListView(padding: const EdgeInsets.all(24), children: [
+          const Icon(Icons.mark_email_read_outlined, size: 72),
+          const SizedBox(height: 16),
+          Text('Confirma que el correo es tuyo',
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Text('Enviamos un código de seis dígitos a ${widget.email}.',
+              textAlign: TextAlign.center),
+          const SizedBox(height: 24),
+          TextField(
+              controller: code,
+              enabled: !busy,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              maxLength: 6,
+              onSubmitted: (_) => confirm(),
+              decoration: const InputDecoration(
+                  labelText: 'Código de verificación',
+                  prefixIcon: Icon(Icons.pin_outlined))),
+          if (message != null)
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(message!, textAlign: TextAlign.center)),
+          FilledButton.icon(
+              onPressed: busy ? null : confirm,
+              icon: const Icon(Icons.verified_outlined),
+              label: Text(busy ? 'Verificando…' : 'Verificar correo')),
+          TextButton(
+              onPressed: busy ? null : resend,
+              child: const Text('Enviar un código nuevo')),
+          TextButton(
+              onPressed: busy
+                  ? null
+                  : () => Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (_) => const Welcome()),
+                      (_) => false),
+              child: const Text('Volver al inicio de sesión')),
+        ]),
+      );
+}
+
 class ChangeTemporaryPassword extends StatefulWidget {
   const ChangeTemporaryPassword(this.session, {super.key});
   final Session session;
@@ -2270,9 +2499,9 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
 
   Future<void> save() async {
     FocusScope.of(context).unfocus();
-    if (password.text.length < 8) {
-      setState(() =>
-          error = 'La nueva contraseña debe tener al menos 8 caracteres.');
+    final validationError = strongPasswordError(password.text);
+    if (validationError != null) {
+      setState(() => error = validationError);
       return;
     }
     if (password.text != confirmation.text) {
@@ -2334,6 +2563,7 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
             TextField(
                 controller: password,
                 obscureText: !showPassword,
+                onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                     labelText: 'Nueva contraseña',
                     prefixIcon: const Icon(Icons.lock_outline),
@@ -2343,6 +2573,7 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
                         icon: Icon(showPassword
                             ? Icons.visibility_off_outlined
                             : Icons.visibility_outlined)))),
+            PasswordStrengthIndicator(password: password.text),
             const SizedBox(height: 14),
             TextField(
                 controller: confirmation,
@@ -2509,7 +2740,14 @@ class _RegisterState extends State<Register> {
           'profilePhotoMime': profilePhotoMime
       });
       if (!mounted) return;
-      if (role == 'PASSENGER' && d['token'] != null) {
+      if (d['verificationRequired'] == true) {
+        Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+                builder: (_) => EmailVerificationScreen(
+                    email: d['email']?.toString() ?? email.text.trim(),
+                    initialMessage: d['message']?.toString())));
+      } else if (role == 'PASSENGER' && d['token'] != null) {
         final s = Session(
             d['token'], d['user']['role'], d['user']['name'], d['user']['id']);
         await AppSessionStore.save(s);
@@ -2595,11 +2833,11 @@ class _RegisterState extends State<Register> {
                 enabled: !submitted,
                 obscureText: true,
                 textInputAction: TextInputAction.next,
-                validator: (value) => (value ?? '').length < 8
-                    ? 'La contraseña debe tener al menos 8 caracteres.'
-                    : null,
-                decoration: const InputDecoration(
-                    labelText: 'Contraseña (mín. 8 caracteres) *')),
+                onChanged: (_) => setState(() {}),
+                validator: strongPasswordError,
+                decoration:
+                    const InputDecoration(labelText: 'Contraseña segura *')),
+            PasswordStrengthIndicator(password: password.text),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
                 initialValue: role,
@@ -3043,9 +3281,9 @@ class _ChangePasswordState extends State<ChangePassword> {
   }
 
   Future<void> save() async {
-    if (password.text.length < 8) {
-      setState(() =>
-          message = 'La nueva contraseña debe tener al menos 8 caracteres.');
+    final validationError = strongPasswordError(password.text);
+    if (validationError != null) {
+      setState(() => message = validationError);
       return;
     }
     if (password.text != confirmation.text) {
@@ -3098,9 +3336,11 @@ class _ChangePasswordState extends State<ChangePassword> {
           TextField(
               controller: password,
               obscureText: hidden,
+              onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                   labelText: 'Nueva contraseña',
                   prefixIcon: Icon(Icons.password_outlined))),
+          PasswordStrengthIndicator(password: password.text),
           const SizedBox(height: 14),
           TextField(
               controller: confirmation,

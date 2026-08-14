@@ -160,7 +160,7 @@ describe("consola administrativa", () => {
       payload: { password: "corta" }
     });
     expect(response.statusCode).toBe(400);
-    expect(response.json().error).toBe("INVALID_PASSWORD");
+    expect(response.json().error).toBe("WEAK_PASSWORD");
   });
 
   it("permite al administrador aprobar y audita el cambio", async () => {

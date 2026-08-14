@@ -16,6 +16,13 @@ import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
 import { captureOperationalError } from "./observability.js";
 import { sendTransactionalEmail } from "./email.js";
 import {
+  legacyPhoneAliases,
+  normalizeEmail,
+  normalizePhone,
+  passwordPolicyMessage,
+  strongPasswordSchema
+} from "./auth-security.js";
+import {
   authorizedServiceAreas,
   filterLocationsToArea,
   resolveServiceArea,
@@ -41,13 +48,18 @@ const mobileLoginSchema = z.object({
 });
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(8).max(100).optional(),
-  password: z.string().min(8).max(100)
+  password: strongPasswordSchema
 });
 const passwordResetRequestSchema = z.object({ email: z.string().email() });
+const emailVerificationRequestSchema = z.object({ email: z.string().email() });
+const emailVerificationConfirmSchema = z.object({
+  email: z.string().email(),
+  code: z.string().regex(/^\d{6}$/)
+});
 const passwordResetConfirmSchema = z.object({
   email: z.string().email(),
   code: z.string().regex(/^\d{6}$/),
-  password: z.string().min(8).max(100)
+  password: strongPasswordSchema
 });
 const accountDeletionSchema = z.object({ password: z.string().min(8).max(100) });
 const externalDeletionRequestSchema = z.object({ email: z.string().email() });
@@ -55,8 +67,8 @@ const externalDeletionConfirmSchema = z.object({ token: z.string().min(32).max(2
 const registrationSchema = z.object({
   fullName: z.string().trim().min(3).max(120),
   email: z.string().email(),
-  password: z.string().min(8).max(100),
-  phone: z.string().trim().regex(/^\+?[0-9]{8,15}$/),
+  password: strongPasswordSchema,
+  phone: z.string().trim().min(8).max(30),
   role: z.enum(["PASSENGER", "DRIVER"]),
   vehicleIdentifier: z.string().trim().min(3).max(30).optional(),
   cooperativeId: z.string().uuid().nullable().optional(),
@@ -155,6 +167,25 @@ function decodeImage(fileBase64: string, fileMime: "image/jpeg" | "image/png" | 
 function privateTokenHash(value: string): string {
   const pepper = process.env.ADMIN_SESSION_SECRET ?? "costa-go-local-development";
   return createHash("sha256").update(`${pepper}:${value}`).digest("hex");
+}
+
+async function issueEmailVerificationCode(userId: string, email: string): Promise<boolean> {
+  const [recent] = await database()`select 1 from email_verification_codes
+    where user_id=${userId} and created_at > now()-interval '60 seconds' limit 1`;
+  if (recent) return true;
+  const code = randomInt(100000, 1000000).toString();
+  await database().begin(async tx => {
+    await tx`update email_verification_codes set used_at=coalesce(used_at,now())
+      where user_id=${userId} and used_at is null`;
+    await tx`insert into email_verification_codes(user_id,code_hash,expires_at)
+      values (${userId},${privateTokenHash(`${email}:${code}`)},now()+interval '15 minutes')`;
+  });
+  return sendTransactionalEmail({
+    to: email,
+    subject: "Verifica tu correo en Costa-Go",
+    text: `Tu código de verificación es ${code}. Caduca en 15 minutos.`,
+    html: `<p>Tu código de verificación de Costa-Go es:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>Caduca en 15 minutos. Si no creaste esta cuenta, ignora este mensaje.</p>`
+  });
 }
 
 async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRIP"> {
@@ -616,6 +647,64 @@ export async function buildApp() {
     }
   });
 
+  app.post("/v1/auth/email-verification/request", async (request, reply) => {
+    const parsed = emailVerificationRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_EMAIL" });
+    const email = normalizeEmail(parsed.data.email);
+    const [account] = await database()`select id::text,email,email_verified_at as "verifiedAt"
+      from users where lower(email)=lower(${email}) and role in ('PASSENGER','DRIVER') and deleted_at is null limit 1`;
+    if (account && !account.verifiedAt) {
+      const delivered = await issueEmailVerificationCode(String(account.id), String(account.email));
+      request.log.info({ delivered }, "email_verification_requested");
+    }
+    return reply.code(202).send({ accepted: true });
+  });
+
+  app.post("/v1/auth/email-verification/confirm", async (request, reply) => {
+    const parsed = emailVerificationConfirmSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_EMAIL_VERIFICATION" });
+    const email = normalizeEmail(parsed.data.email);
+    const hash = privateTokenHash(`${email}:${parsed.data.code}`);
+    const [verification] = await database()`select verification.id,verification.user_id as "userId",
+        users.full_name as name,users.role,drivers.approval_status as "approvalStatus"
+      from email_verification_codes verification
+      join users on users.id=verification.user_id
+      left join drivers on drivers.user_id=users.id
+      where lower(users.email)=lower(${email}) and verification.code_hash=${hash}
+        and verification.used_at is null and verification.expires_at>now() and verification.attempts<5
+      order by verification.created_at desc limit 1`;
+    if (!verification) {
+      await database()`update email_verification_codes set attempts=attempts+1
+        where id=(select verification.id from email_verification_codes verification
+          join users on users.id=verification.user_id
+          where lower(users.email)=lower(${email}) and verification.used_at is null
+          order by verification.created_at desc limit 1)`;
+      return reply.code(400).send({ error: "INVALID_OR_EXPIRED_EMAIL_CODE" });
+    }
+    const sessionId = randomUUID();
+    await database().begin(async tx => {
+      await tx`update email_verification_codes set used_at=now() where id=${verification.id}`;
+      await tx`update users set email_verified_at=now(),
+          status=case when role='PASSENGER' then 'ACTIVE'::account_status else status end,
+          active_session_id=${sessionId},updated_at=now() where id=${verification.userId}`;
+    });
+    const user: SessionUser = {
+      id: String(verification.userId),
+      email,
+      name: String(verification.name),
+      role: verification.role as "PASSENGER" | "DRIVER",
+      sessionId,
+      mustChangePassword: false,
+      driverApprovalStatus: verification.approvalStatus ? String(verification.approvalStatus) : undefined
+    };
+    return {
+      verified: true,
+      token: tokenFor(user),
+      user,
+      restricted: user.role === "DRIVER"
+    };
+  });
+
   app.post("/v1/auth/password-reset/request", async (request, reply) => {
     const parsed = passwordResetRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_EMAIL" });
@@ -677,7 +766,9 @@ export async function buildApp() {
     if (samePassword) return reply.code(409).send({ error: "PASSWORD_REUSED" });
     await database().begin(async tx => {
       await tx`update users set password_hash=crypt(${parsed.data.password},gen_salt('bf')),
-        must_change_password=false, active_session_id=null, updated_at=now()
+        must_change_password=false, email_verified_at=coalesce(email_verified_at,now()),
+        status=case when role='PASSENGER' then 'ACTIVE'::account_status else status end,
+        active_session_id=null, updated_at=now()
         where id=${token.userId}`;
       await tx`update password_reset_tokens set used_at=now() where id=${token.id}`;
       await tx`delete from device_tokens where user_id=${token.userId}`;
@@ -731,7 +822,8 @@ export async function buildApp() {
     }
 
     const rows = await database()`
-      select u.id, u.email, u.full_name, u.role, u.status, u.must_change_password as "mustChangePassword",
+      select u.id, u.email, u.full_name, u.role, u.status, u.email_verified_at as "emailVerifiedAt",
+        u.must_change_password as "mustChangePassword",
         d.approval_status as "approvalStatus"
       from users u left join drivers d on d.user_id=u.id
       where lower(email) = lower(${parsed.data.email})
@@ -739,8 +831,9 @@ export async function buildApp() {
         and role in ('PASSENGER', 'DRIVER')
         and deleted_at is null
     `;
-    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string; mustChangePassword: boolean; approvalStatus?: string } | undefined;
+    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; status: string; emailVerifiedAt?: Date; mustChangePassword: boolean; approvalStatus?: string } | undefined;
     if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
+    if (!account.emailVerifiedAt) return reply.code(403).send({ error: "EMAIL_VERIFICATION_REQUIRED" });
     if (account.role === "DRIVER" && account.approvalStatus === "RECHAZADO") return reply.code(403).send({ error: "DRIVER_REJECTED" });
     if (account.role === "DRIVER" && account.approvalStatus === "SUSPENDIDO") return reply.code(403).send({ error: "DRIVER_SUSPENDED" });
     if (account.role !== "DRIVER" && account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
@@ -775,8 +868,18 @@ export async function buildApp() {
 
   app.post("/v1/auth/register", async (request, reply) => {
     const parsed = registrationSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: "INVALID_REGISTRATION", details: parsed.error.issues });
+    if (!parsed.success) {
+      const weakPassword = parsed.error.issues.some(issue => issue.path[0] === "password");
+      return reply.code(400).send({
+        error: weakPassword ? "WEAK_PASSWORD" : "INVALID_REGISTRATION",
+        message: weakPassword ? passwordPolicyMessage : undefined,
+        details: parsed.error.issues
+      });
+    }
     const input = parsed.data;
+    const normalizedEmail = normalizeEmail(input.email);
+    const normalizedPhone = normalizePhone(input.phone);
+    if (!normalizedPhone) return reply.code(400).send({ error: "INVALID_PHONE" });
     if (input.role === "DRIVER" && !input.vehicleIdentifier) return reply.code(400).send({ error: "VEHICLE_REQUIRED" });
     let profilePhoto: Buffer | null = null;
     if (input.profilePhotoBase64 && input.profilePhotoMime) {
@@ -784,16 +887,28 @@ export async function buildApp() {
       catch { return reply.code(400).send({ error: "INVALID_PROFILE_PHOTO" }); }
     }
     try {
+      const phoneAliases = legacyPhoneAliases(normalizedPhone);
+      const [duplicates] = await database()`
+        select
+          exists(select 1 from users where lower(email)=lower(${normalizedEmail}) and deleted_at is null) as "emailExists",
+          exists(select 1 from users where phone_e164 in ${database()(phoneAliases)} and deleted_at is null) as "phoneExists",
+          ${input.role === "DRIVER" && input.vehicleIdentifier
+            ? database()`exists(select 1 from vehicles where lower(identifier)=lower(${input.vehicleIdentifier.trim()}))`
+            : database()`false`} as "vehicleExists"
+      ` as unknown as [{ emailExists: boolean; phoneExists: boolean; vehicleExists: boolean }];
+      if (duplicates.emailExists) return reply.code(409).send({ error: "EMAIL_ALREADY_EXISTS" });
+      if (duplicates.phoneExists) return reply.code(409).send({ error: "PHONE_ALREADY_EXISTS" });
+      if (duplicates.vehicleExists) return reply.code(409).send({ error: "VEHICLE_ALREADY_EXISTS" });
       const account = await database().begin(async tx => {
         if (input.role === "DRIVER" && input.cooperativeId) {
           const cooperative = await tx`select id from cooperatives where id=${input.cooperativeId} and status='ACTIVE'`;
           if (!cooperative.length) throw new Error("INVALID_COOPERATIVE");
         }
-        const status = input.role === "DRIVER" ? "PENDING" : "ACTIVE";
+        const status = "PENDING";
         const [user] = await tx`
           insert into users (phone_e164, full_name, email, password_hash, role, status, cooperative_id, phone_verified_at, terms_accepted_at,
             profile_photo_data, profile_photo_mime, profile_photo_updated_at)
-          values (${input.phone.startsWith("+") ? input.phone : `+${input.phone}`}, ${input.fullName}, ${input.email.toLowerCase()}, crypt(${input.password}, gen_salt('bf')), ${input.role}, ${status}, ${input.role === "DRIVER" ? input.cooperativeId ?? null : null}, now(), now(),
+          values (${normalizedPhone}, ${input.fullName}, ${normalizedEmail}, crypt(${input.password}, gen_salt('bf')), ${input.role}, ${status}, ${input.role === "DRIVER" ? input.cooperativeId ?? null : null}, null, now(),
             ${profilePhoto}, ${input.profilePhotoMime ?? null}, ${profilePhoto ? new Date() : null})
           returning id, email, full_name, role, status
         `;
@@ -806,14 +921,27 @@ export async function buildApp() {
         }
         return user!;
       });
-      const sessionId = randomUUID();
-      await database()`update users set active_session_id=${sessionId} where id=${account.id}`;
-      const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: account.role, sessionId, mustChangePassword: false, driverApprovalStatus: account.role === "DRIVER" ? "PENDIENTE_DOCUMENTOS" : undefined };
-      return reply.code(201).send({ status: account.role === "DRIVER" ? "PENDING_DOCUMENTS" : "ACTIVE", token: tokenFor(user), user, restricted: account.role === "DRIVER", message: account.role === "DRIVER" ? "Registro creado. Completa los documentos habilitantes para enviar tu solicitud a revisión." : undefined });
+      const delivered = await issueEmailVerificationCode(String(account.id), String(account.email));
+      return reply.code(201).send({
+        status: "PENDING_EMAIL_VERIFICATION",
+        verificationRequired: true,
+        delivered,
+        email: account.email,
+        role: account.role,
+        message: delivered
+          ? "Te enviamos un código para verificar tu correo."
+          : "La cuenta fue creada, pero el correo no pudo enviarse. Solicita un código nuevo."
+      });
     } catch (error) {
       if (error instanceof Error && error.message === "INVALID_COOPERATIVE") return reply.code(400).send({ error: error.message });
       const code = (error as { code?: string }).code;
-      if (code === "23505") return reply.code(409).send({ error: "ACCOUNT_ALREADY_EXISTS" });
+      if (code === "23505") {
+        const constraint = String((error as { constraint_name?: string }).constraint_name ?? "");
+        if (constraint.includes("email")) return reply.code(409).send({ error: "EMAIL_ALREADY_EXISTS" });
+        if (constraint.includes("phone")) return reply.code(409).send({ error: "PHONE_ALREADY_EXISTS" });
+        if (constraint.includes("identifier")) return reply.code(409).send({ error: "VEHICLE_ALREADY_EXISTS" });
+        return reply.code(409).send({ error: "ACCOUNT_ALREADY_EXISTS" });
+      }
       throw error;
     }
   });

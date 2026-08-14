@@ -3,6 +3,13 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
 import {
+  legacyPhoneAliases,
+  normalizeEmail,
+  normalizePhone,
+  passwordPolicyMessage,
+  strongPasswordSchema
+} from "./auth-security.js";
+import {
   adminRoles,
   allPermissions,
   hasPermission,
@@ -75,7 +82,7 @@ const approvalSettingsSchema = z.object({
   emailEnabled: z.boolean(), internalEnabled: z.boolean(), pushEnabled: z.boolean()
 });
 const passengerSchema = z.object({ status: z.enum(["ACTIVE", "SUSPENDED"]), reason: z.string().min(3) });
-const passwordResetSchema = z.object({ password: z.string().min(8).max(100) });
+const passwordResetSchema = z.object({ password: strongPasswordSchema });
 const documentReviewSchema = z.object({
   status: z.enum(["ACTIVE", "REJECTED"]),
   note: z.string().trim().min(3).max(300)
@@ -152,7 +159,7 @@ const adminUserCreateSchema = z.object({
   fullName: z.string().trim().min(3).max(120),
   email: z.string().email(),
   phone: z.string().trim().min(8).max(24),
-  password: z.string().min(8).max(100),
+  password: strongPasswordSchema,
   role: z.enum(["SUPER_ADMIN", "ADMIN_OPERACIONES", "SOPORTE", "ANALISTA_COOPERATIVA"]),
   cooperativeId: z.string().uuid().nullable().optional()
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
@@ -333,12 +340,20 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const actor = requirePermission(request, "roles:manage");
     const body = adminUserCreateSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
-    const normalizedPhone = body.phone.startsWith("+") ? body.phone : `+${body.phone}`;
+    const normalizedPhone = normalizePhone(body.phone);
+    if (!normalizedPhone) return reply.code(400).send({ error: "INVALID_PHONE" });
+    const normalizedEmail = normalizeEmail(body.email);
+    const aliases = legacyPhoneAliases(normalizedPhone);
+    const [duplicate] = await database()`select
+      exists(select 1 from users where lower(email)=lower(${normalizedEmail}) and deleted_at is null) as "emailExists",
+      exists(select 1 from users where phone_e164 in ${database()(aliases)} and deleted_at is null) as "phoneExists"` as unknown as [{ emailExists: boolean; phoneExists: boolean }];
+    if (duplicate.emailExists) return reply.code(409).send({ error: "EMAIL_ALREADY_EXISTS" });
+    if (duplicate.phoneExists) return reply.code(409).send({ error: "PHONE_ALREADY_EXISTS" });
     const [account] = await database()`
       insert into users
         (phone_e164, full_name, email, password_hash, role, status,
           cooperative_id, phone_verified_at, terms_accepted_at)
-      values (${normalizedPhone}, ${body.fullName}, ${body.email.toLowerCase()},
+      values (${normalizedPhone}, ${body.fullName}, ${normalizedEmail},
         crypt(${body.password}, gen_salt('bf')), ${body.role}, 'ACTIVE',
         ${body.cooperativeId ?? null}, now(), now())
       returning id::text, full_name as name, email, role,
@@ -348,7 +363,15 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       `Rol ${body.role}`);
     return reply.code(201).send(account);
   } catch (e) {
-    if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_ADMIN_USER", details: e.issues });
+    if (e instanceof z.ZodError) {
+      const weakPassword = e.issues.some(issue => issue.path[0] === "password");
+      return reply.code(400).send({ error: weakPassword ? "WEAK_PASSWORD" : "INVALID_ADMIN_USER", message: weakPassword ? passwordPolicyMessage : undefined, details: e.issues });
+    }
+    if ((e as { code?: string }).code === "23505") {
+      const constraint = String((e as { constraint_name?: string }).constraint_name ?? "");
+      if (constraint.includes("email")) return reply.code(409).send({ error: "EMAIL_ALREADY_EXISTS" });
+      if (constraint.includes("phone")) return reply.code(409).send({ error: "PHONE_ALREADY_EXISTS" });
+    }
     return guardError(e, reply);
   } });
   app.patch("/v1/admin/access/users/:id", async (request, reply) => { try {
@@ -487,7 +510,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     await persistAudit(user, "USER_PASSWORD_RESET", "USER", id, "Contraseña restablecida y sesiones cerradas");
     return { ok: true, sessionsRevoked: true };
   } catch(e) {
-    if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_PASSWORD", message: "La contraseña debe tener entre 8 y 100 caracteres." });
+    if (e instanceof z.ZodError) return reply.code(400).send({ error: "WEAK_PASSWORD", message: passwordPolicyMessage });
     return guardError(e, reply);
   } });
   app.get("/v1/admin/dashboard", async (request, reply) => { try {
