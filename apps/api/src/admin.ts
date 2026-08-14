@@ -523,7 +523,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         where id=${id} and role in ('PASSENGER','DRIVER')
         returning id::text, role
       `;
-      if (updated) await tx`delete from device_tokens where user_id=${id}`;
+      if (updated) {
+        await tx`delete from device_tokens where user_id=${id}`;
+        await tx`delete from biometric_credentials where user_id=${id}`;
+      }
       return updated;
     });
     if (!account) return reply.code(404).send({ error: "NOT_FOUND" });

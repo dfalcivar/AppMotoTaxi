@@ -48,6 +48,10 @@ const mobileLoginSchema = z.object({
   password: z.string().min(8),
   role: z.enum(["PASSENGER", "DRIVER"]).optional()
 });
+const biometricSessionSchema = z.object({
+  credential: z.string().min(32).max(256),
+  role: z.enum(["PASSENGER", "DRIVER"]).optional()
+});
 const switchMobileRoleSchema = z.object({ role: z.enum(["PASSENGER", "DRIVER"]) });
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(8).max(100).optional(),
@@ -230,6 +234,7 @@ async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRI
         where id in ${tx(tripIds)}`;
     }
     await tx`delete from device_tokens where user_id=${userId}`;
+    await tx`delete from biometric_credentials where user_id=${userId}`;
     await tx`delete from favorite_places where user_id=${userId}`;
     await tx`delete from user_notifications where user_id=${userId}`;
     await tx`delete from password_reset_tokens where user_id=${userId}`;
@@ -801,6 +806,7 @@ export async function buildApp() {
         where id=${token.userId}`;
       await tx`update password_reset_tokens set used_at=now() where id=${token.id}`;
       await tx`delete from device_tokens where user_id=${token.userId}`;
+      await tx`delete from biometric_credentials where user_id=${token.userId}`;
       await tx`update drivers set is_available=false where user_id=${token.userId}`;
     });
     return { changed: true };
@@ -872,26 +878,84 @@ export async function buildApp() {
     if (activeRole === "DRIVER" && account.approvalStatus === "SUSPENDIDO") return reply.code(403).send({ error: "DRIVER_SUSPENDED" });
 
     const sessionId = randomUUID();
-    await database()`update users set active_session_id=${sessionId},last_mobile_role=${activeRole} where id=${account.id}`;
+    await database().begin(async tx => {
+      await tx`delete from biometric_credentials where user_id=${account.id}`;
+      await tx`update users set active_session_id=${sessionId},last_mobile_role=${activeRole} where id=${account.id}`;
+    });
     const user: SessionUser = { id: account.id, email: account.email, name: account.full_name, role: activeRole, sessionId, mustChangePassword: account.mustChangePassword, driverApprovalStatus: account.approvalStatus, availableRoles: account.roles };
     return { token: tokenFor(user), user, restricted: activeRole === "DRIVER" && account.approvalStatus !== "APROBADO" };
+  });
+
+  app.post("/v1/auth/biometric/enroll", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
+    const credential = randomBytes(32).toString("hex");
+    const hash = privateTokenHash(`biometric:${credential}`);
+    await database()`insert into biometric_credentials(user_id,secret_hash)
+      values (${user.id!},${hash})
+      on conflict (user_id) do update set secret_hash=excluded.secret_hash,
+        created_at=now(),last_used_at=null,revoked_at=null`;
+    return { credential };
+  });
+
+  app.delete("/v1/auth/biometric", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
+    await database()`delete from biometric_credentials where user_id=${user.id!}`;
+    return { disabled: true };
+  });
+
+  app.post("/v1/auth/biometric/session", async (request, reply) => {
+    const parsed = biometricSessionSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_BIOMETRIC_CREDENTIAL" });
+    const hash = privateTokenHash(`biometric:${parsed.data.credential}`);
+    const [account] = await database()`select u.id::text,u.email,u.full_name,u.role,
+        u.last_mobile_role as "lastMobileRole",u.status,u.email_verified_at as "emailVerifiedAt",
+        u.must_change_password as "mustChangePassword",d.approval_status as "approvalStatus",
+        array(select mar.role from mobile_account_roles mar where mar.user_id=u.id order by mar.role) roles
+      from biometric_credentials biometric
+      join users u on u.id=biometric.user_id
+      left join drivers d on d.user_id=u.id
+      where biometric.secret_hash=${hash} and biometric.revoked_at is null and u.deleted_at is null
+      limit 1`;
+    if (!account) return reply.code(401).send({ error: "INVALID_BIOMETRIC_CREDENTIAL" });
+    if (!account.emailVerifiedAt || account.status !== "ACTIVE") {
+      return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
+    }
+    const roles = account.roles as Array<"PASSENGER" | "DRIVER">;
+    const activeRole = parsed.data.role ?? account.lastMobileRole ?? account.role as "PASSENGER" | "DRIVER";
+    if (!roles.includes(activeRole)) return reply.code(403).send({ error: "ROLE_NOT_AVAILABLE" });
+    if (activeRole === "DRIVER" && account.approvalStatus === "RECHAZADO") return reply.code(403).send({ error: "DRIVER_REJECTED" });
+    if (activeRole === "DRIVER" && account.approvalStatus === "SUSPENDIDO") return reply.code(403).send({ error: "DRIVER_SUSPENDED" });
+    const sessionId = randomUUID();
+    await database().begin(async tx => {
+      await tx`update users set active_session_id=${sessionId},last_mobile_role=${activeRole} where id=${account.id}`;
+      await tx`update biometric_credentials set last_used_at=now() where user_id=${account.id}`;
+    });
+    const sessionUser: SessionUser = {
+      id: String(account.id), email: String(account.email), name: String(account.full_name), role: activeRole,
+      sessionId, mustChangePassword: Boolean(account.mustChangePassword),
+      driverApprovalStatus: account.approvalStatus ? String(account.approvalStatus) : undefined,
+      availableRoles: roles
+    };
+    return { token: tokenFor(sessionUser), user: sessionUser,
+      restricted: activeRole === "DRIVER" && account.approvalStatus !== "APROBADO" };
   });
 
   app.post("/v1/auth/change-password", async (request, reply) => {
     const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
     const parsed = changePasswordSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_PASSWORD" });
-    const [updated] = await database()`
-      update users
-      set password_hash=crypt(${parsed.data.password}, gen_salt('bf')),
-          must_change_password=false,
-          updated_at=now()
-      where id=${user.id!}
-        and (must_change_password=true or (${parsed.data.currentPassword ?? ""} <> ''
-          and password_hash=crypt(${parsed.data.currentPassword ?? ""}, password_hash)))
-        and password_hash <> crypt(${parsed.data.password}, password_hash)
-      returning id::text
-    `;
+    const [updated] = await database().begin(async tx => {
+      const rows = await tx`update users
+        set password_hash=crypt(${parsed.data.password}, gen_salt('bf')),
+            must_change_password=false,updated_at=now()
+        where id=${user.id!}
+          and (must_change_password=true or (${parsed.data.currentPassword ?? ""} <> ''
+            and password_hash=crypt(${parsed.data.currentPassword ?? ""}, password_hash)))
+          and password_hash <> crypt(${parsed.data.password}, password_hash)
+        returning id::text`;
+      if (rows.length) await tx`delete from biometric_credentials where user_id=${user.id!}`;
+      return rows;
+    });
     if (!updated) {
       const [samePassword] = await database()`select 1 from users where id=${user.id!} and password_hash=crypt(${parsed.data.password}, password_hash)`;
       return reply.code(samePassword ? 409 : 401).send({ error: samePassword ? "PASSWORD_REUSED" : "INVALID_CURRENT_PASSWORD" });

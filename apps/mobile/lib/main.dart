@@ -380,29 +380,43 @@ String supportTripIdentifier(dynamic trip) {
       : '';
 }
 
+class BiometricAccess {
+  const BiometricAccess(this.credential, this.role, this.name, this.id,
+      {this.approvalStatus, this.availableRoles = const ['PASSENGER']});
+  final String credential, role, name, id;
+  final String? approvalStatus;
+  final List<String> availableRoles;
+}
+
 class BiometricSessionStore {
   static const _key = 'atacamesgo_biometric_session';
   static final _auth = LocalAuthentication();
 
-  static Future<void> enable(Session session) => secureStorage.write(
-      key: _key,
-      value: jsonEncode({
-        'token': session.token,
-        'role': session.role,
-        'name': session.name,
-        'id': session.id,
-        'approvalStatus': session.approvalStatus,
-        'availableRoles': session.availableRoles,
-      }));
+  static Future<void> enable(Session session, String credential) =>
+      secureStorage.write(
+          key: _key,
+          value: jsonEncode({
+            'credential': credential,
+            'role': session.role,
+            'name': session.name,
+            'id': session.id,
+            'approvalStatus': session.approvalStatus,
+            'availableRoles': session.availableRoles,
+          }));
 
   static Future<void> clear() => secureStorage.delete(key: _key);
 
-  static Future<Session?> saved() async {
+  static Future<BiometricAccess?> saved() async {
     try {
       final value = await secureStorage.read(key: _key);
       if (value == null) return null;
       final data = jsonDecode(value) as Map<String, dynamic>;
-      return Session(data['token'], data['role'], data['name'], data['id'],
+      final credential = data['credential']?.toString() ?? '';
+      if (credential.isEmpty) {
+        await clear();
+        return null;
+      }
+      return BiometricAccess(credential, data['role'], data['name'], data['id'],
           approvalStatus: data['approvalStatus']?.toString(),
           availableRoles: List<String>.from(
               data['availableRoles'] ?? <String>[data['role']]));
@@ -474,8 +488,8 @@ class AppSessionStore {
         data['id'],
         mustChangePassword: data['mustChangePassword'] == true,
         approvalStatus: data['approvalStatus']?.toString(),
-        availableRoles: List<String>.from(
-            data['availableRoles'] ?? <String>[data['role']]),
+        availableRoles:
+            List<String>.from(data['availableRoles'] ?? <String>[data['role']]),
       );
     } catch (_) {
       try {
@@ -490,17 +504,21 @@ class AppSessionStore {
 
 Future<void> refreshBiometricSessionIfEnabled(Session session) async {
   final biometric = await BiometricSessionStore.saved();
-  if (biometric?.id == session.id) await BiometricSessionStore.enable(session);
+  if (biometric?.id == session.id) {
+    await BiometricSessionStore.enable(session, biometric!.credential);
+  }
 }
 
-Future<void> clearLocalSession() async {
+Future<void> clearLocalSession({bool preserveBiometric = false}) async {
   activeFcmAuthToken = null;
   try {
     await AppSessionStore.clear();
   } catch (_) {}
-  try {
-    await BiometricSessionStore.clear();
-  } catch (_) {}
+  if (!preserveBiometric) {
+    try {
+      await BiometricSessionStore.clear();
+    } catch (_) {}
+  }
 }
 
 Future<void> handleRevokedSession() async {
@@ -881,8 +899,11 @@ class ApiException implements Exception {
 String mensajeApi(dynamic code) =>
     const {
       'INVALID_CREDENTIALS': 'Correo o contraseña incorrectos.',
+      'INVALID_BIOMETRIC_CREDENTIAL':
+          'El acceso biométrico fue revocado. Ingresa con tu contraseña y actívalo nuevamente.',
       'EMAIL_NOT_FOUND': 'No existe una cuenta registrada con ese correo.',
-      'ROLE_NOT_AVAILABLE': 'Este modo todavía no está habilitado en tu cuenta.',
+      'ROLE_NOT_AVAILABLE':
+          'Este modo todavía no está habilitado en tu cuenta.',
       'ROLE_SWITCH_BLOCKED_ACTIVE_TRIP':
           'Finaliza o cancela el viaje activo antes de cambiar de modo.',
       'DRIVER_PROFILE_ALREADY_EXISTS':
@@ -1169,9 +1190,42 @@ class Api {
         d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
         mustChangePassword: d['user']['mustChangePassword'] == true,
         approvalStatus: d['user']['driverApprovalStatus'],
-        availableRoles:
-            List<String>.from(d['user']['availableRoles'] ?? [d['user']['role']]));
+        availableRoles: List<String>.from(
+            d['user']['availableRoles'] ?? [d['user']['role']]));
+    await BiometricSessionStore.clear();
     await AppSessionStore.save(s);
+    await registerFcm(s.token);
+    return s;
+  }
+
+  Session _sessionFromResponse(dynamic d) =>
+      Session(d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
+          mustChangePassword: d['user']['mustChangePassword'] == true,
+          approvalStatus: d['user']['driverApprovalStatus'],
+          availableRoles: List<String>.from(
+              d['user']['availableRoles'] ?? [d['user']['role']]));
+
+  Future<String> enrollBiometric(String token) async {
+    final d = await call('POST', '/v1/auth/biometric/enroll', token: token);
+    final credential = d['credential']?.toString() ?? '';
+    if (credential.isEmpty) {
+      throw const ApiException('No se pudo habilitar el acceso biométrico.');
+    }
+    return credential;
+  }
+
+  Future<void> disableBiometric(String token) async {
+    await call('DELETE', '/v1/auth/biometric', token: token);
+  }
+
+  Future<Session> biometricLogin(String credential, {String? role}) async {
+    final d = await call('POST', '/v1/auth/biometric/session', body: {
+      'credential': credential,
+      if (role != null) 'role': role,
+    });
+    final s = _sessionFromResponse(d);
+    await AppSessionStore.save(s);
+    await BiometricSessionStore.enable(s, credential);
     await registerFcm(s.token);
     return s;
   }
@@ -1272,8 +1326,8 @@ class Api {
     final s = Session(
         d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
         approvalStatus: d['user']['driverApprovalStatus'],
-        availableRoles:
-            List<String>.from(d['user']['availableRoles'] ?? [d['user']['role']]));
+        availableRoles: List<String>.from(
+            d['user']['availableRoles'] ?? [d['user']['role']]));
     await AppSessionStore.save(s);
     await registerFcm(s.token);
     return s;
@@ -1284,22 +1338,24 @@ class Api {
   Future<Session> switchRole(String token, String role) async {
     final d = await call('POST', '/v1/auth/switch-role',
         token: token, body: {'role': role});
-    return Session(d['token'], d['user']['role'], d['user']['name'],
-        d['user']['id'],
+    return Session(
+        d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
         mustChangePassword: d['user']['mustChangePassword'] == true,
         approvalStatus: d['user']['driverApprovalStatus'],
         availableRoles:
             List<String>.from(d['user']['availableRoles'] ?? [role]));
   }
+
   Future<Session> enrollDriver(String token, Map<String, dynamic> body) async {
     final d = await call('POST', '/v1/profile/driver-enrollment',
         token: token, body: body);
-    return Session(d['token'], d['user']['role'], d['user']['name'],
-        d['user']['id'],
+    return Session(
+        d['token'], d['user']['role'], d['user']['name'], d['user']['id'],
         approvalStatus: d['user']['driverApprovalStatus'],
         availableRoles: List<String>.from(
             d['user']['availableRoles'] ?? ['PASSENGER', 'DRIVER']));
   }
+
   Future<dynamic> confirmPasswordReset(
           String email, String code, String password) =>
       call('POST', '/v1/auth/password-reset/confirm', body: {
@@ -1896,7 +1952,7 @@ class _LoginState extends State<Login> {
   String? error;
   bool busy = false;
   bool showPassword = false;
-  Session? biometricSession;
+  BiometricAccess? biometricSession;
   @override
   void initState() {
     super.initState();
@@ -1984,20 +2040,22 @@ class _LoginState extends State<Login> {
     }
 
     try {
-      await Api().profile(session.token);
-      await AppSessionStore.save(session);
-      unawaited(Api().registerFcm(session.token));
+      final activeSession =
+          await Api().biometricLogin(session.credential, role: widget.role);
       if (!mounted) return;
       Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-              builder: (_) => session.role == 'DRIVER'
-                  ? Driver(session)
-                  : Passenger(session)));
+              builder: (_) => activeSession.role == 'DRIVER'
+                  ? (activeSession.approvalStatus == null ||
+                          activeSession.approvalStatus == 'APROBADO'
+                      ? Driver(activeSession)
+                      : DriverApprovalScreen(activeSession))
+                  : Passenger(activeSession)));
     } catch (reason) {
       final revoked = reason is ApiException &&
           (reason.code == 'UNAUTHORIZED' ||
-              reason.code == 'SESSION_REPLACED' ||
+              reason.code == 'INVALID_BIOMETRIC_CREDENTIAL' ||
               reason.statusCode == 401);
       if (revoked) await BiometricSessionStore.clear();
       if (mounted) {
@@ -3034,8 +3092,10 @@ class _ProfileState extends State<Profile> {
       if (enabled) {
         final ok = await BiometricSessionStore.authenticate();
         if (!ok) return;
-        await BiometricSessionStore.enable(widget.s);
+        final credential = await Api().enrollBiometric(widget.s.token);
+        await BiometricSessionStore.enable(widget.s, credential);
       } else {
+        await Api().disableBiometric(widget.s.token);
         await BiometricSessionStore.clear();
       }
       if (mounted) setState(() => biometricEnabled = enabled);
@@ -3461,7 +3521,7 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
     try {
       await Api().logout(widget.session.token);
     } catch (_) {}
-    await clearLocalSession();
+    await clearLocalSession(preserveBiometric: true);
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(context,
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
@@ -3469,15 +3529,15 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
 
   Future<void> usePassengerMode() async {
     try {
-      final session=await Api().switchRole(widget.session.token,'PASSENGER');
+      final session = await Api().switchRole(widget.session.token, 'PASSENGER');
       await AppSessionStore.save(session);
       await refreshBiometricSessionIfEnabled(session);
       unawaited(Api().registerFcm(session.token));
-      if(!mounted)return;
+      if (!mounted) return;
       Navigator.pushAndRemoveUntil(context,
-          MaterialPageRoute(builder:(_)=>Passenger(session)),(_)=>false);
-    } catch(reason) {
-      if(mounted)setState(()=>error=reason.toString());
+          MaterialPageRoute(builder: (_) => Passenger(session)), (_) => false);
+    } catch (reason) {
+      if (mounted) setState(() => error = reason.toString());
     }
   }
 
@@ -3556,7 +3616,7 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
                       onPressed: load,
                       icon: const Icon(Icons.refresh),
                       label: const Text('Actualizar estado')),
-                  if(widget.session.availableRoles.contains('PASSENGER'))
+                  if (widget.session.availableRoles.contains('PASSENGER'))
                     OutlinedButton.icon(
                         onPressed: usePassengerMode,
                         icon: const Icon(Icons.person_pin_circle_outlined),
@@ -3631,8 +3691,8 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
     Uint8List bytes;
     String mime;
     if (action == 'DOCUMENT') {
-      final selected = await nativeActions.invokeMapMethod<String, dynamic>(
-          'pickDocument', const {
+      final selected = await nativeActions
+          .invokeMapMethod<String, dynamic>('pickDocument', const {
         'extensions': ['pdf', 'doc', 'docx']
       });
       if (selected == null) return;
@@ -3643,16 +3703,15 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
       }
       bytes = rawBytes;
       final name = (selected['name'] as String? ?? '').trim();
-      final extension = name.contains('.')
-          ? name.split('.').last.toLowerCase()
-          : '';
+      final extension =
+          name.contains('.') ? name.split('.').last.toLowerCase() : '';
       mime = (selected['mime'] as String?)?.trim().isNotEmpty == true
           ? (selected['mime'] as String).trim()
           : extension == 'pdf'
-          ? 'application/pdf'
-          : extension == 'doc'
-              ? 'application/msword'
-              : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+              ? 'application/pdf'
+              : extension == 'doc'
+                  ? 'application/msword'
+                  : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
       if (bytes.length > 5000000) {
         setState(() => message = 'El documento no puede superar 5 MB.');
         return;
@@ -3660,7 +3719,9 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
     } else {
       final file = await picker.pickImage(
           source: action == 'CAMERA' ? ImageSource.camera : ImageSource.gallery,
-          imageQuality: 72, maxWidth: 1400, maxHeight: 1400);
+          imageQuality: 72,
+          maxWidth: 1400,
+          maxHeight: 1400);
       if (file == null) return;
       bytes = await file.readAsBytes();
       final extension = file.name.toLowerCase();
@@ -3767,71 +3828,133 @@ class _DriverEnrollmentScreenState extends State<DriverEnrollmentScreen> {
   }
 
   @override
-  void dispose() { vehicle.dispose(); super.dispose(); }
+  void dispose() {
+    vehicle.dispose();
+    super.dispose();
+  }
 
   Future<void> pickPhoto() async {
-    final file = await ImagePicker().pickImage(source: ImageSource.gallery,
-        imageQuality: 68,maxWidth: 1024,maxHeight: 1024);
+    final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 68,
+        maxWidth: 1024,
+        maxHeight: 1024);
     if (file == null) return;
     final bytes = await file.readAsBytes();
     final mime = supportedImageMime(bytes);
     if (bytes.length > 1200000 || mime == null) {
-      setState(() => error = 'Usa una fotografía JPG, PNG o WEBP de máximo 1,2 MB.');
+      setState(
+          () => error = 'Usa una fotografía JPG, PNG o WEBP de máximo 1,2 MB.');
       return;
     }
-    setState(() { photo=bytes; photoMime=mime; error=null; });
+    setState(() {
+      photo = bytes;
+      photoMime = mime;
+      error = null;
+    });
   }
 
   Future<void> submit() async {
     if (vehicle.text.trim().length < 3 || photo == null || photoMime == null) {
-      setState(() => error='Ingresa la placa y selecciona una fotografía frontal clara.');
+      setState(() => error =
+          'Ingresa la placa y selecciona una fotografía frontal clara.');
       return;
     }
-    setState(() { busy=true; error=null; });
+    setState(() {
+      busy = true;
+      error = null;
+    });
     try {
-      final session=await Api().enrollDriver(widget.session.token,{
-        'vehicleIdentifier':vehicle.text.trim(),
-        'cooperativeId':cooperative=='INDIVIDUAL' ? null : cooperative,
-        'profilePhotoBase64':base64Encode(photo!),
-        'profilePhotoMime':photoMime,
+      final session = await Api().enrollDriver(widget.session.token, {
+        'vehicleIdentifier': vehicle.text.trim(),
+        'cooperativeId': cooperative == 'INDIVIDUAL' ? null : cooperative,
+        'profilePhotoBase64': base64Encode(photo!),
+        'profilePhotoMime': photoMime,
       });
       await AppSessionStore.save(session);
       await refreshBiometricSessionIfEnabled(session);
       unawaited(Api().registerFcm(session.token));
-      if(!mounted)return;
-      Navigator.pushAndRemoveUntil(context,
-          MaterialPageRoute(builder:(_)=>DriverApprovalScreen(session)),(_)=>false);
-    } catch(reason) { if(mounted)setState(()=>error=reason.toString()); }
-    finally { if(mounted)setState(()=>busy=false); }
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => DriverApprovalScreen(session)),
+          (_) => false);
+    } catch (reason) {
+      if (mounted) setState(() => error = reason.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Quiero conducir')),
-    body: ListView(padding: const EdgeInsets.all(20),children:[
-      Text('Activa tu perfil de conductor',style:Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight:FontWeight.w800)),
-      const SizedBox(height:8),
-      const Text('Tu correo, teléfono y contraseña seguirán siendo los mismos. Solo debes completar la información habilitante.'),
-      const SizedBox(height:20),
-      DropdownButtonFormField<String>(initialValue:cooperative,
-        decoration:const InputDecoration(labelText:'Cooperativa'),items:[
-          const DropdownMenuItem(value:'INDIVIDUAL',child:Text('Conductor independiente')),
-          ...cooperatives.map((item)=>DropdownMenuItem<String>(value:item['id']?.toString(),child:Text(item['name']?.toString()??'Cooperativa')))
-        ],onChanged:busy?null:(value)=>setState(()=>cooperative=value??'INDIVIDUAL')),
-      const SizedBox(height:14),
-      TextField(controller:vehicle,textCapitalization:TextCapitalization.characters,
-        decoration:const InputDecoration(labelText:'Placa o identificador *',prefixIcon:Icon(Icons.badge_outlined))),
-      const SizedBox(height:16),
-      Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(children:[
-        if(photo!=null) ClipOval(child:Image.memory(photo!,width:112,height:112,fit:BoxFit.cover))
-        else const CircleAvatar(radius:56,child:Icon(Icons.person_outline,size:52)),
-        const SizedBox(height:10),
-        const Text('Fotografía frontal, clara y con el rostro visible *',textAlign:TextAlign.center),
-        OutlinedButton.icon(onPressed:busy?null:pickPhoto,icon:const Icon(Icons.add_a_photo_outlined),label:Text(photo==null?'Seleccionar fotografía':'Cambiar fotografía')),
-      ]))),
-      if(error!=null) Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(error!,style:TextStyle(color:Theme.of(context).colorScheme.error))),
-      FilledButton.icon(onPressed:busy?null:submit,icon:const Icon(Icons.send_outlined),label:Text(busy?'Enviando…':'Crear perfil de conductor')),
-    ]));
+      appBar: AppBar(title: const Text('Quiero conducir')),
+      body: ListView(padding: const EdgeInsets.all(20), children: [
+        Text('Activa tu perfil de conductor',
+            style: Theme.of(context)
+                .textTheme
+                .headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        const Text(
+            'Tu correo, teléfono y contraseña seguirán siendo los mismos. Solo debes completar la información habilitante.'),
+        const SizedBox(height: 20),
+        DropdownButtonFormField<String>(
+            initialValue: cooperative,
+            decoration: const InputDecoration(labelText: 'Cooperativa'),
+            items: [
+              const DropdownMenuItem(
+                  value: 'INDIVIDUAL', child: Text('Conductor independiente')),
+              ...cooperatives.map((item) => DropdownMenuItem<String>(
+                  value: item['id']?.toString(),
+                  child: Text(item['name']?.toString() ?? 'Cooperativa')))
+            ],
+            onChanged: busy
+                ? null
+                : (value) =>
+                    setState(() => cooperative = value ?? 'INDIVIDUAL')),
+        const SizedBox(height: 14),
+        TextField(
+            controller: vehicle,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(
+                labelText: 'Placa o identificador *',
+                prefixIcon: Icon(Icons.badge_outlined))),
+        const SizedBox(height: 16),
+        Card(
+            child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(children: [
+                  if (photo != null)
+                    ClipOval(
+                        child: Image.memory(photo!,
+                            width: 112, height: 112, fit: BoxFit.cover))
+                  else
+                    const CircleAvatar(
+                        radius: 56,
+                        child: Icon(Icons.person_outline, size: 52)),
+                  const SizedBox(height: 10),
+                  const Text(
+                      'Fotografía frontal, clara y con el rostro visible *',
+                      textAlign: TextAlign.center),
+                  OutlinedButton.icon(
+                      onPressed: busy ? null : pickPhoto,
+                      icon: const Icon(Icons.add_a_photo_outlined),
+                      label: Text(photo == null
+                          ? 'Seleccionar fotografía'
+                          : 'Cambiar fotografía')),
+                ]))),
+        if (error != null)
+          Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(error!,
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.error))),
+        FilledButton.icon(
+            onPressed: busy ? null : submit,
+            icon: const Icon(Icons.send_outlined),
+            label: Text(busy ? 'Enviando…' : 'Crear perfil de conductor')),
+      ]));
 }
 
 class AccountHub extends StatefulWidget {
@@ -3901,7 +4024,7 @@ class _AccountHubState extends State<AccountHub> {
     try {
       await Api().logout(widget.s.token);
     } catch (_) {}
-    await clearLocalSession();
+    await clearLocalSession(preserveBiometric: true);
     if (sentryDsn.isNotEmpty) {
       await Sentry.configureScope((scope) => scope.setUser(null));
     }
@@ -3918,12 +4041,14 @@ class _AccountHubState extends State<AccountHub> {
       await refreshBiometricSessionIfEnabled(session);
       unawaited(Api().registerFcm(session.token));
       if (!mounted) return;
-      Navigator.pushAndRemoveUntil(context,
-          MaterialPageRoute(builder: (_) => homeForSession(session)), (_) => false);
+      Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => homeForSession(session)),
+          (_) => false);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
       }
     } finally {
       if (mounted) setState(() => switchingMode = false);
@@ -3979,7 +4104,8 @@ class _AccountHubState extends State<AccountHub> {
               subtitle: const Text('Usa la misma cuenta y conserva tus datos'),
               trailing: switchingMode
                   ? const SizedBox.square(
-                      dimension: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                      dimension: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.swap_horiz_rounded),
               onTap: switchingMode
                   ? null
@@ -3991,8 +4117,10 @@ class _AccountHubState extends State<AccountHub> {
               title: const Text('Quiero conducir con Costa-Go'),
               subtitle: const Text('Completa tu perfil sin crear otra cuenta'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => DriverEnrollmentScreen(widget.s)))),
+              onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => DriverEnrollmentScreen(widget.s)))),
         ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('Mi perfil'),
