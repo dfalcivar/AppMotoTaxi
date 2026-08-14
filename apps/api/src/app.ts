@@ -452,9 +452,11 @@ export async function buildApp() {
       if (parsed.data.serviceAreaId && !bounds) {
         return reply.code(403).send({ error: "SERVICE_AREA_NOT_ALLOWED" });
       }
-      // Bounds only bias provider ranking. The exact ServiceArea polygon below
-      // remains the definitive spatial filter.
-      const locations = await searchLocations(parsed.data.q, focus, bounds);
+      // Google Places busca por texto y cercania. La ServiceArea se aplica
+      // despues como filtro espacial exacto; no se envian sus bounds al
+      // proveedor porque los poligonos irregulares pueden excluir resultados
+      // validos o provocar respuestas incompatibles.
+      const locations = await searchLocations(parsed.data.q, focus);
       if (!parsed.data.serviceAreaId) return locations;
       let allowedIndexes = new Set(await filterLocationsToArea(
         parsed.data.serviceAreaId,
