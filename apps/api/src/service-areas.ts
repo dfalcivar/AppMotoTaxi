@@ -199,14 +199,18 @@ export async function authorizedServiceAreas(userId: string, knownVersion?: numb
         'south', ST_YMin(ST_Envelope(v.geometry)),
         'east', ST_XMax(ST_Envelope(v.geometry)),
         'north', ST_YMax(ST_Envelope(v.geometry))
-      ) as bounds
+      ) as bounds,
+      case when access.review_mode then jsonb_build_object(
+        'latitude', ST_Y(ST_PointOnSurface(v.geometry)),
+        'longitude', ST_X(ST_PointOnSurface(v.geometry)),
+        'label', a.name || ' · ubicación de revisión'
+      ) end as "reviewLocation"
     from service_areas a join service_area_versions v on v.id=a.current_version_id
+    left join user_service_area_access access on access.user_id=${userId}
+      and access.service_area_id=a.id
+      and (access.expires_at is null or access.expires_at>now())
     where a.enabled and (
-      a.audience='ALL' or exists (
-        select 1 from user_service_area_access access
-        where access.user_id=${userId} and access.service_area_id=a.id
-          and (access.expires_at is null or access.expires_at>now())
-      ) or (a.audience='ROLES' and exists (
+      a.audience='ALL' or access.user_id is not null or (a.audience='ROLES' and exists (
         select 1 from service_area_role_access role_access
         join users account on account.id=${userId}
         where role_access.service_area_id=a.id and role_access.role=account.role::text

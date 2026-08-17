@@ -641,10 +641,8 @@ Future<void> warmApi() async {
   }
 }
 
-const privacyPolicyUrl =
-    'https://costa-go.com/privacy.html';
-const accountDeletionUrl =
-    'https://costa-go.com/account-deletion.html';
+const privacyPolicyUrl = 'https://costa-go.com/privacy.html';
+const accountDeletionUrl = 'https://costa-go.com/account-deletion.html';
 const locationDisclosureVersion = 1;
 
 Future<void> openExternalPage(BuildContext context, String value) async {
@@ -5274,6 +5272,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   ServiceAreaCatalog? serviceAreaCatalog;
   ServiceArea? selectedOriginArea;
   ServiceArea? pendingSelectionArea;
+  bool reviewLocationActive = false;
   bool coverageDialogOpen = false;
   bool initialPushHandled = false;
   @override
@@ -5404,6 +5403,35 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     } catch (_) {
       // El backend vuelve a validar; se conservan valores seguros por defecto.
     }
+  }
+
+  Future<void> togglePassengerReviewLocation() async {
+    final area = serviceAreaCatalog?.reviewArea;
+    final point = area?.reviewLocation;
+    if (area == null || point == null || active != null) return;
+    if (reviewLocationActive) {
+      setState(() => reviewLocationActive = false);
+      await useCurrentLocation(explicit: true);
+      return;
+    }
+    originSelectionGuard.markManualOrigin();
+    setState(() {
+      reviewLocationActive = true;
+      currentLocation = point;
+      pickup = point;
+      selectedOriginArea = area;
+      origin.text = area.reviewLabel ?? '${area.name} · ubicación de revisión';
+      message = 'Modo de revisión de Google Play activo.';
+      routePoints = [];
+    });
+    realtime.subscribeNearby(point.latitude, point.longitude);
+    unawaited(refreshNearbyDrivers(point));
+    try {
+      final result = await api.reverse(widget.s.token, point);
+      if (!mounted || !reviewLocationActive || pickup != point) return;
+      setState(() => origin.text = cleanAddressLabel(result['label'],
+          fallback: area.reviewLabel ?? area.name));
+    } catch (_) {}
   }
 
   @override
@@ -6033,6 +6061,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   Future<LatLng?> centerPassengerCurrentLocation() async {
+    final reviewPoint = reviewLocationActive
+        ? serviceAreaCatalog?.reviewArea?.reviewLocation
+        : null;
+    if (reviewPoint != null) {
+      if (mounted) setState(() => currentLocation = reviewPoint);
+      return reviewPoint;
+    }
     try {
       final position = await currentGpsPosition(context);
       if (!mounted) return null;
@@ -7608,6 +7643,21 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   List<Widget> _requestContent(BuildContext context) => [
+        if (serviceAreaCatalog?.reviewArea != null)
+          Card(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            child: SwitchListTile(
+              secondary: const Icon(Icons.verified_user_outlined),
+              title: const Text('Modo de revisión de Google Play'),
+              subtitle: Text(reviewLocationActive
+                  ? 'Usando la ubicación autorizada de pruebas.'
+                  : 'Permite revisar el flujo aunque el dispositivo esté fuera de cobertura.'),
+              value: reviewLocationActive,
+              onChanged: active == null
+                  ? (_) => unawaited(togglePassengerReviewLocation())
+                  : null,
+            ),
+          ),
         Row(children: [
           Icon(Icons.electric_rickshaw,
               size: 18, color: Theme.of(context).colorScheme.primary),
@@ -7945,6 +7995,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   String? promptedRatingTripId;
   final Set<String> processingOfferIds = <String>{};
   bool initialPushHandled = false;
+  ServiceArea? driverReviewArea;
+  bool driverReviewLocationActive = false;
   @override
   void initState() {
     super.initState();
@@ -8019,8 +8071,42 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       });
       Future.microtask(restoreInitialPush);
     }
-    restore();
+    unawaited(initializeDriver());
     timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
+  }
+
+  Future<void> initializeDriver() async {
+    try {
+      final response = Map<String, dynamic>.from(
+          await api.serviceAreas(widget.s.token) as Map);
+      final catalog = ServiceAreaCatalog.fromJson(response);
+      if (mounted) setState(() => driverReviewArea = catalog.reviewArea);
+    } catch (_) {
+      // Una cuenta normal no necesita configuración de revisión.
+    }
+    await restore();
+  }
+
+  LatLng? get driverReviewPoint => driverReviewArea?.reviewLocation;
+
+  Future<void> toggleDriverReviewLocation(bool enabled) async {
+    if (driverReviewPoint == null || active != null) return;
+    final wasAvailable = available;
+    if (wasAvailable) {
+      await api.available(widget.s.token, false);
+      await positionSubscription?.cancel();
+      positionSubscription = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      driverReviewLocationActive = enabled;
+      currentDriverPosition = enabled ? driverReviewPoint : null;
+      nearbyDriverPositions.clear();
+      driverMessage = enabled
+          ? 'Modo de revisión activo en ${driverReviewArea!.name}.'
+          : 'Modo de revisión desactivado.';
+    });
+    if (wasAvailable) await startGpsTracking(markAvailable: true);
   }
 
   @override
@@ -8217,6 +8303,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       LatLng(position.latitude, position.longitude);
 
   Future<void> startGpsTracking({required bool markAvailable}) async {
+    final reviewPoint = driverReviewLocationActive ? driverReviewPoint : null;
+    if (reviewPoint != null) {
+      await positionSubscription?.cancel();
+      positionSubscription = null;
+      if (markAvailable) {
+        await api.available(widget.s.token, true, reviewPoint);
+      }
+      sendReviewPosition(reviewPoint);
+      return;
+    }
     final position = await currentGpsPosition(context);
     if (markAvailable) {
       await api.available(widget.s.token, true, pointFrom(position));
@@ -8246,6 +8342,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   Future<LatLng?> centerDriverCurrentLocation() async {
+    if (driverReviewLocationActive && driverReviewPoint != null) {
+      final point = driverReviewPoint!;
+      if (mounted) setState(() => currentDriverPosition = point);
+      return point;
+    }
     try {
       final position = await currentGpsPosition(context);
       final point = pointFrom(position);
@@ -8290,6 +8391,26 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       unawaited(refreshNearbyDriverPositions(pointFrom(position)));
     }
     refreshDriverRoute();
+  }
+
+  void sendReviewPosition(LatLng point) {
+    if (mounted) {
+      setState(() {
+        currentDriverPosition = point;
+        currentDriverBearing = 0;
+      });
+    }
+    final now = DateTime.now();
+    realtime.sendDriverLocation(
+      tripId: active?['tripId']?.toString(),
+      latitude: point.latitude,
+      longitude: point.longitude,
+      bearing: 0,
+      speed: 0,
+      accuracy: 5,
+      recordedAt: now,
+      sequence: now.millisecondsSinceEpoch,
+    );
   }
 
   Future<void> refreshNearbyDriverPositions(LatLng point) async {
@@ -8388,6 +8509,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> refresh() async {
     try {
+      if (driverReviewLocationActive &&
+          driverReviewPoint != null &&
+          (available || active != null)) {
+        sendReviewPosition(driverReviewPoint!);
+      }
       await refreshScheduled();
       if (active == null) await syncActivatedScheduledTrip();
       if (active != null) {
@@ -9364,6 +9490,21 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       ]);
 
   List<Widget> _driverSheetContent(BuildContext context, String? action) => [
+        if (driverReviewArea?.reviewLocation != null)
+          Card(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            child: SwitchListTile(
+              secondary: const Icon(Icons.verified_user_outlined),
+              title: const Text('Modo de revisión de Google Play'),
+              subtitle: Text(driverReviewLocationActive
+                  ? 'Ubicación de pruebas activa en ${driverReviewArea!.name}.'
+                  : 'Usa la ubicación autorizada para revisar viajes.'),
+              value: driverReviewLocationActive,
+              onChanged: active == null
+                  ? (value) => unawaited(toggleDriverReviewLocation(value))
+                  : null,
+            ),
+          ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Disponible para viajes'),

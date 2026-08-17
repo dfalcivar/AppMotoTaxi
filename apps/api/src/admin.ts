@@ -126,7 +126,11 @@ const fareRuleSchema = z.object({
   bidirectional: z.boolean().default(true), enabled: z.boolean().default(false)
 }).refine(value => value.maximumPassengers >= value.minimumPassengers, { message: "INVALID_PASSENGER_RANGE" });
 const serviceAreaStatusSchema = z.object({ enabled: z.boolean() });
-const serviceAreaAccessSchema = z.object({ userId: z.string().uuid(), expiresAt: z.string().datetime({ offset: true }).nullable().optional() });
+const serviceAreaAccessSchema = z.object({
+  userId: z.string().uuid(),
+  expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
+  reviewMode: z.boolean().default(false)
+});
 const serviceAreaValidationSchema = z.object({
   geometry: serviceAreaPublishSchema.shape.geometry,
   excludeAreaId: z.string().uuid().optional()
@@ -1083,19 +1087,23 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   app.get("/v1/admin/zones/:id/access",async(request,reply)=>{try{
     requirePermission(request,"service_areas:view");const id=(request.params as {id:string}).id;
     return database()`select u.id::text,u.full_name as name,u.email,u.role,
-      access.expires_at as "expiresAt",access.created_at as "grantedAt"
+      access.expires_at as "expiresAt",access.created_at as "grantedAt",
+      access.review_mode as "reviewMode"
       from user_service_area_access access join users u on u.id=access.user_id
       where access.service_area_id=${id}::uuid order by u.full_name`;
   }catch(e){return guardError(e,reply);}});
   app.post("/v1/admin/zones/:id/access",async(request,reply)=>{try{
     const user=requirePermission(request,"service_areas:edit");const body=serviceAreaAccessSchema.parse(request.body);
     const id=(request.params as {id:string}).id;
-    const [item]=await database()`insert into user_service_area_access(user_id,service_area_id,granted_by,expires_at)
-      select ${body.userId}::uuid,area.id,${user.id!},${body.expiresAt ? new Date(body.expiresAt) : null}
+    const [item]=await database()`insert into user_service_area_access(user_id,service_area_id,granted_by,expires_at,review_mode)
+      select ${body.userId}::uuid,area.id,${user.id!},${body.expiresAt ? new Date(body.expiresAt) : null},${body.reviewMode}
       from service_areas area join users account on account.id=${body.userId}::uuid
       where area.id=${id}::uuid and account.role in ('PASSENGER','DRIVER')
-      on conflict(user_id,service_area_id) do update set granted_by=excluded.granted_by,expires_at=excluded.expires_at,created_at=now()
-      returning user_id::text as "userId",service_area_id::text as "serviceAreaId",expires_at as "expiresAt"`;
+        and (not ${body.reviewMode} or area.environment='TEST')
+      on conflict(user_id,service_area_id) do update set granted_by=excluded.granted_by,expires_at=excluded.expires_at,
+        review_mode=excluded.review_mode,created_at=now()
+      returning user_id::text as "userId",service_area_id::text as "serviceAreaId",
+        expires_at as "expiresAt",review_mode as "reviewMode"`;
     if(!item)return reply.code(404).send({error:"USER_OR_SERVICE_AREA_NOT_FOUND"});
     await database()`update service_area_catalog set version=version+1,updated_at=now() where id=1`;
     await persistAudit(user,"SERVICE_AREA_ACCESS_GRANTED","SERVICE_AREA",id,body.userId);return reply.code(201).send(item);
