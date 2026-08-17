@@ -239,8 +239,10 @@ async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRI
     await tx`delete from user_notifications where user_id=${userId}`;
     await tx`delete from password_reset_tokens where user_id=${userId}`;
     await tx`delete from admin_sessions where user_id=${userId}`;
-    await tx`delete from service_area_user_access where user_id=${userId}`;
-    await tx`delete from user_permissions where user_id=${userId}`;
+    await tx`delete from user_service_area_access where user_id=${userId}`;
+    await tx`delete from admin_permission_overrides where user_id=${userId}`;
+    await tx`delete from email_verification_codes where user_id=${userId}`;
+    await tx`delete from mobile_account_roles where user_id=${userId}`;
     await tx`delete from driver_documents where driver_id=${userId}`;
     await tx`delete from support_incident_attachments where uploaded_by=${userId}`;
     await tx`update support_incident_messages set author_id=null,
@@ -843,7 +845,13 @@ export async function buildApp() {
       from account_deletion_requests where token_hash=${privateTokenHash(parsed.data.token)}
         and confirmed_at is null and completed_at is null and expires_at > now() limit 1`;
     if (!deletion?.userId) return reply.code(400).send({ error: "INVALID_DELETION_TOKEN" });
-    const result = await eraseUserAccount(deletion.userId as string);
+    let result: "DELETED" | "ACTIVE_TRIP";
+    try {
+      result = await eraseUserAccount(deletion.userId as string);
+    } catch (error) {
+      request.log.error({ err: error, userId: deletion.userId }, "external_account_deletion_failed");
+      return reply.code(500).send({ error: "ACCOUNT_DELETION_FAILED" });
+    }
     if (result === "ACTIVE_TRIP") return reply.code(409).send({ error: "ACCOUNT_DELETION_BLOCKED_ACTIVE_TRIP" });
     await database()`update account_deletion_requests set confirmed_at=now(),completed_at=now(),user_id=null
       where id=${deletion.id}`;
@@ -1232,7 +1240,13 @@ export async function buildApp() {
     const [verified] = await database()`select 1 from users where id=${user.id!}
       and password_hash=crypt(${parsed.data.password},password_hash) and deleted_at is null`;
     if (!verified) return reply.code(401).send({ error: "INVALID_CURRENT_PASSWORD" });
-    const result = await eraseUserAccount(user.id!);
+    let result: "DELETED" | "ACTIVE_TRIP";
+    try {
+      result = await eraseUserAccount(user.id!);
+    } catch (error) {
+      request.log.error({ err: error, userId: user.id }, "authenticated_account_deletion_failed");
+      return reply.code(500).send({ error: "ACCOUNT_DELETION_FAILED" });
+    }
     if (result === "ACTIVE_TRIP") return reply.code(409).send({ error: "ACCOUNT_DELETION_BLOCKED_ACTIVE_TRIP" });
     return { deleted: true };
   });

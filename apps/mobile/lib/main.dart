@@ -642,9 +642,9 @@ Future<void> warmApi() async {
 }
 
 const privacyPolicyUrl =
-    'https://mototaxi-atacames-admin.onrender.com/privacy.html';
+    'https://costa-go.com/privacy.html';
 const accountDeletionUrl =
-    'https://mototaxi-atacames-admin.onrender.com/account-deletion.html';
+    'https://costa-go.com/account-deletion.html';
 const locationDisclosureVersion = 1;
 
 Future<void> openExternalPage(BuildContext context, String value) async {
@@ -991,6 +991,8 @@ String mensajeApi(dynamic code) =>
           'El código es incorrecto o ya caducó. Solicita uno nuevo.',
       'ACCOUNT_DELETION_BLOCKED_ACTIVE_TRIP':
           'Finaliza o cancela el viaje pendiente antes de eliminar tu cuenta.',
+      'ACCOUNT_DELETION_FAILED':
+          'No se pudo completar la eliminación en este momento. Inténtalo nuevamente o contacta a soporte.',
       'INVALID_DELETION_TOKEN':
           'El enlace de eliminación es inválido o ya caducó.',
       'INVALID_DRIVER_DOCUMENT':
