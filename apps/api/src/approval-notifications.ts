@@ -8,7 +8,7 @@ function html(value: string) {
 }
 
 export async function notifyDriverApproved(email: string, driverName: string) {
-  const web = (process.env.PUBLIC_WEB_BASE_URL ?? "https://mototaxi-atacames-admin.onrender.com").replace(/\/$/, "");
+  const web = (process.env.PUBLIC_WEB_BASE_URL ?? "https://costa-go.com").replace(/\/$/, "");
   const logo = `${web}/costa-go-emblem.png`;
   const privacy = `${web}/privacy.html`;
   const terms = `${web}/terms.html`;

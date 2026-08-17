@@ -28,7 +28,7 @@ Costa-Go no procesa actualmente números de tarjeta ni credenciales bancarias. E
 ## Eliminación
 
 - Solicitud dentro de la app: `Mi cuenta → Privacidad y datos → Eliminar mi cuenta`.
-- Solicitud web: `https://mototaxi-atacames-admin.onrender.com/account-deletion.html`.
+- Solicitud web: `https://costa-go.com/account-deletion.html`.
 - La eliminación cubre datos personales, fotos, documentos, favoritos, mensajes, tokens y ubicaciones precisas.
 - Registros mínimos necesarios por seguridad, prevención de fraude, reclamos o cumplimiento pueden conservarse anonimizados.
 

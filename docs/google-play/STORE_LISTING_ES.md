@@ -46,9 +46,9 @@ Tu viaje, nuestra prioridad.
 
 - Correo de soporte: `soporte@costa-go.com` — recepción verificada mediante Cloudflare Email Routing.
 - Sitio web: `https://costa-go.com` — publicar únicamente después de comprobar DNS, HTTPS y contenido público.
-- Política de privacidad actual: `https://mototaxi-atacames-admin.onrender.com/privacy.html`
-- Términos actuales: `https://mototaxi-atacames-admin.onrender.com/terms.html`
-- Eliminación de cuenta actual: `https://mototaxi-atacames-admin.onrender.com/account-deletion.html`
+- Política de privacidad actual: `https://costa-go.com/privacy.html`
+- Términos actuales: `https://costa-go.com/terms.html`
+- Eliminación de cuenta actual: `https://costa-go.com/account-deletion.html`
 
 Cuando el dominio esté listo, se recomienda servir las mismas páginas en:
 

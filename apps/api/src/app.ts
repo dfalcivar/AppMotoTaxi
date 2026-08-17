@@ -825,7 +825,7 @@ export async function buildApp() {
       const token = randomBytes(32).toString("hex");
       await database()`insert into account_deletion_requests(user_id,requested_email,token_hash,expires_at)
         values (${account.id},${email},${privateTokenHash(token)},now()+interval '24 hours')`;
-      const webBase = (process.env.PUBLIC_WEB_BASE_URL ?? "https://mototaxi-atacames-admin.onrender.com").replace(/\/$/, "");
+      const webBase = (process.env.PUBLIC_WEB_BASE_URL ?? "https://costa-go.com").replace(/\/$/, "");
       const url = `${webBase}/account-deletion.html?token=${encodeURIComponent(token)}`;
       const delivered = await sendTransactionalEmail({
         to: account.email as string,

@@ -6,15 +6,15 @@ void main() {
   group('enlaces de preguntas frecuentes', () {
     test('detecta un enlace web seguro dentro de la respuesta', () {
       final uri = firstWebUrl(
-          'Consulta el tarifario en https://mototaxi-atacames-admin.onrender.com/fares.html.');
+          'Consulta el tarifario en https://costa-go.com/fares.html.');
       expect(uri?.toString(),
-          'https://mototaxi-atacames-admin.onrender.com/fares.html');
+          'https://costa-go.com/fares.html');
     });
 
     test('separa la URL del texto que se presenta al usuario', () {
       expect(
           answerWithoutWebUrl(
-              'Consulta aquí https://mototaxi-atacames-admin.onrender.com/fares.html. Antes de viajar.'),
+              'Consulta aquí https://costa-go.com/fares.html. Antes de viajar.'),
           'Consulta aquí. Antes de viajar.');
     });
   });

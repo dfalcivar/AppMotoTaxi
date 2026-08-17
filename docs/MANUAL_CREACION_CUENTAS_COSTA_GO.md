@@ -132,8 +132,8 @@ Verifica el formato, el tamaño y la conexión. La fotografía debe ser clara y 
 - Verifica que el correo y el teléfono sean tuyos.
 - Cierra sesión si utilizas un equipo que no te pertenece.
 - Si olvidas la contraseña, utiliza **Recuperar contraseña** desde el inicio de sesión.
-- Consulta la Política de privacidad: https://mototaxi-atacames-admin.onrender.com/privacy.html
-- Consulta los Términos y condiciones: https://mototaxi-atacames-admin.onrender.com/terms.html
+- Consulta la Política de privacidad: https://costa-go.com/privacy.html
+- Consulta los Términos y condiciones: https://costa-go.com/terms.html
 
 ## 9. Ayuda
 

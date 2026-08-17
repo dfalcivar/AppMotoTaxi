@@ -8,8 +8,8 @@
 
 ## URLs públicas
 
-- Política de privacidad: `https://mototaxi-atacames-admin.onrender.com/privacy.html`
-- Eliminación de cuenta: `https://mototaxi-atacames-admin.onrender.com/account-deletion.html`
+- Política de privacidad: `https://costa-go.com/privacy.html`
+- Eliminación de cuenta: `https://costa-go.com/account-deletion.html`
 
 Estas páginas se publican con el servicio estático administrativo y no requieren iniciar sesión.
 
@@ -19,7 +19,7 @@ API:
 
 - `RESEND_API_KEY`: credencial de Resend autorizada para enviar correos.
 - `NOTIFICATION_FROM_EMAIL`: remitente verificado, por ejemplo `Costa-Go <cuentas@dominio-verificado>`.
-- `PUBLIC_WEB_BASE_URL`: `https://mototaxi-atacames-admin.onrender.com`.
+- `PUBLIC_WEB_BASE_URL`: `https://costa-go.com`.
 - `ADMIN_SESSION_SECRET`: ya debe existir; también protege el hash de códigos y enlaces.
 
 ## Declaraciones de Google Play

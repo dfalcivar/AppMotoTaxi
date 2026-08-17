@@ -40,7 +40,7 @@ services:
       - key: NOTIFICATION_FROM_EMAIL
         sync: false
       - key: PUBLIC_WEB_BASE_URL
-        value: https://mototaxi-atacames-admin.onrender.com
+        value: https://costa-go.com
       - key: SENTRY_DSN
         sync: false
       - key: SENTRY_ENVIRONMENT
