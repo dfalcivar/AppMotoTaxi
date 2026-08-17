@@ -4,6 +4,8 @@ param(
   [string]$Flutter = "C:\Proyectos\flutter\bin\flutter.bat",
   [ValidateSet("development", "staging", "production")]
   [string]$Environment = "staging",
+  [ValidateSet("google", "osm")]
+  [string]$MapProvider = "google",
   [string]$ApiBaseUrl = "https://mototaxi-atacames-api.onrender.com",
   [string]$SentryDsn = "",
   [switch]$Production
@@ -29,10 +31,13 @@ if ($Production) {
 }
 
 $defines = @(
-  "--dart-define=MAP_PROVIDER=google",
+  "--dart-define=MAP_PROVIDER=$MapProvider",
   "--dart-define=API_BASE_URL=$ApiBaseUrl",
   "--dart-define=APP_ENVIRONMENT=$Environment"
 )
+if ($Production -and $MapProvider -ne "google") {
+  throw "Las compilaciones de producción de Costa-Go deben usar MAP_PROVIDER=google."
+}
 if (-not [string]::IsNullOrWhiteSpace($SentryDsn)) { $defines += "--dart-define=SENTRY_DSN=$SentryDsn" }
 
 Push-Location $mobile
@@ -54,4 +59,4 @@ try {
   Pop-Location
 }
 
-Write-Host "Artefactos Costa-Go disponibles en $release"
+Write-Host "Artefactos Costa-Go disponibles en $release (MAP_PROVIDER=$MapProvider)"

@@ -12,7 +12,7 @@ import 'package:latlong2/latlong.dart';
 enum MapPointSelection { origin, destination }
 
 const configuredMapProvider =
-    String.fromEnvironment('MAP_PROVIDER', defaultValue: 'osm');
+    String.fromEnvironment('MAP_PROVIDER', defaultValue: 'google');
 
 const _androidMapId = String.fromEnvironment('GOOGLE_MAPS_ANDROID_MAP_ID');
 const _androidLightMapId =

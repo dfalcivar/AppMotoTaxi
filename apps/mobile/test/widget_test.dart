@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mototaxi_atacames/live_map.dart';
 import 'package:mototaxi_atacames/main.dart';
 
 void main() {
+  test('Google Maps es el proveedor predeterminado de compilación', () {
+    expect(configuredMapProvider, 'google');
+  });
   test('restaura la pantalla correcta para una sesión persistente', () {
     expect(homeForSession(const Session('t', 'PASSENGER', 'Ana', '1')),
         isA<Passenger>());

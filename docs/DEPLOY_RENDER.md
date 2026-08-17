@@ -128,7 +128,10 @@ Sin `SENTRY_DSN` la aplicacion funciona normalmente y no envia telemetria. La
 API registra solicitudes, tiempos de respuesta y operaciones lentas en los logs
 estructurados de Render. No guardes el DSN ni configuraciones de proxy en Git.
 
-Sin `MAP_PROVIDER=google`, la APK conserva OpenStreetMap como respaldo.
+Google Maps es el proveedor predeterminado de la aplicación. Para generar un
+artefacto oficial utiliza `tools/build_costa_go.ps1`, que además registra
+explícitamente `MAP_PROVIDER=google`. OpenStreetMap queda disponible únicamente
+como respaldo deliberado compilando con `--dart-define=MAP_PROVIDER=osm`.
 
 Para desarrollo contra una API local en el emulador utiliza explícitamente:
 

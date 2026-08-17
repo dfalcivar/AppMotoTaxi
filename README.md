@@ -143,8 +143,8 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 - La aplicación ya no inicia con coordenadas fijas de Atacames. El origen se
   obtiene del GPS real del teléfono y origen/destino también pueden marcarse
   tocando el mapa.
-- El proveedor móvil se selecciona con `MAP_PROVIDER`: `osm` es el respaldo y
-  `google` activa Google Maps cuando la compilación recibe una clave Android.
+- El proveedor móvil se selecciona con `MAP_PROVIDER`: `google` es el valor
+  predeterminado y `osm` queda como respaldo explícito para diagnósticos.
 - Con `GOOGLE_MAPS_SERVER_API_KEY`, la API usa Google Places para comercios y
   sitios conocidos, Geocoding para direcciones y Google Routes para rutas.
   Nominatim y OpenRouteService (`ORS_API_KEY`) permanecen como respaldo.

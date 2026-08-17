@@ -8,6 +8,7 @@ apps/mobile/android/app/google-services.json
 apps/api/secrets/
 .DS_Store
 coverage/
+*.tsbuildinfo
 work/
 .dart_tool/
 .flutter-plugins*

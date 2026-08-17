@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manual de creación de cuentas · Costa-Go</title>
+  <style>
+    @page { size: A4; margin: 17mm 18mm 17mm; }
+    :root { --navy:#033252; --blue:#087ccb; --cyan:#00aeef; --ink:#17202a; --muted:#5e6b78; --soft:#edf7fc; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); font:10.6pt/1.48 Arial, sans-serif; }
+    h1,h2,h3 { color:var(--navy); margin:0 0 10px; line-height:1.18; }
+    h1 { font-size:29pt; } h2 { font-size:18pt; margin-top:18px; } h3 { color:var(--blue); font-size:12.5pt; margin-top:14px; }
+    p { margin:0 0 8px; } ul,ol { margin:5px 0 12px 22px; padding:0; } li { margin:3px 0; }
+    a { color:var(--blue); }
+    .cover { min-height:245mm; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; page-break-after:always; background:linear-gradient(145deg,#fff 60%,#e6f7ff); }
+    .cover img { width:42mm; margin-bottom:18px; }
+    .cover .eyebrow { color:var(--cyan); letter-spacing:2px; font-weight:700; }
+    .cover .subtitle { font-size:17pt; color:var(--blue); margin:8px 0 22px; }
+    .cover .meta { color:var(--muted); }
+    .cover .tagline { margin-top:42px; color:var(--navy); font-size:14pt; font-weight:700; }
+    .page-break { page-break-before:always; }
+    .note { background:var(--soft); border-left:4px solid var(--cyan); border-radius:7px; padding:10px 12px; margin:12px 0; }
+    .warning { background:#fff7e7; border-left-color:#f0a000; }
+    .shot { margin:14px auto 18px; text-align:center; page-break-inside:avoid; }
+    .shot-frame { display:inline-block; width:78mm; max-height:145mm; overflow:hidden; border:1px solid #d3dde5; border-radius:13px; box-shadow:0 4px 15px #002b4a22; background:#f8fbff; }
+    .shot-frame.driver { max-height:150mm; }
+    .shot-frame.verify { max-height:122mm; }
+    .shot img { display:block; width:100%; height:auto; }
+    .shot figcaption { color:var(--muted); font-size:9pt; margin-top:6px; }
+    .status { border-collapse:collapse; width:100%; margin:10px 0 15px; page-break-inside:avoid; }
+    .status th,.status td { border:1px solid #d8e1e8; padding:7px 8px; vertical-align:top; }
+    .status th { background:var(--navy); color:#fff; text-align:left; }
+    .check { color:var(--blue); font-weight:700; }
+    footer { margin-top:18px; padding-top:8px; border-top:1px solid #d8e1e8; color:var(--muted); text-align:center; font-size:8.5pt; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <img src="../apps/mobile/assets/images/costa-go-emblem.png" alt="Costa-Go">
+    <div class="eyebrow">COSTA-GO</div>
+    <h1>Manual de usuario</h1>
+    <div class="subtitle">Creación de cuentas de pasajero y conductor</div>
+    <div class="meta">Guía visual paso a paso<br>Versión 1.0 · 14 de agosto de 2026</div>
+    <div class="tagline">Tu viaje, nuestra prioridad.</div>
+  </section>
+
+  <h2>1. Antes de comenzar</h2>
+  <p>Este manual explica cómo crear y verificar una cuenta en Costa-Go. Los campos marcados con <b>*</b> son obligatorios.</p>
+  <p>Ten disponible:</p>
+  <ul><li>un correo electrónico personal al que puedas acceder;</li><li>un número de teléfono activo;</li><li>una contraseña segura;</li><li>conexión a Internet.</li></ul>
+  <p>Si vas a registrarte como conductor, también necesitas una fotografía frontal, la placa o identificador de la mototaxi, documentos habilitantes y el nombre de tu cooperativa si perteneces a una.</p>
+
+  <h2>2. Reglas de la contraseña</h2>
+  <p>La contraseña debe tener entre 10 y 100 caracteres, incluir mayúscula, minúscula, número y símbolo (por ejemplo <b>!</b>, <b>@</b> o <b>#</b>) y no contener espacios.</p>
+  <div class="note warning"><b>Seguridad:</b> no copies contraseñas de ejemplo ni compartas tu contraseña o código de verificación.</div>
+
+  <h2 class="page-break">3. Crear una cuenta de pasajero</h2>
+  <ol>
+    <li>Abre Costa-Go y pulsa <b>Crear una cuenta</b>.</li>
+    <li>Escribe tu <b>nombre completo</b>.</li>
+    <li>Ingresa un <b>correo electrónico válido</b>. Se utilizará para verificar la cuenta y recuperar la contraseña.</li>
+    <li>Ingresa tu <b>número de teléfono</b>; si corresponde, usa el prefijo de país, por ejemplo +593.</li>
+    <li>Crea una contraseña que cumpla las reglas indicadas.</li>
+    <li>En <b>Tipo de cuenta</b>, selecciona <b>Pasajero</b>.</li>
+    <li>Lee la Política de privacidad y marca la casilla de aceptación.</li>
+    <li>Pulsa <b>Crear cuenta</b>.</li>
+  </ol>
+  <figure class="shot"><div class="shot-frame"><img src="manual_assets/registro-pasajero.png" alt="Registro de pasajero"></div><figcaption>Formulario de creación de cuenta de pasajero.</figcaption></figure>
+
+  <h2>4. Verificar el correo</h2>
+  <ol>
+    <li>Revisa la bandeja de entrada del correo registrado.</li>
+    <li>Busca el mensaje de Costa-Go. Si no aparece, revisa Spam, Correo no deseado o Promociones.</li>
+    <li>Escribe en la aplicación el código de seis dígitos y pulsa <b>Verificar correo</b>.</li>
+    <li>Si el código caducó o no llegó, pulsa <b>Enviar un código nuevo</b> y utiliza el más reciente.</li>
+  </ol>
+  <figure class="shot"><div class="shot-frame verify"><img src="manual_assets/verificacion-correo.png" alt="Verificación de correo"></div><figcaption>Verificación de identidad mediante correo electrónico.</figcaption></figure>
+
+  <h2 class="page-break">5. Crear una cuenta de conductor</h2>
+  <ol>
+    <li>Completa nombre, correo, teléfono y contraseña segura.</li>
+    <li>En <b>Tipo de cuenta</b>, selecciona <b>Conductor</b>.</li>
+    <li>Elige tu cooperativa o selecciona <b>Conductor independiente</b>.</li>
+    <li>Carga una fotografía frontal, clara y con el rostro visible.</li>
+    <li>Escribe la placa o identificador de la mototaxi.</li>
+    <li>Acepta la Política de privacidad y pulsa <b>Crear cuenta</b>.</li>
+    <li>Verifica el correo con el código de seis dígitos.</li>
+  </ol>
+  <figure class="shot"><div class="shot-frame driver"><img src="manual_assets/registro-conductor.png" alt="Registro de conductor"></div><figcaption>Datos adicionales obligatorios para el perfil de conductor.</figcaption></figure>
+
+  <h2>6. Documentos y aprobación del conductor</h2>
+  <p>Crear la cuenta no habilita inmediatamente al conductor para recibir viajes. Debes cargar:</p>
+  <ol><li>fotografía del conductor;</li><li>documento de identificación;</li><li>licencia de conducir;</li><li>matrícula de la mototaxi;</li><li>permiso de operación.</li></ol>
+  <p>Para imágenes se admiten JPG, JPEG, PNG y WEBP. El permiso de operación también puede cargarse como PDF, DOC o DOCX, con un máximo de 5 MB.</p>
+  <table class="status"><thead><tr><th>Estado</th><th>Qué significa</th></tr></thead><tbody>
+    <tr><td>Completa tus documentos</td><td>Falta uno o más archivos obligatorios.</td></tr>
+    <tr><td>Documentos enviados para revisión</td><td>La información está completa y espera revisión administrativa.</td></tr>
+    <tr><td>Se requieren correcciones</td><td>Revisa la observación y reemplaza el documento solicitado.</td></tr>
+    <tr><td>Solicitud rechazada</td><td>La solicitud no fue aprobada; revisa la explicación recibida.</td></tr>
+    <tr><td>Aprobado</td><td>Ya puedes conectarte como conductor y recibir solicitudes.</td></tr>
+    <tr><td>Cuenta suspendida</td><td>No podrás recibir viajes hasta que administración levante la suspensión.</td></tr>
+  </tbody></table>
+  <div class="note"><span class="check">Importante:</span> solo un conductor aprobado puede ponerse disponible y aceptar viajes.</div>
+
+  <h2 class="page-break">7. Mensajes frecuentes y solución</h2>
+  <h3>El correo o teléfono ya está registrado</h3><p>Usa <b>Recuperar contraseña</b> si la cuenta es tuya. Un usuario puede tener perfiles de pasajero y conductor en una misma cuenta cuando complete la habilitación correspondiente; no debe crear cuentas duplicadas.</p>
+  <h3>La contraseña es rechazada</h3><p>Comprueba longitud, mayúsculas, minúsculas, número, símbolo y ausencia de espacios.</p>
+  <h3>No llega el código de verificación</h3><p>Confirma que el correo esté bien escrito, revisa Spam y solicita un código nuevo.</p>
+  <h3>El conductor no puede recibir viajes</h3><p>Revisa el estado de habilitación. Puede faltar documentación, existir una observación o estar pendiente la aprobación.</p>
+  <h3>La foto o documento no carga</h3><p>Verifica el formato, el tamaño y la conexión. La fotografía debe ser clara y permitir identificar el rostro.</p>
+
+  <h2>8. Seguridad y privacidad</h2>
+  <ul>
+    <li>No compartas contraseñas ni códigos recibidos por correo.</li>
+    <li>Si olvidas la contraseña, usa <b>Recuperar contraseña</b> desde el inicio de sesión.</li>
+    <li>Política de privacidad: <a href="https://mototaxi-atacames-admin.onrender.com/privacy.html">consultar documento</a>.</li>
+    <li>Términos y condiciones: <a href="https://mototaxi-atacames-admin.onrender.com/terms.html">consultar documento</a>.</li>
+  </ul>
+  <h2>9. Ayuda</h2>
+  <p>Abre <b>Mi cuenta → Ayuda y soporte</b> para consultar preguntas frecuentes o crear una solicitud. Indica el correo, el perfil y el mensaje mostrado. Puedes adjuntar una captura, pero nunca expongas contraseñas ni códigos.</p>
+  <footer>Costa-Go · Manual de creación de cuentas · Versión 1.0</footer>
+</body>
+</html>
