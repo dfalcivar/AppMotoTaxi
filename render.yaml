@@ -72,6 +72,13 @@ services:
         source: /*
         destination: /index.html
 
+  - type: web
+    name: costa-go-web
+    runtime: static
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @mototaxi/site build
+    staticPublishPath: ./apps/site/dist
+    autoDeployTrigger: commit
+
 databases:
   - name: mototaxi-atacames-db
     plan: free

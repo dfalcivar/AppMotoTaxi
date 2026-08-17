@@ -10,6 +10,7 @@
     "typecheck": "pnpm -r typecheck",
     "dev:api": "pnpm --filter @mototaxi/api dev",
     "dev:admin": "pnpm --filter @mototaxi/admin dev",
+    "build:site": "pnpm --filter @mototaxi/site build",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @mototaxi/api db:migrate"

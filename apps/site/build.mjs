@@ -1,0 +1,30 @@
+import { cp, mkdir, rm } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const current = dirname(fileURLToPath(import.meta.url));
+const root = resolve(current, "../..");
+const output = resolve(current, "dist");
+
+await rm(output, { recursive: true, force: true });
+await mkdir(resolve(output, "assets"), { recursive: true });
+await cp(resolve(current, "src"), output, { recursive: true });
+
+for (const page of ["privacy.html", "terms.html", "account-deletion.html", "fares.html"]) {
+  await cp(resolve(root, "apps/admin/public", page), resolve(output, page));
+}
+
+await cp(
+  resolve(root, "apps/admin/public/costa-go-emblem.png"),
+  resolve(output, "assets/costa-go-emblem.png")
+);
+await cp(
+  resolve(root, "docs/google-play/assets/feature-background-source.png"),
+  resolve(output, "assets/costa-go-coast.png")
+);
+await cp(
+  resolve(root, "docs/google-play/assets/costa-go-feature-graphic-1024x500.png"),
+  resolve(output, "assets/og.png")
+);
+
+console.log(`Sitio Costa-Go generado en ${output}`);
