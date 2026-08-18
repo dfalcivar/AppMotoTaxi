@@ -1,17 +1,36 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val localSigningProperties = Properties().apply {
+    val propertiesFile = rootProject.file("key.properties")
+    if (propertiesFile.exists()) {
+        propertiesFile.inputStream().use(::load)
+    }
+}
+
+fun signingValue(environmentName: String, propertyName: String): String? =
+    providers.gradleProperty(environmentName).orNull
+        ?: providers.environmentVariable(environmentName).orNull
+        ?: localSigningProperties.getProperty(propertyName)
+
 val googleMapsApiKey = providers.gradleProperty("GOOGLE_MAPS_ANDROID_API_KEY")
     .orElse(providers.environmentVariable("GOOGLE_MAPS_ANDROID_API_KEY"))
     .orElse("")
-val releaseKeystorePath = providers.gradleProperty("COSTA_GO_KEYSTORE_PATH").orElse(providers.environmentVariable("COSTA_GO_KEYSTORE_PATH"))
-val releaseKeystorePassword = providers.gradleProperty("COSTA_GO_KEYSTORE_PASSWORD").orElse(providers.environmentVariable("COSTA_GO_KEYSTORE_PASSWORD"))
-val releaseKeyAlias = providers.gradleProperty("COSTA_GO_KEY_ALIAS").orElse(providers.environmentVariable("COSTA_GO_KEY_ALIAS"))
-val releaseKeyPassword = providers.gradleProperty("COSTA_GO_KEY_PASSWORD").orElse(providers.environmentVariable("COSTA_GO_KEY_PASSWORD"))
-val productionSigningConfigured = listOf(releaseKeystorePath, releaseKeystorePassword, releaseKeyAlias, releaseKeyPassword).all { it.isPresent && it.get().isNotBlank() }
+val releaseKeystorePath = signingValue("COSTA_GO_KEYSTORE_PATH", "storeFile")
+val releaseKeystorePassword = signingValue("COSTA_GO_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("COSTA_GO_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("COSTA_GO_KEY_PASSWORD", "keyPassword")
+val productionSigningConfigured = listOf(
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
@@ -50,10 +69,10 @@ android {
     signingConfigs {
         if (productionSigningConfigured) {
             create("release") {
-                storeFile = file(releaseKeystorePath.get())
-                storePassword = releaseKeystorePassword.get()
-                keyAlias = releaseKeyAlias.get()
-                keyPassword = releaseKeyPassword.get()
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = requireNotNull(releaseKeystorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
             }
         }
     }

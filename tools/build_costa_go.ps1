@@ -7,6 +7,7 @@ param(
   [ValidateSet("google", "osm")]
   [string]$MapProvider = "google",
   [string]$ApiBaseUrl = "https://mototaxi-atacames-api.onrender.com",
+  [string]$ApiHttpProxy = "",
   [string]$SentryDsn = "",
   [switch]$Production
 )
@@ -25,9 +26,34 @@ $release = Join-Path $mobile "release"
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 
 if ($Production) {
-  $required = @("COSTA_GO_KEYSTORE_PATH", "COSTA_GO_KEYSTORE_PASSWORD", "COSTA_GO_KEY_ALIAS", "COSTA_GO_KEY_PASSWORD")
-  $missing = $required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
-  if ($missing.Count -gt 0) { throw "Firma de producción incompleta. Faltan: $($missing -join ', ')." }
+  $keyPropertiesPath = Join-Path $mobile "android\key.properties"
+  $environmentSigningNames = @("COSTA_GO_KEYSTORE_PATH", "COSTA_GO_KEYSTORE_PASSWORD", "COSTA_GO_KEY_ALIAS", "COSTA_GO_KEY_PASSWORD")
+  $environmentSigningReady = ($environmentSigningNames | Where-Object {
+    [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+  }).Count -eq 0
+  $localSigningReady = $false
+
+  if (Test-Path -LiteralPath $keyPropertiesPath) {
+    $localSigning = @{}
+    Get-Content -LiteralPath $keyPropertiesPath | ForEach-Object {
+      if ($_ -match '^\s*([^#=]+?)\s*=\s*(.*?)\s*$') {
+        $localSigning[$matches[1]] = $matches[2]
+      }
+    }
+    $localSigningNames = @("storeFile", "storePassword", "keyAlias", "keyPassword")
+    $localSigningReady = ($localSigningNames | Where-Object {
+      -not $localSigning.ContainsKey($_) -or [string]::IsNullOrWhiteSpace($localSigning[$_])
+    }).Count -eq 0
+    if ($localSigningReady) {
+      $androidApp = Join-Path $mobile "android\app"
+      $localKeystore = [IO.Path]::GetFullPath((Join-Path $androidApp $localSigning["storeFile"]))
+      $localSigningReady = Test-Path -LiteralPath $localKeystore
+    }
+  }
+
+  if (-not $environmentSigningReady -and -not $localSigningReady) {
+    throw "Firma de producción incompleta. Configura las variables COSTA_GO_* o un android/key.properties válido."
+  }
 }
 
 $defines = @(
@@ -35,6 +61,13 @@ $defines = @(
   "--dart-define=API_BASE_URL=$ApiBaseUrl",
   "--dart-define=APP_ENVIRONMENT=$Environment"
 )
+if (-not [string]::IsNullOrWhiteSpace($ApiHttpProxy)) {
+  $defines += "--dart-define=API_HTTP_PROXY=$ApiHttpProxy"
+  Write-Host "Compilando variante de red con proxy explicito (solo pruebas controladas)."
+}
+if ($Production -and -not [string]::IsNullOrWhiteSpace($ApiHttpProxy)) {
+  throw "Una compilación de producción para Google Play no puede incluir API_HTTP_PROXY."
+}
 if ($Production -and $MapProvider -ne "google") {
   throw "Las compilaciones de producción de Costa-Go deben usar MAP_PROVIDER=google."
 }
@@ -47,8 +80,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Falló la compilación APK." }
     $apkSource = "build\app\outputs\flutter-apk\app-release.apk"
     if (-not (Test-Path $apkSource)) { throw "Flutter terminó sin producir el APK universal esperado." }
-    Copy-Item $apkSource (Join-Path $release "Costa-Go-universal.apk") -Force
-    Copy-Item $apkSource (Join-Path $release "Costa-Go-release.apk") -Force
+    if ([string]::IsNullOrWhiteSpace($ApiHttpProxy)) {
+      Copy-Item $apkSource (Join-Path $release "Costa-Go-universal.apk") -Force
+      Copy-Item $apkSource (Join-Path $release "Costa-Go-release.apk") -Force
+    } else {
+      Copy-Item $apkSource (Join-Path $release "Costa-Go-lab-proxy.apk") -Force
+    }
   }
   if ($Target -in @("appbundle", "all")) {
     & $Flutter build appbundle --release @defines

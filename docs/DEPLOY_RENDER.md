@@ -139,6 +139,12 @@ Para desarrollo contra una API local en el emulador utiliza explícitamente:
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3001
 ```
 
+En una red de laboratorio que requiera un proxy HTTP, genera una variante de
+pruebas pasando `-ApiHttpProxy` a `tools/build_costa_go.ps1`. Nunca incluyas un
+proxy privado en el AAB de Google Play: los revisores y usuarios externos no
+pueden acceder a esa red. Sin ese parametro se produce el artefacto publico,
+conectado directamente a la API HTTPS de Render.
+
 El APK queda en:
 
 ```text
