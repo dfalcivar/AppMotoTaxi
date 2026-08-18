@@ -2,7 +2,7 @@ services:
   - type: web
     name: mototaxi-atacames-api
     runtime: docker
-    plan: free
+    plan: starter
     region: virginia
     dockerfilePath: ./Dockerfile.api
     dockerContext: .
@@ -81,7 +81,9 @@ services:
 
 databases:
   - name: mototaxi-atacames-db
-    plan: free
+    plan: basic-1gb
+    diskSizeGB: 5
+    storageAutoscalingEnabled: false
     region: virginia
     databaseName: mototaxi
     user: mototaxi
