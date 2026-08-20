@@ -1374,7 +1374,14 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         banner.active,banner.sort_order as "sortOrder",banner.image_mime as "imageMime",
         octet_length(banner.image_data) as "imageBytes",banner.created_at as "createdAt",banner.updated_at as "updatedAt",
         banner.weight,banner.action_type as "actionType",banner.action_value as "actionValue",
-        banner.service_area_id::text as "serviceAreaId",coalesce(plan.code,'BASIC') as "planCode"
+        banner.service_area_id::text as "serviceAreaId",coalesce(plan.code,'BASIC') as "planCode",
+        banner.campaign_status as "campaignStatus",
+        case
+          when not banner.active or banner.campaign_status <> 'ACTIVE' then 'INACTIVE'
+          when banner.starts_at > now() then 'SCHEDULED'
+          when banner.ends_at is not null and banner.ends_at <= now() then 'EXPIRED'
+          else 'VISIBLE'
+        end as "displayStatus"
       from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id
       order by banner.active desc,banner.sort_order,banner.starts_at desc
     `;
@@ -1429,7 +1436,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       update affiliate_banners set
         title=${body.title ?? current.title}, target_url=${body.targetUrl === "" ? null : (body.targetUrl ?? current.target_url)},
         advertiser_name=${body.advertiserName ?? current.advertiser_name},
-        advertising_plan_id=coalesce((select id from advertising_plans where code=${body.planCode ?? null} and enabled=true),current.advertising_plan_id),
+        advertising_plan_id=coalesce(
+          (select id from advertising_plans where code=${body.planCode ?? null} and enabled=true),
+          ${current.advertising_plan_id}
+        ),
         placement=${body.placement ?? current.placement},service_area_id=${body.serviceAreaId === undefined ? current.service_area_id : body.serviceAreaId},
         weight=${body.weight ?? current.weight},action_type=${body.actionType ?? current.action_type},
         action_value=${body.actionValue === "" ? null : (body.actionValue ?? current.action_value)},

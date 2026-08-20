@@ -367,6 +367,7 @@ function DocumentExpirySettings({ token, admin }: { token: string; admin: boolea
 
 function Advertising({ token, admin }: { token: string; admin: boolean }) {
   const placementLabels:Record<string,string>={PASSENGER_SEARCHING_DRIVER:"Buscando conductor",PASSENGER_WAITING_DRIVER:"Esperando conductor",PASSENGER_TRIP_IN_PROGRESS:"Viaje en curso"};
+  const displayStatusLabels:Record<string,string>={VISIBLE:"Visible en la aplicación",SCHEDULED:"Pendiente por fecha de inicio",EXPIRED:"Vigencia finalizada",INACTIVE:"Inactiva"};
   const emptyForm = () => ({ title: "", advertiserName:"", planCode:"BASIC", placement: "PASSENGER_SEARCHING_DRIVER", serviceAreaId:"", weight:1, actionType:"WEB", actionValue:"", targetUrl: "", startsAt: localDateTimeInput(), endsAt: localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: 0, active: true, imageBase64: "", imageMime: "" });
   const [data, setData] = useState<any[]>([]); const [zones, setZones] = useState<any[]>([]); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -414,7 +415,7 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
         <article className="banner-placeholder-card permanent"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Tu publicidad aquí · pieza fija</strong><p>Respaldo permanente de la app. Se muestra automáticamente cuando no existen campañas vigentes.</p></div></article>
         {data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}>
         <img src={apiUrl(`/v1/banners/${item.id}/image?v=${encodeURIComponent(item.updatedAt)}`)} alt={item.title} />
-        <div><strong>{item.title}</strong><small>{item.planCode==="PREMIUM"?"Premium":"Básico"} · {item.planCode==="PREMIUM"?"Búsqueda, espera y viaje en curso":placementLabels[item.placement]??"Buscando conductor"} · peso {item.weight}</small><small>{new Date(item.startsAt).toLocaleString()} — {item.endsAt ? new Date(item.endsAt).toLocaleString() : "sin fecha final"}</small></div>
+        <div><strong>{item.title}</strong><small>{item.planCode==="PREMIUM"?"Premium":"Básico"} · {item.planCode==="PREMIUM"?"Búsqueda, espera y viaje en curso":placementLabels[item.placement]??"Buscando conductor"} · peso {item.weight}</small><small>{new Date(item.startsAt).toLocaleString()} — {item.endsAt ? new Date(item.endsAt).toLocaleString() : "sin fecha final"}</small><small><strong>{displayStatusLabels[item.displayStatus]??"Estado por verificar"}</strong></small></div>
         {admin && <div className="banner-actions"><button className="secondary" onClick={() => edit(item)}>Editar</button><button className="secondary" onClick={() => toggle(item)}>{item.active ? "Desactivar" : "Activar"}</button></div>}
         </article>)}
       </div>
