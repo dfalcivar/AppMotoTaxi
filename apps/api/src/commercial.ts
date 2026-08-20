@@ -30,7 +30,7 @@ const leadSchema = z.object({
   conversationState: z.record(z.string(), z.unknown()).default({})
 });
 const draftSchema = z.object({
-  step: z.number().int().min(1).max(7).optional(),
+  step: z.number().int().min(1).max(20).optional(),
   business: z.record(z.string(), z.unknown()).optional(),
   campaign: z.record(z.string(), z.unknown()).optional(),
   planId: z.string().uuid().optional(),
@@ -47,7 +47,7 @@ const submitSchema = z.object({
   }),
   campaign: z.object({
     title: z.string().trim().min(3).max(120),
-    placement: z.enum(["PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]),
+    placement: z.enum(["PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]).optional(),
     serviceAreaId: z.string().uuid().nullable().optional(),
     actionType: z.enum(["WEB", "PHONE", "WHATSAPP", "MAPS", "NONE"]).default("NONE"),
     actionValue: z.string().trim().max(500).optional().default(""),
@@ -245,7 +245,7 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
         values (${body.business.businessName},${body.business.contactName},${body.business.phone},lower(${body.business.email}),${body.business.city},${body.business.businessType},'PROSPECT',${invitation.created_by})
         on conflict(lower(email),lower(business_name)) do update set contact_name=excluded.contact_name,phone_e164=excluded.phone_e164,city=excluded.city,business_type=excluded.business_type,updated_at=now() returning id::text`;
       if (!advertiser) throw new Error("ADVERTISER_NOT_CREATED");
-      const amount = Number(plan.price ?? plan.monthly_price ?? 0), duration = Number(plan.duration_days ?? 30), start = new Date(body.campaign.startsAt), end = new Date(start.getTime() + duration * 86_400_000);
+      const amount = Number(plan.price ?? plan.monthly_price ?? 0), duration = Number(plan.duration_days ?? 30), start = new Date(body.campaign.startsAt), end = new Date(start.getTime() + duration * 86_400_000), campaignPlacement = String(plan.placement ?? plan.allowed_placements?.[0] ?? "PASSENGER_SEARCHING_DRIVER");
       const [order] = await tx`insert into advertising_orders(code,lead_id,advertiser_id,plan_id,assigned_commercial_id,status,amount,currency,plan_snapshot,requested_start_at,requested_end_at)
         values ('PUB-'||extract(year from now())::int||'-'||lpad(nextval('advertising_request_code_seq')::text,6,'0'),${invitation.lead_id},${advertiser.id},${plan.id},${invitation.created_by},'PENDING_PAYMENT',${amount},${plan.currency},${JSON.stringify({ code: plan.code, name: plan.name, durationDays: duration, price: amount })}::jsonb,${start.toISOString()},${end.toISOString()}) returning id::text,code`;
       if (!order) throw new Error("ORDER_NOT_CREATED");
@@ -254,10 +254,10 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
       await tx`insert into advertising_payments(order_id,advertiser_id,amount,currency,payment_method_id,proof_mime,proof_data,reference,status)
         values (${order.id},${advertiser.id},${amount},${plan.currency},${method.id},${body.proof?.fileMime ?? null},${proof},${body.proof?.reference ?? null},${paymentStatus})`;
       const [campaign] = await tx`insert into affiliate_banners(title,advertiser_id,advertiser_name,advertising_plan_id,service_area_id,placement,weight,action_type,action_value,image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,order_id,submitted_at,review_requested_at)
-        values (${body.campaign.title},${advertiser.id},${body.business.businessName},${plan.id},${body.campaign.serviceAreaId ?? null},${body.campaign.placement},${plan.default_weight},${body.campaign.actionType},${body.campaign.actionValue || null},${body.campaign.imageMime},${image},${body.campaign.actionType === "WEB" ? body.campaign.actionValue || null : null},${start.toISOString()},${end.toISOString()},false,${paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT"},${plan.sort_order ?? 0},${order.id},now(),now()) returning id::text`;
+        values (${body.campaign.title},${advertiser.id},${body.business.businessName},${plan.id},${body.campaign.serviceAreaId ?? null},${campaignPlacement},${plan.default_weight},${body.campaign.actionType},${body.campaign.actionValue || null},${body.campaign.imageMime},${image},${body.campaign.actionType === "WEB" ? body.campaign.actionValue || null : null},${start.toISOString()},${end.toISOString()},false,${paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT"},${plan.sort_order ?? 0},${order.id},now(),now()) returning id::text`;
       if (!campaign) throw new Error("CAMPAIGN_NOT_CREATED");
       await tx`insert into campaign_status_history(campaign_id,to_status,note) values (${campaign.id},${paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT"},'Solicitud enviada por comercio')`;
-      const submittedSummary={business:body.business,campaign:{title:body.campaign.title,placement:body.campaign.placement,serviceAreaId:body.campaign.serviceAreaId,actionType:body.campaign.actionType,actionValue:body.campaign.actionValue,startsAt:body.campaign.startsAt,imageMime:body.campaign.imageMime},planId:body.planId,paymentMethodId:body.paymentMethodId,orderCode:order.code};
+      const submittedSummary={business:body.business,campaign:{title:body.campaign.title,placement:campaignPlacement,serviceAreaId:body.campaign.serviceAreaId,actionType:body.campaign.actionType,actionValue:body.campaign.actionValue,startsAt:body.campaign.startsAt,imageMime:body.campaign.imageMime},planId:body.planId,paymentMethodId:body.paymentMethodId,orderCode:order.code};
       await tx`update advertising_invitations set status='SUBMITTED',submitted_at=now(),advertiser_id=${advertiser.id},draft_data=${JSON.stringify(submittedSummary)}::jsonb,updated_at=now() where id=${invitation.id}`;
       await tx`update advertising_leads set status='QUALIFIED',advertiser_id=${advertiser.id},updated_at=now() where id=${invitation.lead_id}`;
       return { orderCode: order.code, campaignId: campaign.id, status: paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT" };

@@ -1,0 +1,66 @@
+.assistant-floating {
+  display: flex;
+  flex-direction: column;
+  max-height: min(720px, calc(100dvh - 120px));
+}
+
+.assistant-floating .conversation {
+  flex: 1;
+  min-height: 0;
+}
+
+.assistant-floating .assistant-form {
+  flex: 0 0 auto;
+  margin-top: 0;
+  background: #fff;
+}
+
+.plan-confirmation {
+  display: grid;
+  gap: 7px;
+  padding: 13px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+}
+
+.plan-confirmation strong {
+  color: var(--navy);
+}
+
+.plan-confirmation span {
+  color: #087c9e;
+  font-weight: 850;
+}
+
+.plan-confirmation p,
+.plan-confirmation small {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.plan-confirmation .choice-grid {
+  margin-top: 5px;
+}
+
+@media (max-width: 760px) {
+  .assistant-floating {
+    height: min(680px, calc(100dvh - 96px));
+    max-height: calc(100dvh - 96px);
+  }
+
+  .assistant-floating .conversation {
+    min-height: 0;
+    max-height: none;
+  }
+
+  .assistant-floating .assistant-form {
+    position: sticky;
+    bottom: 0;
+  }
+
+  .assistant-form .primary {
+    width: 100%;
+  }
+}
