@@ -368,7 +368,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       from users u
       left join cooperatives c on c.id=u.cooperative_id
       left join admin_permission_overrides permission on permission.user_id=u.id
-      where u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE')
+      where u.deleted_at is null
+        and u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE')
       group by u.id, c.name
       order by u.created_at
     `;
@@ -722,6 +723,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       join users u on u.id = d.user_id
       left join cooperatives c on c.id=u.cooperative_id
       left join lateral (select identifier from vehicles where driver_id = d.user_id order by created_at desc limit 1) v on true
+      where u.deleted_at is null
       order by u.created_at
     `;
   } catch(e) { return guardError(e, reply); } });
@@ -740,7 +742,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       left join cooperatives c on c.id=u.cooperative_id
       left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true
       left join driver_documents dd on dd.driver_id=u.id and dd.status<>'SUSPENDED'
-      where d.approval_status in ('PENDIENTE_DOCUMENTOS','PENDIENTE_REVISION','OBSERVADO','RECHAZADO')
+      where u.deleted_at is null
+        and d.approval_status in ('PENDIENTE_DOCUMENTOS','PENDIENTE_REVISION','OBSERVADO','RECHAZADO')
       group by u.id,c.name,v.identifier,d.approval_status,d.approval_observation,d.submitted_for_review_at,d.approval_updated_at
       order by case d.approval_status when 'PENDIENTE_REVISION' then 0 when 'OBSERVADO' then 1 else 2 end,
         d.approval_updated_at desc
@@ -907,7 +910,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,
         count(t.id)::int as trips, max(t.requested_at)::text as "lastTrip"
       from users u left join trips t on t.passenger_id = u.id
-      where exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role='PASSENGER')
+      where u.deleted_at is null
+        and exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role='PASSENGER')
       group by u.id order by u.created_at
     `;
   } catch(e){return guardError(e,reply);} });

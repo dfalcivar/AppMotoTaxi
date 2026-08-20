@@ -1,0 +1,17 @@
+.panel-dialog-backdrop { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 22px; background: rgba(2,25,38,.67); backdrop-filter: blur(5px); }
+.panel-dialog-card { width: min(560px,100%); max-height: calc(100dvh - 44px); overflow: auto; display: grid; gap: 17px; padding: 25px; border: 1px solid rgba(255,255,255,.55); border-radius: 24px; background: #fff; box-shadow: 0 28px 80px rgba(0,28,46,.34); }
+.panel-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.panel-dialog-heading h2 { margin: 5px 0 0; color: #073b4c; }
+.panel-dialog-description { margin: 0; color: #536d75; line-height: 1.55; }
+.panel-dialog-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.panel-dialog-fields label { display: grid; gap: 7px; color: #36545e; font-size: .84rem; font-weight: 800; }
+.panel-dialog-fields label:has(textarea),.panel-dialog-checkbox { grid-column: 1/-1; }
+.panel-dialog-fields input,.panel-dialog-fields select,.panel-dialog-fields textarea { width: 100%; min-width: 0; border: 1px solid #cadadd; border-radius: 12px; padding: 11px 12px; color: #17343c; background: #fff; font: inherit; }
+.panel-dialog-fields textarea { resize: vertical; line-height: 1.45; }
+.panel-dialog-fields input:focus,.panel-dialog-fields select:focus,.panel-dialog-fields textarea:focus { outline: 3px solid rgba(8,127,140,.15); border-color: #087f8c; }
+.panel-dialog-fields small { color: #6b7f86; font-weight: 500; line-height: 1.35; }
+.panel-dialog-checkbox { display: flex !important; align-items: flex-start; gap: 10px !important; padding: 11px 12px; border: 1px solid #d8e5e8; border-radius: 12px; background: #f7fafb; }
+.panel-dialog-checkbox input { width: 18px; height: 18px; margin-top: 2px; accent-color: #087f8c; }
+.panel-dialog-checkbox span { display: grid; gap: 3px; }
+.panel-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 2px; }
+@media(max-width:620px){.panel-dialog-backdrop{place-items:end center;padding:max(10px,env(safe-area-inset-top)) 0 0}.panel-dialog-card{width:100%;max-height:calc(100dvh - max(10px,env(safe-area-inset-top)));border-radius:24px 24px 0 0;padding:20px 18px max(18px,env(safe-area-inset-bottom))}.panel-dialog-fields{grid-template-columns:1fr}.panel-dialog-actions{position:sticky;bottom:calc(-1 * max(18px,env(safe-area-inset-bottom)));display:grid;grid-template-columns:1fr 1fr;margin:2px -18px calc(-1 * max(18px,env(safe-area-inset-bottom)));padding:12px 18px max(14px,env(safe-area-inset-bottom));border-top:1px solid #e1eaec;background:rgba(255,255,255,.97)}.panel-dialog-actions button{min-height:46px}}

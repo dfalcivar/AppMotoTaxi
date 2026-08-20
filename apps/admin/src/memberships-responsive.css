@@ -92,6 +92,10 @@
 .collector-order-results span { display: grid; gap: 3px; }
 .collector-order-results span:last-child { text-align: right; }
 .collector-order-results small { color: #667d84; }
+.collector-order { display: grid; gap: 10px; margin-top: 14px; padding: 16px; border: 1px solid #d5e5e9; border-radius: 14px; background: #f8fbfc; }
+.collector-order h3,.collector-order p { margin: 0; }
+.collector-order label { display: grid; grid-template-columns: minmax(90px,auto) minmax(180px,1fr); align-items: center; gap: 10px; }
+.collector-order .primary { justify-self: start; }
 
 @media(max-width:620px) {
   .membership-modal-backdrop { place-items: end center; padding: max(10px,env(safe-area-inset-top)) 0 0; }
@@ -102,4 +106,26 @@
   .plan-duration-preview span { text-align: left; }
   .membership-modal-actions { position: sticky; bottom: calc(-1 * max(18px,env(safe-area-inset-bottom))); display: grid; grid-template-columns: 1fr 1fr; margin: 2px -18px calc(-1 * max(18px,env(safe-area-inset-bottom))); padding: 12px 18px max(14px,env(safe-area-inset-bottom)); border-top: 1px solid #e1eaec; background: rgba(255,255,255,.97); }
   .membership-modal-actions button { min-height: 46px; }
+  .collector-portal { gap: 12px; }
+  .collector-portal .card { margin-bottom: 0; padding: 14px; border-radius: 15px; }
+  .collector-portal .membership-hero { display: grid; grid-template-columns: 1fr auto; align-items: start; }
+  .collector-portal .membership-hero h2,.collector-portal .card h2 { font-size: 1.18rem; line-height: 1.25; }
+  .collector-portal .membership-hero p { font-size: .82rem; line-height: 1.4; }
+  .collector-portal .membership-hero .secondary { padding: 9px 11px; }
+  .collector-portal .note { margin: 8px 0 12px; padding: 10px; font-size: .82rem; line-height: 1.4; }
+  .collector-portal .membership-toolbar { gap: 10px; margin-bottom: 10px; }
+  .collector-portal .membership-toolbar label { font-size: .82rem; }
+  .collector-portal input,.collector-portal select { min-height: 46px; padding: 10px 12px; font-size: 16px; }
+  .collector-portal .membership-toolbar button { width: 100%; min-height: 46px; }
+  .collector-order { margin-top: 10px; padding: 13px; gap: 8px; }
+  .collector-order h3 { font-size: 1.1rem; }
+  .collector-order p { font-size: .86rem; line-height: 1.42; overflow-wrap: anywhere; }
+  .collector-order label { grid-template-columns: 1fr; gap: 5px; font-size: .82rem; }
+  .collector-order .primary { width: 100%; min-height: 46px; }
+  .collector-order-results button { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .collector-order-results span:last-child { text-align: left; }
+  .collector-portal .table-wrap { margin: 0 -14px -14px; }
+  .collector-portal table { min-width: 620px; }
+  .collector-portal th,.collector-portal td { padding: 10px 12px; font-size: .78rem; }
+  .collector-portal .empty { padding: 24px 12px; font-size: .86rem; }
 }

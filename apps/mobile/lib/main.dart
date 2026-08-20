@@ -1433,8 +1433,7 @@ class Api {
           token: t, body: {'body': body});
   Future<List<dynamic>> banners(String t, String placement,
           {String? serviceAreaId}) async =>
-      List<dynamic>.from(await call(
-          'GET',
+      List<dynamic>.from(await call('GET',
           '/v1/banners?placement=${Uri.encodeQueryComponent(placement)}${serviceAreaId == null ? '' : '&serviceAreaId=${Uri.encodeQueryComponent(serviceAreaId)}'}',
           token: t));
   Future<Map<String, dynamic>> mobileConfig(String t) async =>
@@ -1453,7 +1452,8 @@ class Api {
       });
   Future<dynamic> submitMembershipTransferProof(
           String t, String orderId, Map<String, dynamic> proof) =>
-      call('POST', '/v1/driver/membership/payment-orders/$orderId/transfer-proof',
+      call('POST',
+          '/v1/driver/membership/payment-orders/$orderId/transfer-proof',
           token: t, body: proof);
   Future<void> advertisingEvent(String t,
       {required String campaignId,
@@ -1473,6 +1473,7 @@ class Api {
       if (actionType != null) 'actionType': actionType,
     });
   }
+
   Future<dynamic> trip(String t, String id) =>
       call('GET', '/v1/trips/$id', token: t);
   Future<Map<String, dynamic>> route(
@@ -7369,15 +7370,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Future<void> _openBanner(Map<String, dynamic> banner) async {
     unawaited(_reportBannerEvent(banner, 'CLICK'));
     final action = banner['actionType']?.toString() ?? 'WEB';
-    final value = (banner['actionValue'] ?? banner['targetUrl'])?.toString().trim() ?? '';
+    final value =
+        (banner['actionValue'] ?? banner['targetUrl'])?.toString().trim() ?? '';
     final uri = action == 'PHONE'
         ? Uri(scheme: 'tel', path: value.replaceAll(RegExp(r'[^+0-9]'), ''))
         : Uri.tryParse(value);
-    final valid = uri != null && switch (action) {
-      'PHONE' => uri.scheme == 'tel' && uri.path.length >= 7,
-      'WEB' || 'WHATSAPP' || 'MAPS' => uri.scheme == 'https' && uri.host.isNotEmpty,
-      _ => false,
-    };
+    final valid = uri != null &&
+        switch (action) {
+          'PHONE' => uri.scheme == 'tel' && uri.path.length >= 7,
+          'WEB' ||
+          'WHATSAPP' ||
+          'MAPS' =>
+            uri.scheme == 'https' && uri.host.isNotEmpty,
+          _ => false,
+        };
     if (!valid) return;
     try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -8226,7 +8232,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> refreshMembership({bool force = false}) async {
     final now = DateTime.now();
-    if (!force && lastMembershipRefreshAt != null &&
+    if (!force &&
+        lastMembershipRefreshAt != null &&
         now.difference(lastMembershipRefreshAt!) < const Duration(minutes: 1)) {
       return;
     }
@@ -8238,7 +8245,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         lastMembershipRefreshAt = now;
       });
       if (value['eligibility']?['eligible'] == false &&
-          active == null && available) {
+          active == null &&
+          available) {
         await api.available(widget.s.token, false);
         await positionSubscription?.cancel();
         positionSubscription = null;
@@ -8257,7 +8265,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       platformConfig['navigation'] as Map? ?? const {});
 
   String _navigationProvider(String status) => status == 'IN_PROGRESS'
-      ? (_navigationConfig['destinationProvider']?.toString() ?? 'EXTERNAL_MAPS')
+      ? (_navigationConfig['destinationProvider']?.toString() ??
+          'EXTERNAL_MAPS')
       : (_navigationConfig['pickupProvider']?.toString() ?? 'EXTERNAL_MAPS');
 
   String _navigationStartMode(String status) => status == 'IN_PROGRESS'
@@ -9195,7 +9204,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         label: cleanAddressLabel(stop['reference'], fallback: 'Destino'),
       ));
     }
-    if (result.isEmpty && active?['destinationLatitude'] != null &&
+    if (result.isEmpty &&
+        active?['destinationLatitude'] != null &&
         active?['destinationLongitude'] != null) {
       result.add(DriverNavigationStop(
         latitude: (active['destinationLatitude'] as num).toDouble(),
@@ -9258,9 +9268,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             mode: LaunchMode.externalNonBrowserApplication);
       }
       if (!opened) {
-        final target = defaultTargetPlatform == TargetPlatform.iOS
-            ? appleUri
-            : googleUri;
+        final target =
+            defaultTargetPlatform == TargetPlatform.iOS ? appleUri : googleUri;
         opened = await launchUrl(target, mode: LaunchMode.externalApplication);
       }
     } on PlatformException catch (error) {
@@ -9777,8 +9786,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Widget _membershipCard(BuildContext context) {
     final data = membershipData;
     if (data == null) return const SizedBox.shrink();
-    final membership = Map<String, dynamic>.from(
-        data['membership'] as Map? ?? const {});
+    final membership =
+        Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final status = membership['status']?.toString() ?? 'PENDING';
     final eligible = data['eligibility']?['eligible'] != false;
     final color = switch (status) {
@@ -9787,8 +9796,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Colors.red,
       _ => Theme.of(context).colorScheme.primary,
     };
-    final expiresAt = DateTime.tryParse(membership['expiresAt']?.toString() ?? '')
-        ?.toLocal();
+    final expiresAt =
+        DateTime.tryParse(membership['expiresAt']?.toString() ?? '')?.toLocal();
     final expiryText = expiresAt == null
         ? 'Activa tu plan para empezar a recibir solicitudes.'
         : 'Vigente hasta ${MaterialLocalizations.of(context).formatMediumDate(expiresAt)}';
@@ -9803,21 +9812,29 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             CircleAvatar(
               backgroundColor: color.withValues(alpha: .18),
               foregroundColor: color,
-              child: Icon(eligible ? Icons.verified_outlined : Icons.lock_clock_outlined),
+              child: Icon(eligible
+                  ? Icons.verified_outlined
+                  : Icons.lock_clock_outlined),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Membresía Costa-Go',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w900)),
-                Text(_membershipStatusLabel(status),
-                    style: TextStyle(color: color, fontWeight: FontWeight.w800)),
-                Text(expiryText, style: Theme.of(context).textTheme.bodySmall),
-                if (membership['planName'] != null)
-                  Text('Plan ${membership['planName']}',
-                      style: Theme.of(context).textTheme.bodySmall),
-              ]),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Membresía Costa-Go',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w900)),
+                    Text(_membershipStatusLabel(status),
+                        style: TextStyle(
+                            color: color, fontWeight: FontWeight.w800)),
+                    Text(expiryText,
+                        style: Theme.of(context).textTheme.bodySmall),
+                    if (membership['planName'] != null)
+                      Text('Plan ${membership['planName']}',
+                          style: Theme.of(context).textTheme.bodySmall),
+                  ]),
             ),
             const Icon(Icons.chevron_right),
           ]),
@@ -9828,21 +9845,63 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<bool> _submitMembershipTransferProof(
       BuildContext context, Map<String, dynamic> order) async {
-    final selected = await nativeActions
-        .invokeMapMethod<String, dynamic>('pickDocument', const {
-      'extensions': ['jpg', 'jpeg', 'png', 'webp', 'pdf']
-    });
-    if (selected == null || !context.mounted) return false;
-    final bytes = selected['bytes'];
-    if (bytes is! Uint8List || bytes.length < 100 || bytes.length > 5242880) {
+    final action = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(
+                  leading: const Icon(Icons.camera_alt_outlined),
+                  title: const Text('Tomar fotografía del comprobante'),
+                  onTap: () => Navigator.pop(sheetContext, 'CAMERA')),
+              ListTile(
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Elegir imagen de la galería'),
+                  subtitle: const Text('JPG, PNG o WEBP · máximo 5 MB'),
+                  onTap: () => Navigator.pop(sheetContext, 'GALLERY')),
+              ListTile(
+                  leading: const Icon(Icons.picture_as_pdf_outlined),
+                  title: const Text('Elegir PDF desde Archivos'),
+                  subtitle: const Text('PDF · máximo 5 MB'),
+                  onTap: () => Navigator.pop(sheetContext, 'DOCUMENT')),
+            ])));
+    if (action == null || !context.mounted) return false;
+    late Uint8List bytes;
+    late String filename;
+    late String reportedMime;
+    if (action == 'DOCUMENT') {
+      final selected = await nativeActions
+          .invokeMapMethod<String, dynamic>('pickDocument', const {
+        'extensions': ['pdf']
+      });
+      if (selected == null || !context.mounted) return false;
+      final rawBytes = selected['bytes'];
+      if (rawBytes is! Uint8List) return false;
+      bytes = rawBytes;
+      filename = selected['name']?.toString().toLowerCase() ?? '';
+      reportedMime = selected['mime']?.toString() ?? '';
+    } else {
+      final image = await ImagePicker().pickImage(
+          source: action == 'CAMERA' ? ImageSource.camera : ImageSource.gallery,
+          imageQuality: 78,
+          maxWidth: 1800,
+          maxHeight: 1800);
+      if (image == null || !context.mounted) return false;
+      bytes = await image.readAsBytes();
+      filename = image.name.toLowerCase();
+      reportedMime = filename.endsWith('.png')
+          ? 'image/png'
+          : filename.endsWith('.webp')
+              ? 'image/webp'
+              : 'image/jpeg';
+    }
+    if (bytes.length < 100 || bytes.length > 5242880) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Selecciona una imagen o PDF de hasta 5 MB.')));
       }
       return false;
     }
-    final filename = selected['name']?.toString().toLowerCase() ?? '';
-    final reportedMime = selected['mime']?.toString() ?? '';
     final mime = reportedMime == 'application/pdf' || filename.endsWith('.pdf')
         ? 'application/pdf'
         : reportedMime == 'image/png' || filename.endsWith('.png')
@@ -9850,6 +9909,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             : reportedMime == 'image/webp' || filename.endsWith('.webp')
                 ? 'image/webp'
                 : 'image/jpeg';
+    if (!context.mounted) return false;
     final bank = TextEditingController();
     final reference = TextEditingController();
     final observation = TextEditingController();
@@ -9881,15 +9941,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.attach_file_outlined),
-                    title: Text(selected['name']?.toString() ?? 'Comprobante'),
+                    title: Text(filename.isEmpty ? 'Comprobante' : filename),
                     subtitle: Text('${(bytes.length / 1024).ceil()} KB'),
                   ),
                 ]),
               ),
               actions: [
                 TextButton(
-                    onPressed:
-                        sending ? null : () => Navigator.pop(dialogContext, false),
+                    onPressed: sending
+                        ? null
+                        : () => Navigator.pop(dialogContext, false),
                     child: const Text('Cancelar')),
                 FilledButton(
                   onPressed: sending

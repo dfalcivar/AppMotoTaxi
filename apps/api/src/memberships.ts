@@ -742,6 +742,14 @@ function businessError(error: unknown, reply: FastifyReply) {
     "MEMBERSHIP_REQUIRED", "MEMBERSHIP_NOT_CREATED", "PAYMENT_NOT_CREATED",
     "COLLECTION_POINT_INACTIVE", "PAYMENT_METHOD_DISABLED"
   ];
+  if (message === "NO_PAYMENTS_TO_CLOSE") return reply.code(409).send({
+    error: message,
+    message: "No hay cobros pendientes para cerrar en la jornada seleccionada."
+  });
+  if (message === "FUTURE_CLOSURE_DATE") return reply.code(400).send({
+    error: message,
+    message: "No se puede cerrar una jornada futura."
+  });
   if (conflict.includes(message)) return reply.code(409).send({ error: message });
   if (notFound.includes(message)) return reply.code(404).send({ error: message });
   if (badRequest.includes(message)) return reply.code(400).send({ error: message });
@@ -931,7 +939,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     requirePermission(request, "memberships:view");
     const query = z.object({ status: membershipStatusSchema.optional(), cooperativeId: z.string().uuid().optional(), search: z.string().trim().max(100).optional(), page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25) }).parse(request.query);
     const offset=(query.page-1)*query.limit;
-    const rows=await database()`select dm.id::text,dm.driver_id::text as "driverId",u.full_name as driver,u.email,u.phone_e164 as phone,c.name as cooperative,dm.plan_code as plan,dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",dm.billable_extra_amount::float8 as "extraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedRenewal",dm.currency,dm.payer_type as "payerType",count(*) over()::int as total from driver_memberships dm join users u on u.id=dm.driver_id left join cooperatives c on c.id=dm.cooperative_id where dm.cycle_closed_at is null and (${query.status ?? null}::text is null or dm.status=${query.status ?? null}) and (${query.cooperativeId ?? null}::uuid is null or dm.cooperative_id=${query.cooperativeId ?? null}) and (${query.search ?? null}::text is null or u.full_name ilike ${query.search ? `%${query.search}%` : null} or u.email ilike ${query.search ? `%${query.search}%` : null} or u.phone_e164 ilike ${query.search ? `%${query.search}%` : null}) order by dm.expires_at nulls first,u.full_name limit ${query.limit} offset ${offset}`;
+    const rows=await database()`select dm.id::text,dm.driver_id::text as "driverId",u.full_name as driver,u.email,u.phone_e164 as phone,c.name as cooperative,dm.plan_code as plan,dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",dm.billable_extra_amount::float8 as "extraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedRenewal",dm.currency,dm.payer_type as "payerType",count(*) over()::int as total from driver_memberships dm join users u on u.id=dm.driver_id left join cooperatives c on c.id=dm.cooperative_id where u.deleted_at is null and dm.cycle_closed_at is null and (${query.status ?? null}::text is null or dm.status=${query.status ?? null}) and (${query.cooperativeId ?? null}::uuid is null or dm.cooperative_id=${query.cooperativeId ?? null}) and (${query.search ?? null}::text is null or u.full_name ilike ${query.search ? `%${query.search}%` : null} or u.email ilike ${query.search ? `%${query.search}%` : null} or u.phone_e164 ilike ${query.search ? `%${query.search}%` : null}) order by dm.expires_at nulls first,u.full_name limit ${query.limit} offset ${offset}`;
     return { items: rows, page: query.page, limit: query.limit, total: Number(rows[0]?.total ?? 0) };
   } catch (error) { return businessError(error, reply); } });
 
@@ -1111,31 +1119,61 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.post("/v1/collector/payment-orders/token/:token/confirm",async(request,reply)=>{try{const actor=requirePermission(request,"payments:collect");const body=paymentConfirmSchema.parse(request.body);const token=(request.params as {token:string}).token;const [order]=await database()`select id::text from membership_payment_orders where public_token_hash=${sha256(token)}`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});return await confirmCollectorPayment(order.id,actor,body);}catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/collector/payments/today",async(request,reply)=>{try{const actor=requirePermission(request,"payments:view_own_point");return database()`select p.id::text,p.amount::float8,p.currency,p.method,p.settlement_status as "settlementStatus",p.confirmed_at as "confirmedAt",u.full_name as driver,cp.name as point from membership_payments p join users u on u.id=p.driver_id join collection_points cp on cp.id=p.collection_point_id join collector_assignments ca on ca.collection_point_id=cp.id and ca.collector_id=${actor.id!} where p.confirmed_at>=date_trunc('day',now()) and p.status='CONFIRMED' order by p.confirmed_at desc`; }catch(error){return businessError(error,reply);} });
+  app.get("/v1/collector/payments/today",async(request,reply)=>{try{const actor=requirePermission(request,"payments:view_own_point");return database()`select p.id::text,p.amount::float8,p.currency,p.method,p.settlement_status as "settlementStatus",p.confirmed_at as "confirmedAt",u.full_name as driver,cp.id::text as "collectionPointId",cp.name as point from membership_payments p join users u on u.id=p.driver_id join collection_points cp on cp.id=p.collection_point_id join collector_assignments ca on ca.collection_point_id=cp.id and ca.collector_id=${actor.id!} where p.collector_id=${actor.id!} and p.confirmed_at>=date_trunc('day',now()) and p.status='CONFIRMED' and not exists(select 1 from collection_point_closure_payments link where link.payment_id=p.id) order by p.confirmed_at desc`; }catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/collector/payments/pending-closure",async(request,reply)=>{try{
+    const actor=requirePermission(request,"payments:view_own_point");
+    return database()`
+      select p.id::text,p.amount::float8,p.currency,p.method,p.settlement_status as "settlementStatus",
+        p.confirmed_at as "confirmedAt",u.full_name as driver,cp.id::text as "collectionPointId",cp.name as point,
+        (p.confirmed_at at time zone coalesce(settings.membership_timezone,'America/Guayaquil'))::date::text as "businessDate"
+      from membership_payments p
+      join users u on u.id=p.driver_id
+      join collection_points cp on cp.id=p.collection_point_id
+      join collector_assignments ca on ca.collection_point_id=cp.id and ca.collector_id=${actor.id!}
+        and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now())
+      cross join operational_settings settings
+      where p.collector_id=${actor.id!} and p.status='CONFIRMED'
+        and not exists(select 1 from collection_point_closure_payments link where link.payment_id=p.id)
+      order by p.confirmed_at asc
+    `;
+  }catch(error){return businessError(error,reply);} });
 
   app.get("/v1/collector/me",async(request,reply)=>{try{const actor=requirePermission(request,"payments:view_own_point");const points=await database()`select cp.id::text,cp.code,cp.name,cp.address,cp.status,cp.cash_enabled as "cashEnabled",cp.deuna_enabled as "deunaEnabled",cp.bank_transfer_enabled as "bankTransferEnabled" from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now()) order by cp.name`;return {user:{id:actor.id,name:actor.name},points};}catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/collector/closures",async(request,reply)=>{try{const actor=requirePermission(request,"settlements:view_own_point");return database()`select c.id::text,c.period_start as "periodStart",c.period_end as "periodEnd",c.status,c.cash_total::float8 as "cashTotal",c.deuna_total::float8 as "deunaTotal",c.transfer_total::float8 as "transferTotal",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join collector_assignments ca on ca.collection_point_id=cp.id and ca.collector_id=${actor.id!} order by c.created_at desc limit 100`; }catch(error){return businessError(error,reply);} });
+  app.get("/v1/collector/closures",async(request,reply)=>{try{const actor=requirePermission(request,"settlements:view_own_point");return database()`select c.id::text,c.period_start as "periodStart",c.period_end as "periodEnd",c.status,c.cash_total::float8 as "cashTotal",c.deuna_total::float8 as "deunaTotal",c.transfer_total::float8 as "transferTotal",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id where c.collector_id=${actor.id!} and c.gross_amount>0 order by c.created_at desc limit 100`; }catch(error){return businessError(error,reply);} });
 
   app.post("/v1/collector/closures", async (request, reply) => {
     try {
       const actor = requirePermission(request, "cash_closures:create");
-      const body = z.object({ collectionPointId: z.string().uuid(), notes: z.string().trim().max(500).optional() }).parse(request.body);
+      const body = z.object({
+        collectionPointId: z.string().uuid(),
+        businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        notes: z.string().trim().max(500).optional()
+      }).parse(request.body);
       const result = await database().begin(async (tx) => {
         const [assignment] = await tx`select cp.id from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and cp.id=${body.collectionPointId} and cp.status='ACTIVE' and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now())`;
         if (!assignment) throw new Error("FORBIDDEN");
-        const [prior] = await tx`select coalesce(max(period_end),date_trunc('day',now())) as start from collection_point_closures where collection_point_id=${body.collectionPointId} and collector_id=${actor.id!}`;
-        const periodStart = prior?.start ?? new Date();
-        const payments = await tx`select p.id,p.method,p.amount from membership_payments p where p.collection_point_id=${body.collectionPointId} and p.collector_id=${actor.id!} and p.status='CONFIRMED' and p.confirmed_at>${periodStart} and not exists(select 1 from collection_point_closure_payments link where link.payment_id=p.id) for update`;
+        const [settings] = await tx`select coalesce(membership_timezone,'America/Guayaquil') as timezone from operational_settings limit 1`;
+        const timezone = String(settings?.timezone ?? "America/Guayaquil");
+        const [period] = await tx`select
+          (${body.businessDate}::date at time zone ${timezone}) as start,
+          ((${body.businessDate}::date + 1) at time zone ${timezone}) as end,
+          (now() at time zone ${timezone})::date::text as "today"`;
+        if (!period || body.businessDate > String(period.today)) throw new Error("FUTURE_CLOSURE_DATE");
+        await tx`select pg_advisory_xact_lock(hashtext(${`${body.collectionPointId}:${actor.id!}:${body.businessDate}`}))`;
+        const payments = await tx`select p.id,p.method,p.amount from membership_payments p where p.collection_point_id=${body.collectionPointId} and p.collector_id=${actor.id!} and p.status='CONFIRMED' and p.confirmed_at>=${period.start} and p.confirmed_at<${period.end} and not exists(select 1 from collection_point_closure_payments link where link.payment_id=p.id) for update`;
+        if (!payments.length) throw new Error("NO_PAYMENTS_TO_CLOSE");
         const total = (method: string) => money(payments.filter((item) => item.method === method).reduce((sum, item) => sum + Number(item.amount), 0));
         const cash = total("CASH");
         const deuna = total("DEUNA");
         const transfer = total("BANK_TRANSFER");
         const gross = money(cash + deuna + transfer);
-        const [closure] = await tx`insert into collection_point_closures(collection_point_id,collector_id,period_start,period_end,status,cash_total,deuna_total,transfer_total,gross_amount,net_amount,closed_at,notes) values(${body.collectionPointId},${actor.id!},${periodStart},now(),'PENDING_SETTLEMENT',${cash},${deuna},${transfer},${gross},${gross},now(),${body.notes ?? null}) returning id::text,status,gross_amount::float8 as "grossAmount",net_amount::float8 as "netAmount"`;
+        const periodEnd = body.businessDate === String(period.today) ? new Date() : period.end;
+        const [closure] = await tx`insert into collection_point_closures(collection_point_id,collector_id,period_start,period_end,status,cash_total,deuna_total,transfer_total,gross_amount,net_amount,closed_at,notes) values(${body.collectionPointId},${actor.id!},${period.start},${periodEnd},'PENDING_SETTLEMENT',${cash},${deuna},${transfer},${gross},${gross},now(),${body.notes ?? null}) returning id::text,status,gross_amount::float8 as "grossAmount",net_amount::float8 as "netAmount"`;
         if (!closure) throw new Error("CLOSURE_NOT_CREATED");
         for (const payment of payments) await tx`insert into collection_point_closure_payments(closure_id,payment_id) values(${closure.id},${payment.id})`;
-        return { id: String(closure.id), status: String(closure.status), grossAmount: Number(closure.grossAmount), netAmount: Number(closure.netAmount), payments: payments.length };
+        return { id: String(closure.id), status: String(closure.status), businessDate: body.businessDate, grossAmount: Number(closure.grossAmount), netAmount: Number(closure.netAmount), payments: payments.length };
       });
       await persistAudit(actor, "COLLECTION_CLOSURE_CREATED", "COLLECTION_POINT_CLOSURE", result.id, body.notes ?? "Cierre de caja");
       return reply.code(201).send(result);
@@ -1144,7 +1182,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     }
   });
 
-  app.get("/v1/admin/collection-closures",async(request,reply)=>{try{requirePermission(request,"cash_closures:review");return database()`select c.id::text,c.status,c.period_start as "periodStart",c.period_end as "periodEnd",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point,u.full_name as collector,c.created_at as "createdAt" from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join users u on u.id=c.collector_id order by c.created_at desc limit 200`; }catch(error){return businessError(error,reply);} });
+  app.get("/v1/admin/collection-closures",async(request,reply)=>{try{requirePermission(request,"cash_closures:review");return database()`select c.id::text,c.status,c.period_start as "periodStart",c.period_end as "periodEnd",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point,u.full_name as collector,c.created_at as "createdAt" from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join users u on u.id=c.collector_id where c.gross_amount>0 order by c.created_at desc limit 200`; }catch(error){return businessError(error,reply);} });
 
   app.get("/v1/admin/membership-payments/pending",async(request,reply)=>{try{requirePermission(request,"payments:transfer_review");return database()`select proof.id::text,proof.order_id::text as "orderId",u.full_name as driver,o.total_amount::float8 as "expectedAmount",proof.declared_amount::float8 as "declaredAmount",o.currency,proof.bank_name as bank,proof.reference_masked as reference,proof.transfer_date as "transferDate",proof.status,proof.created_at as "createdAt" from membership_transfer_proofs proof join membership_payment_orders o on o.id=proof.order_id join users u on u.id=o.driver_id where proof.status='PENDING' order by proof.created_at`; }catch(error){return businessError(error,reply);} });
 

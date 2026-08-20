@@ -20,6 +20,10 @@
 .banner-preview { border: 1px solid #cbdcdf; }
 .placement-note { display: grid; gap: 4px; padding: 12px; border-radius: 12px; background: #e8f5f6; color: #24545d; }
 .placement-note span { font-size: .8rem; color: #587178; }
+.advertising-placement-summary { display: grid; gap: 5px; min-width: 0; padding: 11px 12px; border: 1px solid #cadadd; border-radius: 12px; background: #f5fafb; }
+.advertising-placement-summary span { color: #36545e; font-size: .78rem; font-weight: 800; }
+.advertising-placement-summary strong { color: #073b4c; line-height: 1.25; }
+.advertising-placement-summary small { color: #647b82; line-height: 1.3; }
 .banner-placeholder-card { display: grid; gap: 14px; padding: 14px; border: 1px dashed #83afb5; border-radius: 14px; background: #f8fbfb; }
 .banner-placeholder-card.permanent { border-style: solid; border-color: #58a8b4; background: #eefafb; }
 .banner-placeholder-card img { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: cover; border-radius: 10px; }
