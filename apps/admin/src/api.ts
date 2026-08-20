@@ -1,5 +1,5 @@
 export type Zone = "URBAN" | "EXTENDED";
-export type AdminRole = "ADMIN" | "SUPPORT" | "SUPER_ADMIN" | "ADMIN_OPERACIONES" | "SOPORTE" | "ANALISTA_COOPERATIVA" | "COLLECTOR" | "FINANCE";
+export type AdminRole = "ADMIN" | "SUPPORT" | "SUPER_ADMIN" | "ADMIN_OPERACIONES" | "SOPORTE" | "ANALISTA_COOPERATIVA" | "COLLECTOR" | "FINANCE" | "COMMERCIAL";
 export interface SessionUser {
   email: string;
   name: string;

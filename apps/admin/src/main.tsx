@@ -15,9 +15,10 @@ import { MembershipAdmin } from "./memberships-admin.js";
 import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
 import { FareTerritories } from "./fare-admin.js";
+import { CommercialAdmin } from "./commercial-admin.js";
 import { AdminErrorBoundary } from "./observability.js";
 
-type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "access" | "audit" | "database";
+type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
 
 const labels: Record<Module, string> = {
   dashboard: "Tablero",
@@ -32,24 +33,26 @@ const labels: Record<Module, string> = {
   zones: "Zonas de cobertura",
   settings: "Radio de búsqueda",
   advertising: "Publicidad",
+  commercial: "Comercial y publicidad",
   incidents: "Soporte e incidentes",
   access: "Usuarios y roles",
   audit: "Auditoría",
   database: "PostgreSQL"
 };
-const icons: Record<Module, string> = { dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", memberships: "◈", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
+const icons: Record<Module, string> = { dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", memberships: "◈", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", commercial: "◆", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
 const modulePermissions: Record<Module, string[]> = {
   dashboard: ["dashboard:view", "cooperative_dashboard:view"],
   operations: ["operations:view"], alerts: ["alerts:view"],
   trips: ["trips:view"], drivers: ["drivers:view"], memberships: ["memberships:view"], passengers: ["passengers:view"],
   cooperatives: ["cooperatives:view"], pricing: ["pricing:view"], zones: ["service_areas:view"],
-  settings: ["settings:view"], advertising: ["advertising:view"], incidents: ["incidents:view"],
+  settings: ["settings:view"], advertising: ["advertising:view"],
+  commercial: ["commercial:dashboard", "commercial:leads:view", "commercial:campaigns:view", "commercial:payments:view"], incidents: ["incidents:view"],
   access: ["roles:manage"], audit: ["audit:view"], database: ["database:view"]
 };
 const roleLabels: Record<string, string> = {
   ADMIN: "Administrador actual", SUPPORT: "Soporte actual", SUPER_ADMIN: "Superadministrador",
   ADMIN_OPERACIONES: "Administrador de operaciones", SOPORTE: "Soporte",
-  ANALISTA_COOPERATIVA: "Analista de cooperativa", COLLECTOR: "Recaudador", FINANCE: "Finanzas"
+  ANALISTA_COOPERATIVA: "Analista de cooperativa", COLLECTOR: "Recaudador", FINANCE: "Finanzas", COMMERCIAL: "Comercial"
 };
 const legacySupportPermissions = new Set(["dashboard:view", "passengers:view", "drivers:view", "trips:view", "support:view", "support:manage", "incidents:view", "incidents:manage", "faq:view", "faq:manage"]);
 function can(user: SessionUser, permission: string) {
@@ -559,6 +562,7 @@ function App() {
       {currentModule === "zones" && <CoverageZones token={session.token} permissions={session.user.permissions ?? []} />}
       {currentModule === "settings" && <><Settings token={session.token} admin={allowed("settings:manage")} /><DocumentExpirySettings token={session.token} admin={allowed("settings:manage")} /></>}
       {currentModule === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}
+      {currentModule === "commercial" && <CommercialAdmin token={session.token} permissions={session.user.permissions ?? []} />}
       {currentModule === "incidents" && <SupportAdmin token={session.token} />}
       {currentModule === "access" && <AccessManagement token={session.token} />}
       {currentModule === "audit" && <Audit token={session.token} />}

@@ -160,6 +160,22 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("protege el módulo administrativo comercial", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/admin/commercial/dashboard" });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("valida prospectos y métricas publicitarias públicas antes de persistir", async () => {
+    const [lead, event] = await Promise.all([
+      app.inject({ method: "POST", url: "/v1/public/advertising/leads", payload: { email: "incorrecto" } }),
+      app.inject({ method: "POST", url: "/v1/public/advertising/events", payload: { eventType: "CLICK" } })
+    ]);
+    expect(lead.statusCode).toBe(400);
+    expect(event.statusCode).toBe(400);
+    expect(lead.json().error).toBe("INVALID_DATA");
+    expect(event.json().error).toBe("INVALID_DATA");
+  });
+
   it("protege las preguntas frecuentes y solicitudes de soporte", async () => {
     const faqs = await app.inject({ method: "GET", url: "/v1/support/faqs" });
     const incidents = await app.inject({ method: "GET", url: "/v1/support/incidents" });

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS advertising_invitations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_id uuid NOT NULL REFERENCES advertising_leads(id) ON DELETE CASCADE,
   advertiser_id uuid REFERENCES advertisers(id) ON DELETE SET NULL,
+  campaign_id uuid REFERENCES affiliate_banners(id) ON DELETE SET NULL,
   token_hash text NOT NULL UNIQUE,
   status text NOT NULL DEFAULT 'CREATED' CHECK (status IN ('CREATED','OPENED','IN_PROGRESS','SUBMITTED','EXPIRED','REVOKED','CORRECTION')),
   source text NOT NULL,
@@ -172,4 +173,3 @@ ALTER TABLE operational_settings
   ADD COLUMN IF NOT EXISTS advertising_banner_width integer NOT NULL DEFAULT 1200,
   ADD COLUMN IF NOT EXISTS advertising_banner_height integer NOT NULL DEFAULT 400,
   ADD COLUMN IF NOT EXISTS advertising_commercial_emails text[] NOT NULL DEFAULT '{}';
-

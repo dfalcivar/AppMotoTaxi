@@ -55,6 +55,7 @@ export const allPermissions = [
   "commercial:payments:review",
   "commercial:campaigns:view",
   "commercial:campaigns:manage",
+  "commercial:campaigns:review",
   "commercial:plans:manage",
   "settings:view",
   "settings:manage",
@@ -123,7 +124,8 @@ const financePermissions: Permission[] = [
   "dashboard:view", "memberships:view", "payments:transfer_review",
   "payments:view_all", "cash_closures:review", "settlements:review",
   "settlements:view_all", "financial_accounts:manage", "reports:view",
-  "reports:export"
+  "reports:export", "commercial:payments:view", "commercial:payments:review",
+  "commercial:orders:view"
 ];
 
 const commercialPermissions: Permission[] = [
