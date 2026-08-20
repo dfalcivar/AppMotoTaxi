@@ -63,7 +63,7 @@ const platformSettingsSchema = z.object({
   path: ["navigationCriticalPercent"], message: "CRITICAL_THRESHOLD_MUST_EXCEED_WARNING"
 });
 
-const planSchema = z.object({
+const planBaseSchema = z.object({
   code: z.string().trim().min(3).max(40).regex(/^[A-Z0-9_]+$/),
   name: z.string().trim().min(3).max(100),
   periodUnit: z.enum(["DAY", "MONTH", "QUARTER", "YEAR"]),
@@ -76,6 +76,16 @@ const planSchema = z.object({
   extraTripSharePercent: z.number().min(0).max(100),
   enabled: z.boolean().default(true),
   effectiveFrom: z.string().datetime({ offset: true }).optional()
+});
+
+const planSchema = planBaseSchema.refine(value => value.maxRenewalAmount >= value.baseAmount, {
+  path: ["maxRenewalAmount"], message: "MAXIMUM_BELOW_BASE"
+});
+
+const planVersionSchema = planBaseSchema.omit({
+  code: true,
+  enabled: true,
+  effectiveFrom: true
 }).refine(value => value.maxRenewalAmount >= value.baseAmount, {
   path: ["maxRenewalAmount"], message: "MAXIMUM_BELOW_BASE"
 });
@@ -631,8 +641,12 @@ function settingsProjection(row: any) {
 function businessError(error: unknown, reply: FastifyReply) {
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.issues });
   const message = error instanceof Error ? error.message : "ERROR";
-  const conflict = ["PAYMENT_ORDER_ALREADY_PAID", "PAYMENT_ORDER_NOT_PAYABLE", "PAYMENT_REFERENCE_ALREADY_USED"];
-  const notFound = ["PAYMENT_ORDER_NOT_FOUND"];
+  const conflict = [
+    "PAYMENT_ORDER_ALREADY_PAID", "PAYMENT_ORDER_NOT_PAYABLE",
+    "PAYMENT_REFERENCE_ALREADY_USED", "MEMBERSHIP_PLAN_CODE_EXISTS",
+    "MEMBERSHIP_PLAN_NOT_CURRENT"
+  ];
+  const notFound = ["PAYMENT_ORDER_NOT_FOUND", "MEMBERSHIP_PLAN_NOT_FOUND"];
   const badRequest = [
     "PAYMENT_ORDER_EXPIRED", "MEMBERSHIP_PLAN_DISABLED", "PAYMENT_AMOUNT_MISMATCH",
     "INVALID_CSV_QUOTES", "INVALID_CSV_ENCODING", "INVALID_CSV_HEADERS", "EMPTY_CSV",
@@ -778,16 +792,46 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/membership-plans", async (request, reply) => { try {
     requirePermission(request, "memberships:view");
-    return database()`select id::text,code,name,period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil" from membership_plans order by duration_days,effective_from desc`;
+    return database()`select id::text,code,version,name,period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil",(enabled=true and effective_from<=now() and effective_until is null) as "current" from membership_plans order by code,version desc`;
   } catch (error) { return businessError(error, reply); } });
 
   app.post("/v1/admin/membership-plans", async (request, reply) => { try {
     const actor = requirePermission(request, "membership_plans:manage");
     const body = planSchema.parse(request.body);
-    const [plan] = await database()`insert into membership_plans(code,name,period_unit,period_count,duration_days,base_amount,currency,included_trips,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${body.code},${body.name},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.maxRenewalAmount},${body.extraTripSharePercent},${body.enabled},${body.effectiveFrom ?? new Date()},${actor.id!},${actor.id!}) returning id::text,code,name`;
+    const [existing] = await database()`select id from membership_plans where code=${body.code} limit 1`;
+    if (existing) throw new Error("MEMBERSHIP_PLAN_CODE_EXISTS");
+    const [plan] = await database()`insert into membership_plans(code,version,name,period_unit,period_count,duration_days,base_amount,currency,included_trips,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${body.code},1,${body.name},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.maxRenewalAmount},${body.extraTripSharePercent},${body.enabled},${body.effectiveFrom ?? new Date()},${actor.id!},${actor.id!}) returning id::text,code,version,name`;
     if (!plan) throw new Error("MEMBERSHIP_PLAN_NOT_CREATED");
     await persistAudit(actor,"MEMBERSHIP_PLAN_CREATED","MEMBERSHIP_PLAN",plan.id,body.code);
     return reply.code(201).send(plan);
+  } catch (error) { return businessError(error, reply); } });
+
+  app.post("/v1/admin/membership-plans/:planId/versions", async (request, reply) => { try {
+    const actor = requirePermission(request, "membership_plans:manage");
+    const planId = (request.params as { planId: string }).planId;
+    const body = planVersionSchema.parse(request.body);
+    const next = await database().begin(async tx => {
+      const [previous] = await tx`select * from membership_plans where id=${planId} for update`;
+      if (!previous) throw new Error("MEMBERSHIP_PLAN_NOT_FOUND");
+      if (!previous.enabled || previous.effective_until) throw new Error("MEMBERSHIP_PLAN_NOT_CURRENT");
+      const changedAt = new Date();
+      await tx`update membership_plans set enabled=false,effective_until=${changedAt},updated_by=${actor.id!},updated_at=${changedAt} where id=${planId}`;
+      const [created] = await tx`insert into membership_plans(code,version,name,period_unit,period_count,duration_days,base_amount,currency,included_trips,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${previous.code},${Number(previous.version) + 1},${body.name},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.maxRenewalAmount},${body.extraTripSharePercent},true,${changedAt},${actor.id!},${actor.id!}) returning id::text,code,version,name`;
+      return created;
+    });
+    if (!next) throw new Error("MEMBERSHIP_PLAN_NOT_CREATED");
+    await persistAudit(actor,"MEMBERSHIP_PLAN_VERSION_CREATED","MEMBERSHIP_PLAN",next.id,`${next.code} v${next.version}; reemplaza ${planId}`);
+    return reply.code(201).send(next);
+  } catch (error) { return businessError(error, reply); } });
+
+  app.post("/v1/admin/membership-plans/:planId/deactivate", async (request, reply) => { try {
+    const actor = requirePermission(request, "membership_plans:manage");
+    const planId = (request.params as { planId: string }).planId;
+    const reason = z.object({ reason: z.string().trim().min(5).max(500) }).parse(request.body).reason;
+    const [plan] = await database()`update membership_plans set enabled=false,effective_until=coalesce(effective_until,now()),updated_by=${actor.id!},updated_at=now() where id=${planId} and enabled=true and effective_until is null returning id::text,code,version`;
+    if (!plan) throw new Error("MEMBERSHIP_PLAN_NOT_CURRENT");
+    await persistAudit(actor,"MEMBERSHIP_PLAN_DEACTIVATED","MEMBERSHIP_PLAN",plan.id,`${plan.code} v${plan.version}: ${reason}`);
+    return plan;
   } catch (error) { return businessError(error, reply); } });
 
   app.get("/v1/admin/memberships", async (request, reply) => { try {
@@ -843,6 +887,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         return adjustment;
       });
     } else {
+      requirePermission(request,"payments:courtesy_grant");
       const input={planId:body.planId,intendedMethod:undefined,idempotencyKey:`courtesy-${driverId}-${Date.now()}`};
       const order=await createPaymentOrder(driverId,input);
       result=await processMembershipPayment(String(order.id),actor,{method:"COURTESY",receiverScope:"NOT_APPLICABLE",verificationChannel:"ADMIN_COURTESY",idempotencyKey:`courtesy-payment-${order.id}`});

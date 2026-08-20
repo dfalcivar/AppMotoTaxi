@@ -1,0 +1,44 @@
+.membership-admin:not(.collector-portal) .table-wrap {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.membership-admin:not(.collector-portal) .table-wrap table {
+  min-width: 1080px;
+}
+
+.membership-admin:not(.collector-portal) .table-wrap th,
+.membership-admin:not(.collector-portal) .table-wrap td {
+  min-width: 110px;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.membership-admin:not(.collector-portal) .table-wrap th:first-child,
+.membership-admin:not(.collector-portal) .table-wrap td:first-child {
+  min-width: 180px;
+}
+
+.membership-admin:not(.collector-portal) .table-wrap th:last-child,
+.membership-admin:not(.collector-portal) .table-wrap td:last-child {
+  min-width: 210px;
+}
+
+.plan-actions {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #d7e5e9;
+}
+
+.plan-history {
+  margin-top: 22px;
+  border-top: 1px solid #d7e5e9;
+  padding-top: 16px;
+}
+
+.plan-history summary {
+  cursor: pointer;
+  color: #075f70;
+  font-weight: 800;
+  margin-bottom: 12px;
+}

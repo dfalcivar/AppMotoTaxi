@@ -9208,16 +9208,31 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> _openExternalNavigation(
       String status, List<DriverNavigationStop> stops) async {
-    if (stops.isEmpty) return;
-    final destination = stops.last;
+    final validStops = stops.where((stop) {
+      return stop.latitude.isFinite &&
+          stop.longitude.isFinite &&
+          stop.latitude >= -90 &&
+          stop.latitude <= 90 &&
+          stop.longitude >= -180 &&
+          stop.longitude <= 180;
+    }).toList(growable: false);
+    if (validStops.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'No se encontraron coordenadas válidas para iniciar la navegación.')));
+      }
+      return;
+    }
+    final destination = validStops.last;
     final parameters = <String, String>{
       'api': '1',
       'destination': '${destination.latitude},${destination.longitude}',
       'travelmode': 'driving',
       'dir_action': 'navigate',
-      if (stops.length > 1)
-        'waypoints': stops
-            .sublist(0, stops.length - 1)
+      if (validStops.length > 1)
+        'waypoints': validStops
+            .sublist(0, validStops.length - 1)
             .map((stop) => '${stop.latitude},${stop.longitude}')
             .join('|'),
     };
@@ -9226,13 +9241,37 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       'daddr': '${destination.latitude},${destination.longitude}',
       'dirflg': 'd',
     });
-    final target = defaultTargetPlatform == TargetPlatform.iOS
-        ? appleUri
-        : googleUri;
-    final opened = await launchUrl(target, mode: LaunchMode.externalApplication);
+    var opened = false;
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          validStops.length == 1) {
+        // Abre directamente Google Maps y evita el navegador intermedio.
+        final nativeGoogleUri = Uri(
+          scheme: 'google.navigation',
+          queryParameters: <String, String>{
+            'q': '${destination.latitude},${destination.longitude}',
+            'mode': 'd',
+          },
+        );
+        opened = await launchUrl(nativeGoogleUri,
+            mode: LaunchMode.externalNonBrowserApplication);
+      }
+      if (!opened) {
+        final target = defaultTargetPlatform == TargetPlatform.iOS
+            ? appleUri
+            : googleUri;
+        opened = await launchUrl(target, mode: LaunchMode.externalApplication);
+      }
+    } on PlatformException catch (error) {
+      debugPrint('EXTERNAL_NAVIGATION_ERROR status=$status code=${error.code}');
+    } catch (error) {
+      debugPrint(
+          'EXTERNAL_NAVIGATION_ERROR status=$status type=${error.runtimeType}');
+    }
     if (!opened && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('No se encontró una aplicación de mapas disponible.')));
+          content: Text(
+              'No se pudo abrir Google Maps. Verifica que esté instalado y actualizado.')));
     }
   }
 
@@ -9938,54 +9977,89 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   fontWeight: FontWeight.w800)),
           ...plans.map((raw) {
             final plan = Map<String, dynamic>.from(raw as Map);
+            Future<void> createRenewalOrder() async {
+              try {
+                final order = await api.createMembershipPaymentOrder(
+                    widget.s.token, plan['id'].toString(), 'BANK_TRANSFER');
+                if (!sheetContext.mounted) return;
+                await showDialog<void>(
+                  context: sheetContext,
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text('Orden de renovación creada'),
+                    content: Text(
+                        'Código: ${order['shortCode']}\nTotal: \$${(order['totalAmount'] as num).toStringAsFixed(2)}\n\nPuedes presentar este código en un punto autorizado o adjuntar tu transferencia desde el portal de pago.'),
+                    actions: [
+                      TextButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(dialogContext);
+                          await _submitMembershipTransferProof(sheetContext,
+                              Map<String, dynamic>.from(order as Map));
+                        },
+                        icon: const Icon(Icons.upload_file_outlined),
+                        label: const Text('Adjuntar transferencia'),
+                      ),
+                      TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text('Cerrar')),
+                      FilledButton(
+                        onPressed: () => launchUrl(
+                            Uri.parse(order['qrUrl'].toString()),
+                            mode: LaunchMode.externalApplication),
+                        child: const Text('Abrir orden'),
+                      ),
+                    ],
+                  ),
+                );
+              } catch (error) {
+                if (sheetContext.mounted) {
+                  ScaffoldMessenger.of(sheetContext).showSnackBar(
+                      SnackBar(content: Text(error.toString())));
+                }
+              }
+            }
+
+            final planName = plan['name']?.toString() ?? 'Plan';
+            final planDetails =
+                '${plan['durationDays']} días · ${plan['includedTrips']} viajes incluidos';
+            final price = '\$${(plan['amount'] as num).toStringAsFixed(2)}';
             return Card(
-              child: ListTile(
-                title: Text(plan['name']?.toString() ?? 'Plan'),
-                subtitle: Text('${plan['durationDays']} días · ${plan['includedTrips']} viajes incluidos'),
-                trailing: FilledButton(
-                  onPressed: () async {
-                    try {
-                      final order = await api.createMembershipPaymentOrder(
-                          widget.s.token, plan['id'].toString(), 'BANK_TRANSFER');
-                      if (!sheetContext.mounted) return;
-                      await showDialog<void>(
-                        context: sheetContext,
-                        builder: (dialogContext) => AlertDialog(
-                          title: const Text('Orden de renovación creada'),
-                          content: Text(
-                              'Código: ${order['shortCode']}\nTotal: \$${(order['totalAmount'] as num).toStringAsFixed(2)}\n\nPuedes presentar este código en un punto autorizado o adjuntar tu transferencia desde el portal de pago.'),
-                          actions: [
-                            TextButton.icon(
-                              onPressed: () async {
-                                Navigator.pop(dialogContext);
-                                await _submitMembershipTransferProof(
-                                    sheetContext,
-                                    Map<String, dynamic>.from(order as Map));
-                              },
-                              icon: const Icon(Icons.upload_file_outlined),
-                              label: const Text('Adjuntar transferencia'),
-                            ),
-                            TextButton(
-                                onPressed: () => Navigator.pop(dialogContext),
-                                child: const Text('Cerrar')),
-                            FilledButton(
-                              onPressed: () => launchUrl(
-                                  Uri.parse(order['qrUrl'].toString()),
-                                  mode: LaunchMode.externalApplication),
-                              child: const Text('Abrir orden'),
-                            ),
-                          ],
-                        ),
-                      );
-                    } catch (error) {
-                      if (sheetContext.mounted) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                            SnackBar(content: Text(error.toString())));
-                      }
-                    }
-                  },
-                  child: Text('\$${(plan['amount'] as num).toStringAsFixed(2)}'),
-                ),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final description = Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(planName,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 3),
+                      Text(planDetails,
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  );
+                  final action = FilledButton(
+                    onPressed: createRenewalOrder,
+                    child: Text(price),
+                  );
+                  if (constraints.maxWidth < 340) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        description,
+                        const SizedBox(height: 12),
+                        action,
+                      ],
+                    );
+                  }
+                  return Row(children: [
+                    Expanded(child: description),
+                    const SizedBox(width: 12),
+                    action,
+                  ]);
+                }),
               ),
             );
           }),
