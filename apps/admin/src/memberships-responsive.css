@@ -86,6 +86,12 @@
 .danger-button:disabled { opacity: .45; }
 .danger-text { color: #a63e32; }
 .navigation-setting small { min-height: 36px; color: #647b82; font-weight: 500; line-height: 1.35; }
+.collector-order-results { display: grid; gap: 8px; margin: 12px 0; }
+.collector-order-results button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 12px 14px; border: 1px solid #d5e5e9; border-radius: 12px; background: #f8fbfc; color: #17343c; text-align: left; cursor: pointer; }
+.collector-order-results button:hover { border-color: #0782a0; background: #eef9fc; }
+.collector-order-results span { display: grid; gap: 3px; }
+.collector-order-results span:last-child { text-align: right; }
+.collector-order-results small { color: #667d84; }
 
 @media(max-width:620px) {
   .membership-modal-backdrop { place-items: end center; padding: max(10px,env(safe-area-inset-top)) 0 0; }

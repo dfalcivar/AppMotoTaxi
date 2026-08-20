@@ -21,6 +21,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import 'affiliate_banners.dart';
 import 'chat_sheet.dart';
@@ -9948,12 +9949,101 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     return submitted;
   }
 
+  Future<void> _showMembershipPaymentOrder(
+      BuildContext hostContext, Map<String, dynamic> order) async {
+    final status = order['status']?.toString() ?? 'PENDING';
+    final qrUrl = order['qrUrl']?.toString();
+    final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
+    final expiresAt =
+        DateTime.tryParse(order['expiresAt']?.toString() ?? '')?.toLocal();
+    await showDialog<void>(
+      context: hostContext,
+      builder: (dialogContext) => AlertDialog(
+        icon: Image.asset('assets/images/costa-go-emblem.png',
+            width: 42, height: 42),
+        title: Text(status == 'PENDING_VERIFICATION'
+            ? 'Pago pendiente de verificación'
+            : 'QR de membresía'),
+        content: SingleChildScrollView(
+          child: SizedBox(
+            width: 300,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              if (status == 'PENDING' && qrUrl != null && qrUrl.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                        color:
+                            Theme.of(dialogContext).colorScheme.outlineVariant),
+                  ),
+                  child: QrImageView(
+                    data: qrUrl,
+                    version: QrVersions.auto,
+                    size: 220,
+                    backgroundColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                    'Presenta este QR en un punto de recaudación autorizado.',
+                    textAlign: TextAlign.center),
+              ] else
+                const Icon(Icons.hourglass_top_rounded, size: 58),
+              const SizedBox(height: 12),
+              Text('Código ${order['shortCode']}',
+                  style: Theme.of(dialogContext)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              Text('Total: \$${amount.toStringAsFixed(2)}',
+                  style: Theme.of(dialogContext)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              if (expiresAt != null)
+                Text(
+                    'Válido hasta ${MaterialLocalizations.of(dialogContext).formatFullDate(expiresAt)} · ${TimeOfDay.fromDateTime(expiresAt).format(dialogContext)}',
+                    textAlign: TextAlign.center),
+              if (status == 'PENDING_VERIFICATION')
+                const Padding(
+                  padding: EdgeInsets.only(top: 10),
+                  child: Text(
+                      'Tu comprobante ya fue enviado. No generes otra orden mientras se realiza la revisión.',
+                      textAlign: TextAlign.center),
+                ),
+            ]),
+          ),
+        ),
+        actions: [
+          if (status == 'PENDING')
+            TextButton.icon(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await _submitMembershipTransferProof(hostContext, order);
+              },
+              icon: const Icon(Icons.upload_file_outlined),
+              label: const Text('Adjuntar transferencia'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showMembershipDetails() async {
     final data = membershipData;
     if (data == null || !mounted) return;
-    final membership = Map<String, dynamic>.from(
-        data['membership'] as Map? ?? const {});
+    final membership =
+        Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final plans = List<dynamic>.from(data['plans'] ?? const []);
+    final pendingOrder = data['pendingOrder'] is Map
+        ? Map<String, dynamic>.from(data['pendingOrder'] as Map)
+        : null;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -9961,112 +10051,116 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       showDragHandle: true,
       builder: (sheetContext) => FractionallySizedBox(
         heightFactor: .78,
-        child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 28), children: [
-          Text('Membresía Costa-Go',
-              style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w900)),
-          const SizedBox(height: 8),
-          Text(_membershipStatusLabel(membership['status']?.toString() ?? 'PENDING')),
-          if (membership['completedTrips'] != null)
-            Text('Viajes del ciclo: ${membership['completedTrips']}'),
-          if (membership['estimatedNextRenewalAmount'] != null)
-            Text('Renovación estimada: \$${(membership['estimatedNextRenewalAmount'] as num).toStringAsFixed(2)}'),
-          const SizedBox(height: 18),
-          Text('Planes disponibles',
-              style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800)),
-          ...plans.map((raw) {
-            final plan = Map<String, dynamic>.from(raw as Map);
-            Future<void> createRenewalOrder() async {
-              try {
-                final order = await api.createMembershipPaymentOrder(
-                    widget.s.token, plan['id'].toString(), 'BANK_TRANSFER');
-                if (!sheetContext.mounted) return;
-                await showDialog<void>(
-                  context: sheetContext,
-                  builder: (dialogContext) => AlertDialog(
-                    title: const Text('Orden de renovación creada'),
-                    content: Text(
-                        'Código: ${order['shortCode']}\nTotal: \$${(order['totalAmount'] as num).toStringAsFixed(2)}\n\nPuedes presentar este código en un punto autorizado o adjuntar tu transferencia desde el portal de pago.'),
-                    actions: [
-                      TextButton.icon(
-                        onPressed: () async {
-                          Navigator.pop(dialogContext);
-                          await _submitMembershipTransferProof(sheetContext,
-                              Map<String, dynamic>.from(order as Map));
-                        },
-                        icon: const Icon(Icons.upload_file_outlined),
-                        label: const Text('Adjuntar transferencia'),
-                      ),
-                      TextButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          child: const Text('Cerrar')),
-                      FilledButton(
-                        onPressed: () => launchUrl(
-                            Uri.parse(order['qrUrl'].toString()),
-                            mode: LaunchMode.externalApplication),
-                        child: const Text('Abrir orden'),
-                      ),
-                    ],
+        child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+            children: [
+              Text('Membresía Costa-Go',
+                  style: Theme.of(sheetContext)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 8),
+              Text(_membershipStatusLabel(
+                  membership['status']?.toString() ?? 'PENDING')),
+              if (membership['completedTrips'] != null)
+                Text('Viajes del ciclo: ${membership['completedTrips']}'),
+              if (membership['estimatedNextRenewalAmount'] != null)
+                Text(
+                    'Renovación estimada: \$${(membership['estimatedNextRenewalAmount'] as num).toStringAsFixed(2)}'),
+              const SizedBox(height: 18),
+              if (pendingOrder != null) ...[
+                Card(
+                  color: Theme.of(sheetContext).colorScheme.primaryContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.qr_code_2_rounded),
+                    title: Text(pendingOrder['status'] == 'PENDING_VERIFICATION'
+                        ? 'Pago en revisión'
+                        : 'Orden de pago vigente'),
+                    subtitle: Text(
+                        'Código ${pendingOrder['shortCode']} · vence ${DateTime.tryParse(pendingOrder['expiresAt']?.toString() ?? '')?.toLocal().toString().substring(0, 16) ?? 'próximamente'}'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () =>
+                        _showMembershipPaymentOrder(sheetContext, pendingOrder),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              Text('Planes disponibles',
+                  style: Theme.of(sheetContext)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              ...plans.map((raw) {
+                final plan = Map<String, dynamic>.from(raw as Map);
+                Future<void> createRenewalOrder() async {
+                  try {
+                    final order = await api.createMembershipPaymentOrder(
+                        widget.s.token, plan['id'].toString(), 'CASH');
+                    if (!sheetContext.mounted) return;
+                    await _showMembershipPaymentOrder(
+                        sheetContext, Map<String, dynamic>.from(order as Map));
+                    await refreshMembership(force: true);
+                  } catch (error) {
+                    if (sheetContext.mounted) {
+                      ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          SnackBar(content: Text(error.toString())));
+                    }
+                  }
+                }
+
+                final planName = plan['name']?.toString() ?? 'Plan';
+                final planDetails =
+                    '${plan['durationDays']} días · ${plan['includedTrips']} viajes incluidos';
+                final price = '\$${(plan['amount'] as num).toStringAsFixed(2)}';
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: LayoutBuilder(builder: (context, constraints) {
+                      final description = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(planName,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 3),
+                          Text(planDetails,
+                              style: Theme.of(context).textTheme.bodySmall),
+                        ],
+                      );
+                      final action = FilledButton(
+                        onPressed: pendingOrder == null
+                            ? createRenewalOrder
+                            : () => _showMembershipPaymentOrder(
+                                sheetContext, pendingOrder),
+                        child: Text(
+                            pendingOrder == null ? price : 'Ver orden vigente'),
+                      );
+                      if (constraints.maxWidth < 340) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            description,
+                            const SizedBox(height: 12),
+                            action,
+                          ],
+                        );
+                      }
+                      return Row(children: [
+                        Expanded(child: description),
+                        const SizedBox(width: 12),
+                        action,
+                      ]);
+                    }),
                   ),
                 );
-              } catch (error) {
-                if (sheetContext.mounted) {
-                  ScaffoldMessenger.of(sheetContext).showSnackBar(
-                      SnackBar(content: Text(error.toString())));
-                }
-              }
-            }
-
-            final planName = plan['name']?.toString() ?? 'Plan';
-            final planDetails =
-                '${plan['durationDays']} días · ${plan['includedTrips']} viajes incluidos';
-            final price = '\$${(plan['amount'] as num).toStringAsFixed(2)}';
-            return Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: LayoutBuilder(builder: (context, constraints) {
-                  final description = Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(planName,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 3),
-                      Text(planDetails,
-                          style: Theme.of(context).textTheme.bodySmall),
-                    ],
-                  );
-                  final action = FilledButton(
-                    onPressed: createRenewalOrder,
-                    child: Text(price),
-                  );
-                  if (constraints.maxWidth < 340) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        description,
-                        const SizedBox(height: 12),
-                        action,
-                      ],
-                    );
-                  }
-                  return Row(children: [
-                    Expanded(child: description),
-                    const SizedBox(width: 12),
-                    action,
-                  ]);
-                }),
-              ),
-            );
-          }),
-          const SizedBox(height: 12),
-          const Text(
-              'Si la membresía vence, tu cuenta, historial, documentos, perfil y soporte permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'),
-        ]),
+              }),
+              const SizedBox(height: 12),
+              const Text(
+                  'Si la membresía vence, tu cuenta, historial, documentos, perfil y soporte permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'),
+            ]),
       ),
     );
     unawaited(refreshMembership(force: true));
