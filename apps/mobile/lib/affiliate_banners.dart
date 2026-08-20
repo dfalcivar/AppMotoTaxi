@@ -29,6 +29,14 @@ class AffiliateBanners extends StatefulWidget {
 }
 
 class _AffiliateBannersState extends State<AffiliateBanners> {
+  static const fallbackBanner = <String, dynamic>{
+    'id': 'costa-go-default-advertising',
+    'title': 'Tu publicidad aquí',
+    'placement': 'PASSENGER_SEARCHING_DRIVER',
+    'actionType': 'NONE',
+    'isFallback': true,
+    'weight': 1,
+  };
   final controller = PageController();
   List<Map<String, dynamic>> banners = [];
   Timer? rotation;
@@ -64,14 +72,16 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
     try {
       final result = await widget.load();
       if (!mounted) return;
-      final source = result
-          .map((item) => Map<String, dynamic>.from(item as Map))
-          .toList();
+      final source =
+          result.map((item) => Map<String, dynamic>.from(item as Map)).toList();
       final weighted = <Map<String, dynamic>>[];
-      final maximumWeight = source.length <= 1 ? 1 : source.fold<int>(1, (value, banner) {
-        final weight = ((banner['weight'] as num?)?.toInt() ?? 1).clamp(1, 5);
-        return weight > value ? weight : value;
-      });
+      final maximumWeight = source.length <= 1
+          ? 1
+          : source.fold<int>(1, (value, banner) {
+              final weight =
+                  ((banner['weight'] as num?)?.toInt() ?? 1).clamp(1, 5);
+              return weight > value ? weight : value;
+            });
       for (var round = 0; round < maximumWeight; round++) {
         for (final banner in source) {
           final weight = ((banner['weight'] as num?)?.toInt() ?? 1).clamp(1, 5);
@@ -79,14 +89,19 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
         }
       }
       setState(() {
-        banners = weighted;
+        banners = weighted.isEmpty
+            ? [Map<String, dynamic>.from(fallbackBanner)]
+            : weighted;
         if (page >= banners.length) page = 0;
       });
-      reportAvailability(banners.isNotEmpty);
+      reportAvailability(source.isNotEmpty);
       reportImpression(page);
     } catch (_) {
       // La publicidad no bloquea el flujo principal si la red falla.
-      reportAvailability(banners.isNotEmpty);
+      if (mounted && banners.isEmpty) {
+        setState(() => banners = [Map<String, dynamic>.from(fallbackBanner)]);
+      }
+      reportAvailability(banners.any((banner) => banner['isFallback'] != true));
     }
   }
 
@@ -96,7 +111,9 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
     impressionDelay = Timer(const Duration(seconds: 1), () {
       if (!mounted || page != index || index >= banners.length) return;
       final banner = banners[index];
-      final key = '${banner['id']}-$index-${DateTime.now().millisecondsSinceEpoch ~/ (widget.rotationSeconds * 1000)}';
+      if (banner['isFallback'] == true) return;
+      final key =
+          '${banner['id']}-$index-${DateTime.now().millisecondsSinceEpoch ~/ (widget.rotationSeconds * 1000)}';
       if (lastImpressionKey == key) return;
       lastImpressionKey = key;
       widget.onImpression?.call(banner);
@@ -112,15 +129,18 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
     super.dispose();
   }
 
-  Widget bannerImage(Map<String, dynamic> banner,
-          {BoxFit fit = BoxFit.cover}) =>
-      Image.network(
-        widget.imageUrl(banner),
-        fit: fit,
-        semanticLabel: banner['title']?.toString(),
-        errorBuilder: (_, __, ___) =>
-            Image.asset('assets/images/advertising-placeholder.png', fit: fit),
-      );
+  Widget bannerImage(Map<String, dynamic> banner, {BoxFit fit = BoxFit.cover}) {
+    if (banner['isFallback'] == true) {
+      return Image.asset('assets/images/advertising-placeholder.png', fit: fit);
+    }
+    return Image.network(
+      widget.imageUrl(banner),
+      fit: fit,
+      semanticLabel: banner['title']?.toString(),
+      errorBuilder: (_, __, ___) =>
+          Image.asset('assets/images/advertising-placeholder.png', fit: fit),
+    );
+  }
 
   Widget expandedBanner(BuildContext context, Map<String, dynamic> banner) {
     final scheme = Theme.of(context).colorScheme;

@@ -6890,7 +6890,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                               'Destino ${leg['order']}: \$${(((leg['totalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}${leg['suggested'] == true ? ' · sugerido' : ''}')),
                       const SizedBox(height: 6),
                       Text(
-                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido de trayectos' : 'Subtotal de trayectos'}: \$${(((preview['baseFareCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
+                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido de trayectos' : 'Subtotal de trayectos'}: \$${(((preview['journeyFareCents'] as num?) ?? (preview['baseFareCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
                       if (((preview['stopSurchargeCents'] as num?) ?? 0) > 0)
                         Text(
                             'Adicional por paradas: \$${((preview['stopSurchargeCents'] as num) / 100).toStringAsFixed(2)}'),
@@ -9792,51 +9792,50 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final eligible = data['eligibility']?['eligible'] != false;
     final color = switch (status) {
       'ACTIVE' => Colors.green,
-      'EXPIRING' || 'GRACE_PERIOD' => Colors.orange,
+      'EXPIRING' ||
+      'GRACE_PERIOD' ||
+      'PAYMENT_DUE' ||
+      'SUSPENSION_PENDING_ACTIVE_TRIP' =>
+        Colors.orange,
       'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Colors.red,
-      _ => Theme.of(context).colorScheme.primary,
+      _ => Colors.orange,
     };
-    final expiresAt =
-        DateTime.tryParse(membership['expiresAt']?.toString() ?? '')?.toLocal();
-    final expiryText = expiresAt == null
-        ? 'Activa tu plan para empezar a recibir solicitudes.'
-        : 'Vigente hasta ${MaterialLocalizations.of(context).formatMediumDate(expiresAt)}';
-    return Card(
-      color: color.withValues(alpha: .10),
+    return Align(
+      alignment: Alignment.centerLeft,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(22),
         onTap: _showMembershipDetails,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(children: [
-            CircleAvatar(
-              backgroundColor: color.withValues(alpha: .18),
-              foregroundColor: color,
-              child: Icon(eligible
-                  ? Icons.verified_outlined
-                  : Icons.lock_clock_outlined),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.fromLTRB(10, 7, 12, 7),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .11),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: color.withValues(alpha: .35)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                  color: color, borderRadius: BorderRadius.circular(10)),
+              child: Icon(
+                eligible ? Icons.verified_rounded : Icons.lock_clock_rounded,
+                color: Colors.white,
+                size: 19,
+              ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Membresía Costa-Go',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w900)),
-                    Text(_membershipStatusLabel(status),
-                        style: TextStyle(
-                            color: color, fontWeight: FontWeight.w800)),
-                    Text(expiryText,
-                        style: Theme.of(context).textTheme.bodySmall),
-                    if (membership['planName'] != null)
-                      Text('Plan ${membership['planName']}',
-                          style: Theme.of(context).textTheme.bodySmall),
-                  ]),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Membresía Costa-Go · ${_membershipStatusLabel(status)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color, fontWeight: FontWeight.w900),
+              ),
             ),
-            const Icon(Icons.chevron_right),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right_rounded, color: color, size: 20),
           ]),
         ),
       ),
@@ -10123,6 +10122,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               const SizedBox(height: 8),
               Text(_membershipStatusLabel(
                   membership['status']?.toString() ?? 'PENDING')),
+              if (membership['planName'] != null)
+                Text('Plan actual: ${membership['planName']}'),
+              if (membership['startsAt'] != null)
+                Text(
+                    'Inicio: ${MaterialLocalizations.of(sheetContext).formatMediumDate(DateTime.parse(membership['startsAt'].toString()).toLocal())}'),
+              if (membership['expiresAt'] != null)
+                Text(
+                    'Vigente hasta: ${MaterialLocalizations.of(sheetContext).formatMediumDate(DateTime.parse(membership['expiresAt'].toString()).toLocal())}'),
+              if (membership['graceEndsAt'] != null)
+                Text(
+                    'Gracia hasta: ${MaterialLocalizations.of(sheetContext).formatMediumDate(DateTime.parse(membership['graceEndsAt'].toString()).toLocal())}'),
               if (membership['completedTrips'] != null)
                 Text('Viajes del ciclo: ${membership['completedTrips']}'),
               if (membership['estimatedNextRenewalAmount'] != null)

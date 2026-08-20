@@ -228,6 +228,11 @@ const bannerUpdateSchema = z.object({
   message: "INVALID_BANNER_IMAGE"
 });
 
+function normalizedBannerPlacement(value: unknown): "PASSENGER_SEARCHING_DRIVER" | "PASSENGER_WAITING_DRIVER" | "PASSENGER_TRIP_IN_PROGRESS" {
+  if (value === "PASSENGER_WAITING_DRIVER" || value === "PASSENGER_TRIP_IN_PROGRESS") return value;
+  return "PASSENGER_SEARCHING_DRIVER";
+}
+
 export function imageDimensions(image: Buffer, mime: string): { width: number; height: number } | undefined {
   if (mime === "image/png" && image.length >= 24 && image.subarray(1, 4).toString() === "PNG") {
     return { width: image.readUInt32BE(16), height: image.readUInt32BE(20) };
@@ -1411,7 +1416,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!item) return reply.code(500).send({ error: "BANNER_NOT_CREATED" });
     await persistAudit(user, "BANNER_CREATED", "AFFILIATE_BANNER", String(item.id), body.title);
     return reply.code(201).send(item);
-  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA",details:e.flatten()}); return guardError(e,reply); } });
   app.patch("/v1/admin/banners/:id", async (request, reply) => { try {
     const user = requirePermission(request, "advertising:manage");
     const body = bannerUpdateSchema.parse(request.body);
@@ -1431,6 +1436,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     }
     const startsAt = body.startsAt ?? current.starts_at;
     const endsAt = body.endsAt === "" ? null : (body.endsAt ?? current.ends_at);
+    const placement = normalizedBannerPlacement(body.placement ?? current.placement);
     if (endsAt && new Date(endsAt) <= new Date(startsAt)) return reply.code(400).send({ error: "INVALID_BANNER_DATES" });
     const [item] = await database()`
       update affiliate_banners set
@@ -1440,7 +1446,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
           (select id from advertising_plans where code=${body.planCode ?? null} and enabled=true),
           ${current.advertising_plan_id}
         ),
-        placement=${body.placement ?? current.placement},service_area_id=${body.serviceAreaId === undefined ? current.service_area_id : body.serviceAreaId},
+        placement=${placement},service_area_id=${body.serviceAreaId === undefined ? current.service_area_id : body.serviceAreaId},
         weight=${body.weight ?? current.weight},action_type=${body.actionType ?? current.action_type},
         action_value=${body.actionValue === "" ? null : (body.actionValue ?? current.action_value)},
         image_mime=${imageMime}, image_data=${image}, starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
@@ -1453,7 +1459,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
     await persistAudit(user, "BANNER_UPDATED", "AFFILIATE_BANNER", id, body.active === false ? "Banner desactivado" : "Banner actualizado");
     return item;
-  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA",details:e.flatten()}); return guardError(e,reply); } });
   app.post("/v1/admin/trips/:id/action", async (request, reply) => { try {
     const user = requirePermission(request, "trips:manage"); const body = adminTripActionSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });

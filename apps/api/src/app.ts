@@ -1483,6 +1483,7 @@ export async function buildApp() {
       paymentMethod: input.paymentMethod,
       quotedTotalCents: fare.totalCents,
       baseFareCents: fare.baseCents,
+      journeyFareCents: fare.baseCents + fare.platformCommissionCents,
       stopSurchargeCents: fare.stopSurchargeCents,
       fareIsSuggested: fare.suggested,
       fareLegs: fare.legs.map(leg => ({ order: leg.order, totalCents: leg.fareCents + leg.commissionCents, suggested: leg.suggested })),

@@ -377,7 +377,9 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
   function resetForm() { setEditingId(null); setForm(emptyForm()); }
   function edit(item: any) {
     setError(""); setSuccess(""); setEditingId(item.id);
-    setForm({ title: item.title, advertiserName:item.advertiserName??item.title, planCode:item.planCode??"BASIC", placement: item.placement, serviceAreaId:item.serviceAreaId??"", weight:item.weight??1, actionType:item.actionType??"WEB", actionValue:item.actionValue??item.targetUrl??"", targetUrl: item.targetUrl ?? "", startsAt: localDateTimeInput(item.startsAt), endsAt: item.endsAt ? localDateTimeInput(item.endsAt) : localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: item.sortOrder, active: item.active, imageBase64: "", imageMime: "" });
+    const placement=Object.hasOwn(placementLabels,item.placement)?item.placement:"PASSENGER_SEARCHING_DRIVER";
+    const planCode=item.planCode==="PREMIUM"?"PREMIUM":"BASIC";
+    setForm({ title: item.title, advertiserName:item.advertiserName??item.title, planCode, placement, serviceAreaId:item.serviceAreaId??"", weight:item.weight??1, actionType:item.actionType??"WEB", actionValue:item.actionValue??item.targetUrl??"", targetUrl: item.targetUrl ?? "", startsAt: localDateTimeInput(item.startsAt), endsAt: item.endsAt ? localDateTimeInput(item.endsAt) : localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: item.sortOrder, active: item.active, imageBase64: "", imageMime: "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function choose(file?: File) {

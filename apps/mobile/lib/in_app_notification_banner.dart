@@ -142,10 +142,39 @@ class _AnimatedBannerState extends State<_AnimatedBanner>
                     ],
                   ),
                   child: Row(children: [
-                    CircleAvatar(
-                      backgroundColor: theme.colorScheme.primaryContainer,
-                      foregroundColor: theme.colorScheme.onPrimaryContainer,
-                      child: Icon(widget.icon),
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          width: 46,
+                          height: 46,
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF003B64),
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                          child: Image.asset(
+                            'assets/images/costa-go-emblem.png',
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                        Positioned(
+                          right: -4,
+                          bottom: -4,
+                          child: Container(
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: theme.colorScheme.surface, width: 2),
+                            ),
+                            child: Icon(widget.icon,
+                                size: 12, color: theme.colorScheme.onPrimary),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(width: 12),
                     Expanded(
