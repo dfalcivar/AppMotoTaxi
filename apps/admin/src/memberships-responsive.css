@@ -42,3 +42,58 @@
   font-weight: 800;
   margin-bottom: 12px;
 }
+
+.membership-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: grid;
+  place-items: center;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: rgba(4, 30, 40, .68);
+  backdrop-filter: blur(5px);
+}
+
+.membership-modal-card {
+  width: min(720px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  display: grid;
+  gap: 18px;
+  padding: 26px;
+  border: 1px solid rgba(255,255,255,.7);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 30px 90px rgba(2, 25, 34, .34);
+}
+
+.membership-modal-card.confirmation-modal { width: min(520px, 100%); }
+.membership-modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.membership-modal-heading h2 { margin: 5px 0 0; color: #073b4c; }
+.membership-modal-card label { display: grid; gap: 7px; color: #36545e; font-size: .82rem; font-weight: 800; }
+.membership-modal-card textarea { width: 100%; resize: vertical; border: 1px solid #cadadd; border-radius: 12px; padding: 11px; color: #17343c; background: #fff; font: inherit; }
+.membership-modal-card input:focus,.membership-modal-card select:focus,.membership-modal-card textarea:focus { outline: 3px solid rgba(8,127,140,.15); border-color: #087f8c; }
+.membership-modal-card small { color: #6b7f86; font-weight: 500; }
+.plan-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.plan-form-grid .wide { grid-column: 1 / -1; }
+.plan-duration-preview { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 15px; border: 1px solid #cfe8ee; border-radius: 13px; background: #eef9fc; color: #24545f; }
+.plan-duration-preview span { color: #5a747b; font-size: .82rem; text-align: right; }
+.plan-version-note { margin: 0; padding: 13px 15px; border-radius: 13px; background: #fff7dd; color: #684f0a; }
+.membership-modal-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px; }
+.danger-button { border: 0; border-radius: 10px; padding: 11px 15px; background: #a63e32; color: #fff; font-weight: 800; cursor: pointer; }
+.danger-button:disabled { opacity: .45; }
+.danger-text { color: #a63e32; }
+.navigation-setting small { min-height: 36px; color: #647b82; font-weight: 500; line-height: 1.35; }
+
+@media(max-width:620px) {
+  .membership-modal-backdrop { place-items: end center; padding: max(10px,env(safe-area-inset-top)) 0 0; }
+  .membership-modal-card { width: 100%; max-height: calc(100dvh - max(10px,env(safe-area-inset-top))); border-radius: 24px 24px 0 0; padding: 20px 18px max(18px,env(safe-area-inset-bottom)); }
+  .plan-form-grid { grid-template-columns: 1fr; }
+  .plan-form-grid .wide { grid-column: auto; }
+  .plan-duration-preview { align-items: flex-start; flex-direction: column; }
+  .plan-duration-preview span { text-align: left; }
+  .membership-modal-actions { position: sticky; bottom: calc(-1 * max(18px,env(safe-area-inset-bottom))); display: grid; grid-template-columns: 1fr 1fr; margin: 2px -18px calc(-1 * max(18px,env(safe-area-inset-bottom))); padding: 12px 18px max(14px,env(safe-area-inset-bottom)); border-top: 1px solid #e1eaec; background: rgba(255,255,255,.97); }
+  .membership-modal-actions button { min-height: 46px; }
+}
