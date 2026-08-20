@@ -41,3 +41,10 @@ describe("matriz de permisos administrativos", () => {
     expect(permissions).not.toContain("unknown:permission");
   });
 });
+
+it("permite al rol comercial consultar banners y su segmentación territorial", () => {
+  expect(hasPermission("COMMERCIAL", "advertising:view")).toBe(true);
+  expect(hasPermission("COMMERCIAL", "service_areas:view")).toBe(true);
+  expect(hasPermission("COMMERCIAL", "service_areas:edit")).toBe(false);
+  expect(hasPermission("COMMERCIAL", "commercial:plans:manage")).toBe(false);
+});

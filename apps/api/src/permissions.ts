@@ -133,7 +133,7 @@ const commercialPermissions: Permission[] = [
   "commercial:advertisers:view", "commercial:advertisers:manage",
   "commercial:orders:view", "commercial:orders:manage",
   "commercial:payments:view", "commercial:campaigns:view",
-  "commercial:campaigns:manage", "advertising:view"
+  "commercial:campaigns:manage", "advertising:view", "service_areas:view"
 ];
 
 export const rolePermissions: Record<AdminRole, readonly Permission[]> = {
