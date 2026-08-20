@@ -17,6 +17,7 @@ import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
 import { captureOperationalError } from "./observability.js";
 import { sendTransactionalEmail } from "./email.js";
 import { registerCollectionAdminRoutes } from "./collection-admin.js";
+import { advertisingSchedulerTick, registerCommercialRoutes } from "./commercial.js";
 import {
   driverMembershipEligibility,
   membershipSchedulerTick,
@@ -405,11 +406,17 @@ export async function buildApp() {
   await registerSupportRoutes(app);
   await registerMembershipRoutes(app);
   await registerCollectionAdminRoutes(app);
+  await registerCommercialRoutes(app);
   const membershipScheduler = setInterval(() => {
     void membershipSchedulerTick().catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
   }, 60_000);
   membershipScheduler.unref();
   app.addHook("onClose", async () => clearInterval(membershipScheduler));
+  const advertisingScheduler = setInterval(() => {
+    void advertisingSchedulerTick().catch(error => app.log.error({ err: error }, "advertising_scheduler_failed"));
+  }, 60_000);
+  advertisingScheduler.unref();
+  app.addHook("onClose", async () => clearInterval(advertisingScheduler));
 
   app.addHook("onError", async (request, reply, error) => {
     if (reply.statusCode >= 500) {

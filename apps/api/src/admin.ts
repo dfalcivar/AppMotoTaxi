@@ -184,7 +184,7 @@ const adminUserCreateSchema = z.object({
   email: z.string().email(),
   phone: z.string().trim().min(8).max(24),
   password: strongPasswordSchema,
-  role: z.enum(["SUPER_ADMIN", "ADMIN_OPERACIONES", "SOPORTE", "ANALISTA_COOPERATIVA", "COLLECTOR", "FINANCE"]),
+  role: z.enum(["SUPER_ADMIN", "ADMIN_OPERACIONES", "SOPORTE", "ANALISTA_COOPERATIVA", "COLLECTOR", "FINANCE", "COMMERCIAL"]),
   cooperativeId: z.string().uuid().nullable().optional()
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
   message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
@@ -319,7 +319,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         where lower(email) = lower(${parsed.data.email})
           and password_hash = crypt(${parsed.data.password}, password_hash)
           and status = 'ACTIVE'
-          and role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE')
+          and role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE', 'COMMERCIAL')
       `;
       const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole; cooperativeId?: string } | undefined;
       if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
@@ -369,7 +369,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       left join cooperatives c on c.id=u.cooperative_id
       left join admin_permission_overrides permission on permission.user_id=u.id
       where u.deleted_at is null
-        and u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE')
+        and u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE', 'COMMERCIAL')
       group by u.id, c.name
       order by u.created_at
     `;

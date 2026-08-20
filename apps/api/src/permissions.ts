@@ -6,7 +6,8 @@ export const adminRoles = [
   "SOPORTE",
   "ANALISTA_COOPERATIVA",
   "COLLECTOR",
-  "FINANCE"
+  "FINANCE",
+  "COMMERCIAL"
 ] as const;
 
 export type AdminRole = typeof adminRoles[number];
@@ -43,6 +44,18 @@ export const allPermissions = [
   "service_areas:archive",
   "advertising:view",
   "advertising:manage",
+  "commercial:dashboard",
+  "commercial:leads:view",
+  "commercial:leads:manage",
+  "commercial:advertisers:view",
+  "commercial:advertisers:manage",
+  "commercial:orders:view",
+  "commercial:orders:manage",
+  "commercial:payments:view",
+  "commercial:payments:review",
+  "commercial:campaigns:view",
+  "commercial:campaigns:manage",
+  "commercial:plans:manage",
   "settings:view",
   "settings:manage",
   "users:manage",
@@ -113,6 +126,14 @@ const financePermissions: Permission[] = [
   "reports:export"
 ];
 
+const commercialPermissions: Permission[] = [
+  "commercial:dashboard", "commercial:leads:view", "commercial:leads:manage",
+  "commercial:advertisers:view", "commercial:advertisers:manage",
+  "commercial:orders:view", "commercial:orders:manage",
+  "commercial:payments:view", "commercial:campaigns:view",
+  "commercial:campaigns:manage", "advertising:view"
+];
+
 export const rolePermissions: Record<AdminRole, readonly Permission[]> = {
   // Roles legados: se conservan para que las cuentas actuales no pierdan acceso.
   ADMIN: allPermissions,
@@ -122,7 +143,8 @@ export const rolePermissions: Record<AdminRole, readonly Permission[]> = {
   SOPORTE: supportPermissions,
   ANALISTA_COOPERATIVA: cooperativeAnalystPermissions,
   COLLECTOR: collectorPermissions,
-  FINANCE: financePermissions
+  FINANCE: financePermissions,
+  COMMERCIAL: commercialPermissions
 };
 
 const knownPermissions = new Set<string>(allPermissions);
