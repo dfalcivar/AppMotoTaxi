@@ -356,9 +356,9 @@ async function findIntersection(query: string, focus?: FocusPoint): Promise<Loca
   };
 }
 
-export async function searchLocations(query: string, focus?: FocusPoint, bounds?: SearchBounds): Promise<LocationResult[]> {
+export async function searchLocations(query: string, focus?: FocusPoint, bounds?: SearchBounds, allowGoogle = true): Promise<LocationResult[]> {
   const providerErrors: string[] = [];
-  if (googleMapsKey()) {
+  if (allowGoogle && googleMapsKey()) {
     try {
       const places = await searchGooglePlaces(query, focus, bounds);
       if (places.length) return places;
@@ -402,13 +402,14 @@ export async function searchLocations(query: string, focus?: FocusPoint, bounds?
 export async function searchLocationsInArea(
   query: string,
   focus: FocusPoint | undefined,
-  bounds: SearchBounds
+  bounds: SearchBounds,
+  allowGoogle = true
 ): Promise<LocationResult[]> {
   const areaLabel = bounds.label?.split(" - ")[0]?.trim();
   const contextualQuery = areaLabel
     ? `${query}, ${areaLabel}`
     : query;
-  return searchLocations(contextualQuery, focus);
+  return searchLocations(contextualQuery, focus, undefined, allowGoogle);
 }
 
 function reverseLabel(item: NominatimReverseItem): string {

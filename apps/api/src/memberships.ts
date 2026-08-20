@@ -1,0 +1,982 @@
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
+import { database } from "./database.js";
+import { persistAudit, requirePermission, userFrom, type SessionUser } from "./admin.js";
+import { legacyPhoneAliases, normalizeEmail, normalizePhone } from "./auth-security.js";
+import { sendTransactionalEmail } from "./email.js";
+import { sendPush } from "./push.js";
+
+const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
+const membershipStatusSchema = z.enum([
+  "PENDING", "ACTIVE", "EXPIRING", "GRACE_PERIOD", "PAYMENT_DUE",
+  "SUSPENSION_PENDING_ACTIVE_TRIP", "SUSPENDED_NON_PAYMENT", "SUSPENDED", "CLOSED"
+]);
+const navigationProviderSchema = z.enum(["MAP_ONLY", "EXTERNAL_MAPS", "NAVIGATION_SDK"]);
+const navigationStartModeSchema = z.enum(["MANUAL", "AUTO"]);
+
+const platformSettingsSchema = z.object({
+  navigationPickupProvider: navigationProviderSchema,
+  navigationDestinationProvider: navigationProviderSchema,
+  navigationPickupStartMode: navigationStartModeSchema,
+  navigationDestinationStartMode: navigationStartModeSchema,
+  mobileCloudMapStyleEnabled: z.boolean(),
+  textSearchMinimumCharacters: z.number().int().min(2).max(10),
+  textSearchDebounceMilliseconds: z.number().int().min(200).max(1500),
+  textSearchFreeCapReference: z.number().int().min(0).max(10_000_000),
+  textSearchPricePerThousandUsd: z.number().min(0).max(10000),
+  textSearchMonthlyBudgetUsd: z.number().min(0).max(1_000_000),
+  textSearchWarningPercent: z.number().int().min(1).max(99),
+  textSearchCriticalPercent: z.number().int().min(2).max(100),
+  textSearchHardLimitEnabled: z.boolean(),
+  navigationFreeCapReference: z.number().int().min(0).max(10_000_000),
+  navigationWarningPercent: z.number().int().min(1).max(99),
+  navigationCriticalPercent: z.number().int().min(2).max(100),
+  driverMembershipsEnabled: z.boolean(),
+  membershipEnforcementEnabled: z.boolean(),
+  membershipUsageBillingEnabled: z.boolean(),
+  membershipSuspensionSchedulerEnabled: z.boolean(),
+  collectorPortalEnabled: z.boolean(),
+  bankTransferEnabled: z.boolean(),
+  cashCollectionEnabled: z.boolean(),
+  deunaCollectionEnabled: z.boolean(),
+  collectionPointSettlementsEnabled: z.boolean(),
+  collectionPointCommissionsEnabled: z.boolean(),
+  collectionPointLimitsEnabled: z.boolean(),
+  financeRoleEnabled: z.boolean(),
+  membershipExpiryNoticeDays: z.number().int().min(1).max(90),
+  membershipGraceDays: z.number().int().min(0).max(90),
+  membershipGraceAllowsTrips: z.boolean(),
+  membershipSuspensionLocalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  membershipTimezone: z.string().min(3).max(80),
+  newDriverGraceEnabled: z.boolean(),
+  newDriverGraceDurationHours: z.number().int().min(0).max(24 * 90),
+  newDriverGraceAllowsTrips: z.boolean(),
+  newDriverGraceMaxGrants: z.number().int().min(0).max(20),
+  membershipExtraTripSharePercent: z.number().min(0).max(100),
+  membershipQrDurationHours: z.number().int().min(1).max(168),
+  advertisingRotationSeconds: z.number().int().min(3).max(60),
+  advertisingMaxActivePerZone: z.number().int().min(1).max(100)
+}).refine(value => value.textSearchCriticalPercent > value.textSearchWarningPercent, {
+  path: ["textSearchCriticalPercent"], message: "CRITICAL_THRESHOLD_MUST_EXCEED_WARNING"
+}).refine(value => value.navigationCriticalPercent > value.navigationWarningPercent, {
+  path: ["navigationCriticalPercent"], message: "CRITICAL_THRESHOLD_MUST_EXCEED_WARNING"
+});
+
+const planSchema = z.object({
+  code: z.string().trim().min(3).max(40).regex(/^[A-Z0-9_]+$/),
+  name: z.string().trim().min(3).max(100),
+  periodUnit: z.enum(["DAY", "MONTH", "QUARTER", "YEAR"]),
+  periodCount: z.number().int().min(1).max(24),
+  durationDays: z.number().int().min(1).max(730),
+  baseAmount: z.number().min(0).max(10000),
+  currency: z.string().length(3).default("USD"),
+  includedTrips: z.number().int().min(0).max(1_000_000),
+  maxRenewalAmount: z.number().min(0).max(100000),
+  extraTripSharePercent: z.number().min(0).max(100),
+  enabled: z.boolean().default(true),
+  effectiveFrom: z.string().datetime({ offset: true }).optional()
+}).refine(value => value.maxRenewalAmount >= value.baseAmount, {
+  path: ["maxRenewalAmount"], message: "MAXIMUM_BELOW_BASE"
+});
+
+const gracePolicySchema = z.object({
+  name: z.string().trim().min(3).max(120),
+  reason: z.string().trim().min(5).max(500),
+  scope: z.enum(["ALL", "COOPERATIVE", "DRIVER"]),
+  cooperativeId: z.string().uuid().nullable().optional(),
+  driverId: z.string().uuid().nullable().optional(),
+  graceDays: z.number().int().min(0).max(90),
+  allowsTrips: z.boolean(),
+  campaignKind: z.enum(["RENEWAL", "NEW_DRIVER_ONBOARDING"]),
+  startsAt: z.string().datetime({ offset: true }),
+  endsAt: z.string().datetime({ offset: true }),
+  expiryWindowStart: z.string().date().nullable().optional(),
+  expiryWindowEnd: z.string().date().nullable().optional(),
+  priority: z.number().int().min(-1000).max(1000).default(0),
+  status: z.enum(["DRAFT", "ACTIVE", "PAUSED", "FINISHED"]).default("DRAFT")
+}).superRefine((value, context) => {
+  if (new Date(value.endsAt) <= new Date(value.startsAt)) context.addIssue({ code: "custom", path: ["endsAt"], message: "INVALID_CAMPAIGN_DATES" });
+  if (value.scope === "COOPERATIVE" && !value.cooperativeId) context.addIssue({ code: "custom", path: ["cooperativeId"], message: "COOPERATIVE_REQUIRED" });
+  if (value.scope === "DRIVER" && !value.driverId) context.addIssue({ code: "custom", path: ["driverId"], message: "DRIVER_REQUIRED" });
+});
+
+const paymentOrderSchema = z.object({
+  planId: z.string().uuid(),
+  intendedMethod: z.enum(["CASH", "DEUNA", "BANK_TRANSFER"]).optional(),
+  idempotencyKey: z.string().trim().min(8).max(120)
+});
+const paymentConfirmSchema = z.object({
+  method: z.enum(["CASH", "DEUNA", "BANK_TRANSFER"]),
+  collectionPointId: z.string().uuid(),
+  reference: z.string().trim().min(3).max(120).optional(),
+  idempotencyKey: z.string().trim().min(8).max(120)
+});
+const transferProofSchema = z.object({
+  bankName: z.string().trim().min(2).max(100),
+  reference: z.string().trim().min(3).max(120),
+  transferDate: z.string().date(),
+  declaredAmount: z.number().positive().max(100000),
+  fileMime: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]),
+  fileBase64: z.string().min(100).max(7_500_000),
+  observation: z.string().trim().max(500).optional()
+});
+const usageSchema = z.object({
+  provider: z.enum(["NAVIGATION_SDK", "ROUTES", "PLACES_AUTOCOMPLETE", "PLACE_DETAILS", "TEXT_SEARCH_PRO", "GEOCODING", "MOBILE_MAP", "WEB_DYNAMIC_MAP"]),
+  requestKey: z.string().trim().min(8).max(200),
+  tripId: z.string().uuid().optional(),
+  serviceAreaId: z.string().uuid().optional(),
+  phase: z.string().trim().max(50).optional(),
+  sessionKey: z.string().trim().max(200).optional(),
+  result: z.string().trim().max(80).optional(),
+  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional()
+});
+
+const driverImportSchema = z.object({
+  filename: z.string().trim().min(5).max(180).refine(value => value.toLowerCase().endsWith(".csv")),
+  contentBase64: z.string().min(8).max(3_000_000)
+});
+
+type DriverImportRow = {
+  rowNumber: number;
+  firstNames: string;
+  lastNames: string;
+  identityNumber: string;
+  email: string;
+  phone: string;
+  cooperativeCode: string;
+  plate: string;
+  vehicleBrand: string;
+  vehicleModel: string;
+  vehicleYear?: number;
+  notes: string;
+};
+
+function parseCsv(content: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < content.length; index++) {
+    const character = content[index]!;
+    if (character === '"') {
+      if (quoted && content[index + 1] === '"') { cell += '"'; index++; }
+      else quoted = !quoted;
+    } else if (character === "," && !quoted) {
+      row.push(cell.trim()); cell = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && content[index + 1] === "\n") index++;
+      row.push(cell.trim()); cell = "";
+      if (row.some(value => value.length)) rows.push(row);
+      row = [];
+    } else cell += character;
+  }
+  if (quoted) throw new Error("INVALID_CSV_QUOTES");
+  row.push(cell.trim());
+  if (row.some(value => value.length)) rows.push(row);
+  return rows;
+}
+
+const driverImportHeaders = [
+  "nombres", "apellidos", "identificacion", "correo", "telefono", "cooperativa",
+  "placa", "marca", "modelo", "anio", "informacion_adicional"
+] as const;
+
+function importedRow(values: string[], headerIndex: Map<string, number>, rowNumber: number): DriverImportRow {
+  const value = (name: typeof driverImportHeaders[number]) => values[headerIndex.get(name) ?? -1]?.trim() ?? "";
+  const yearText = value("anio");
+  return {
+    rowNumber,
+    firstNames: value("nombres"), lastNames: value("apellidos"), identityNumber: value("identificacion"),
+    email: normalizeEmail(value("correo")), phone: value("telefono"), cooperativeCode: value("cooperativa").toUpperCase(),
+    plate: value("placa").replace(/\s+/g, "").toUpperCase(), vehicleBrand: value("marca"), vehicleModel: value("modelo"),
+    vehicleYear: /^\d{4}$/.test(yearText) ? Number(yearText) : undefined, notes: value("informacion_adicional")
+  };
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function money(value: unknown): number {
+  return Number(Number(value ?? 0).toFixed(2));
+}
+
+function maskReference(value: string): string {
+  const normalized = value.replace(/\s+/g, "").toUpperCase();
+  return normalized.length <= 4 ? "****" : `****${normalized.slice(-4)}`;
+}
+
+function normalizeReference(value: string): string {
+  return value.normalize("NFKC").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+function validFileSignature(data: Buffer, mime: string): boolean {
+  if (mime === "image/jpeg") return data[0] === 0xff && data[1] === 0xd8 && data[data.length - 2] === 0xff && data[data.length - 1] === 0xd9;
+  if (mime === "image/png") return data.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]));
+  if (mime === "image/webp") return data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+  if (mime === "application/pdf") return data.subarray(0, 5).toString("ascii") === "%PDF-";
+  return false;
+}
+
+async function requireMobileUser(request: FastifyRequest, reply: FastifyReply, role?: "DRIVER" | "PASSENGER"): Promise<SessionUser | undefined> {
+  const token = userFrom(request);
+  if (!token?.id) {
+    reply.code(401).send({ error: "UNAUTHORIZED" });
+    return;
+  }
+  const [row] = await database()`
+    select u.status::text, u.active_session_id::text as "activeSessionId", u.deleted_at,
+      exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role=${role ?? token.role}) as "hasRole"
+    from users u where u.id=${token.id}
+  `;
+  if (!row || row.deleted_at || row.status !== "ACTIVE" || !row.hasRole || (token.sessionId && row.activeSessionId !== token.sessionId)) {
+    reply.code(401).send({ error: "SESSION_EXPIRED" });
+    return;
+  }
+  if (role && token.role !== role) {
+    reply.code(403).send({ error: "FORBIDDEN" });
+    return;
+  }
+  return token;
+}
+
+export interface DriverEligibility {
+  eligible: boolean;
+  reason?: string;
+  membership?: Record<string, unknown>;
+  enforcementEnabled: boolean;
+}
+
+export async function driverMembershipEligibility(driverId: string): Promise<DriverEligibility> {
+  const [settings] = await database()`
+    select driver_memberships_enabled as "membershipsEnabled",
+      membership_enforcement_enabled as "enforcementEnabled"
+    from operational_settings where id=1
+  `;
+  if (!settings?.membershipsEnabled || !settings?.enforcementEnabled) {
+    return { eligible: true, enforcementEnabled: Boolean(settings?.enforcementEnabled) };
+  }
+  const [driver] = await database()`
+    select u.status::text as "accountStatus", d.approval_status as "approvalStatus",
+      exists(select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED') as "hasSuspendedDocuments"
+    from drivers d join users u on u.id=d.user_id where d.user_id=${driverId}
+  `;
+  if (!driver || driver.accountStatus !== "ACTIVE") return { eligible: false, reason: "DRIVER_ACCOUNT_INACTIVE", enforcementEnabled: true };
+  if (driver.approvalStatus !== "APROBADO") return { eligible: false, reason: "DRIVER_NOT_APPROVED", enforcementEnabled: true };
+  if (driver.hasSuspendedDocuments) return { eligible: false, reason: "DRIVER_DOCUMENTS_INVALID", enforcementEnabled: true };
+  const [membership] = await database()`
+    select id::text, status, starts_at as "startsAt", expires_at as "expiresAt",
+      grace_ends_at as "graceEndsAt", suspension_at as "suspensionAt",
+      grace_allows_trips_applied as "graceAllowsTrips"
+    from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
+    order by created_at desc limit 1
+  `;
+  if (!membership) return { eligible: false, reason: "MEMBERSHIP_REQUIRED", enforcementEnabled: true };
+  const status = String(membership.status);
+  const now = Date.now();
+  if (membership.suspensionAt && new Date(String(membership.suspensionAt)).getTime() <= now && status !== "ACTIVE" && status !== "EXPIRING") {
+    return { eligible: false, reason: "MEMBERSHIP_SUSPENDED_NON_PAYMENT", membership, enforcementEnabled: true };
+  }
+  const permitted = ["ACTIVE", "EXPIRING", "PAYMENT_DUE"].includes(status)
+    || (status === "GRACE_PERIOD" && Boolean(membership.graceAllowsTrips));
+  return { eligible: permitted, reason: permitted ? undefined : `MEMBERSHIP_${status}`, membership, enforcementEnabled: true };
+}
+
+export async function grantInitialDriverGrace(driverId: string, actorId?: string): Promise<void> {
+  const sql = database();
+  await sql.begin(async tx => {
+    const [settings] = await tx`
+      select driver_memberships_enabled as enabled, new_driver_grace_enabled as "graceEnabled",
+        new_driver_grace_duration_hours as "durationHours", new_driver_grace_allows_trips as "allowsTrips",
+        new_driver_grace_max_grants as "maxGrants", membership_timezone as timezone,
+        membership_suspension_local_time::text as "suspensionTime",
+        membership_extra_trip_share_percent::numeric as "sharePercent"
+      from operational_settings where id=1
+    `;
+    if (!settings?.enabled) return;
+    const [existing] = await tx`select id from driver_memberships where driver_id=${driverId} and cycle_closed_at is null for update`;
+    if (existing) return;
+    const [grants] = await tx`select count(*)::int as count from driver_memberships where driver_id=${driverId} and source='NEW_DRIVER_ONBOARDING'`;
+    const [plan] = await tx`select * from membership_plans where code='MONTHLY' and enabled=true order by effective_from desc limit 1`;
+    if (!plan) return;
+    const graceEnabled = Boolean(settings.graceEnabled) && Number(grants?.count ?? 0) < Number(settings.maxGrants ?? 1);
+    const durationHours = graceEnabled ? Number(settings.durationHours ?? 48) : 0;
+    const [price] = await tx`select platform_commission_cents_per_leg from pricing_versions where active_from<=now() and (active_until is null or active_until>now()) order by active_from desc limit 1`;
+    const passengerAdditional = Number(price?.platform_commission_cents_per_leg ?? 5) / 100;
+    const sharePercent = Number(settings.sharePercent ?? plan.extra_trip_share_percent ?? 40);
+    const extraFee = Number((passengerAdditional * sharePercent / 100).toFixed(4));
+    await tx`
+      insert into driver_memberships (
+        driver_id,plan_id,plan_code,status,starts_at,expires_at,grace_ends_at,suspension_at,
+        suspension_timezone_snapshot,suspension_local_time_snapshot,grace_reason,
+        grace_days_applied,grace_allows_trips_applied,plan_snapshot,cycle_duration_snapshot,
+        base_membership_amount_snapshot,included_trips_snapshot,extra_trip_fee_snapshot,
+        extra_trip_share_percent_snapshot,max_renewal_amount_snapshot,
+        passenger_service_additional_snapshot,estimated_next_renewal_amount,payer_type,
+        amount,currency,payment_status,source,created_by,updated_by
+      ) values (
+        ${driverId},${plan.id},${plan.code},${graceEnabled ? "GRACE_PERIOD" : "PENDING"},now(),
+        ${graceEnabled ? new Date(Date.now() + durationHours * 3_600_000) : null},
+        ${graceEnabled ? new Date(Date.now() + durationHours * 3_600_000) : null},
+        ${graceEnabled ? new Date(Date.now() + durationHours * 3_600_000) : null},
+        ${settings.timezone},${settings.suspensionTime},${graceEnabled ? "NEW_DRIVER_ONBOARDING" : null},
+        ${Math.ceil(durationHours / 24)},${graceEnabled && Boolean(settings.allowsTrips)},
+        ${JSON.stringify({ code: plan.code, name: plan.name, periodUnit: plan.period_unit, periodCount: plan.period_count })}::jsonb,
+        ${plan.duration_days},${plan.base_amount},${plan.included_trips},${extraFee},${sharePercent},
+        ${plan.max_renewal_amount},${passengerAdditional},${plan.base_amount},'INDIVIDUAL',
+        ${plan.base_amount},${plan.currency},'PENDING',${graceEnabled ? "NEW_DRIVER_ONBOARDING" : "NORMAL"},
+        ${actorId ?? null},${actorId ?? null})
+    `;
+  });
+}
+
+export async function recordCompletedTripMembershipUsage(tripId: string, driverId: string): Promise<void> {
+  await database().begin(async tx => {
+    const [settings] = await tx`select membership_usage_billing_enabled as enabled from operational_settings where id=1`;
+    if (!settings?.enabled) return;
+    const [cycle] = await tx`
+      select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
+      order by created_at desc limit 1 for update
+    `;
+    if (!cycle || !["ACTIVE", "EXPIRING", "GRACE_PERIOD", "PAYMENT_DUE"].includes(String(cycle.status))) return;
+    const [trip] = await tx`select completed_at from trips where id=${tripId} and driver_id=${driverId} and status='COMPLETED'`;
+    if (!trip?.completed_at) return;
+    const sequence = Number(cycle.completed_trips ?? 0) + 1;
+    const included = sequence <= Number(cycle.included_trips_snapshot ?? 0);
+    const rawExtra = included ? Number(cycle.raw_extra_amount ?? 0) : money(Number(cycle.raw_extra_amount ?? 0) + Number(cycle.extra_trip_fee_snapshot ?? 0));
+    const maximumExtra = Math.max(0, Number(cycle.max_renewal_amount_snapshot) - Number(cycle.base_membership_amount_snapshot));
+    const billable = Math.min(rawExtra, maximumExtra);
+    const inserted = await tx`
+      insert into membership_cycle_trip_usages (
+        membership_cycle_id,trip_id,driver_id,completed_at,sequence_number,usage_kind,
+        extra_trip_fee_snapshot,amount_before_cap,amount_after_cap,idempotency_key
+      ) values (${cycle.id},${tripId},${driverId},${trip.completed_at},${sequence},
+        ${included ? "INCLUDED" : "EXTRA"},${cycle.extra_trip_fee_snapshot},${rawExtra},${billable},${`trip-completed:${tripId}`})
+      on conflict (trip_id) do nothing returning id
+    `;
+    if (!inserted.length) return;
+    const adjustment = Number(cycle.adjustment_amount ?? 0);
+    const estimate = Math.max(0, Math.min(Number(cycle.max_renewal_amount_snapshot), money(Number(cycle.base_membership_amount_snapshot) + billable + adjustment)));
+    await tx`update driver_memberships set completed_trips=${sequence}, extra_trips=${Math.max(0, sequence - Number(cycle.included_trips_snapshot))}, raw_extra_amount=${rawExtra}, billable_extra_amount=${billable}, estimated_next_renewal_amount=${estimate}, updated_at=now() where id=${cycle.id}`;
+  });
+}
+
+async function currentMembership(driverId: string) {
+  const [row] = await database()`
+    select dm.id::text, dm.plan_code as "planCode", coalesce(mp.name,dm.plan_code) as "planName",
+      dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",
+      dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",
+      dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",
+      dm.extra_trip_fee_snapshot::float8 as "extraTripFee",dm.raw_extra_amount::float8 as "rawExtraAmount",
+      dm.billable_extra_amount::float8 as "billableExtraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedNextRenewalAmount",
+      dm.final_renewal_amount::float8 as "finalRenewalAmount",dm.base_membership_amount_snapshot::float8 as "baseAmount",
+      dm.max_renewal_amount_snapshot::float8 as "maximumAmount",dm.passenger_service_additional_snapshot::float8 as "passengerAdditional",
+      dm.currency,dm.payer_type as "payerType",coalesce(c.name,'Individual') as "payerName",
+      dm.grace_reason as "graceReason",dm.grace_allows_trips_applied as "graceAllowsTrips"
+    from driver_memberships dm left join membership_plans mp on mp.id=dm.plan_id
+    left join cooperatives c on c.id=dm.cooperative_id
+    where dm.driver_id=${driverId} and dm.cycle_closed_at is null order by dm.created_at desc limit 1
+  `;
+  return row;
+}
+
+async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>) {
+  const rawToken = randomBytes(32).toString("base64url");
+  const tokenHash = sha256(rawToken);
+  const shortCode = randomBytes(5).toString("hex").toUpperCase();
+  const [settings] = await database()`select membership_qr_duration_hours as hours from operational_settings where id=1`;
+  const [plan] = await database()`select * from membership_plans where id=${input.planId} and enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())`;
+  if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
+  const [cycle] = await database()`
+    select id,cycle_closed_at,
+      coalesce(final_renewal_amount,estimated_next_renewal_amount,base_membership_amount_snapshot,0)::float8 as total,
+      coalesce(base_membership_amount_snapshot,0)::float8 as base
+    from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
+    order by created_at desc limit 1
+  `;
+  const usageAmount = cycle?.cycle_closed_at
+    ? Math.max(0, Number(cycle.total ?? 0) - Number(cycle.base ?? 0))
+    : 0;
+  const total = money(Number(plan.base_amount) + usageAmount);
+  const [order] = await database()`
+    insert into membership_payment_orders (
+      public_token_hash,short_code,driver_id,membership_cycle_id,plan_id,plan_snapshot,
+      base_amount,prior_usage_amount,total_amount,currency,intended_method,receiver_scope,
+      verification_channel,status,expires_at,created_by,idempotency_key
+    ) values (${tokenHash},${shortCode},${driverId},${cycle?.id ?? null},${plan.id},
+      ${JSON.stringify({ code: plan.code, name: plan.name, durationDays: plan.duration_days, includedTrips: plan.included_trips, maximumAmount: plan.max_renewal_amount, extraTripSharePercent: plan.extra_trip_share_percent })}::jsonb,
+      ${plan.base_amount},${usageAmount},${total},${plan.currency},${input.intendedMethod ?? null},
+      ${input.intendedMethod === "BANK_TRANSFER" ? "COSTA_GO_CENTRAL" : "NOT_APPLICABLE"},
+      ${input.intendedMethod === "BANK_TRANSFER" ? "REMOTE_PROOF" : null},'PENDING',
+      now()+(${Number(settings?.hours ?? 24)}*interval '1 hour'),${driverId},${input.idempotencyKey})
+    on conflict(driver_id,idempotency_key) do update set updated_at=membership_payment_orders.updated_at
+    returning id::text,status,short_code as "shortCode",base_amount::float8 as "baseAmount",
+      prior_usage_amount::float8 as "priorUsageAmount",total_amount::float8 as "totalAmount",
+      currency,expires_at as "expiresAt",plan_snapshot as "plan"
+  `;
+  return { ...(order as Record<string, unknown>), token: rawToken, qrUrl: `https://costa-go.com/collector-payment.html?token=${encodeURIComponent(rawToken)}` } as {
+    id: string; status: string; shortCode: string; baseAmount: number; priorUsageAmount: number;
+    totalAmount: number; currency: string; expiresAt: string; plan: Record<string, unknown>;
+    token: string; qrUrl: string;
+  };
+}
+
+async function processMembershipPayment(orderId: string, actor: SessionUser, input: {
+  method: "CASH" | "DEUNA" | "BANK_TRANSFER" | "COURTESY";
+  receiverScope: "COLLECTION_POINT" | "COSTA_GO_CENTRAL" | "NOT_APPLICABLE";
+  verificationChannel: string;
+  collectionPointId?: string;
+  reference?: string;
+  referenceHash?: string;
+  referenceMasked?: string;
+  idempotencyKey: string;
+}) {
+  return database().begin(async tx => {
+    const [priorPayment] = await tx`select id::text,"status",membership_cycle_id::text as "membershipId" from membership_payments where idempotency_key=${input.idempotencyKey}`;
+    if (priorPayment) return { alreadyProcessed: true, paymentId: priorPayment.id, membershipId: priorPayment.membershipId };
+    const [order] = await tx`select * from membership_payment_orders where id=${orderId} for update`;
+    if (!order) throw new Error("PAYMENT_ORDER_NOT_FOUND");
+    if (order.status === "PAID") throw new Error("PAYMENT_ORDER_ALREADY_PAID");
+    if (!["PENDING", "PENDING_VERIFICATION"].includes(String(order.status))) throw new Error("PAYMENT_ORDER_NOT_PAYABLE");
+    if (new Date(String(order.expires_at)).getTime() <= Date.now()) {
+      await tx`update membership_payment_orders set status='EXPIRED',updated_at=now() where id=${order.id}`;
+      throw new Error("PAYMENT_ORDER_EXPIRED");
+    }
+    const [plan] = await tx`select * from membership_plans where id=${order.plan_id}`;
+    if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
+    const normalizedReference = input.reference ? normalizeReference(input.reference) : undefined;
+    const referenceHash = input.referenceHash
+      ?? (normalizedReference ? sha256(`${input.method}:${input.receiverScope}:${normalizedReference}`) : undefined);
+    const referenceMasked = input.referenceMasked ?? (input.reference ? maskReference(input.reference) : undefined);
+    const [payment] = await tx`
+      insert into membership_payments (
+        order_id,driver_id,collection_point_id,collector_id,method,receiver_scope,
+        verification_channel,amount,currency,reference_normalized_hash,reference_masked,
+        settlement_status,confirmed_by,idempotency_key
+      ) values (${order.id},${order.driver_id},${input.collectionPointId ?? null},${actor.id!},${input.method},
+        ${input.receiverScope},${input.verificationChannel},${order.total_amount},${order.currency},
+        ${referenceHash ?? null},
+        ${referenceMasked ?? null},
+        ${input.receiverScope === "COLLECTION_POINT" ? "PENDING_SETTLEMENT" : "NOT_APPLICABLE"},
+        ${actor.id!},${input.idempotencyKey})
+      returning id::text
+    `;
+    if (!payment) throw new Error("PAYMENT_NOT_CREATED");
+    const [current] = await tx`select * from driver_memberships where driver_id=${order.driver_id} and cycle_closed_at is null order by created_at desc limit 1 for update`;
+    const baseDate = Math.max(Date.now(), current?.expires_at ? new Date(String(current.expires_at)).getTime() : 0, current?.grace_ends_at ? new Date(String(current.grace_ends_at)).getTime() : 0);
+    if (current) await tx`update driver_memberships set status='CLOSED',cycle_closed_at=now(),cycle_close_reason='PAID_RENEWAL',final_renewal_amount=coalesce(final_renewal_amount,estimated_next_renewal_amount),renewal_order_id=${order.id},updated_at=now() where id=${current.id}`;
+    const [price] = await tx`select platform_commission_cents_per_leg from pricing_versions where active_from<=now() and (active_until is null or active_until>now()) order by active_from desc limit 1`;
+    const passengerAdditional = Number(price?.platform_commission_cents_per_leg ?? 5) / 100;
+    const extraFee = Number((passengerAdditional * Number(plan.extra_trip_share_percent) / 100).toFixed(4));
+    const [membership] = await tx`
+      insert into driver_memberships (
+        driver_id,plan_id,plan_code,status,starts_at,expires_at,expiration_local_date,
+        suspension_timezone_snapshot,suspension_local_time_snapshot,previous_membership_cycle_id,
+        plan_snapshot,cycle_duration_snapshot,base_membership_amount_snapshot,included_trips_snapshot,
+        extra_trip_fee_snapshot,extra_trip_share_percent_snapshot,max_renewal_amount_snapshot,
+        passenger_service_additional_snapshot,estimated_next_renewal_amount,payer_type,cooperative_id,
+        amount,currency,payment_status,payment_method,payment_reference,paid_at,renewed_at,
+        opening_payment_id,source,created_by,updated_by
+      ) select ${order.driver_id},${plan.id},${plan.code},'ACTIVE',${new Date(baseDate)},
+        ${new Date(baseDate + Number(plan.duration_days) * 86_400_000)},${new Date(baseDate + Number(plan.duration_days) * 86_400_000)},
+        os.membership_timezone,os.membership_suspension_local_time,${current?.id ?? null},${order.plan_snapshot},
+        ${plan.duration_days},${plan.base_amount},${plan.included_trips},${extraFee},${plan.extra_trip_share_percent},
+        ${plan.max_renewal_amount},${passengerAdditional},${plan.base_amount},'INDIVIDUAL',null,
+        ${order.total_amount},${order.currency},'CONFIRMED',${input.method},${referenceMasked ?? null},
+        now(),now(),${payment.id},'NORMAL',${actor.id!},${actor.id!}
+      from operational_settings os where os.id=1 returning id::text,expires_at as "expiresAt",status
+    `;
+    if (!membership) throw new Error("MEMBERSHIP_NOT_CREATED");
+    await tx`update membership_payments set membership_cycle_id=${membership.id} where id=${payment.id}`;
+    await tx`update membership_payment_orders set status='PAID',paid_at=now(),updated_at=now() where id=${order.id}`;
+    await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason) values (${actor.id!},'MEMBERSHIP_PAYMENT_CONFIRMED','MEMBERSHIP_PAYMENT',${payment.id},${JSON.stringify({ orderId: String(order.id), membershipId: membership.id, method: input.method, amount: Number(order.total_amount) })}::jsonb,'Pago verificado y membresía activada')`;
+    return { alreadyProcessed: false, paymentId: payment.id, membershipId: membership.id, expiresAt: membership.expiresAt };
+  });
+}
+
+export async function membershipSchedulerTick(): Promise<void> {
+  const [settings] = await database()`select membership_suspension_scheduler_enabled as enabled,membership_enforcement_enabled as enforcement from operational_settings where id=1`;
+  if (!settings?.enabled || !settings?.enforcement) return;
+  await database()`update membership_payment_orders set status='EXPIRED',updated_at=now() where status in ('PENDING','PENDING_VERIFICATION') and expires_at<=now()`;
+
+  const expiring = await database()`
+    update driver_memberships dm set status='EXPIRING',updated_at=now()
+    from operational_settings os
+    where os.id=1 and dm.cycle_closed_at is null and dm.status='ACTIVE'
+      and dm.expires_at>now() and dm.expires_at<=now()+(os.membership_expiry_notice_days*interval '1 day')
+    returning dm.id::text,dm.driver_id::text as "driverId",dm.expires_at as "expiresAt"
+  `;
+  for (const item of expiring) {
+    void sendPush(item.driverId, "Tu membresía está próxima a vencer", `Renueva antes del ${new Date(String(item.expiresAt)).toLocaleDateString("es-EC", { timeZone: "America/Guayaquil" })} para seguir recibiendo solicitudes.`, { type: "MEMBERSHIP_EXPIRING", membershipId: item.id }).catch(() => undefined);
+  }
+
+  const expired = await database()`
+    select dm.id::text,dm.driver_id::text as "driverId",dm.expires_at as "expiresAt",
+      dm.cooperative_id::text as "cooperativeId",os.membership_grace_days::int as "defaultGraceDays",
+      os.membership_grace_allows_trips as "defaultAllowsTrips",os.membership_timezone as timezone,
+      os.membership_suspension_local_time::text as "suspensionTime"
+    from driver_memberships dm cross join operational_settings os
+    where os.id=1 and dm.cycle_closed_at is null and dm.status in ('ACTIVE','EXPIRING') and dm.expires_at<=now()
+    order by dm.expires_at limit 100
+  `;
+  for (const item of expired) {
+    const transition = await database().begin(async tx => {
+      const [locked] = await tx`select id,status from driver_memberships where id=${item.id} for update`;
+      if (!locked || !["ACTIVE", "EXPIRING"].includes(String(locked.status))) return;
+      const [policy] = await tx`
+        select gp.id::text,gp.grace_days::int as "graceDays",gp.allows_trips as "allowsTrips",gp.reason
+        from membership_grace_policies gp
+        where gp.status='ACTIVE' and gp.campaign_kind='RENEWAL' and gp.starts_at<=now() and gp.ends_at>now()
+          and (gp.expiry_window_start is null or (${item.expiresAt} at time zone ${item.timezone})::date>=gp.expiry_window_start)
+          and (gp.expiry_window_end is null or (${item.expiresAt} at time zone ${item.timezone})::date<=gp.expiry_window_end)
+          and (gp.scope='ALL' or (gp.scope='COOPERATIVE' and gp.cooperative_id=${item.cooperativeId ?? null})
+            or (gp.scope='DRIVER' and gp.driver_id=${item.driverId}))
+        order by case gp.scope when 'DRIVER' then 3 when 'COOPERATIVE' then 2 else 1 end desc,gp.priority desc,gp.created_at desc limit 1
+      `;
+      const graceDays = Number(policy?.graceDays ?? item.defaultGraceDays ?? 0);
+      const allowsTrips = Boolean(policy?.allowsTrips ?? item.defaultAllowsTrips);
+      const [updated] = await tx`
+        update driver_memberships set
+          status=${graceDays > 0 ? "GRACE_PERIOD" : "PAYMENT_DUE"},
+          expiration_local_date=(${item.expiresAt} at time zone ${item.timezone})::date,
+          grace_ends_at=case when ${graceDays}>0 then ${item.expiresAt}::timestamptz+(${graceDays}*interval '1 day') else ${item.expiresAt}::timestamptz end,
+          last_grace_local_date=((${item.expiresAt} at time zone ${item.timezone})::date+${graceDays}),
+          suspension_at=(((${item.expiresAt} at time zone ${item.timezone})::date+${graceDays + 1})::date+${item.suspensionTime}::time) at time zone ${item.timezone},
+          grace_policy_id=${policy?.id ?? null},grace_reason=${policy?.reason ?? "DEFAULT_RENEWAL_GRACE"},
+          grace_days_applied=${graceDays},grace_allows_trips_applied=${graceDays > 0 && allowsTrips},updated_at=now()
+        where id=${item.id} returning id::text,status,grace_ends_at as "graceEndsAt",suspension_at as "suspensionAt"
+      `;
+      return updated;
+    });
+    if (transition) {
+      void sendPush(item.driverId, "Membresía pendiente de renovación", transition.status === "GRACE_PERIOD" ? "Tu período de gracia ya comenzó. Revisa la fecha límite en Costa-Go." : "Renueva tu membresía antes de la hora de suspensión.", { type: "MEMBERSHIP_PAYMENT_DUE", membershipId: item.id }).catch(() => undefined);
+    }
+  }
+  const due = await database()`select id::text,driver_id::text as "driverId" from driver_memberships where cycle_closed_at is null and suspension_at is not null and suspension_at<=now() and status in ('GRACE_PERIOD','PAYMENT_DUE') order by suspension_at limit 100`;
+  for (const item of due) {
+    const outcome = await database().begin(async tx => {
+      const [membership] = await tx`select status from driver_memberships where id=${item.id} for update`;
+      if (!membership || !["GRACE_PERIOD", "PAYMENT_DUE"].includes(String(membership.status))) return;
+      const [activeTrip] = await tx`select id from trips where driver_id=${item.driverId} and status in ${tx(ACTIVE_TRIP_STATES as unknown as string[])} limit 1`;
+      const status = activeTrip ? "SUSPENSION_PENDING_ACTIVE_TRIP" : "SUSPENDED_NON_PAYMENT";
+      await tx`update driver_memberships set status=${status},suspension_pending_active_trip=${Boolean(activeTrip)},suspended_non_payment_at=case when ${Boolean(activeTrip)} then suspended_non_payment_at else now() end,updated_at=now() where id=${item.id}`;
+      if (!activeTrip) await tx`update drivers set is_available=false where user_id=${item.driverId}`;
+      return status;
+    });
+    if (outcome) void sendPush(item.driverId, "Membresía Costa-Go", outcome === "SUSPENDED_NON_PAYMENT" ? "Tu membresía venció. Renueva para volver a recibir solicitudes." : "Finaliza tu viaje actual y renueva tu membresía.", { type: outcome, membershipId: item.id }).catch(() => undefined);
+  }
+
+  const pendingAfterTrip = await database()`
+    select dm.id::text,dm.driver_id::text as "driverId" from driver_memberships dm
+    where dm.cycle_closed_at is null and dm.status='SUSPENSION_PENDING_ACTIVE_TRIP'
+      and not exists(select 1 from trips t where t.driver_id=dm.driver_id and t.status in ${database()(ACTIVE_TRIP_STATES as unknown as string[])})
+    limit 100
+  `;
+  for (const item of pendingAfterTrip) {
+    const [updated] = await database()`update driver_memberships set status='SUSPENDED_NON_PAYMENT',suspension_pending_active_trip=false,suspended_non_payment_at=now(),updated_at=now() where id=${item.id} and status='SUSPENSION_PENDING_ACTIVE_TRIP' returning id`;
+    if (updated) {
+      await database()`update drivers set is_available=false where user_id=${item.driverId}`;
+      void sendPush(item.driverId, "Membresía vencida", "Tu viaje terminó y la recepción de nuevas solicitudes quedó pausada. Renueva para reconectarte.", { type: "MEMBERSHIP_SUSPENDED_NON_PAYMENT", membershipId: item.id }).catch(() => undefined);
+    }
+  }
+}
+
+function settingsProjection(row: any) {
+  return {
+    navigationPickupProvider: row.navigation_pickup_provider,
+    navigationDestinationProvider: row.navigation_destination_provider,
+    navigationPickupStartMode: row.navigation_pickup_start_mode,
+    navigationDestinationStartMode: row.navigation_destination_start_mode,
+    mobileCloudMapStyleEnabled: Boolean(row.mobile_cloud_map_style_enabled),
+    textSearchMinimumCharacters: Number(row.text_search_minimum_characters),
+    textSearchDebounceMilliseconds: Number(row.text_search_debounce_milliseconds),
+    textSearchFreeCapReference: Number(row.text_search_free_cap_reference),
+    textSearchPricePerThousandUsd: Number(row.text_search_price_per_thousand_usd),
+    textSearchMonthlyBudgetUsd: Number(row.text_search_monthly_budget_usd),
+    textSearchWarningPercent: Number(row.text_search_warning_percent),
+    textSearchCriticalPercent: Number(row.text_search_critical_percent),
+    textSearchHardLimitEnabled: Boolean(row.text_search_hard_limit_enabled),
+    navigationFreeCapReference: Number(row.navigation_free_cap_reference),
+    navigationWarningPercent: Number(row.navigation_warning_percent),
+    navigationCriticalPercent: Number(row.navigation_critical_percent),
+    driverMembershipsEnabled: Boolean(row.driver_memberships_enabled),
+    membershipEnforcementEnabled: Boolean(row.membership_enforcement_enabled),
+    membershipUsageBillingEnabled: Boolean(row.membership_usage_billing_enabled),
+    membershipSuspensionSchedulerEnabled: Boolean(row.membership_suspension_scheduler_enabled),
+    collectorPortalEnabled: Boolean(row.collector_portal_enabled),
+    bankTransferEnabled: Boolean(row.bank_transfer_enabled),
+    cashCollectionEnabled: Boolean(row.cash_collection_enabled),
+    deunaCollectionEnabled: Boolean(row.deuna_collection_enabled),
+    collectionPointSettlementsEnabled: Boolean(row.collection_point_settlements_enabled),
+    collectionPointCommissionsEnabled: Boolean(row.collection_point_commissions_enabled),
+    collectionPointLimitsEnabled: Boolean(row.collection_point_limits_enabled),
+    financeRoleEnabled: Boolean(row.finance_role_enabled),
+    membershipExpiryNoticeDays: Number(row.membership_expiry_notice_days),
+    membershipGraceDays: Number(row.membership_grace_days),
+    membershipGraceAllowsTrips: Boolean(row.membership_grace_allows_trips),
+    membershipSuspensionLocalTime: String(row.membership_suspension_local_time).slice(0,5),
+    membershipTimezone: row.membership_timezone,
+    newDriverGraceEnabled: Boolean(row.new_driver_grace_enabled),
+    newDriverGraceDurationHours: Number(row.new_driver_grace_duration_hours),
+    newDriverGraceAllowsTrips: Boolean(row.new_driver_grace_allows_trips),
+    newDriverGraceMaxGrants: Number(row.new_driver_grace_max_grants),
+    membershipExtraTripSharePercent: Number(row.membership_extra_trip_share_percent),
+    membershipQrDurationHours: Number(row.membership_qr_duration_hours),
+    advertisingRotationSeconds: Number(row.advertising_rotation_seconds),
+    advertisingMaxActivePerZone: Number(row.advertising_max_active_per_zone)
+  };
+}
+
+function businessError(error: unknown, reply: FastifyReply) {
+  if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.issues });
+  const message = error instanceof Error ? error.message : "ERROR";
+  const conflict = ["PAYMENT_ORDER_ALREADY_PAID", "PAYMENT_ORDER_NOT_PAYABLE", "PAYMENT_REFERENCE_ALREADY_USED"];
+  const notFound = ["PAYMENT_ORDER_NOT_FOUND"];
+  const badRequest = [
+    "PAYMENT_ORDER_EXPIRED", "MEMBERSHIP_PLAN_DISABLED", "PAYMENT_AMOUNT_MISMATCH",
+    "INVALID_CSV_QUOTES", "INVALID_CSV_ENCODING", "INVALID_CSV_HEADERS", "EMPTY_CSV",
+    "MEMBERSHIP_REQUIRED", "MEMBERSHIP_NOT_CREATED", "PAYMENT_NOT_CREATED"
+  ];
+  if (conflict.includes(message)) return reply.code(409).send({ error: message });
+  if (notFound.includes(message)) return reply.code(404).send({ error: message });
+  if (badRequest.includes(message)) return reply.code(400).send({ error: message });
+  if (["UNAUTHORIZED", "FORBIDDEN"].includes(message)) return reply.code(message === "UNAUTHORIZED" ? 401 : 403).send({ error: message });
+  throw error;
+}
+
+export async function registerMembershipRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/v1/mobile/config", async (request, reply) => {
+    const user = await requireMobileUser(request, reply); if (!user) return;
+    const [row] = await database()`select * from operational_settings where id=1`;
+    const config = settingsProjection(row);
+    return {
+      navigation: {
+        pickupProvider: config.navigationPickupProvider,
+        destinationProvider: config.navigationDestinationProvider,
+        pickupStartMode: config.navigationPickupStartMode,
+        destinationStartMode: config.navigationDestinationStartMode,
+        mobileCloudMapStyleEnabled: config.mobileCloudMapStyleEnabled
+      },
+      places: {
+        minimumCharacters: config.textSearchMinimumCharacters,
+        debounceMilliseconds: config.textSearchDebounceMilliseconds
+      },
+      memberships: { enabled: config.driverMembershipsEnabled }
+    };
+  });
+
+  app.post("/v1/usage-events", async (request, reply) => {
+    const user = await requireMobileUser(request, reply); if (!user) return;
+    const parsed = usageSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_USAGE_EVENT" });
+    const body = parsed.data;
+    await database()`
+      insert into api_usage_events(provider,environment,billing_period,trip_id,user_id,service_area_id,
+        cooperative_id,phase,session_key_hash,request_key,result,metadata)
+      values (${body.provider},${process.env.NODE_ENV === "production" ? "PRODUCTION" : "TEST"},date_trunc('month',now())::date,
+        ${body.tripId ?? null},${user.id!},${body.serviceAreaId ?? null},${user.cooperativeId ?? null},${body.phase ?? null},
+        ${body.sessionKey ? sha256(body.sessionKey) : null},${body.requestKey},${body.result ?? null},${JSON.stringify(body.metadata ?? {})}::jsonb)
+      on conflict(provider,request_key) do nothing
+    `;
+    return reply.code(202).send({ recorded: true });
+  });
+
+  app.get("/v1/driver/membership", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    const membership = await currentMembership(user.id!);
+    const eligibility = await driverMembershipEligibility(user.id!);
+    const plans = await database()`select id::text,code,name,base_amount::float8 as amount,currency,duration_days as "durationDays",included_trips as "includedTrips",max_renewal_amount::float8 as "maximumAmount" from membership_plans where enabled=true and effective_from<=now() and (effective_until is null or effective_until>now()) order by duration_days`;
+    return { membership: membership ?? { status: "PENDING" }, eligibility, plans };
+  });
+
+  app.get("/v1/driver/membership/history", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    return database()`select id::text,plan_code as "planCode",status,starts_at as "startsAt",expires_at as "expiresAt",completed_trips as "completedTrips",extra_trips as "extraTrips",final_renewal_amount::float8 as "finalAmount",estimated_next_renewal_amount::float8 as "estimatedAmount",currency,cycle_closed_at as "closedAt" from driver_memberships where driver_id=${user.id!} order by created_at desc limit 100`;
+  });
+
+  app.get("/v1/driver/membership/payments", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    return database()`select p.id::text,p.amount::float8,p.currency,p.method,p.status,p.confirmed_at as "confirmedAt",o.plan_snapshot as "plan",p.reference_masked as "reference" from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.driver_id=${user.id!} order by p.confirmed_at desc limit 100`;
+  });
+
+  app.post("/v1/driver/membership/payment-orders", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    try {
+      const input = paymentOrderSchema.parse(request.body);
+      return reply.code(201).send(await createPaymentOrder(user.id!, input));
+    } catch (error) { return businessError(error, reply); }
+  });
+
+  app.get("/v1/driver/membership/payment-orders/:id", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    const id = (request.params as { id: string }).id;
+    const [order] = await database()`select id::text,status,short_code as "shortCode",plan_snapshot as plan,base_amount::float8 as "baseAmount",prior_usage_amount::float8 as "priorUsageAmount",total_amount::float8 as "totalAmount",currency,expires_at as "expiresAt",paid_at as "paidAt" from membership_payment_orders where id=${id} and driver_id=${user.id!}`;
+    if (!order) return reply.code(404).send({ error: "PAYMENT_ORDER_NOT_FOUND" });
+    return order;
+  });
+
+  app.post("/v1/driver/membership/payment-orders/:id/transfer-proof", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    try {
+      const body = transferProofSchema.parse(request.body);
+      const id = (request.params as { id: string }).id;
+      const data = Buffer.from(body.fileBase64.replace(/^data:[^;]+;base64,/, ""), "base64");
+      if (data.length < 100 || data.length > 5_242_880 || !validFileSignature(data, body.fileMime)) {
+        return reply.code(400).send({ error: "INVALID_TRANSFER_PROOF" });
+      }
+      const normalized = normalizeReference(body.reference);
+      const [proof] = await database().begin(async tx => {
+        const [order] = await tx`select id,total_amount,status,expires_at from membership_payment_orders where id=${id} and driver_id=${user.id!} for update`;
+        if (!order) throw new Error("PAYMENT_ORDER_NOT_FOUND");
+        if (order.status !== "PENDING") throw new Error("PAYMENT_ORDER_NOT_PAYABLE");
+        if (new Date(String(order.expires_at)).getTime() <= Date.now()) throw new Error("PAYMENT_ORDER_EXPIRED");
+        if (money(order.total_amount) !== money(body.declaredAmount)) throw new Error("PAYMENT_AMOUNT_MISMATCH");
+        const [created] = await tx`insert into membership_transfer_proofs(order_id,bank_name,reference_normalized_hash,reference_masked,transfer_date,declared_amount,file_mime,file_data,observation) values (${id},${body.bankName},${sha256(normalized)},${maskReference(body.reference)},${body.transferDate},${body.declaredAmount},${body.fileMime},${data},${body.observation ?? null}) returning id::text,status`;
+        await tx`update membership_payment_orders set status='PENDING_VERIFICATION',receiver_scope='COSTA_GO_CENTRAL',verification_channel='REMOTE_PROOF',updated_at=now() where id=${id}`;
+        return [created];
+      });
+      return reply.code(201).send(proof);
+    } catch (error) { return businessError(error, reply); }
+  });
+
+  app.get("/v1/admin/platform-settings", async (request, reply) => { try {
+    requirePermission(request, "settings:view");
+    const [row] = await database()`select * from operational_settings where id=1`;
+    return settingsProjection(row);
+  } catch (error) { return businessError(error, reply); } });
+
+  app.patch("/v1/admin/platform-settings", async (request, reply) => { try {
+    const actor = requirePermission(request, "settings:manage");
+    const value = platformSettingsSchema.parse(request.body);
+    const [previous] = await database()`select * from operational_settings where id=1`;
+    await database()`update operational_settings set
+      navigation_pickup_provider=${value.navigationPickupProvider},navigation_destination_provider=${value.navigationDestinationProvider},
+      navigation_pickup_start_mode=${value.navigationPickupStartMode},navigation_destination_start_mode=${value.navigationDestinationStartMode},
+      mobile_cloud_map_style_enabled=${value.mobileCloudMapStyleEnabled},text_search_minimum_characters=${value.textSearchMinimumCharacters},
+      text_search_debounce_milliseconds=${value.textSearchDebounceMilliseconds},text_search_free_cap_reference=${value.textSearchFreeCapReference},
+      text_search_price_per_thousand_usd=${value.textSearchPricePerThousandUsd},text_search_monthly_budget_usd=${value.textSearchMonthlyBudgetUsd},
+      text_search_warning_percent=${value.textSearchWarningPercent},text_search_critical_percent=${value.textSearchCriticalPercent},
+      text_search_hard_limit_enabled=${value.textSearchHardLimitEnabled},navigation_free_cap_reference=${value.navigationFreeCapReference},
+      navigation_warning_percent=${value.navigationWarningPercent},navigation_critical_percent=${value.navigationCriticalPercent},
+      driver_memberships_enabled=${value.driverMembershipsEnabled},membership_enforcement_enabled=${value.membershipEnforcementEnabled},
+      membership_usage_billing_enabled=${value.membershipUsageBillingEnabled},membership_suspension_scheduler_enabled=${value.membershipSuspensionSchedulerEnabled},
+      collector_portal_enabled=${value.collectorPortalEnabled},bank_transfer_enabled=${value.bankTransferEnabled},
+      cash_collection_enabled=${value.cashCollectionEnabled},deuna_collection_enabled=${value.deunaCollectionEnabled},
+      collection_point_settlements_enabled=${value.collectionPointSettlementsEnabled},collection_point_commissions_enabled=${value.collectionPointCommissionsEnabled},
+      collection_point_limits_enabled=${value.collectionPointLimitsEnabled},finance_role_enabled=${value.financeRoleEnabled},
+      membership_expiry_notice_days=${value.membershipExpiryNoticeDays},membership_grace_days=${value.membershipGraceDays},
+      membership_grace_allows_trips=${value.membershipGraceAllowsTrips},membership_suspension_local_time=${value.membershipSuspensionLocalTime},
+      membership_timezone=${value.membershipTimezone},new_driver_grace_enabled=${value.newDriverGraceEnabled},
+      new_driver_grace_duration_hours=${value.newDriverGraceDurationHours},new_driver_grace_allows_trips=${value.newDriverGraceAllowsTrips},
+      new_driver_grace_max_grants=${value.newDriverGraceMaxGrants},membership_extra_trip_share_percent=${value.membershipExtraTripSharePercent},
+      membership_qr_duration_hours=${value.membershipQrDurationHours},advertising_rotation_seconds=${value.advertisingRotationSeconds},
+      advertising_max_active_per_zone=${value.advertisingMaxActivePerZone},updated_by=${actor.id!},updated_at=now() where id=1`;
+    await database()`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason) values (${actor.id!},'PLATFORM_SETTINGS_UPDATED','SETTINGS','1',${JSON.stringify(settingsProjection(previous))}::jsonb,${JSON.stringify(value)}::jsonb,'Configuración operativa actualizada')`;
+    return value;
+  } catch (error) { return businessError(error, reply); } });
+
+  app.get("/v1/admin/membership-plans", async (request, reply) => { try {
+    requirePermission(request, "memberships:view");
+    return database()`select id::text,code,name,period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil" from membership_plans order by duration_days,effective_from desc`;
+  } catch (error) { return businessError(error, reply); } });
+
+  app.post("/v1/admin/membership-plans", async (request, reply) => { try {
+    const actor = requirePermission(request, "membership_plans:manage");
+    const body = planSchema.parse(request.body);
+    const [plan] = await database()`insert into membership_plans(code,name,period_unit,period_count,duration_days,base_amount,currency,included_trips,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${body.code},${body.name},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.maxRenewalAmount},${body.extraTripSharePercent},${body.enabled},${body.effectiveFrom ?? new Date()},${actor.id!},${actor.id!}) returning id::text,code,name`;
+    if (!plan) throw new Error("MEMBERSHIP_PLAN_NOT_CREATED");
+    await persistAudit(actor,"MEMBERSHIP_PLAN_CREATED","MEMBERSHIP_PLAN",plan.id,body.code);
+    return reply.code(201).send(plan);
+  } catch (error) { return businessError(error, reply); } });
+
+  app.get("/v1/admin/memberships", async (request, reply) => { try {
+    requirePermission(request, "memberships:view");
+    const query = z.object({ status: membershipStatusSchema.optional(), cooperativeId: z.string().uuid().optional(), search: z.string().trim().max(100).optional(), page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25) }).parse(request.query);
+    const offset=(query.page-1)*query.limit;
+    const rows=await database()`select dm.id::text,dm.driver_id::text as "driverId",u.full_name as driver,u.email,u.phone_e164 as phone,c.name as cooperative,dm.plan_code as plan,dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",dm.billable_extra_amount::float8 as "extraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedRenewal",dm.currency,dm.payer_type as "payerType",count(*) over()::int as total from driver_memberships dm join users u on u.id=dm.driver_id left join cooperatives c on c.id=dm.cooperative_id where dm.cycle_closed_at is null and (${query.status ?? null}::text is null or dm.status=${query.status ?? null}) and (${query.cooperativeId ?? null}::uuid is null or dm.cooperative_id=${query.cooperativeId ?? null}) and (${query.search ?? null}::text is null or u.full_name ilike ${query.search ? `%${query.search}%` : null} or u.email ilike ${query.search ? `%${query.search}%` : null} or u.phone_e164 ilike ${query.search ? `%${query.search}%` : null}) order by dm.expires_at nulls first,u.full_name limit ${query.limit} offset ${offset}`;
+    return { items: rows, page: query.page, limit: query.limit, total: Number(rows[0]?.total ?? 0) };
+  } catch (error) { return businessError(error, reply); } });
+
+  app.get("/v1/admin/memberships/dashboard", async (request, reply) => { try {
+    requirePermission(request,"memberships:view");
+    const [summary]=await database()`select count(*) filter(where status in ('ACTIVE','EXPIRING'))::int as active,count(*) filter(where expires_at between now() and now()+interval '7 days')::int as "expiring7Days",count(*) filter(where status='GRACE_PERIOD')::int as grace,count(*) filter(where status in ('PAYMENT_DUE','SUSPENDED_NON_PAYMENT'))::int as expired,count(*) filter(where status in ('SUSPENDED','SUSPENDED_NON_PAYMENT'))::int as suspended,count(*) filter(where payer_type='COOPERATIVE')::int as cooperatives,count(*) filter(where payer_type='INDIVIDUAL')::int as individual,count(*) filter(where status='PENDING')::int as pending from driver_memberships where cycle_closed_at is null`;
+    const [income]=await database()`select coalesce(sum(amount),0)::float8 as amount,count(*)::int as payments from membership_payments where status='CONFIRMED' and method<>'COURTESY' and confirmed_at>=date_trunc('month',now())`;
+    return { ...summary, confirmedIncomeMonth: Number(income?.amount ?? 0), confirmedPaymentsMonth: Number(income?.payments ?? 0) };
+  } catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/admin/memberships/:driverId/history", async (request, reply) => { try {
+    requirePermission(request,"memberships:view"); const driverId=(request.params as {driverId:string}).driverId;
+    const memberships=await database()`select id::text,plan_code as plan,status,starts_at as "startsAt",expires_at as "expiresAt",completed_trips as "completedTrips",extra_trips as "extraTrips",raw_extra_amount::float8 as "rawExtra",billable_extra_amount::float8 as "billableExtra",adjustment_amount::float8 as adjustments,estimated_next_renewal_amount::float8 as "estimatedRenewal",final_renewal_amount::float8 as "finalRenewal",currency,cycle_closed_at as "closedAt",source from driver_memberships where driver_id=${driverId} order by created_at desc`;
+    const payments=await database()`select id::text,amount::float8,currency,method,status,settlement_status as "settlementStatus",reference_masked as reference,confirmed_at as "confirmedAt" from membership_payments where driver_id=${driverId} order by confirmed_at desc`;
+    return { memberships,payments };
+  }catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/memberships/:driverId/action", async (request, reply) => { try {
+    const actor=requirePermission(request,"memberships:manage");
+    const driverId=(request.params as {driverId:string}).driverId;
+    const body=z.discriminatedUnion("action",[
+      z.object({action:z.literal("SUSPEND"),reason:z.string().trim().min(5).max(500)}),
+      z.object({action:z.literal("REACTIVATE"),reason:z.string().trim().min(5).max(500)}),
+      z.object({action:z.literal("GRANT_GRACE"),days:z.number().int().min(1).max(90),allowsTrips:z.boolean(),reason:z.string().trim().min(5).max(500)}),
+      z.object({action:z.literal("ADJUST"),amount:z.number().min(-100000).max(100000).refine(value=>value!==0),adjustmentType:z.enum(["BONUS","DISCOUNT","WAIVER","POSITIVE","NEGATIVE"]),reason:z.string().trim().min(5).max(500)}),
+      z.object({action:z.literal("COURTESY_RENEW"),planId:z.string().uuid(),reason:z.string().trim().min(5).max(500)})
+    ]).parse(request.body);
+    const [driver]=await database()`select d.user_id::text from drivers d where d.user_id=${driverId}`;
+    if(!driver)return reply.code(404).send({error:"DRIVER_NOT_FOUND"});
+    let result:unknown;
+    if(body.action==="SUSPEND") {
+      [result]=await database()`update driver_memberships set status='SUSPENDED',suspended_at=now(),suspension_reason=${body.reason},updated_by=${actor.id!},updated_at=now() where driver_id=${driverId} and cycle_closed_at is null returning id::text,status`;
+      await database()`update drivers set is_available=false where user_id=${driverId}`;
+    } else if(body.action==="REACTIVATE") {
+      [result]=await database()`update driver_memberships set status=case when expires_at>now() then 'ACTIVE' when grace_ends_at>now() then 'GRACE_PERIOD' else 'PAYMENT_DUE' end,suspended_at=null,suspension_reason=null,reactivated_after_payment_at=now(),updated_by=${actor.id!},updated_at=now() where driver_id=${driverId} and cycle_closed_at is null returning id::text,status`;
+    } else if(body.action==="GRANT_GRACE") {
+      [result]=await database()`update driver_memberships dm set status='GRACE_PERIOD',grace_ends_at=greatest(coalesce(dm.grace_ends_at,now()),now())+(${body.days}*interval '1 day'),last_grace_local_date=(greatest(coalesce(dm.grace_ends_at,now()),now()) at time zone dm.suspension_timezone_snapshot)::date+${body.days},suspension_at=((((greatest(coalesce(dm.grace_ends_at,now()),now()) at time zone dm.suspension_timezone_snapshot)::date+${body.days+1})::date+dm.suspension_local_time_snapshot) at time zone dm.suspension_timezone_snapshot),grace_reason=${body.reason},grace_days_applied=dm.grace_days_applied+${body.days},grace_allows_trips_applied=${body.allowsTrips},updated_by=${actor.id!},updated_at=now() where dm.driver_id=${driverId} and dm.cycle_closed_at is null returning id::text,status,grace_ends_at as "graceEndsAt",suspension_at as "suspensionAt"`;
+    } else if(body.action==="ADJUST") {
+      result=await database().begin(async tx=>{
+        const [cycle]=await tx`select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null for update`;
+        if(!cycle)throw new Error("MEMBERSHIP_REQUIRED");
+        const [adjustment]=await tx`insert into membership_cycle_adjustments(membership_cycle_id,adjustment_type,amount,reason,created_by) values (${cycle.id},${body.adjustmentType},${body.amount},${body.reason},${actor.id!}) returning id::text,amount::float8`;
+        const nextAdjustment=money(Number(cycle.adjustment_amount)+body.amount);
+        const estimate=Math.max(0,Math.min(Number(cycle.max_renewal_amount_snapshot),money(Number(cycle.base_membership_amount_snapshot)+Number(cycle.billable_extra_amount)+nextAdjustment)));
+        await tx`update driver_memberships set adjustment_amount=${nextAdjustment},estimated_next_renewal_amount=${estimate},updated_by=${actor.id!},updated_at=now() where id=${cycle.id}`;
+        return adjustment;
+      });
+    } else {
+      const input={planId:body.planId,intendedMethod:undefined,idempotencyKey:`courtesy-${driverId}-${Date.now()}`};
+      const order=await createPaymentOrder(driverId,input);
+      result=await processMembershipPayment(String(order.id),actor,{method:"COURTESY",receiverScope:"NOT_APPLICABLE",verificationChannel:"ADMIN_COURTESY",idempotencyKey:`courtesy-payment-${order.id}`});
+    }
+    if(!result)return reply.code(409).send({error:"MEMBERSHIP_REQUIRED"});
+    await persistAudit(actor,`MEMBERSHIP_${body.action}`,"DRIVER_MEMBERSHIP",driverId,body.reason);
+    void sendPush(driverId,"Membresía Costa-Go","Tu membresía fue actualizada. Revisa el detalle en la aplicación.",{type:"MEMBERSHIP_UPDATED"}).catch(()=>undefined);
+    return result;
+  }catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/admin/drivers/import/template",async(request,reply)=>{try{
+    requirePermission(request,"membership_import:manage");
+    reply.header("content-type","text/csv; charset=utf-8").header("content-disposition",'attachment; filename="plantilla-conductores-costa-go.csv"');
+    return `${driverImportHeaders.join(",")}\nJuan,Costa,1712345678,juan@example.com,0991234567,INDIVIDUAL,ABC1234,TukTuk,Modelo 1,2025,\n`;
+  }catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/drivers/import/validate",async(request,reply)=>{try{
+    const actor=requirePermission(request,"membership_import:manage");
+    const body=driverImportSchema.parse(request.body);
+    const buffer=Buffer.from(body.contentBase64.replace(/^data:[^;]+;base64,/,""),"base64");
+    if(!buffer.length||buffer.length>2_000_000)return reply.code(400).send({error:"CSV_FILE_TOO_LARGE"});
+    const text=buffer.toString("utf8").replace(/^\uFEFF/,"");
+    const parsed=parseCsv(text);
+    if(parsed.length<2)return reply.code(400).send({error:"CSV_EMPTY"});
+    if(parsed.length>1001)return reply.code(400).send({error:"CSV_TOO_MANY_ROWS"});
+    const headers=parsed[0]!.map(value=>value.trim().toLocaleLowerCase("es"));
+    const headerIndex=new Map(headers.map((value,index)=>[value,index]));
+    const missing=driverImportHeaders.filter(header=>!headerIndex.has(header));
+    if(missing.length)return reply.code(400).send({error:"CSV_MISSING_COLUMNS",missing});
+    const rows=parsed.slice(1).map((values,index)=>importedRow(values,headerIndex,index+2));
+    const emails=rows.map(row=>row.email); const phones=rows.map(row=>normalizePhone(row.phone)).filter(Boolean) as string[];
+    const identities=rows.map(row=>row.identityNumber); const plates=rows.map(row=>row.plate);
+    const cooperatives=await database()`select id::text,name,coalesce(registration_number,'') as code from cooperatives where status='ACTIVE'`;
+    const cooperativeMap=new Map<string,string>();
+    for(const cooperative of cooperatives){cooperativeMap.set(String(cooperative.name).trim().toUpperCase(),String(cooperative.id));if(cooperative.code)cooperativeMap.set(String(cooperative.code).trim().toUpperCase(),String(cooperative.id));}
+    const existing=await database()`select lower(email) email,phone_e164 phone from users where deleted_at is null and (lower(email)=any(${emails.map(value=>value.toLowerCase())}) or phone_e164=any(${phones}))`;
+    const existingDrivers=await database()`select lower(coalesce(d.identity_number,'')) identity,lower(v.identifier) plate from drivers d left join vehicles v on v.driver_id=d.user_id where lower(coalesce(d.identity_number,''))=any(${identities.map(value=>value.toLowerCase())}) or lower(v.identifier)=any(${plates.map(value=>value.toLowerCase())})`;
+    const existingEmails=new Set(existing.map(row=>String(row.email)));const existingPhones=new Set(existing.map(row=>String(row.phone)));
+    const existingIdentities=new Set(existingDrivers.map(row=>String(row.identity)));const existingPlates=new Set(existingDrivers.map(row=>String(row.plate)));
+    const seenEmails=new Set<string>(),seenPhones=new Set<string>(),seenIdentities=new Set<string>(),seenPlates=new Set<string>();
+    const preview=rows.map(row=>{
+      const errors:string[]=[];const phone=normalizePhone(row.phone);const email=row.email.toLowerCase();const identity=row.identityNumber.toLowerCase();const plate=row.plate.toLowerCase();
+      if(!row.firstNames||!row.lastNames)errors.push("NAME_REQUIRED");
+      if(!/^\S+@\S+\.\S+$/.test(email))errors.push("INVALID_EMAIL");
+      if(!phone)errors.push("INVALID_PHONE");
+      if(row.identityNumber.length<5)errors.push("INVALID_IDENTITY");
+      if(row.plate.length<5)errors.push("INVALID_PLATE");
+      if(row.vehicleYear&&(row.vehicleYear<1980||row.vehicleYear>new Date().getFullYear()+1))errors.push("INVALID_VEHICLE_YEAR");
+      if(row.cooperativeCode!=="INDIVIDUAL"&&!cooperativeMap.has(row.cooperativeCode))errors.push("COOPERATIVE_NOT_FOUND");
+      if(existingEmails.has(email)||seenEmails.has(email))errors.push("EMAIL_ALREADY_EXISTS");else seenEmails.add(email);
+      if(phone&&(existingPhones.has(phone)||seenPhones.has(phone)))errors.push("PHONE_ALREADY_EXISTS");else if(phone)seenPhones.add(phone);
+      if(existingIdentities.has(identity)||seenIdentities.has(identity))errors.push("IDENTITY_ALREADY_EXISTS");else seenIdentities.add(identity);
+      if(existingPlates.has(plate)||seenPlates.has(plate))errors.push("VEHICLE_ALREADY_EXISTS");else seenPlates.add(plate);
+      return {...row,phone:phone??row.phone,cooperativeId:row.cooperativeCode==="INDIVIDUAL"?null:cooperativeMap.get(row.cooperativeCode),errors,status:errors.length?"REJECTED":"VALID"};
+    });
+    const validRows=preview.filter(row=>row.status==="VALID").length;
+    const [batch]=await database()`insert into driver_import_batches(original_filename,total_rows,valid_rows,rejected_rows,status,created_by) values (${body.filename},${preview.length},${validRows},${preview.length-validRows},'VALIDATED',${actor.id!}) returning id::text`;
+    for(const row of preview)await database()`insert into driver_import_rows(batch_id,row_number,normalized_data,status,errors) values (${batch!.id},${row.rowNumber},${JSON.stringify(row)}::jsonb,${row.status},${row.errors})`;
+    await persistAudit(actor,"DRIVER_IMPORT_VALIDATED","DRIVER_IMPORT_BATCH",String(batch!.id),`${validRows}/${preview.length} filas válidas`);
+    return {batchId:batch!.id,totalRows:preview.length,validRows,rejectedRows:preview.length-validRows,items:preview.slice(0,200)};
+  }catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/drivers/import/:batchId/confirm",async(request,reply)=>{try{
+    const actor=requirePermission(request,"membership_import:manage");const batchId=(request.params as {batchId:string}).batchId;
+    const imported=await database().begin(async tx=>{
+      const [batch]=await tx`select * from driver_import_batches where id=${batchId} and status='VALIDATED' for update`;
+      if(!batch)throw new Error("IMPORT_BATCH_NOT_AVAILABLE");
+      const rows=await tx`select id::text,normalized_data from driver_import_rows where batch_id=${batchId} and status='VALID' order by row_number for update`;
+      const created:Array<{id:string;email:string;name:string}>=[];
+      for(const item of rows){const row=item.normalized_data as DriverImportRow&{cooperativeId?:string|null};const password=randomBytes(32).toString("base64url");
+        const [user]=await tx`insert into users(phone_e164,full_name,email,password_hash,role,status,cooperative_id,phone_verified_at,email_verified_at,terms_accepted_at,must_change_password) values (${row.phone},${`${row.firstNames} ${row.lastNames}`.trim()},${row.email},crypt(${password},gen_salt('bf')),'DRIVER','ACTIVE',${row.cooperativeId??null},now(),now(),now(),true) returning id::text,email,full_name as name`;
+        await tx`insert into mobile_account_roles(user_id,role) values (${user!.id},'PASSENGER'),(${user!.id},'DRIVER') on conflict do nothing`;
+        await tx`insert into drivers(user_id,is_available,approval_status,identity_number,imported_at,imported_by) values (${user!.id},false,'PENDIENTE_DOCUMENTOS',${row.identityNumber},now(),${actor.id!})`;
+        await tx`insert into vehicles(driver_id,identifier,maximum_passengers,status,brand,model,model_year,notes) values (${user!.id},${row.plate},3,'PENDING',${row.vehicleBrand||null},${row.vehicleModel||null},${row.vehicleYear??null},${row.notes||null})`;
+        await tx`update driver_import_rows set status='IMPORTED',driver_id=${user!.id} where id=${item.id}`;created.push(user as {id:string;email:string;name:string});
+      }
+      await tx`update driver_import_batches set status='COMPLETED',imported_rows=${created.length},completed_at=now() where id=${batchId}`;
+      return created;
+    });
+    for(const account of imported)void sendTransactionalEmail({to:account.email,subject:"Completa tu registro de conductor en Costa-Go",text:"Tu cuenta fue precargada por Costa-Go. Abre la aplicación, selecciona Recuperar contraseña, crea una contraseña segura y carga personalmente tu fotografía y documentos. Tu cuenta no podrá conectarse hasta completar la revisión y aprobación.",html:`<h2>Bienvenido a Costa-Go</h2><p>Tu cuenta de conductor fue precargada.</p><ol><li>Abre la aplicación.</li><li>Selecciona <strong>Recuperar contraseña</strong>.</li><li>Crea una contraseña segura.</li><li>Carga tu fotografía y documentos habilitantes.</li></ol><p>La importación no aprueba ni habilita automáticamente tu cuenta.</p>`}).catch(()=>false);
+    await persistAudit(actor,"DRIVER_IMPORT_COMPLETED","DRIVER_IMPORT_BATCH",batchId,`${imported.length} cuentas creadas en PENDIENTE_DOCUMENTOS`);
+    return {batchId,importedRows:imported.length};
+  }catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/admin/membership-grace-policies",async(request,reply)=>{try{requirePermission(request,"memberships:view");return database()`select id::text,name,reason,scope,cooperative_id::text as "cooperativeId",driver_id::text as "driverId",grace_days as "graceDays",allows_trips as "allowsTrips",campaign_kind as "campaignKind",starts_at as "startsAt",ends_at as "endsAt",expiry_window_start as "expiryWindowStart",expiry_window_end as "expiryWindowEnd",priority,status,created_at as "createdAt" from membership_grace_policies order by created_at desc`; }catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/membership-grace-policies/preview",async(request,reply)=>{try{requirePermission(request,"membership_grace:manage");const body=gracePolicySchema.parse(request.body);const [preview]=await database()`select count(*)::int as affected,count(*) filter(where dm.status='PENDING')::int as pending,count(*) filter(where dm.status in ('ACTIVE','EXPIRING'))::int as active,count(distinct u.cooperative_id)::int as cooperatives from driver_memberships dm join users u on u.id=dm.driver_id where dm.cycle_closed_at is null and (${body.scope}='ALL' or (${body.scope}='COOPERATIVE' and u.cooperative_id=${body.cooperativeId ?? null}) or (${body.scope}='DRIVER' and dm.driver_id=${body.driverId ?? null})) and (${body.expiryWindowStart ?? null}::date is null or dm.expiration_local_date>=${body.expiryWindowStart ?? null}::date) and (${body.expiryWindowEnd ?? null}::date is null or dm.expiration_local_date<=${body.expiryWindowEnd ?? null}::date)`;return preview;}catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/membership-grace-policies",async(request,reply)=>{try{const actor=requirePermission(request,"membership_grace:manage");const body=gracePolicySchema.parse(request.body);const [item]=await database()`insert into membership_grace_policies(name,reason,scope,cooperative_id,driver_id,grace_days,allows_trips,campaign_kind,starts_at,ends_at,expiry_window_start,expiry_window_end,priority,status,created_by,approved_by) values (${body.name},${body.reason},${body.scope},${body.cooperativeId ?? null},${body.driverId ?? null},${body.graceDays},${body.allowsTrips},${body.campaignKind},${body.startsAt},${body.endsAt},${body.expiryWindowStart ?? null},${body.expiryWindowEnd ?? null},${body.priority},${body.status},${actor.id!},${body.status==='ACTIVE'?actor.id!:null}) returning id::text,name,status`;if(!item)throw new Error("GRACE_POLICY_NOT_CREATED");await persistAudit(actor,"MEMBERSHIP_GRACE_POLICY_CREATED","MEMBERSHIP_GRACE_POLICY",item.id,body.reason);return reply.code(201).send(item);}catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/admin/api-usage",async(request,reply)=>{try{requirePermission(request,"api_usage:view");const [settings]=await database()`select * from operational_settings where id=1`;if(!settings)throw new Error("SETTINGS_NOT_FOUND");const rows=await database()`select provider,count(*)::int as requests,count(*) filter(where result='ERROR')::int as errors from api_usage_events where billing_period=date_trunc('month',now())::date group by provider order by provider`;const map=Object.fromEntries(rows.map(row=>[String(row.provider),Number(row.requests)]));const textSearch=map.TEXT_SEARCH_PRO??0;const navigation=map.NAVIGATION_SDK??0;return {period:new Date().toISOString().slice(0,7),providers:rows,textSearch:{used:textSearch,freeCap:Number(settings.text_search_free_cap_reference),operationalLimit:Number(settings.text_search_free_cap_reference)+Math.floor(Number(settings.text_search_monthly_budget_usd)*1000/Math.max(0.01,Number(settings.text_search_price_per_thousand_usd))),estimatedCost:Math.max(0,textSearch-Number(settings.text_search_free_cap_reference))*Number(settings.text_search_price_per_thousand_usd)/1000},navigation:{used:navigation,freeCap:Number(settings.navigation_free_cap_reference)}};}catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/collector/payment-orders/token/:token",async(request,reply)=>{try{requirePermission(request,"payments:collect");const token=(request.params as {token:string}).token;const [order]=await database()`select o.id::text,o.status,o.short_code as "shortCode",o.total_amount::float8 as amount,o.currency,o.expires_at as "expiresAt",o.plan_snapshot as plan,u.full_name as driver,concat('****',right(coalesce(d.identity_number,''),4)) as identification,v.identifier as vehicle,c.name as cooperative,dm.expires_at as "currentExpiresAt" from membership_payment_orders o join users u on u.id=o.driver_id join drivers d on d.user_id=o.driver_id left join lateral(select identifier from vehicles where driver_id=o.driver_id order by created_at desc limit 1)v on true left join cooperatives c on c.id=u.cooperative_id left join lateral(select expires_at from driver_memberships where driver_id=o.driver_id and cycle_closed_at is null order by created_at desc limit 1)dm on true where o.public_token_hash=${sha256(token)}`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});return order;}catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/collector/payment-orders/token/:token/confirm",async(request,reply)=>{try{const actor=requirePermission(request,"payments:collect");const body=paymentConfirmSchema.parse(request.body);const token=(request.params as {token:string}).token;const [assignment]=await database()`select cp.id,cp.status,cp.cash_enabled,cp.deuna_enabled,cp.bank_transfer_enabled from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and ca.collection_point_id=${body.collectionPointId} and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now())`;if(!assignment||assignment.status!=='ACTIVE')return reply.code(403).send({error:"COLLECTION_POINT_INACTIVE"});const enabled=body.method==='CASH'?assignment.cash_enabled:body.method==='DEUNA'?assignment.deuna_enabled:assignment.bank_transfer_enabled;if(!enabled)return reply.code(400).send({error:"PAYMENT_METHOD_DISABLED"});const [order]=await database()`select id::text from membership_payment_orders where public_token_hash=${sha256(token)}`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});const result=await processMembershipPayment(order.id,actor,{method:body.method,receiverScope:'COLLECTION_POINT',verificationChannel:body.method==='CASH'?'IN_PERSON':'COLLECTION_POINT',collectionPointId:body.collectionPointId,reference:body.reference,idempotencyKey:body.idempotencyKey});return result;}catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/collector/payments/today",async(request,reply)=>{try{const actor=requirePermission(request,"payments:view_own_point");return database()`select p.id::text,p.amount::float8,p.currency,p.method,p.settlement_status as "settlementStatus",p.confirmed_at as "confirmedAt",u.full_name as driver,cp.name as point from membership_payments p join users u on u.id=p.driver_id join collection_points cp on cp.id=p.collection_point_id join collector_assignments ca on ca.collection_point_id=cp.id and ca.collector_id=${actor.id!} where p.confirmed_at>=date_trunc('day',now()) and p.status='CONFIRMED' order by p.confirmed_at desc`; }catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/collector/me",async(request,reply)=>{try{const actor=requirePermission(request,"payments:view_own_point");const points=await database()`select cp.id::text,cp.code,cp.name,cp.address,cp.status,cp.cash_enabled as "cashEnabled",cp.deuna_enabled as "deunaEnabled",cp.bank_transfer_enabled as "bankTransferEnabled" from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now()) order by cp.name`;return {user:{id:actor.id,name:actor.name},points};}catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/collector/closures",async(request,reply)=>{try{const actor=requirePermission(request,"settlements:view_own_point");return database()`select c.id::text,c.period_start as "periodStart",c.period_end as "periodEnd",c.status,c.cash_total::float8 as "cashTotal",c.deuna_total::float8 as "deunaTotal",c.transfer_total::float8 as "transferTotal",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join collector_assignments ca on ca.collection_point_id=cp.id and ca.collector_id=${actor.id!} order by c.created_at desc limit 100`; }catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/collector/closures", async (request, reply) => {
+    try {
+      const actor = requirePermission(request, "cash_closures:create");
+      const body = z.object({ collectionPointId: z.string().uuid(), notes: z.string().trim().max(500).optional() }).parse(request.body);
+      const result = await database().begin(async (tx) => {
+        const [assignment] = await tx`select cp.id from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and cp.id=${body.collectionPointId} and cp.status='ACTIVE' and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now())`;
+        if (!assignment) throw new Error("FORBIDDEN");
+        const [prior] = await tx`select coalesce(max(period_end),date_trunc('day',now())) as start from collection_point_closures where collection_point_id=${body.collectionPointId} and collector_id=${actor.id!}`;
+        const periodStart = prior?.start ?? new Date();
+        const payments = await tx`select p.id,p.method,p.amount from membership_payments p where p.collection_point_id=${body.collectionPointId} and p.collector_id=${actor.id!} and p.status='CONFIRMED' and p.confirmed_at>${periodStart} and not exists(select 1 from collection_point_closure_payments link where link.payment_id=p.id) for update`;
+        const total = (method: string) => money(payments.filter((item) => item.method === method).reduce((sum, item) => sum + Number(item.amount), 0));
+        const cash = total("CASH");
+        const deuna = total("DEUNA");
+        const transfer = total("BANK_TRANSFER");
+        const gross = money(cash + deuna + transfer);
+        const [closure] = await tx`insert into collection_point_closures(collection_point_id,collector_id,period_start,period_end,status,cash_total,deuna_total,transfer_total,gross_amount,net_amount,closed_at,notes) values(${body.collectionPointId},${actor.id!},${periodStart},now(),'PENDING_SETTLEMENT',${cash},${deuna},${transfer},${gross},${gross},now(),${body.notes ?? null}) returning id::text,status,gross_amount::float8 as "grossAmount",net_amount::float8 as "netAmount"`;
+        if (!closure) throw new Error("CLOSURE_NOT_CREATED");
+        for (const payment of payments) await tx`insert into collection_point_closure_payments(closure_id,payment_id) values(${closure.id},${payment.id})`;
+        return { id: String(closure.id), status: String(closure.status), grossAmount: Number(closure.grossAmount), netAmount: Number(closure.netAmount), payments: payments.length };
+      });
+      await persistAudit(actor, "COLLECTION_CLOSURE_CREATED", "COLLECTION_POINT_CLOSURE", result.id, body.notes ?? "Cierre de caja");
+      return reply.code(201).send(result);
+    } catch (error) {
+      return businessError(error, reply);
+    }
+  });
+
+  app.get("/v1/admin/collection-closures",async(request,reply)=>{try{requirePermission(request,"cash_closures:review");return database()`select c.id::text,c.status,c.period_start as "periodStart",c.period_end as "periodEnd",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point,u.full_name as collector,c.created_at as "createdAt" from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join users u on u.id=c.collector_id order by c.created_at desc limit 200`; }catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/admin/membership-payments/pending",async(request,reply)=>{try{requirePermission(request,"payments:transfer_review");return database()`select proof.id::text,proof.order_id::text as "orderId",u.full_name as driver,o.total_amount::float8 as "expectedAmount",proof.declared_amount::float8 as "declaredAmount",o.currency,proof.bank_name as bank,proof.reference_masked as reference,proof.transfer_date as "transferDate",proof.status,proof.created_at as "createdAt" from membership_transfer_proofs proof join membership_payment_orders o on o.id=proof.order_id join users u on u.id=o.driver_id where proof.status='PENDING' order by proof.created_at`; }catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/membership-payments/:proofId/approve",async(request,reply)=>{try{const actor=requirePermission(request,"payments:transfer_review");const proofId=(request.params as {proofId:string}).proofId;const body=z.object({idempotencyKey:z.string().min(8).max(120)}).parse(request.body);const [proof]=await database()`select p.*,o.id::text as "orderId" from membership_transfer_proofs p join membership_payment_orders o on o.id=p.order_id where p.id=${proofId} and p.status='PENDING'`;if(!proof)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});const result=await processMembershipPayment(proof.orderId,actor,{method:'BANK_TRANSFER',receiverScope:'COSTA_GO_CENTRAL',verificationChannel:'REMOTE_PROOF',referenceHash:String(proof.reference_normalized_hash),referenceMasked:String(proof.reference_masked),idempotencyKey:body.idempotencyKey});await database()`update membership_transfer_proofs set status='APPROVED',reviewed_by=${actor.id!},reviewed_at=now() where id=${proofId} and status='PENDING'`;return result;}catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/membership-payments/:proofId/reject",async(request,reply)=>{try{const actor=requirePermission(request,"payments:transfer_review");const proofId=(request.params as {proofId:string}).proofId;const body=z.object({reason:z.enum(['TRANSFER_NOT_FOUND','WRONG_AMOUNT','DUPLICATE_RECEIPT','INVALID_RECEIPT','OTHER']),comment:z.string().trim().min(3).max(500)}).parse(request.body);const [proof]=await database().begin(async tx=>{const [item]=await tx`update membership_transfer_proofs set status='REJECTED',reviewed_by=${actor.id!},reviewed_at=now(),rejection_reason=${`${body.reason}: ${body.comment}`} where id=${proofId} and status='PENDING' returning id::text,order_id::text as "orderId"`;if(item)await tx`update membership_payment_orders set status='REJECTED',rejected_at=now(),updated_at=now() where id=${item.orderId}`;return [item];});if(!proof)return reply.code(409).send({error:'PAYMENT_ORDER_NOT_PAYABLE'});await persistAudit(actor,'PAYMENT_REJECTED','MEMBERSHIP_TRANSFER_PROOF',proofId,body.comment);return proof;}catch(error){return businessError(error,reply);} });
+}

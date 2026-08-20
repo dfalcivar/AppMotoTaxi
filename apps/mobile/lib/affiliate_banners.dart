@@ -12,6 +12,8 @@ class AffiliateBanners extends StatefulWidget {
     this.variant = AffiliateBannerVariant.expanded,
     this.onTap,
     this.onAvailabilityChanged,
+    this.rotationSeconds = 5,
+    this.onImpression,
   });
 
   final Future<List<dynamic>> Function() load;
@@ -19,6 +21,8 @@ class AffiliateBanners extends StatefulWidget {
   final AffiliateBannerVariant variant;
   final ValueChanged<Map<String, dynamic>>? onTap;
   final ValueChanged<bool>? onAvailabilityChanged;
+  final int rotationSeconds;
+  final ValueChanged<Map<String, dynamic>>? onImpression;
 
   @override
   State<AffiliateBanners> createState() => _AffiliateBannersState();
@@ -29,19 +33,22 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
   List<Map<String, dynamic>> banners = [];
   Timer? rotation;
   Timer? refresh;
+  Timer? impressionDelay;
   int page = 0;
   bool? lastAvailability;
+  String? lastImpressionKey;
 
   @override
   void initState() {
     super.initState();
     reload();
     refresh = Timer.periodic(const Duration(minutes: 5), (_) => reload());
-    rotation = Timer.periodic(const Duration(seconds: 8), (_) {
+    rotation = Timer.periodic(Duration(seconds: widget.rotationSeconds), (_) {
       if (!mounted || banners.length < 2 || !controller.hasClients) return;
       page = (page + 1) % banners.length;
       controller.animateToPage(page,
           duration: const Duration(milliseconds: 450), curve: Curves.easeInOut);
+      reportImpression(page);
     });
   }
 
@@ -57,23 +64,50 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
     try {
       final result = await widget.load();
       if (!mounted) return;
+      final source = result
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      final weighted = <Map<String, dynamic>>[];
+      final maximumWeight = source.length <= 1 ? 1 : source.fold<int>(1, (value, banner) {
+        final weight = ((banner['weight'] as num?)?.toInt() ?? 1).clamp(1, 5);
+        return weight > value ? weight : value;
+      });
+      for (var round = 0; round < maximumWeight; round++) {
+        for (final banner in source) {
+          final weight = ((banner['weight'] as num?)?.toInt() ?? 1).clamp(1, 5);
+          if (round < weight) weighted.add(banner);
+        }
+      }
       setState(() {
-        banners = result
-            .map((item) => Map<String, dynamic>.from(item as Map))
-            .toList();
+        banners = weighted;
         if (page >= banners.length) page = 0;
       });
       reportAvailability(banners.isNotEmpty);
+      reportImpression(page);
     } catch (_) {
       // La publicidad no bloquea el flujo principal si la red falla.
       reportAvailability(banners.isNotEmpty);
     }
   }
 
+  void reportImpression(int index) {
+    if (index < 0 || index >= banners.length) return;
+    impressionDelay?.cancel();
+    impressionDelay = Timer(const Duration(seconds: 1), () {
+      if (!mounted || page != index || index >= banners.length) return;
+      final banner = banners[index];
+      final key = '${banner['id']}-$index-${DateTime.now().millisecondsSinceEpoch ~/ (widget.rotationSeconds * 1000)}';
+      if (lastImpressionKey == key) return;
+      lastImpressionKey = key;
+      widget.onImpression?.call(banner);
+    });
+  }
+
   @override
   void dispose() {
     rotation?.cancel();
     refresh?.cancel();
+    impressionDelay?.cancel();
     controller.dispose();
     super.dispose();
   }
@@ -90,7 +124,9 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
 
   Widget expandedBanner(BuildContext context, Map<String, dynamic> banner) {
     final scheme = Theme.of(context).colorScheme;
-    final hasLink = banner['targetUrl']?.toString().trim().isNotEmpty == true;
+    final hasLink = banner['actionType']?.toString() != 'NONE' &&
+        (banner['actionValue']?.toString().trim().isNotEmpty == true ||
+            banner['targetUrl']?.toString().trim().isNotEmpty == true);
     return Material(
       color: scheme.surfaceContainer,
       borderRadius: BorderRadius.circular(18),
@@ -142,7 +178,9 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
 
   Widget compactBanner(BuildContext context, Map<String, dynamic> banner) {
     final scheme = Theme.of(context).colorScheme;
-    final hasLink = banner['targetUrl']?.toString().trim().isNotEmpty == true;
+    final hasLink = banner['actionType']?.toString() != 'NONE' &&
+        (banner['actionValue']?.toString().trim().isNotEmpty == true ||
+            banner['targetUrl']?.toString().trim().isNotEmpty == true);
     return Material(
       color: scheme.surface,
       borderRadius: BorderRadius.circular(18),
@@ -196,7 +234,10 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
         child: PageView.builder(
           controller: controller,
           itemCount: banners.length,
-          onPageChanged: (value) => page = value,
+          onPageChanged: (value) {
+            page = value;
+            reportImpression(value);
+          },
           itemBuilder: (context, index) => compact
               ? compactBanner(context, banners[index])
               : expandedBanner(context, banners[index]),

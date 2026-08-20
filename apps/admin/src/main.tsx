@@ -11,12 +11,13 @@ import "./responsive.css";
 import "./operations.css";
 import "./service-areas.css";
 import "./brand.css";
+import { MembershipAdmin } from "./memberships-admin.js";
 import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
 import { FareTerritories } from "./fare-admin.js";
 import { AdminErrorBoundary } from "./observability.js";
 
-type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "access" | "audit" | "database";
+type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "incidents" | "access" | "audit" | "database";
 
 const labels: Record<Module, string> = {
   dashboard: "Tablero",
@@ -24,6 +25,7 @@ const labels: Record<Module, string> = {
   alerts: "Centro de alertas",
   trips: "Viajes",
   drivers: "Conductores",
+  memberships: "Membresías",
   passengers: "Pasajeros",
   cooperatives: "Cooperativas",
   pricing: "Tarifas",
@@ -35,11 +37,11 @@ const labels: Record<Module, string> = {
   audit: "Auditoría",
   database: "PostgreSQL"
 };
-const icons: Record<Module, string> = { dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
+const icons: Record<Module, string> = { dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", memberships: "◈", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
 const modulePermissions: Record<Module, string[]> = {
   dashboard: ["dashboard:view", "cooperative_dashboard:view"],
   operations: ["operations:view"], alerts: ["alerts:view"],
-  trips: ["trips:view"], drivers: ["drivers:view"], passengers: ["passengers:view"],
+  trips: ["trips:view"], drivers: ["drivers:view"], memberships: ["memberships:view"], passengers: ["passengers:view"],
   cooperatives: ["cooperatives:view"], pricing: ["pricing:view"], zones: ["service_areas:view"],
   settings: ["settings:view"], advertising: ["advertising:view"], incidents: ["incidents:view"],
   access: ["roles:manage"], audit: ["audit:view"], database: ["database:view"]
@@ -356,16 +358,16 @@ function DocumentExpirySettings({ token, admin }: { token: string; admin: boolea
 }
 
 function Advertising({ token, admin }: { token: string; admin: boolean }) {
-  const emptyForm = () => ({ title: "", placement: "PASSENGER_HOME", targetUrl: "", startsAt: localDateTimeInput(), endsAt: localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: 0, active: true, imageBase64: "", imageMime: "" });
-  const [data, setData] = useState<any[]>([]); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [busy, setBusy] = useState(false);
+  const emptyForm = () => ({ title: "", advertiserName:"", planCode:"BASIC", placement: "PASSENGER_SEARCHING_DRIVER", serviceAreaId:"", weight:1, actionType:"WEB", actionValue:"", targetUrl: "", startsAt: localDateTimeInput(), endsAt: localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: 0, active: true, imageBase64: "", imageMime: "" });
+  const [data, setData] = useState<any[]>([]); const [zones, setZones] = useState<any[]>([]); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
-  const load = () => apiFetch<any[]>("/v1/admin/banners", token).then(setData).catch(reason => setError(errorText(reason)));
+  const load = () => Promise.all([apiFetch<any[]>("/v1/admin/banners", token),apiFetch<any[]>("/v1/admin/zones",token)]).then(([campaigns,areas])=>{setData(campaigns);setZones(areas);}).catch(reason => setError(errorText(reason)));
   useEffect(() => { void load(); }, [token]);
   function resetForm() { setEditingId(null); setForm(emptyForm()); }
   function edit(item: any) {
     setError(""); setSuccess(""); setEditingId(item.id);
-    setForm({ title: item.title, placement: item.placement, targetUrl: item.targetUrl ?? "", startsAt: localDateTimeInput(item.startsAt), endsAt: item.endsAt ? localDateTimeInput(item.endsAt) : localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: item.sortOrder, active: item.active, imageBase64: "", imageMime: "" });
+    setForm({ title: item.title, advertiserName:item.advertiserName??item.title, planCode:item.planCode??"BASIC", placement: item.placement, serviceAreaId:item.serviceAreaId??"", weight:item.weight??1, actionType:item.actionType??"WEB", actionValue:item.actionValue??item.targetUrl??"", targetUrl: item.targetUrl ?? "", startsAt: localDateTimeInput(item.startsAt), endsAt: item.endsAt ? localDateTimeInput(item.endsAt) : localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: item.sortOrder, active: item.active, imageBase64: "", imageMime: "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function choose(file?: File) {
@@ -381,7 +383,7 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
     if (new Date(form.endsAt) <= new Date(form.startsAt)) { setError("La fecha final debe ser posterior a la fecha de inicio."); return; }
     const { imageBase64, imageMime, ...fields } = form;
     const payload = {
-      ...fields,
+      ...fields, serviceAreaId:fields.serviceAreaId||null,
       startsAt: new Date(form.startsAt).toISOString(),
       endsAt: new Date(form.endsAt).toISOString(),
       ...(imageBase64 ? { imageBase64, imageMime } : {})
@@ -403,7 +405,7 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
         <article className="banner-placeholder-card permanent"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Tu publicidad aquí · pieza fija</strong><p>Respaldo permanente de la app. Se muestra automáticamente cuando no existen campañas vigentes.</p></div></article>
         {data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}>
         <img src={apiUrl(`/v1/banners/${item.id}/image?v=${encodeURIComponent(item.updatedAt)}`)} alt={item.title} />
-        <div><strong>{item.title}</strong><small>Inicio del pasajero · orden {item.sortOrder}</small><small>{new Date(item.startsAt).toLocaleString()} — {item.endsAt ? new Date(item.endsAt).toLocaleString() : "sin fecha final"}</small></div>
+        <div><strong>{item.title}</strong><small>{item.planCode} · {item.placement} · peso {item.weight}</small><small>{new Date(item.startsAt).toLocaleString()} — {item.endsAt ? new Date(item.endsAt).toLocaleString() : "sin fecha final"}</small></div>
         {admin && <div className="banner-actions"><button className="secondary" onClick={() => edit(item)}>Editar</button><button className="secondary" onClick={() => toggle(item)}>{item.active ? "Desactivar" : "Activar"}</button></div>}
         </article>)}
       </div>
@@ -413,9 +415,16 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
       <p className="banner-spec">1200×400 px · JPG, PNG o WebP · máximo 1 MB</p>
       <div className="placement-note"><strong>Campaña con vigencia automática</strong><span>La pieza «Tu publicidad aquí» queda como respaldo permanente cuando no existan campañas activas.</span></div>
       <label>Comercio o campaña<input required minLength={3} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
+      <label>Nombre del anunciante<input required minLength={2} value={form.advertiserName} onChange={e=>setForm({...form,advertiserName:e.target.value})}/></label>
+      <div className="form-grid">
+        <label>Plan<select value={form.planCode} onChange={e=>setForm({...form,planCode:e.target.value,placement:e.target.value==="BASIC"?"PASSENGER_SEARCHING_DRIVER":form.placement,weight:e.target.value==="PREMIUM"?2:1})}><option value="BASIC">Básico</option><option value="PREMIUM">Premium</option></select></label>
+        <label>Momento<select value={form.placement} onChange={e=>setForm({...form,placement:e.target.value})}><option value="PASSENGER_SEARCHING_DRIVER">Buscando conductor</option>{form.planCode==="PREMIUM"&&<><option value="PASSENGER_WAITING_DRIVER">Esperando conductor</option><option value="PASSENGER_TRIP_IN_PROGRESS">Viaje en curso</option></>}</select></label>
+        <label>Peso de rotación<input type="number" min="1" max="5" value={form.weight} onChange={e=>setForm({...form,weight:Number(e.target.value)})}/></label>
+        <label>Zona de cobertura<select value={form.serviceAreaId} onChange={e=>setForm({...form,serviceAreaId:e.target.value})}><option value="">Todas las zonas autorizadas</option>{zones.map(zone=><option key={zone.id} value={zone.id}>{zone.name} · {zone.code}</option>)}</select></label>
+      </div>
       <label>{editingId ? "Reemplazar imagen (opcional)" : "Imagen"}<input required={!editingId} type="file" accept="image/jpeg,image/png,image/webp" onChange={e => choose(e.target.files?.[0])} /></label>
       {form.imageBase64 && <img className="banner-preview" src={`data:${form.imageMime};base64,${form.imageBase64}`} alt="Vista previa" />}
-      <label>Enlace opcional<input type="url" placeholder="https://comercio.example" value={form.targetUrl} onChange={e => setForm({ ...form, targetUrl: e.target.value })} /></label>
+      <div className="form-grid"><label>Acción<select value={form.actionType} onChange={e=>setForm({...form,actionType:e.target.value})}><option value="WEB">Sitio web</option><option value="WHATSAPP">WhatsApp</option><option value="PHONE">Llamada</option><option value="MAPS">Mapa</option><option value="NONE">Sin acción</option></select></label><label>Destino de la acción<input value={form.actionValue} onChange={e=>setForm({...form,actionValue:e.target.value})} placeholder={form.actionType==="PHONE"?"+593...":form.actionType==="WHATSAPP"?"https://wa.me/...":"https://..."}/></label></div>
       <div className="form-grid">
         <label>Mostrar desde<input required type="datetime-local" value={form.startsAt} onChange={e => setForm({ ...form, startsAt: e.target.value })} /></label>
         <label>Mostrar hasta<input required type="datetime-local" value={form.endsAt} onChange={e => setForm({ ...form, endsAt: e.target.value })} /></label>
@@ -446,7 +455,7 @@ function AccessManagement({ token }: { token: string }) {
   function updateDraft(id: string, values: Record<string, unknown>) { setUsers(current => current.map(user => user.id === id ? { ...user, ...values } : user)); }
   async function save(user: any) { setBusy(user.id); setError(""); setSuccess(""); try { await apiFetch(`/v1/admin/access/users/${user.id}`, token, { method: "PATCH", body: JSON.stringify({ role: user.role, cooperativeId: user.cooperativeId || null, overrides: user.overrides ?? [] }) }); setSuccess(`Acceso actualizado para ${user.name}. Deberá iniciar sesión nuevamente.`); await load(); } catch (reason) { setError(errorText(reason)); } finally { setBusy(""); } }
   async function create(event: React.FormEvent) { event.preventDefault(); const policyError = strongPasswordError(form.password); if (policyError) { setError(policyError); return; } setBusy("new"); setError(""); setSuccess(""); try { await apiFetch("/v1/admin/access/users", token, { method: "POST", body: JSON.stringify({ ...form, cooperativeId: form.cooperativeId || null }) }); setForm({ fullName: "", email: "", phone: "", password: "", role: "SOPORTE", cooperativeId: "" }); setSuccess("Usuario administrativo creado."); await load(); } catch (reason) { setError(errorText(reason)); } finally { setBusy(""); } }
-  const roleLabel: Record<string, string> = { ADMIN: "Administrador actual", SUPPORT: "Soporte actual", SUPER_ADMIN: "Superadministrador", ADMIN_OPERACIONES: "Administrador de operaciones", SOPORTE: "Soporte", ANALISTA_COOPERATIVA: "Analista de cooperativa" };
+  const roleLabel: Record<string, string> = { ADMIN: "Administrador actual", SUPPORT: "Soporte actual", SUPER_ADMIN: "Superadministrador", ADMIN_OPERACIONES: "Administrador de operaciones", SOPORTE: "Soporte", ANALISTA_COOPERATIVA: "Analista de cooperativa", COLLECTOR: "Recaudador", FINANCE: "Finanzas" };
   return <div className="split"><section className="card"><Header eyebrow="CONTROL DE ACCESO" title="Usuarios y roles" action={`${roles.length} roles`} /><Notice error={error} success={success} /><p className="note">Los permisos se validan también en la API. Un analista debe tener una cooperativa asignada y solo recibe datos agregados de ella.</p>{users.length ? <Table headers={["Usuario", "Rol", "Cooperativa", "Permisos base", "Acción"]} rows={users.map(user => [<div><strong>{user.name}</strong><br /><small>{user.email}</small></div>, <select value={user.role} onChange={event => updateDraft(user.id, { role: event.target.value })}>{roles.map(item => <option key={item.role} value={item.role}>{roleLabel[item.role] ?? item.role}</option>)}</select>, <select value={user.cooperativeId ?? ""} onChange={event => updateDraft(user.id, { cooperativeId: event.target.value || null })}><option value="">Sin cooperativa</option>{cooperatives.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>, roles.find(item => item.role === user.role)?.permissions.length ?? 0, <button className="link" disabled={busy === user.id || (user.role === "ANALISTA_COOPERATIVA" && !user.cooperativeId)} onClick={() => save(user)}>{busy === user.id ? "Guardando…" : "Guardar"}</button>])} /> : <Empty text="No existen usuarios administrativos en la base." />}</section><form className="card form-card" onSubmit={create}><Header eyebrow="NUEVO ACCESO" title="Crear usuario administrativo" /><label>Nombre<input required minLength={3} value={form.fullName} onChange={event => setForm({ ...form, fullName: event.target.value })} /></label><label>Correo<input required type="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} /></label><label>Teléfono<input required minLength={8} value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value })} /></label><label>Clave temporal<input required type="password" minLength={10} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label><small>10+ caracteres con mayúscula, minúscula, número y símbolo.</small><label>Rol<select value={form.role} onChange={event => setForm({ ...form, role: event.target.value })}>{roles.filter(item => !["ADMIN", "SUPPORT"].includes(item.role)).map(item => <option key={item.role} value={item.role}>{roleLabel[item.role] ?? item.role}</option>)}</select></label><label>Cooperativa<select value={form.cooperativeId} onChange={event => setForm({ ...form, cooperativeId: event.target.value })}><option value="">Sin cooperativa</option>{cooperatives.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="primary" disabled={busy === "new" || (form.role === "ANALISTA_COOPERATIVA" && !form.cooperativeId)}>{busy === "new" ? "Creando…" : "Crear usuario"}</button></form></div>;
 }
 
@@ -504,13 +513,17 @@ function Database({ token }: { token: string }) {
 
 function App() {
   const [session, setSession] = useState<Session | undefined>(() => { try { return JSON.parse(localStorage.getItem("admin-session") ?? ""); } catch { return undefined; } });
-  const [module, setModule] = useState<Module>("dashboard");
+  const [module, setModule] = useState<Module>(() => {
+    const requested=new URLSearchParams(window.location.search).get("module");
+    return (requested&&requested in labels?requested:"dashboard") as Module;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   function save(next: Session) { localStorage.setItem("admin-session", JSON.stringify(next)); setSession(next); }
   function logout() { localStorage.removeItem("admin-session"); setSession(undefined); }
   if (!session) return <Login onSession={save} />;
   const allowed = (permission: string) => can(session.user, permission);
   const visible = (Object.keys(labels) as Module[]).filter(item => modulePermissions[item].some(allowed));
+  const currentModule = visible.includes(module) ? module : (visible[0] ?? "dashboard");
   const cooperativeDashboard = allowed("cooperative_dashboard:view") && !allowed("dashboard:view");
   function selectModule(next: Module) {
     setModule(next);
@@ -522,28 +535,29 @@ function App() {
         <button className="menu-toggle" type="button" aria-label={sidebarOpen ? "Cerrar menú" : "Abrir menú"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(value => !value)}>☰</button>
         <div className="brand"><img className="brand-logo" src="/costa-go-emblem.png" alt="" /><div><strong><span>Costa-</span>Go</strong><small>Centro de control</small></div></div>
       </div>
-      <nav>{visible.map(item => <button key={item} title={!sidebarOpen ? labels[item] : undefined} className={module === item ? "active" : ""} onClick={() => selectModule(item)}><span>{icons[item]}</span><span className="nav-label">{labels[item]}</span></button>)}</nav>
+      <nav>{visible.map(item => <button key={item} title={!sidebarOpen ? labels[item] : undefined} className={currentModule === item ? "active" : ""} onClick={() => selectModule(item)}><span>{icons[item]}</span><span className="nav-label">{labels[item]}</span></button>)}</nav>
       <div className="profile"><strong>{session.user.name}</strong><small>{session.user.role.replaceAll("_", " ")}</small><button onClick={logout}>Cerrar sesión</button></div>
     </aside>
     {sidebarOpen && <button className="sidebar-scrim" aria-label="Cerrar menú" onClick={() => setSidebarOpen(false)} />}
     <main>
-      <header className="topbar"><button className="mobile-menu-toggle" type="button" aria-label="Abrir menú" onClick={() => setSidebarOpen(true)}>☰</button><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[module]}</h1></div><span className="status">● Render conectado</span></header>
-      {module === "dashboard" && <Dashboard token={session.token} cooperative={cooperativeDashboard} />}
-      {module === "operations" && <OperationsCenter token={session.token} />}
-      {module === "alerts" && <AlertsCenter token={session.token} />}
-      {module === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}
-      {module === "drivers" && <Drivers token={session.token} canApprove={allowed("drivers:approve")} canViewDocuments={allowed("drivers:documents:view")} canManageDocuments={allowed("drivers:documents:manage")} canResetPasswords={allowed("users:manage")} />}
-      {module === "passengers" && <Passengers token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}
-      {module === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}
-      {module === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}
-      {module === "pricing" && <FareTerritories token={session.token} canManage={allowed("pricing:manage")} />}
-      {module === "zones" && <CoverageZones token={session.token} permissions={session.user.permissions ?? []} />}
-      {module === "settings" && <><Settings token={session.token} admin={allowed("settings:manage")} /><DocumentExpirySettings token={session.token} admin={allowed("settings:manage")} /></>}
-      {module === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}
-      {module === "incidents" && <SupportAdmin token={session.token} />}
-      {module === "access" && <AccessManagement token={session.token} />}
-      {module === "audit" && <Audit token={session.token} />}
-      {module === "database" && <Database token={session.token} />}
+      <header className="topbar"><button className="mobile-menu-toggle" type="button" aria-label="Abrir menú" onClick={() => setSidebarOpen(true)}>☰</button><div><span className="eyebrow">CONSOLA ADMINISTRATIVA</span><h1>{labels[currentModule]}</h1></div><span className="status">● Render conectado</span></header>
+      {currentModule === "dashboard" && <Dashboard token={session.token} cooperative={cooperativeDashboard} />}
+      {currentModule === "operations" && <OperationsCenter token={session.token} />}
+      {currentModule === "alerts" && <AlertsCenter token={session.token} />}
+      {currentModule === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}
+      {currentModule === "drivers" && <Drivers token={session.token} canApprove={allowed("drivers:approve")} canViewDocuments={allowed("drivers:documents:view")} canManageDocuments={allowed("drivers:documents:manage")} canResetPasswords={allowed("users:manage")} />}
+      {currentModule === "memberships" && <MembershipAdmin token={session.token} permissions={session.user.permissions ?? []} />}
+      {currentModule === "passengers" && <Passengers token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}
+      {currentModule === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}
+      {currentModule === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}
+      {currentModule === "pricing" && <FareTerritories token={session.token} canManage={allowed("pricing:manage")} />}
+      {currentModule === "zones" && <CoverageZones token={session.token} permissions={session.user.permissions ?? []} />}
+      {currentModule === "settings" && <><Settings token={session.token} admin={allowed("settings:manage")} /><DocumentExpirySettings token={session.token} admin={allowed("settings:manage")} /></>}
+      {currentModule === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}
+      {currentModule === "incidents" && <SupportAdmin token={session.token} />}
+      {currentModule === "access" && <AccessManagement token={session.token} />}
+      {currentModule === "audit" && <Audit token={session.token} />}
+      {currentModule === "database" && <Database token={session.token} />}
     </main>
   </div>;
 }

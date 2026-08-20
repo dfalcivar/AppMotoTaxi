@@ -4,7 +4,9 @@ export const adminRoles = [
   "SUPER_ADMIN",
   "ADMIN_OPERACIONES",
   "SOPORTE",
-  "ANALISTA_COOPERATIVA"
+  "ANALISTA_COOPERATIVA",
+  "COLLECTOR",
+  "FINANCE"
 ] as const;
 
 export type AdminRole = typeof adminRoles[number];
@@ -50,7 +52,29 @@ export const allPermissions = [
   "operations:view",
   "alerts:view",
   "faq:view",
-  "faq:manage"
+  "faq:manage",
+  "memberships:view",
+  "memberships:manage",
+  "membership_plans:manage",
+  "membership_grace:manage",
+  "membership_import:manage",
+  "payment_orders:create",
+  "payments:collect",
+  "payments:transfer_review",
+  "payments:view_own_point",
+  "payments:view_all",
+  "payments:courtesy_grant",
+  "payments:reverse",
+  "collection_points:manage",
+  "cash_closures:create",
+  "cash_closures:review",
+  "settlements:create",
+  "settlements:review",
+  "settlements:view_own_point",
+  "settlements:view_all",
+  "financial_accounts:manage",
+  "collection_point_limits:manage",
+  "api_usage:view"
 ] as const;
 
 export type Permission = typeof allPermissions[number];
@@ -76,6 +100,19 @@ const cooperativeAnalystPermissions: Permission[] = [
   "cooperative_dashboard:view", "reports:view", "reports:export_aggregated"
 ];
 
+const collectorPermissions: Permission[] = [
+  "memberships:view", "payment_orders:create", "payments:collect",
+  "payments:view_own_point", "cash_closures:create", "settlements:create",
+  "settlements:view_own_point", "drivers:view"
+];
+
+const financePermissions: Permission[] = [
+  "dashboard:view", "memberships:view", "payments:transfer_review",
+  "payments:view_all", "cash_closures:review", "settlements:review",
+  "settlements:view_all", "financial_accounts:manage", "reports:view",
+  "reports:export"
+];
+
 export const rolePermissions: Record<AdminRole, readonly Permission[]> = {
   // Roles legados: se conservan para que las cuentas actuales no pierdan acceso.
   ADMIN: allPermissions,
@@ -83,7 +120,9 @@ export const rolePermissions: Record<AdminRole, readonly Permission[]> = {
   SUPER_ADMIN: allPermissions,
   ADMIN_OPERACIONES: operationsPermissions,
   SOPORTE: supportPermissions,
-  ANALISTA_COOPERATIVA: cooperativeAnalystPermissions
+  ANALISTA_COOPERATIVA: cooperativeAnalystPermissions,
+  COLLECTOR: collectorPermissions,
+  FINANCE: financePermissions
 };
 
 const knownPermissions = new Set<string>(allPermissions);

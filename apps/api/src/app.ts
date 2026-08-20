@@ -16,6 +16,13 @@ import { computeRoute } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
 import { captureOperationalError } from "./observability.js";
 import { sendTransactionalEmail } from "./email.js";
+import { registerCollectionAdminRoutes } from "./collection-admin.js";
+import {
+  driverMembershipEligibility,
+  membershipSchedulerTick,
+  recordCompletedTripMembershipUsage,
+  registerMembershipRoutes
+} from "./memberships.js";
 import {
   legacyPhoneAliases,
   normalizeEmail,
@@ -149,7 +156,19 @@ const pageQuerySchema = z.object({
   status: z.enum(["ALL", "COMPLETED", "CANCELLED", "SCHEDULED"]).default("ALL")
 });
 const inboxQuerySchema = pageQuerySchema.pick({ limit: true, cursor: true });
-const bannerPlacementSchema = z.object({ placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]).default("PASSENGER_HOME") });
+const bannerPlacementSchema = z.object({
+  placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME", "PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]).default("PASSENGER_HOME"),
+  serviceAreaId: z.string().uuid().optional()
+});
+const advertisingEventSchema = z.object({
+  campaignId: z.string().uuid(),
+  eventType: z.enum(["IMPRESSION", "CLICK", "ACTION"]),
+  exhibitionId: z.string().trim().min(8).max(120),
+  placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME", "PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]),
+  serviceAreaId: z.string().uuid().optional(),
+  tripStatus: z.string().trim().max(50).optional(),
+  actionType: z.string().trim().max(30).optional()
+});
 const favoritePlaceSchema = z.object({
   label: z.string().trim().min(2).max(50),
   address: z.string().trim().min(3).max(200),
@@ -384,6 +403,13 @@ export async function buildApp() {
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
   await registerSupportRoutes(app);
+  await registerMembershipRoutes(app);
+  await registerCollectionAdminRoutes(app);
+  const membershipScheduler = setInterval(() => {
+    void membershipSchedulerTick().catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
+  }, 60_000);
+  membershipScheduler.unref();
+  app.addHook("onClose", async () => clearInterval(membershipScheduler));
 
   app.addHook("onError", async (request, reply, error) => {
     if (reply.statusCode >= 500) {
@@ -428,14 +454,30 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const parsed = bannerPlacementSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_BANNER_PLACEMENT" });
+    const effectivePlacement=parsed.data.placement==="PASSENGER_HOME"?"PASSENGER_SEARCHING_DRIVER":parsed.data.placement;
     return await database()`
-      select id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
-        ends_at as "endsAt", sort_order as "sortOrder", updated_at as "updatedAt"
-      from affiliate_banners
-      where placement=${parsed.data.placement} and active=true and starts_at <= now()
-        and (ends_at is null or ends_at > now())
-      order by sort_order, starts_at desc
+      select banner.id::text,banner.title,${effectivePlacement}::text as placement,banner.target_url as "targetUrl",
+        banner.starts_at as "startsAt",banner.ends_at as "endsAt",banner.sort_order as "sortOrder",
+        banner.updated_at as "updatedAt",banner.advertiser_name as "advertiserName",banner.action_type as "actionType",
+        banner.action_value as "actionValue",coalesce(banner.weight,plan.default_weight,1)::int as weight,
+        coalesce(plan.code,'BASIC') as plan,banner.service_area_id::text as "serviceAreaId"
+      from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id
+      where banner.active=true and banner.campaign_status='ACTIVE' and banner.starts_at<=now()
+        and (banner.ends_at is null or banner.ends_at>now())
+        and (${parsed.data.serviceAreaId??null}::uuid is null or banner.service_area_id is null or banner.service_area_id=${parsed.data.serviceAreaId??null})
+        and (${effectivePlacement}=banner.placement or ${effectivePlacement}=any(coalesce(plan.allowed_placements,array[banner.placement])))
+      order by banner.sort_order,banner.starts_at desc
+      limit (select advertising_max_active_per_zone from operational_settings where id=1)
     `;
+  });
+
+  app.post("/v1/advertising/events",async(request,reply)=>{
+    const user=await authenticatedUser(request,reply);if(!user)return;
+    const parsed=advertisingEventSchema.safeParse(request.body);
+    if(!parsed.success)return reply.code(400).send({error:"INVALID_ADVERTISING_EVENT"});
+    const value=parsed.data;
+    await database()`insert into advertising_events(campaign_id,event_type,exhibition_id,session_key_hash,placement,service_area_id,trip_status,action_type) select ${value.campaignId},${value.eventType},${value.exhibitionId},encode(digest(${user.sessionId??user.id!},'sha256'),'hex'),${value.placement},${value.serviceAreaId??null},${value.tripStatus??null},${value.actionType??null} where exists(select 1 from affiliate_banners where id=${value.campaignId} and active=true) on conflict(campaign_id,event_type,exhibition_id) do nothing`;
+    return reply.code(202).send({accepted:true});
   });
 
   app.get("/v1/banners/:id/image", async (request, reply) => {
@@ -469,7 +511,11 @@ export async function buildApp() {
       if (!trip) return null;
       const candidates = await tx`
         select d.user_id from drivers d join users u on u.id=d.user_id
-        where d.is_available=true and u.status='ACTIVE' and d.last_location is not null
+        where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
+          and ((select not membership_enforcement_enabled from operational_settings where id=1)
+            or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
+              and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
+              and (dm.suspension_at is null or dm.suspension_at>now())))
           and (${trip.paymentMethod}='CASH' or d.deuna_enabled=true)
           and d.last_location_at > now() - interval '5 minutes'
           and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'))
@@ -593,11 +639,16 @@ export async function buildApp() {
       if (parsed.data.serviceAreaId && !bounds) {
         return reply.code(403).send({ error: "SERVICE_AREA_NOT_ALLOWED" });
       }
+      const [searchControl]=await database()`select os.text_search_free_cap_reference::int as "freeCap",os.text_search_price_per_thousand_usd::float8 as price,os.text_search_monthly_budget_usd::float8 as budget,os.text_search_hard_limit_enabled as "hardLimit",coalesce((select count(*) from api_usage_events usage where usage.provider='TEXT_SEARCH_PRO' and usage.billing_period=date_trunc('month',now())::date),0)::int as used from operational_settings os where os.id=1`;
+      const operationalLimit=Number(searchControl?.freeCap??0)+Math.floor(Number(searchControl?.budget??0)*1000/Math.max(.01,Number(searchControl?.price??32)));
+      const allowGoogle=!(Boolean(searchControl?.hardLimit)&&Number(searchControl?.used??0)>=operationalLimit);
+      const usageRequestKey=randomUUID();
       // Google Places busca por texto y cercania. La ServiceArea se aplica
       // despues como filtro espacial exacto; no se envian sus bounds al
       // proveedor porque los poligonos irregulares pueden excluir resultados
       // validos o provocar respuestas incompatibles.
-      const locations = await searchLocations(parsed.data.q, focus);
+      const locations = await searchLocations(parsed.data.q, focus, undefined, allowGoogle);
+      if(allowGoogle)await database()`insert into api_usage_events(provider,environment,billing_period,user_id,service_area_id,phase,request_key,result,metadata) values ('TEXT_SEARCH_PRO',${process.env.NODE_ENV??'development'},date_trunc('month',now())::date,${user.id!},${parsed.data.serviceAreaId??null},'LOCATION_SEARCH',${usageRequestKey},${locations.length?'RESULTS':'EMPTY'},${JSON.stringify({queryLength:parsed.data.q.length,hasFocus:Boolean(focus)})}::jsonb) on conflict(provider,request_key) do nothing`;
       if (!parsed.data.serviceAreaId) return locations;
       let allowedIndexes = new Set(await filterLocationsToArea(
         parsed.data.serviceAreaId,
@@ -611,8 +662,8 @@ export async function buildApp() {
       // If Google ranks only candidates in one of the excluded corners, retry
       // with a location bias and apply the exact same polygon validation.
       const retryLocations = bounds
-        ? await searchLocationsInArea(parsed.data.q, focus, bounds)
-        : await searchLocations(parsed.data.q, focus);
+        ? await searchLocationsInArea(parsed.data.q, focus, bounds, allowGoogle)
+        : await searchLocations(parsed.data.q, focus, undefined, allowGoogle);
       allowedIndexes = new Set(await filterLocationsToArea(
         parsed.data.serviceAreaId,
         user.id!,
@@ -1363,6 +1414,10 @@ export async function buildApp() {
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = availabilitySchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_AVAILABILITY" });
     if (parsed.data.available && !parsed.data.location) return reply.code(400).send({ error: "LOCATION_REQUIRED" });
+    if (parsed.data.available) {
+      const eligibility = await driverMembershipEligibility(user.id!);
+      if (!eligibility.eligible) return reply.code(403).send({ error: eligibility.reason ?? "MEMBERSHIP_REQUIRED", membership: eligibility.membership });
+    }
     if (parsed.data.available && parsed.data.location) {
       const area = await resolveServiceArea(user.id!, parsed.data.location);
       if (!area) return reply.code(422).send({ error: "OUTSIDE_SERVICE_AREA" });
@@ -1503,7 +1558,7 @@ export async function buildApp() {
         `;
       }
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, ${JSON.stringify({ scheduledFor: scheduledFor?.toISOString() ?? null, scheduleStatus: scheduledFor ? "SCHEDULED" : null, stops: destinations.length })}::jsonb)`;
-      const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ${searchRadius}) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
+      const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and ((select not membership_enforcement_enabled from operational_settings where id=1) or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true)) and (dm.suspension_at is null or dm.suspension_at>now()))) and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ${searchRadius}) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
       if (!scheduledFor) for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
       return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
     });
@@ -1841,6 +1896,10 @@ export async function buildApp() {
     const parsed = z.object({ accept: z.boolean() }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_OFFER_RESPONSE" });
     const tripId = (request.params as { tripId: string }).tripId;
+    if (parsed.data.accept) {
+      const eligibility = await driverMembershipEligibility(user.id!);
+      if (!eligibility.eligible) return reply.code(403).send({ error: eligibility.reason ?? "MEMBERSHIP_REQUIRED", membership: eligibility.membership });
+    }
     if (!parsed.data.accept) {
       await database()`
         insert into scheduled_trip_responses (trip_id, driver_id, accepted)
@@ -2086,7 +2145,12 @@ export async function buildApp() {
         type: String(result.status), tripId, errorCode: push.errorCode, failed: push.failed
       }, "trip_status_push_not_delivered");
     }
-    if (result.status === "COMPLETED") void redispatchOldestTrip().catch(() => undefined);
+    if (result.status === "COMPLETED") {
+      await recordCompletedTripMembershipUsage(tripId, user.id!);
+      const eligibility = await driverMembershipEligibility(user.id!);
+      if (!eligibility.eligible) await database()`update drivers set is_available=false where user_id=${user.id!}`;
+      else void redispatchOldestTrip().catch(() => undefined);
+    }
     realtime.publishTripStatus(tripId, String(result.status));
     return result;
   });
@@ -2177,6 +2241,10 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const body = z.object({ accept: z.boolean() }).safeParse(request.body); if (!body.success) return reply.code(400).send({ error: "INVALID_OFFER_RESPONSE" });
+    if (body.data.accept) {
+      const eligibility = await driverMembershipEligibility(user.id!);
+      if (!eligibility.eligible) return reply.code(403).send({ error: eligibility.reason ?? "MEMBERSHIP_REQUIRED", membership: eligibility.membership });
+    }
     const offerId = (request.params as { offerId: string }).offerId;
     const result = await database().begin(async tx => {
       const [offer] = await tx`select trip_id from driver_offers where id=${offerId} and driver_id=${user.id!} and responded_at is null and expires_at > now() for update`;

@@ -1,6 +1,6 @@
 # Próxima versión: navegación, carga masiva, membresías y recaudación
 
-Estado: **planificado, todavía no implementado**.
+Estado: **implementado para validación controlada en prueba cerrada; activación productiva pendiente de migración, despliegue y pruebas operativas**.
 
 Este documento conserva el alcance acordado para agrupar la implementación, las mejoras visuales, las pruebas y el empaquetado en una sola versión.
 
@@ -2125,3 +2125,38 @@ Implementar junto con las próximas mejoras visuales y entregar en un solo ciclo
 10. commit y despliegue Render;
 11. nuevo App Bundle/APK con `versionCode` superior al publicado;
 12. activación gradual únicamente después de aprobar los resultados operativos.
+
+## 12. Estado de implementación para la prueba cerrada
+
+Implementado en el código de esta entrega:
+
+- migración única para membresías, ciclos, gracia, órdenes, comprobantes, pagos, puntos, cierres, liquidaciones, consumo de API, importación de conductores y planes publicitarios;
+- elegibilidad de membresía validada por backend al conectarse, consultar ofertas y aceptar solicitudes;
+- protección de viajes activos ante vencimientos y suspensión diferida hasta finalizar;
+- parámetros operativos y `feature flags` con enforcement, scheduler y canales de cobro sensibles desactivados por defecto;
+- panel de membresías, indicadores, planes, comprobantes, parámetros, consumo de API e importación CSV;
+- puntos de recaudación configurables, asignación de recaudadores, portal limitado, cierre de caja y conciliación financiera auditada;
+- tarjeta de membresía en conductor, planes, orden QR/código y carga de comprobante JPEG, PNG, WebP o PDF de máximo 5 MB;
+- navegación por fase parametrizable entre mapa interno, mapas externos y Navigation SDK, con mapas externos como opción predeterminada de bajo costo;
+- limpieza del formulario después de programar un viaje y total final visible en el resumen;
+- publicidad Básica/Premium por contexto, zona, peso e impresión/clic;
+- icono nativo de Costa-Go para notificaciones Android y burbuja superior reutilizable dentro de la aplicación;
+- página pública segura para abrir una orden de membresía en el portal del recaudador;
+- App Bundle de producción compilado con Google Maps, firma de producción y sin proxy privado.
+
+Activación recomendada durante la prueba cerrada:
+
+1. ejecutar la migración y comprobar planes/usuarios sin habilitar enforcement;
+2. crear un punto inactivo, asignar un usuario `COLLECTOR` y habilitar únicamente los métodos que se probarán;
+3. probar orden, comprobante, aprobación, cobro presencial, cierre y conciliación con importes controlados;
+4. activar visualización de membresías y navegación externa;
+5. habilitar contabilización y scheduler solamente después de validar fechas, zona horaria y notificaciones;
+6. habilitar `membershipEnforcementEnabled` al final, con vista previa y monitoreo en Sentry/Render.
+
+Pendientes deliberados que no bloquean la prueba cerrada inicial:
+
+- credenciales/cuentas financieras productivas y convenios reales con puntos de recaudación;
+- prueba física de concurrencia con dos recaudadores y dos administradores contra el ambiente desplegado;
+- reglas comerciales definitivas de comisión por punto y límites de saldo pendiente;
+- Navigation SDK nativo para iOS; el fallback de mapas externos mantiene el viaje operativo;
+- actualización futura de Gradle 8.13 a 8.14 o superior, una vez validada la compatibilidad de plugins.

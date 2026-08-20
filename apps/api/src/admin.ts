@@ -184,14 +184,20 @@ const adminUserCreateSchema = z.object({
   email: z.string().email(),
   phone: z.string().trim().min(8).max(24),
   password: strongPasswordSchema,
-  role: z.enum(["SUPER_ADMIN", "ADMIN_OPERACIONES", "SOPORTE", "ANALISTA_COOPERATIVA"]),
+  role: z.enum(["SUPER_ADMIN", "ADMIN_OPERACIONES", "SOPORTE", "ANALISTA_COOPERATIVA", "COLLECTOR", "FINANCE"]),
   cooperativeId: z.string().uuid().nullable().optional()
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
   message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
 });
 const bannerSchema = z.object({
   title: z.string().trim().min(3).max(120),
-  placement: z.enum(["PASSENGER_HOME", "DRIVER_HOME"]),
+  advertiserName: z.string().trim().min(2).max(120),
+  planCode: z.enum(["BASIC", "PREMIUM"]),
+  placement: z.enum(["PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]),
+  serviceAreaId: z.string().uuid().nullable().optional(),
+  weight: z.number().int().min(1).max(5).default(1),
+  actionType: z.enum(["WEB", "PHONE", "WHATSAPP", "MAPS", "NONE"]).default("NONE"),
+  actionValue: z.string().trim().max(500).optional().or(z.literal("")),
   imageBase64: z.string().min(20),
   imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
   targetUrl: z.string().url().optional().or(z.literal("")),
@@ -204,6 +210,13 @@ const bannerSchema = z.object({
 });
 const bannerUpdateSchema = z.object({
   title: z.string().trim().min(3).max(120).optional(),
+  advertiserName: z.string().trim().min(2).max(120).optional(),
+  planCode: z.enum(["BASIC", "PREMIUM"]).optional(),
+  placement: z.enum(["PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]).optional(),
+  serviceAreaId: z.string().uuid().nullable().optional(),
+  weight: z.number().int().min(1).max(5).optional(),
+  actionType: z.enum(["WEB", "PHONE", "WHATSAPP", "MAPS", "NONE"]).optional(),
+  actionValue: z.string().trim().max(500).optional().or(z.literal("")),
   imageBase64: z.string().min(20).optional(),
   imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
   targetUrl: z.string().url().optional().or(z.literal("")),
@@ -270,7 +283,7 @@ export function userFrom(request: FastifyRequest): SessionUser | undefined {
 function audit(user: SessionUser, action: string, entity: string, detail: string) {
   audits.unshift({ id: `AUD-${Date.now()}`, actor: user.email, action, entity, detail, createdAt: new Date().toISOString() });
 }
-async function persistAudit(user: SessionUser, action: string, entityType: string, entityId: string, detail: string) {
+export async function persistAudit(user: SessionUser, action: string, entityType: string, entityId: string, detail: string) {
   audit(user, action, entityId, detail);
   if (!process.env.DATABASE_URL || !user.id) return;
   await database()`
@@ -279,7 +292,7 @@ async function persistAudit(user: SessionUser, action: string, entityType: strin
   `;
 }
 function requireUser(request: FastifyRequest) { const user = userFrom(request); if (!user) throw new Error("UNAUTHORIZED"); return user; }
-function requireAdminSession(request: FastifyRequest): SessionUser & { role: AdminRole } {
+export function requireAdminSession(request: FastifyRequest): SessionUser & { role: AdminRole } {
   const user = requireUser(request);
   if (!isAdminRole(user.role)) throw new Error("FORBIDDEN");
   if (user.role === "ANALISTA_COOPERATIVA" && !user.cooperativeId) {
@@ -287,7 +300,7 @@ function requireAdminSession(request: FastifyRequest): SessionUser & { role: Adm
   }
   return user as SessionUser & { role: AdminRole };
 }
-function requirePermission(request: FastifyRequest, permission: Permission) {
+export function requirePermission(request: FastifyRequest, permission: Permission) {
   const user = requireAdminSession(request);
   if (!hasPermission(user.role, permission, user.permissions)) throw new Error("FORBIDDEN");
   return user;
@@ -306,7 +319,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         where lower(email) = lower(${parsed.data.email})
           and password_hash = crypt(${parsed.data.password}, password_hash)
           and status = 'ACTIVE'
-          and role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA')
+          and role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE')
       `;
       const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole; cooperativeId?: string } | undefined;
       if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
@@ -355,7 +368,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       from users u
       left join cooperatives c on c.id=u.cooperative_id
       left join admin_permission_overrides permission on permission.user_id=u.id
-      where u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA')
+      where u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE')
       group by u.id, c.name
       order by u.created_at
     `;
@@ -765,6 +778,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       const message=messages[body.decision]; if(message)void sendPush(driverId,message[0],message[1],{type:"DRIVER_APPROVAL",status:result.approvalStatus}).catch(()=>undefined);
     }
     if(body.decision==="APPROVE") {
+      const { grantInitialDriverGrace } = await import("./memberships.js");
+      await grantInitialDriverGrace(driverId, actor.id);
       try { const delivered=await notifyDriverApproved(result.email,result.name); if(!delivered)request.log.warn({driverId},"driver_approval_email_not_delivered"); }
       catch(error) { request.log.error({err:error,driverId},"driver_approval_email_failed"); }
     }
@@ -1350,10 +1365,14 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     requirePermission(request, "advertising:view");
     if (!process.env.DATABASE_URL) return [];
     return await database()`
-      select id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
-        ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
-        octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
-      from affiliate_banners order by active desc, sort_order, starts_at desc
+      select banner.id::text,banner.title,banner.advertiser_name as "advertiserName",banner.placement,
+        banner.target_url as "targetUrl",banner.starts_at as "startsAt",banner.ends_at as "endsAt",
+        banner.active,banner.sort_order as "sortOrder",banner.image_mime as "imageMime",
+        octet_length(banner.image_data) as "imageBytes",banner.created_at as "createdAt",banner.updated_at as "updatedAt",
+        banner.weight,banner.action_type as "actionType",banner.action_value as "actionValue",
+        banner.service_area_id::text as "serviceAreaId",coalesce(plan.code,'BASIC') as "planCode"
+      from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id
+      order by banner.active desc,banner.sort_order,banner.starts_at desc
     `;
   } catch(e) { return guardError(e, reply); } });
   app.post("/v1/admin/banners", async (request, reply) => { try {
@@ -1368,9 +1387,12 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     }
     const [item] = await database()`
       insert into affiliate_banners
-        (title, placement, image_mime, image_data, target_url, starts_at, ends_at, active, sort_order, created_by)
-      values (${body.title}, ${body.placement}, ${body.imageMime}, ${image}, ${body.targetUrl || null},
-        ${body.startsAt}, ${body.endsAt}, ${body.active}, ${body.sortOrder}, ${user.id!})
+        (title,advertiser_name,advertising_plan_id,placement,service_area_id,weight,action_type,action_value,
+         image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,created_by)
+      select ${body.title},${body.advertiserName},plan.id,${body.placement},${body.serviceAreaId ?? null},
+        ${body.weight},${body.actionType},${body.actionValue || null},${body.imageMime},${image},${body.targetUrl || null},
+        ${body.startsAt},${body.endsAt},${body.active},${body.active ? "ACTIVE" : "PAUSED"},${body.sortOrder},${user.id!}
+      from advertising_plans plan where plan.code=${body.planCode} and plan.enabled=true
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
         ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
         octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
@@ -1402,7 +1424,13 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const [item] = await database()`
       update affiliate_banners set
         title=${body.title ?? current.title}, target_url=${body.targetUrl === "" ? null : (body.targetUrl ?? current.target_url)},
+        advertiser_name=${body.advertiserName ?? current.advertiser_name},
+        advertising_plan_id=coalesce((select id from advertising_plans where code=${body.planCode ?? null} and enabled=true),current.advertising_plan_id),
+        placement=${body.placement ?? current.placement},service_area_id=${body.serviceAreaId === undefined ? current.service_area_id : body.serviceAreaId},
+        weight=${body.weight ?? current.weight},action_type=${body.actionType ?? current.action_type},
+        action_value=${body.actionValue === "" ? null : (body.actionValue ?? current.action_value)},
         image_mime=${imageMime}, image_data=${image}, starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
+        campaign_status=case when ${body.active ?? current.active} then 'ACTIVE' else 'PAUSED' end,
         sort_order=${body.sortOrder ?? current.sort_order}, updated_at=now()
       where id=${id}
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",

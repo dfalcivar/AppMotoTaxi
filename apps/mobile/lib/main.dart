@@ -1430,10 +1430,48 @@ class Api {
   Future<dynamic> sendSupportMessage(String t, String id, String body) =>
       call('POST', '/v1/support/incidents/$id/messages',
           token: t, body: {'body': body});
-  Future<List<dynamic>> banners(String t, String placement) async =>
+  Future<List<dynamic>> banners(String t, String placement,
+          {String? serviceAreaId}) async =>
       List<dynamic>.from(await call(
-          'GET', '/v1/banners?placement=${Uri.encodeQueryComponent(placement)}',
+          'GET',
+          '/v1/banners?placement=${Uri.encodeQueryComponent(placement)}${serviceAreaId == null ? '' : '&serviceAreaId=${Uri.encodeQueryComponent(serviceAreaId)}'}',
           token: t));
+  Future<Map<String, dynamic>> mobileConfig(String t) async =>
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/mobile/config', token: t));
+  Future<Map<String, dynamic>> driverMembership(String t) async =>
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/driver/membership', token: t));
+  Future<dynamic> createMembershipPaymentOrder(
+          String t, String planId, String method) =>
+      call('POST', '/v1/driver/membership/payment-orders', token: t, body: {
+        'planId': planId,
+        'intendedMethod': method,
+        'idempotencyKey':
+            'mobile-${DateTime.now().microsecondsSinceEpoch}-${math.Random.secure().nextInt(1 << 32)}',
+      });
+  Future<dynamic> submitMembershipTransferProof(
+          String t, String orderId, Map<String, dynamic> proof) =>
+      call('POST', '/v1/driver/membership/payment-orders/$orderId/transfer-proof',
+          token: t, body: proof);
+  Future<void> advertisingEvent(String t,
+      {required String campaignId,
+      required String eventType,
+      required String exhibitionId,
+      required String placement,
+      String? serviceAreaId,
+      String? tripStatus,
+      String? actionType}) async {
+    await call('POST', '/v1/advertising/events', token: t, body: {
+      'campaignId': campaignId,
+      'eventType': eventType,
+      'exhibitionId': exhibitionId,
+      'placement': placement,
+      if (serviceAreaId != null) 'serviceAreaId': serviceAreaId,
+      if (tripStatus != null) 'tripStatus': tripStatus,
+      if (actionType != null) 'actionType': actionType,
+    });
+  }
   Future<dynamic> trip(String t, String id) =>
       call('GET', '/v1/trips/$id', token: t);
   Future<Map<String, dynamic>> route(
@@ -6131,6 +6169,35 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     unawaited(refreshRoute(force: true));
   }
 
+  void _resetRequestAfterScheduledTrip(String confirmation) {
+    for (final stop in additionalStops) {
+      stop.dispose();
+    }
+    additionalStops.clear();
+    origin.clear();
+    destination.clear();
+    notes.clear();
+    pickup = null;
+    dropoff = null;
+    selectedOriginArea = null;
+    selectedDestinationIndex = 0;
+    scheduledFor = null;
+    editingScheduledTripId = null;
+    people = 1;
+    paymentMethod = 'CASH';
+    mapSelection = null;
+    pendingMapPoint = null;
+    selectionResolving = false;
+    selectionMoving = false;
+    routePoints = [];
+    routeDistanceMeters = null;
+    routeDurationSeconds = null;
+    nearbyDrivers.clear();
+    originSelectionGuard.resetToAutomatic();
+    message = confirmation;
+    sheetExtent = .35;
+  }
+
   void beginMapSelection(MapPointSelection selection,
       {int destinationIndex = 0}) {
     FocusManager.instance.primaryFocus?.unfocus();
@@ -6819,11 +6886,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                       ...List<dynamic>.from(preview['fareLegs'] ?? const [])
                           .map((leg) => Text(
                               'Destino ${leg['order']}: \$${(((leg['totalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}${leg['suggested'] == true ? ' · sugerido' : ''}')),
+                      const SizedBox(height: 6),
                       Text(
-                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido' : 'Tarifa'} total: \$${(((preview['quotedTotalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
-                      if ((preview['stopSurchargeCents'] as num?) != null)
+                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido de trayectos' : 'Subtotal de trayectos'}: \$${(((preview['baseFareCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
+                      if (((preview['stopSurchargeCents'] as num?) ?? 0) > 0)
                         Text(
                             'Adicional por paradas: \$${((preview['stopSurchargeCents'] as num) / 100).toStringAsFixed(2)}'),
+                      const Divider(),
+                      Text(
+                        'Total a pagar: \$${(((preview['quotedTotalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}',
+                        style: Theme.of(dialogContext)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w900),
+                      ),
                     ]),
               ),
               actions: [
@@ -7230,12 +7306,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           active = {'tripId': t['tripId'], 'status': 'SEARCHING'};
           sheetExtent = .46;
         } else {
-          message = editingId == null
+          _resetRequestAfterScheduledTrip(editingId == null
               ? 'Viaje programado guardado correctamente.'
-              : 'Viaje programado actualizado correctamente.';
-          scheduledFor = null;
-          editingScheduledTripId = null;
-          sheetExtent = .35;
+              : 'Viaje programado actualizado correctamente.');
         }
       });
       _movePassengerSheet(active == null ? .35 : .50);
@@ -7293,16 +7366,44 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       '$base/v1/banners/${banner['id']}/image?v=${Uri.encodeQueryComponent(banner['updatedAt']?.toString() ?? '')}';
 
   Future<void> _openBanner(Map<String, dynamic> banner) async {
-    final uri = Uri.tryParse(banner['targetUrl']?.toString() ?? '');
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return;
+    unawaited(_reportBannerEvent(banner, 'CLICK'));
+    final action = banner['actionType']?.toString() ?? 'WEB';
+    final value = (banner['actionValue'] ?? banner['targetUrl'])?.toString().trim() ?? '';
+    final uri = action == 'PHONE'
+        ? Uri(scheme: 'tel', path: value.replaceAll(RegExp(r'[^+0-9]'), ''))
+        : Uri.tryParse(value);
+    final valid = uri != null && switch (action) {
+      'PHONE' => uri.scheme == 'tel' && uri.path.length >= 7,
+      'WEB' || 'WHATSAPP' || 'MAPS' => uri.scheme == 'https' && uri.host.isNotEmpty,
+      _ => false,
+    };
+    if (!valid) return;
     try {
-      await nativeActions.invokeMethod('openUrl', {'url': uri.toString()});
-    } on PlatformException {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('No se pudo abrir la promoción.')));
       }
     }
+  }
+
+  Future<void> _reportBannerEvent(
+      Map<String, dynamic> banner, String eventType) async {
+    final id = banner['id']?.toString();
+    final placement = banner['placement']?.toString();
+    if (id == null || placement == null) return;
+    try {
+      await api.advertisingEvent(widget.s.token,
+          campaignId: id,
+          eventType: eventType,
+          exhibitionId:
+              '$eventType-$id-${DateTime.now().millisecondsSinceEpoch ~/ 5000}',
+          placement: placement,
+          serviceAreaId: selectedOriginArea?.id,
+          tripStatus: active?['status']?.toString(),
+          actionType: banner['actionType']?.toString());
+    } catch (_) {}
   }
 
   Widget _routeSummary(BuildContext context) {
@@ -7337,9 +7438,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         AffiliateBanners(
           key: const ValueKey('searching-ad'),
           variant: AffiliateBannerVariant.expanded,
-          load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
+          load: () => api.banners(widget.s.token, 'PASSENGER_SEARCHING_DRIVER',
+              serviceAreaId: selectedOriginArea?.id),
           imageUrl: _bannerImageUrl,
           onTap: _openBanner,
+          onImpression: (banner) =>
+              unawaited(_reportBannerEvent(banner, 'IMPRESSION')),
         ),
         const SizedBox(height: 14),
         OutlinedButton.icon(
@@ -7446,11 +7550,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             status: active['status'].toString(),
             driverName: active['driverName']?.toString()),
         AffiliateBanners(
-          key: const ValueKey('active-trip-ad'),
+          key: ValueKey('active-trip-ad-${active?['status']}'),
           variant: AffiliateBannerVariant.expanded,
-          load: () => api.banners(widget.s.token, 'PASSENGER_HOME'),
+          load: () => api.banners(
+              widget.s.token,
+              active?['status'] == 'IN_PROGRESS'
+                  ? 'PASSENGER_TRIP_IN_PROGRESS'
+                  : 'PASSENGER_WAITING_DRIVER',
+              serviceAreaId: selectedOriginArea?.id),
           imageUrl: _bannerImageUrl,
           onTap: _openBanner,
+          onImpression: (banner) =>
+              unawaited(_reportBannerEvent(banner, 'IMPRESSION')),
         ),
         const SizedBox(height: 12),
         _routeSummary(context),
@@ -7997,6 +8108,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   bool initialPushHandled = false;
   ServiceArea? driverReviewArea;
   bool driverReviewLocationActive = false;
+  Map<String, dynamic> platformConfig = const {
+    'navigation': {
+      'pickupProvider': 'EXTERNAL_MAPS',
+      'destinationProvider': 'EXTERNAL_MAPS',
+      'pickupStartMode': 'MANUAL',
+      'destinationStartMode': 'MANUAL',
+    }
+  };
+  Map<String, dynamic>? membershipData;
+  DateTime? lastMembershipRefreshAt;
   @override
   void initState() {
     super.initState();
@@ -8077,6 +8198,21 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> initializeDriver() async {
     try {
+      final values = await Future.wait([
+        api.mobileConfig(widget.s.token),
+        api.driverMembership(widget.s.token),
+      ]);
+      if (mounted) {
+        setState(() {
+          platformConfig = Map<String, dynamic>.from(values[0]);
+          membershipData = Map<String, dynamic>.from(values[1]);
+          lastMembershipRefreshAt = DateTime.now();
+        });
+      }
+    } catch (_) {
+      // El mapa y el estado del conductor siguen disponibles con valores seguros.
+    }
+    try {
       final response = Map<String, dynamic>.from(
           await api.serviceAreas(widget.s.token) as Map);
       final catalog = ServiceAreaCatalog.fromJson(response);
@@ -8086,6 +8222,49 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
     await restore();
   }
+
+  Future<void> refreshMembership({bool force = false}) async {
+    final now = DateTime.now();
+    if (!force && lastMembershipRefreshAt != null &&
+        now.difference(lastMembershipRefreshAt!) < const Duration(minutes: 1)) {
+      return;
+    }
+    try {
+      final value = await api.driverMembership(widget.s.token);
+      if (!mounted) return;
+      setState(() {
+        membershipData = value;
+        lastMembershipRefreshAt = now;
+      });
+      if (value['eligibility']?['eligible'] == false &&
+          active == null && available) {
+        await api.available(widget.s.token, false);
+        await positionSubscription?.cancel();
+        positionSubscription = null;
+        if (mounted) {
+          setState(() {
+            available = false;
+            driverMessage =
+                'Tu membresía venció. Renueva para volver a recibir solicitudes.';
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Map<String, dynamic> get _navigationConfig => Map<String, dynamic>.from(
+      platformConfig['navigation'] as Map? ?? const {});
+
+  String _navigationProvider(String status) => status == 'IN_PROGRESS'
+      ? (_navigationConfig['destinationProvider']?.toString() ?? 'EXTERNAL_MAPS')
+      : (_navigationConfig['pickupProvider']?.toString() ?? 'EXTERNAL_MAPS');
+
+  String _navigationStartMode(String status) => status == 'IN_PROGRESS'
+      ? (_navigationConfig['destinationStartMode']?.toString() ?? 'MANUAL')
+      : (_navigationConfig['pickupStartMode']?.toString() ?? 'MANUAL');
+
+  bool get _membershipEligible =>
+      membershipData?['eligibility']?['eligible'] != false;
 
   LatLng? get driverReviewPoint => driverReviewArea?.reviewLocation;
 
@@ -8128,6 +8307,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       realtime.connect();
       unawaited(api.registerFcm(widget.s.token));
+      unawaited(refreshMembership(force: true));
       unawaited(refresh());
     }
   }
@@ -8485,6 +8665,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   Future<void> toggle(bool v) async {
+    if (v && !_membershipEligible) {
+      setState(() => driverMessage =
+          'Tu membresía no permite recibir solicitudes. Revisa su estado y las opciones de renovación.');
+      return;
+    }
     try {
       if (v) {
         await startGpsTracking(markAvailable: true);
@@ -8509,6 +8694,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> refresh() async {
     try {
+      unawaited(refreshMembership());
       if (driverReviewLocationActive &&
           driverReviewPoint != null &&
           (available || active != null)) {
@@ -8984,10 +9170,90 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  List<DriverNavigationStop> _currentNavigationStops(String status) {
+    final result = <DriverNavigationStop>[];
+    if (status == 'DRIVER_EN_ROUTE') {
+      if (active?['originLatitude'] == null ||
+          active?['originLongitude'] == null) {
+        return result;
+      }
+      result.add(DriverNavigationStop(
+        latitude: (active['originLatitude'] as num).toDouble(),
+        longitude: (active['originLongitude'] as num).toDouble(),
+        label: cleanAddressLabel(active['originReference'],
+            fallback: 'Punto de recogida'),
+      ));
+      return result;
+    }
+    final remaining = List<dynamic>.from(active?['stops'] ?? const [])
+        .where((stop) => stop['completedAt'] == null);
+    for (final stop in remaining) {
+      result.add(DriverNavigationStop(
+        latitude: (stop['latitude'] as num).toDouble(),
+        longitude: (stop['longitude'] as num).toDouble(),
+        label: cleanAddressLabel(stop['reference'], fallback: 'Destino'),
+      ));
+    }
+    if (result.isEmpty && active?['destinationLatitude'] != null &&
+        active?['destinationLongitude'] != null) {
+      result.add(DriverNavigationStop(
+        latitude: (active['destinationLatitude'] as num).toDouble(),
+        longitude: (active['destinationLongitude'] as num).toDouble(),
+        label: cleanAddressLabel(active['destinationReference'],
+            fallback: 'Destino'),
+      ));
+    }
+    return result;
+  }
+
+  Future<void> _openExternalNavigation(
+      String status, List<DriverNavigationStop> stops) async {
+    if (stops.isEmpty) return;
+    final destination = stops.last;
+    final parameters = <String, String>{
+      'api': '1',
+      'destination': '${destination.latitude},${destination.longitude}',
+      'travelmode': 'driving',
+      'dir_action': 'navigate',
+      if (stops.length > 1)
+        'waypoints': stops
+            .sublist(0, stops.length - 1)
+            .map((stop) => '${stop.latitude},${stop.longitude}')
+            .join('|'),
+    };
+    final googleUri = Uri.https('www.google.com', '/maps/dir/', parameters);
+    final appleUri = Uri.https('maps.apple.com', '/', {
+      'daddr': '${destination.latitude},${destination.longitude}',
+      'dirflg': 'd',
+    });
+    final target = defaultTargetPlatform == TargetPlatform.iOS
+        ? appleUri
+        : googleUri;
+    final opened = await launchUrl(target, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se encontró una aplicación de mapas disponible.')));
+    }
+  }
+
   Future<void> openDriverNavigation() async {
-    if (!navigationSdkEnabled || active == null) return;
+    if (active == null) return;
     final status = active['status']?.toString();
     if (status != 'DRIVER_EN_ROUTE' && status != 'IN_PROGRESS') return;
+    final provider = _navigationProvider(status!);
+    final navigationStops = _currentNavigationStops(status);
+    if (navigationStops.isEmpty) return;
+    if (provider == 'MAP_ONLY') {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('La ruta está visible en el mapa de Costa-Go.')));
+      }
+      return;
+    }
+    if (provider == 'EXTERNAL_MAPS' || !navigationSdkEnabled) {
+      await _openExternalNavigation(status, navigationStops);
+      return;
+    }
     var current = currentDriverPosition;
     if (current == null) {
       try {
@@ -9001,41 +9267,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
     }
 
-    final navigationStops = <DriverNavigationStop>[];
-    if (status == 'DRIVER_EN_ROUTE') {
-      if (active['originLatitude'] == null ||
-          active['originLongitude'] == null) {
-        return;
-      }
-      navigationStops.add(DriverNavigationStop(
-        latitude: (active['originLatitude'] as num).toDouble(),
-        longitude: (active['originLongitude'] as num).toDouble(),
-        label: cleanAddressLabel(active['originReference'],
-            fallback: 'Punto de recogida'),
-      ));
-    } else {
-      final remaining = List<dynamic>.from(active['stops'] ?? const [])
-          .where((stop) => stop['completedAt'] == null)
-          .toList();
-      if (remaining.isNotEmpty) {
-        for (final stop in remaining) {
-          navigationStops.add(DriverNavigationStop(
-            latitude: (stop['latitude'] as num).toDouble(),
-            longitude: (stop['longitude'] as num).toDouble(),
-            label: cleanAddressLabel(stop['reference'], fallback: 'Destino'),
-          ));
-        }
-      } else if (active['destinationLatitude'] != null &&
-          active['destinationLongitude'] != null) {
-        navigationStops.add(DriverNavigationStop(
-          latitude: (active['destinationLatitude'] as num).toDouble(),
-          longitude: (active['destinationLongitude'] as num).toDouble(),
-          label: cleanAddressLabel(active['destinationReference'],
-              fallback: 'Destino'),
-        ));
-      }
-    }
-    if (navigationStops.isEmpty || !mounted) return;
+    if (!mounted) return;
 
     String? routeToken;
     final routeTimer = Stopwatch()..start();
@@ -9107,7 +9339,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             'Inicio de viaje visible en ${timer.elapsedMilliseconds} ms; rutaAnticipada=${cached?.isNotEmpty == true}');
         unawaited(refreshDriverRoute(force: true));
         unawaited(restore(adjustSheet: false));
-        unawaited(openDriverNavigation());
+        if (_navigationStartMode('IN_PROGRESS') == 'AUTO') {
+          unawaited(openDriverNavigation());
+        }
         return;
       }
       if (action == 'COMPLETE') {
@@ -9489,6 +9723,281 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           ),
       ]);
 
+  String _membershipStatusLabel(String status) => switch (status) {
+        'ACTIVE' => 'Activa',
+        'EXPIRING' => 'Próxima a vencer',
+        'GRACE_PERIOD' => 'Período de gracia',
+        'PAYMENT_DUE' => 'Pago pendiente',
+        'SUSPENSION_PENDING_ACTIVE_TRIP' => 'Suspensión al finalizar el viaje',
+        'SUSPENDED_NON_PAYMENT' => 'Membresía vencida',
+        'SUSPENDED' => 'Suspendida',
+        _ => 'Pendiente de activación',
+      };
+
+  Widget _membershipCard(BuildContext context) {
+    final data = membershipData;
+    if (data == null) return const SizedBox.shrink();
+    final membership = Map<String, dynamic>.from(
+        data['membership'] as Map? ?? const {});
+    final status = membership['status']?.toString() ?? 'PENDING';
+    final eligible = data['eligibility']?['eligible'] != false;
+    final color = switch (status) {
+      'ACTIVE' => Colors.green,
+      'EXPIRING' || 'GRACE_PERIOD' => Colors.orange,
+      'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Colors.red,
+      _ => Theme.of(context).colorScheme.primary,
+    };
+    final expiresAt = DateTime.tryParse(membership['expiresAt']?.toString() ?? '')
+        ?.toLocal();
+    final expiryText = expiresAt == null
+        ? 'Activa tu plan para empezar a recibir solicitudes.'
+        : 'Vigente hasta ${MaterialLocalizations.of(context).formatMediumDate(expiresAt)}';
+    return Card(
+      color: color.withValues(alpha: .10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _showMembershipDetails,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(children: [
+            CircleAvatar(
+              backgroundColor: color.withValues(alpha: .18),
+              foregroundColor: color,
+              child: Icon(eligible ? Icons.verified_outlined : Icons.lock_clock_outlined),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Membresía Costa-Go',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900)),
+                Text(_membershipStatusLabel(status),
+                    style: TextStyle(color: color, fontWeight: FontWeight.w800)),
+                Text(expiryText, style: Theme.of(context).textTheme.bodySmall),
+                if (membership['planName'] != null)
+                  Text('Plan ${membership['planName']}',
+                      style: Theme.of(context).textTheme.bodySmall),
+              ]),
+            ),
+            const Icon(Icons.chevron_right),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _submitMembershipTransferProof(
+      BuildContext context, Map<String, dynamic> order) async {
+    final selected = await nativeActions
+        .invokeMapMethod<String, dynamic>('pickDocument', const {
+      'extensions': ['jpg', 'jpeg', 'png', 'webp', 'pdf']
+    });
+    if (selected == null || !context.mounted) return false;
+    final bytes = selected['bytes'];
+    if (bytes is! Uint8List || bytes.length < 100 || bytes.length > 5242880) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Selecciona una imagen o PDF de hasta 5 MB.')));
+      }
+      return false;
+    }
+    final filename = selected['name']?.toString().toLowerCase() ?? '';
+    final reportedMime = selected['mime']?.toString() ?? '';
+    final mime = reportedMime == 'application/pdf' || filename.endsWith('.pdf')
+        ? 'application/pdf'
+        : reportedMime == 'image/png' || filename.endsWith('.png')
+            ? 'image/png'
+            : reportedMime == 'image/webp' || filename.endsWith('.webp')
+                ? 'image/webp'
+                : 'image/jpeg';
+    final bank = TextEditingController();
+    final reference = TextEditingController();
+    final observation = TextEditingController();
+    final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
+    var sending = false;
+    final submitted = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (dialogContext, setDialogState) => AlertDialog(
+              title: const Text('Adjuntar transferencia'),
+              content: SingleChildScrollView(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text('Monto esperado: \$${amount.toStringAsFixed(2)}'),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: bank,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(labelText: 'Banco')),
+                  TextField(
+                      controller: reference,
+                      decoration: const InputDecoration(
+                          labelText: 'Número o referencia de transferencia')),
+                  TextField(
+                      controller: observation,
+                      maxLength: 500,
+                      decoration: const InputDecoration(
+                          labelText: 'Observación (opcional)')),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.attach_file_outlined),
+                    title: Text(selected['name']?.toString() ?? 'Comprobante'),
+                    subtitle: Text('${(bytes.length / 1024).ceil()} KB'),
+                  ),
+                ]),
+              ),
+              actions: [
+                TextButton(
+                    onPressed:
+                        sending ? null : () => Navigator.pop(dialogContext, false),
+                    child: const Text('Cancelar')),
+                FilledButton(
+                  onPressed: sending
+                      ? null
+                      : () async {
+                          if (bank.text.trim().length < 2 ||
+                              reference.text.trim().length < 3) {
+                            ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Ingresa el banco y la referencia.')));
+                            return;
+                          }
+                          setDialogState(() => sending = true);
+                          try {
+                            await api.submitMembershipTransferProof(
+                                widget.s.token, order['id'].toString(), {
+                              'bankName': bank.text.trim(),
+                              'reference': reference.text.trim(),
+                              'transferDate': DateTime.now()
+                                  .toLocal()
+                                  .toIso8601String()
+                                  .split('T')
+                                  .first,
+                              'declaredAmount': amount,
+                              'fileMime': mime,
+                              'fileBase64': base64Encode(bytes),
+                              if (observation.text.trim().isNotEmpty)
+                                'observation': observation.text.trim(),
+                            });
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext, true);
+                            }
+                          } catch (error) {
+                            setDialogState(() => sending = false);
+                            if (dialogContext.mounted) {
+                              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                  SnackBar(content: Text(error.toString())));
+                            }
+                          }
+                        },
+                  child: Text(sending ? 'Enviando...' : 'Enviar comprobante'),
+                ),
+              ],
+            ),
+          ),
+        ) ??
+        false;
+    bank.dispose();
+    reference.dispose();
+    observation.dispose();
+    if (submitted && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Comprobante enviado. Te notificaremos después de revisarlo.')));
+    }
+    return submitted;
+  }
+
+  Future<void> _showMembershipDetails() async {
+    final data = membershipData;
+    if (data == null || !mounted) return;
+    final membership = Map<String, dynamic>.from(
+        data['membership'] as Map? ?? const {});
+    final plans = List<dynamic>.from(data['plans'] ?? const []);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: .78,
+        child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 28), children: [
+          Text('Membresía Costa-Go',
+              style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          Text(_membershipStatusLabel(membership['status']?.toString() ?? 'PENDING')),
+          if (membership['completedTrips'] != null)
+            Text('Viajes del ciclo: ${membership['completedTrips']}'),
+          if (membership['estimatedNextRenewalAmount'] != null)
+            Text('Renovación estimada: \$${(membership['estimatedNextRenewalAmount'] as num).toStringAsFixed(2)}'),
+          const SizedBox(height: 18),
+          Text('Planes disponibles',
+              style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800)),
+          ...plans.map((raw) {
+            final plan = Map<String, dynamic>.from(raw as Map);
+            return Card(
+              child: ListTile(
+                title: Text(plan['name']?.toString() ?? 'Plan'),
+                subtitle: Text('${plan['durationDays']} días · ${plan['includedTrips']} viajes incluidos'),
+                trailing: FilledButton(
+                  onPressed: () async {
+                    try {
+                      final order = await api.createMembershipPaymentOrder(
+                          widget.s.token, plan['id'].toString(), 'BANK_TRANSFER');
+                      if (!sheetContext.mounted) return;
+                      await showDialog<void>(
+                        context: sheetContext,
+                        builder: (dialogContext) => AlertDialog(
+                          title: const Text('Orden de renovación creada'),
+                          content: Text(
+                              'Código: ${order['shortCode']}\nTotal: \$${(order['totalAmount'] as num).toStringAsFixed(2)}\n\nPuedes presentar este código en un punto autorizado o adjuntar tu transferencia desde el portal de pago.'),
+                          actions: [
+                            TextButton.icon(
+                              onPressed: () async {
+                                Navigator.pop(dialogContext);
+                                await _submitMembershipTransferProof(
+                                    sheetContext,
+                                    Map<String, dynamic>.from(order as Map));
+                              },
+                              icon: const Icon(Icons.upload_file_outlined),
+                              label: const Text('Adjuntar transferencia'),
+                            ),
+                            TextButton(
+                                onPressed: () => Navigator.pop(dialogContext),
+                                child: const Text('Cerrar')),
+                            FilledButton(
+                              onPressed: () => launchUrl(
+                                  Uri.parse(order['qrUrl'].toString()),
+                                  mode: LaunchMode.externalApplication),
+                              child: const Text('Abrir orden'),
+                            ),
+                          ],
+                        ),
+                      );
+                    } catch (error) {
+                      if (sheetContext.mounted) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            SnackBar(content: Text(error.toString())));
+                      }
+                    }
+                  },
+                  child: Text('\$${(plan['amount'] as num).toStringAsFixed(2)}'),
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 12),
+          const Text(
+              'Si la membresía vence, tu cuenta, historial, documentos, perfil y soporte permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'),
+        ]),
+      ),
+    );
+    unawaited(refreshMembership(force: true));
+  }
+
   List<Widget> _driverSheetContent(BuildContext context, String? action) => [
         if (driverReviewArea?.reviewLocation != null)
           Card(
@@ -9505,11 +10014,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   : null,
             ),
           ),
+        _membershipCard(context),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Disponible para viajes'),
           value: available,
-          onChanged: active == null ? toggle : null,
+          onChanged: active == null && _membershipEligible ? toggle : null,
         ),
         if (active == null)
           OutlinedButton.icon(
@@ -9666,15 +10176,20 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             icon: const Icon(Icons.shield_outlined),
             label: const Text('Seguridad y compartir viaje'),
           ),
-          if (navigationSdkEnabled &&
-              const {'DRIVER_EN_ROUTE', 'IN_PROGRESS'}
-                  .contains(active['status']?.toString()))
+          if (const {'DRIVER_EN_ROUTE', 'IN_PROGRESS'}
+                  .contains(active['status']?.toString()) &&
+              _navigationProvider(active['status'].toString()) != 'MAP_ONLY')
             FilledButton.tonalIcon(
               onPressed: openDriverNavigation,
               icon: const Icon(Icons.navigation_outlined),
-              label: Text(active['status'] == 'IN_PROGRESS'
-                  ? 'Navegar al destino'
-                  : 'Iniciar navegación'),
+              label: Text(_navigationProvider(active['status'].toString()) ==
+                      'EXTERNAL_MAPS'
+                  ? (active['status'] == 'IN_PROGRESS'
+                      ? 'Abrir ruta al destino'
+                      : 'Abrir ruta al pasajero')
+                  : (active['status'] == 'IN_PROGRESS'
+                      ? 'Navegar al destino'
+                      : 'Iniciar navegación')),
             ),
           if (action != null)
             FilledButton(

@@ -24,6 +24,14 @@ New-Item -ItemType Directory -Force -Path $gradleCache | Out-Null
 $mobile = Join-Path $repo "apps\mobile"
 $release = Join-Path $mobile "release"
 New-Item -ItemType Directory -Force -Path $release | Out-Null
+$pubspecPath = Join-Path $mobile "pubspec.yaml"
+$versionLine = Get-Content -LiteralPath $pubspecPath | Where-Object { $_ -match '^version:\s*([^+\s]+)\+(\d+)\s*$' } | Select-Object -First 1
+if (-not $versionLine -or $versionLine -notmatch '^version:\s*([^+\s]+)\+(\d+)\s*$') {
+  throw "No se pudo obtener versionName y versionCode desde apps/mobile/pubspec.yaml."
+}
+$versionName = $matches[1]
+$versionCode = $matches[2]
+$artifactBase = "Costa-Go-$versionName-build$versionCode"
 
 if ($Production) {
   $keyPropertiesPath = Join-Path $mobile "android\key.properties"
@@ -81,16 +89,15 @@ try {
     $apkSource = "build\app\outputs\flutter-apk\app-release.apk"
     if (-not (Test-Path $apkSource)) { throw "Flutter terminó sin producir el APK universal esperado." }
     if ([string]::IsNullOrWhiteSpace($ApiHttpProxy)) {
-      Copy-Item $apkSource (Join-Path $release "Costa-Go-universal.apk") -Force
-      Copy-Item $apkSource (Join-Path $release "Costa-Go-release.apk") -Force
+      Copy-Item $apkSource (Join-Path $release "$artifactBase-universal.apk") -Force
     } else {
-      Copy-Item $apkSource (Join-Path $release "Costa-Go-lab-proxy.apk") -Force
+      Copy-Item $apkSource (Join-Path $release "$artifactBase-lab-proxy.apk") -Force
     }
   }
   if ($Target -in @("appbundle", "all")) {
     & $Flutter build appbundle --release @defines
     if ($LASTEXITCODE -ne 0) { throw "Falló la compilación AAB." }
-    Copy-Item "build\app\outputs\bundle\release\app-release.aab" (Join-Path $release "Costa-Go-release.aab") -Force
+    Copy-Item "build\app\outputs\bundle\release\app-release.aab" (Join-Path $release "$artifactBase.aab") -Force
   }
 } finally {
   Pop-Location

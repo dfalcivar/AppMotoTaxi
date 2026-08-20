@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Orden de membresía · Costa-Go</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#031a3a;color:#10233b;font-family:system-ui,sans-serif;padding:20px;box-sizing:border-box}.card{max-width:480px;background:white;border-radius:24px;padding:30px;box-shadow:0 20px 55px #0007;text-align:center}h1{margin:8px 0;color:#043d67}.mark{font-size:44px}p{line-height:1.5}.button{display:block;background:#006e9f;color:white;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;margin-top:20px}.hint{font-size:13px;color:#596778}
+  </style>
+</head>
+<body><main class="card"><div class="mark">🛺</div><h1>Orden de membresía</h1><p>Esta orden debe ser validada por un recaudador autorizado de Costa-Go.</p><a class="button" id="open" href="#">Abrir portal de recaudación</a><p class="hint">No compartas el enlace fuera del punto autorizado. El código caduca automáticamente.</p></main><script>const token=new URLSearchParams(location.search).get('token')||'';const target='https://mototaxi-atacames-admin.onrender.com/?module=memberships&paymentToken='+encodeURIComponent(token);document.querySelector('#open').href=target;</script></body>
+</html>

@@ -179,7 +179,7 @@ class MainActivity : FlutterFragmentActivity() {
                 .setVibrate(longArrayOf(0, 350, 180, 350))
         }
         builder
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title.ifBlank { "Nuevo viaje disponible" })
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
