@@ -21,11 +21,19 @@
     </section>
     <section class="plans" id="planes"><div class="heading"><span class="eyebrow">PLANES PARAMETRIZABLES</span><h2>Elige el alcance adecuado</h2><p>Los valores y ubicaciones publicados provienen directamente de Costa-Go.</p></div><div id="plan-grid" class="plan-grid"><div class="skeleton"></div><div class="skeleton"></div></div></section>
     <section class="guided" id="solicitud">
-      <div class="guided-copy"><span class="eyebrow">ASISTENTE COMERCIAL</span><h2 id="assistant-title">Cuéntanos sobre tu negocio</h2><p id="assistant-copy">Te haremos preguntas breves. Puedes solicitar asesoría antes de completar la campaña.</p><div class="privacy-note">Tus datos se utilizan únicamente para gestionar esta solicitud comercial.</div></div>
-      <div class="assistant-card" id="assistant-card"><div id="conversation" class="conversation" aria-live="polite"><div class="message bot">Hola 👋 ¿Qué deseas hacer hoy?</div></div><form id="assistant-form" class="assistant-form"><div id="dynamic-field"></div><button class="primary" type="submit">Continuar</button></form></div>
+      <div class="guided-copy"><span class="eyebrow">ASISTENTE COMERCIAL</span><h2>Resuelve tu solicitud paso a paso</h2><p>El asistente te ayuda a elegir un plan, registrar el negocio o solicitar la llamada de un asesor.</p><div class="privacy-note">Tus datos se utilizan únicamente para gestionar esta solicitud comercial.</div><button class="primary open-assistant" type="button" data-open-assistant>Abrir asistente</button></div>
+      <div class="assistant-preview"><span class="assistant-preview-icon">💬</span><div><strong>Asistente Costa-Go</strong><p>Disponible para orientarte durante todo el proceso.</p></div></div>
     </section>
     <section class="tracking" id="seguimiento"><div><span class="eyebrow">SEGUIMIENTO</span><h2>Consulta tu solicitud</h2><p>Usa el código y correo registrados. Nunca pediremos tu contraseña.</p></div><form id="tracking-form"><label>Código de solicitud<input name="code" required placeholder="PUB-2026-000001"></label><label>Correo<input name="email" type="email" required></label><button class="primary">Consultar</button></form><div id="tracking-result" class="tracking-result" hidden></div></section>
   </main>
+  <div class="assistant-widget" id="assistant-widget">
+    <button class="assistant-launcher" id="assistant-launcher" type="button" aria-label="Abrir asistente comercial" aria-expanded="false"><img src="/assets/costa-go-emblem.png" alt="" width="34" height="34"><span>Te ayudamos</span></button>
+    <section class="assistant-card assistant-floating" id="assistant-card" aria-label="Asistente comercial" hidden>
+      <header class="assistant-header"><div><img src="/assets/costa-go-emblem.png" alt="" width="34" height="34"><span><strong id="assistant-title">Asistente Costa-Go</strong><small id="assistant-copy">Estamos en línea</small></span></div><button id="assistant-minimize" type="button" aria-label="Minimizar asistente">−</button></header>
+      <div id="conversation" class="conversation" aria-live="polite"></div>
+      <form id="assistant-form" class="assistant-form"><div id="dynamic-field"></div><button class="primary" type="submit">Continuar</button></form>
+    </section>
+  </div>
   <footer><img src="/assets/costa-go-emblem.png" alt="" width="36" height="36"><span>Costa-Go · Publicidad responsable para comercios locales</span><a href="mailto:soporte@costa-go.com">soporte@costa-go.com</a></footer>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <dialog id="result-dialog"><div class="dialog-body"><span class="eyebrow">SOLICITUD REGISTRADA</span><h2 id="dialog-title">Todo listo</h2><p id="dialog-copy"></p><div id="dialog-actions" class="dialog-actions"></div><button type="button" class="secondary" data-close>Cerrar</button></div></dialog>
