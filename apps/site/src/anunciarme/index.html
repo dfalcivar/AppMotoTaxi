@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#032b49">
+  <meta name="description" content="Anuncia tu negocio en Costa-Go y conecta con pasajeros de tu zona.">
+  <link rel="icon" href="/assets/costa-go-emblem.png">
+  <link rel="stylesheet" href="/anunciarme/commercial.css">
+  <title>Anuncia tu negocio · Costa-Go</title>
+</head>
+<body>
+  <header class="portal-header">
+    <a class="brand" href="/"><img src="/assets/costa-go-emblem.png" alt="" width="46" height="46"><span>Costa-<b>Go</b></span></a>
+    <nav><a href="#planes">Planes</a><a href="#seguimiento">Consultar solicitud</a><a class="outline" href="/">Volver a Costa-Go</a></nav>
+  </header>
+  <main>
+    <section class="hero" id="inicio">
+      <div><span class="eyebrow">PUBLICIDAD LOCAL INTELIGENTE</span><h1>Tu negocio, visible durante los viajes que importan.</h1><p>Crea una campaña para pasajeros de Costa-Go con un proceso guiado, seguro y sin enviar documentos por canales informales.</p><div class="actions"><button class="primary" data-start="APPLICATION">Quiero anunciarme</button><button class="secondary" data-start="ADVISOR">Hablar con un asesor</button></div></div>
+      <aside><span>Comercio afiliado</span><strong>Publicidad contextual</strong><p>El banner se presenta en momentos definidos del viaje, con fechas, zona y rotación controladas.</p><ul><li>✓ Solicitud guiada</li><li>✓ Comprobante protegido</li><li>✓ Revisión humana</li><li>✓ Métricas verificables</li></ul></aside>
+    </section>
+    <section class="plans" id="planes"><div class="heading"><span class="eyebrow">PLANES PARAMETRIZABLES</span><h2>Elige el alcance adecuado</h2><p>Los valores y ubicaciones publicados provienen directamente de Costa-Go.</p></div><div id="plan-grid" class="plan-grid"><div class="skeleton"></div><div class="skeleton"></div></div></section>
+    <section class="guided" id="solicitud">
+      <div class="guided-copy"><span class="eyebrow">ASISTENTE COMERCIAL</span><h2 id="assistant-title">Cuéntanos sobre tu negocio</h2><p id="assistant-copy">Te haremos preguntas breves. Puedes solicitar asesoría antes de completar la campaña.</p><div class="privacy-note">Tus datos se utilizan únicamente para gestionar esta solicitud comercial.</div></div>
+      <div class="assistant-card" id="assistant-card"><div id="conversation" class="conversation" aria-live="polite"><div class="message bot">Hola 👋 ¿Qué deseas hacer hoy?</div></div><form id="assistant-form" class="assistant-form"><div id="dynamic-field"></div><button class="primary" type="submit">Continuar</button></form></div>
+    </section>
+    <section class="tracking" id="seguimiento"><div><span class="eyebrow">SEGUIMIENTO</span><h2>Consulta tu solicitud</h2><p>Usa el código y correo registrados. Nunca pediremos tu contraseña.</p></div><form id="tracking-form"><label>Código de solicitud<input name="code" required placeholder="PUB-2026-000001"></label><label>Correo<input name="email" type="email" required></label><button class="primary">Consultar</button></form><div id="tracking-result" class="tracking-result" hidden></div></section>
+  </main>
+  <footer><img src="/assets/costa-go-emblem.png" alt="" width="36" height="36"><span>Costa-Go · Publicidad responsable para comercios locales</span><a href="mailto:soporte@costa-go.com">soporte@costa-go.com</a></footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="result-dialog"><div class="dialog-body"><span class="eyebrow">SOLICITUD REGISTRADA</span><h2 id="dialog-title">Todo listo</h2><p id="dialog-copy"></p><div id="dialog-actions" class="dialog-actions"></div><button type="button" class="secondary" data-close>Cerrar</button></div></dialog>
+  <script src="/config.js"></script><script src="/anunciarme/commercial.js" defer></script>
+</body>
+</html>

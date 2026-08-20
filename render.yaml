@@ -78,6 +78,16 @@ services:
     buildCommand: pnpm install --frozen-lockfile && pnpm --filter @mototaxi/site build
     staticPublishPath: ./apps/site/dist
     autoDeployTrigger: commit
+    envVars:
+      - key: PUBLIC_API_BASE_URL
+        value: https://mototaxi-atacames-api.onrender.com
+    routes:
+      - type: rewrite
+        source: /anunciarme/i/*
+        destination: /anunciarme/index.html
+      - type: rewrite
+        source: /anunciarme
+        destination: /anunciarme/index.html
 
 databases:
   - name: mototaxi-atacames-db

@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,11 @@ const output = resolve(current, "dist");
 await rm(output, { recursive: true, force: true });
 await mkdir(resolve(output, "assets"), { recursive: true });
 await cp(resolve(current, "src"), output, { recursive: true });
+await writeFile(
+  resolve(output, "config.js"),
+  `window.COSTA_GO_PUBLIC_CONFIG=${JSON.stringify({ apiBaseUrl: process.env.PUBLIC_API_BASE_URL ?? "https://mototaxi-atacames-api.onrender.com" })};\n`,
+  "utf8"
+);
 
 for (const page of ["privacy.html", "terms.html", "account-deletion.html", "fares.html"]) {
   await cp(resolve(root, "apps/admin/public", page), resolve(output, page));
