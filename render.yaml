@@ -83,6 +83,12 @@ services:
         value: https://mototaxi-atacames-api.onrender.com
     routes:
       - type: rewrite
+        source: /anunciarme/comprobante/*
+        destination: /anunciarme/comprobante/index.html
+      - type: rewrite
+        source: /anunciarme/comprobante
+        destination: /anunciarme/comprobante/index.html
+      - type: rewrite
         source: /anunciarme/i/*
         destination: /anunciarme/index.html
       - type: rewrite

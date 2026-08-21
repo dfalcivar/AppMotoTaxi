@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#032b49">
+  <link rel="icon" href="/assets/costa-go-emblem.png">
+  <link rel="stylesheet" href="/anunciarme/commercial.css">
+  <link rel="stylesheet" href="/anunciarme/comprobante/proof.css">
+  <title>Cargar comprobante · Costa-Go</title>
+</head>
+<body class="proof-page">
+  <main class="proof-shell">
+    <section class="proof-card">
+      <img src="/assets/costa-go-emblem.png" alt="Costa-Go" width="70" height="70">
+      <span class="eyebrow">PAGO SEGURO</span>
+      <h1>Carga tu comprobante</h1>
+      <div id="proof-context" class="proof-context">Validando el enlace seguro…</div>
+      <form id="proof-form" hidden>
+        <label>Referencia de la transferencia<input id="reference" required minlength="3" maxlength="160" placeholder="Número o referencia bancaria"></label>
+        <label>Comprobante<input id="proof-file" type="file" required accept="image/png,image/jpeg,image/webp,application/pdf"><small>Imagen o PDF · máximo 5 MB</small></label>
+        <button class="primary" type="submit">Enviar comprobante</button>
+      </form>
+      <div id="proof-result" class="proof-result" hidden></div>
+      <a href="/" class="secondary proof-home">Volver a Costa-Go</a>
+    </section>
+  </main>
+  <script src="/config.js"></script><script src="/anunciarme/comprobante/proof.js" defer></script>
+</body>
+</html>

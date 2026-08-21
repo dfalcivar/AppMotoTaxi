@@ -67,6 +67,23 @@ const submitSchema = z.object({
     reference: z.string().trim().max(160).optional().default("")
   }).optional()
 });
+const chatSubmitSchema = z.object({
+  submissionKey: z.string().uuid(),
+  source: sourceSchema.default("WEB"),
+  lead: leadSchema.omit({ submissionKey: true, conversationState: true, requiresContact: true, source: true }),
+  campaign: submitSchema.shape.campaign.omit({ serviceAreaId: true }).extend({
+    imageMime: z.enum(["image/jpeg", "image/png"])
+  }),
+  planId: z.string().uuid(),
+  paymentMethodId: z.string().uuid()
+});
+const paymentProofUploadSchema = z.object({
+  proof: z.object({
+    fileBase64: z.string().min(100).max(7_500_000),
+    fileMime: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]),
+    reference: z.string().trim().min(3).max(160)
+  })
+});
 const correctionSubmitSchema = z.object({ campaign: z.object({ imageBase64: z.string().min(100), imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]) }) });
 const listSchema = z.object({
   status: z.string().trim().max(50).optional(), source: sourceSchema.optional(),
@@ -130,6 +147,14 @@ function tokenHash(token: string): string {
   const pepper = process.env.ADMIN_SESSION_SECRET ?? "costa-go-local-development";
   return createHash("sha256").update(`${pepper}:advertising:${token}`).digest("hex");
 }
+function paymentUploadToken(submissionKey: string): string {
+  const pepper = process.env.ADMIN_SESSION_SECRET ?? "costa-go-local-development";
+  return createHash("sha256").update(`${pepper}:advertising-payment:${submissionKey}`).digest("base64url");
+}
+function paymentUploadTokenHash(token: string): string {
+  const pepper = process.env.ADMIN_SESSION_SECRET ?? "costa-go-local-development";
+  return createHash("sha256").update(`${pepper}:advertising-payment-upload:${token}`).digest("hex");
+}
 function publicBase(): string { return (process.env.PUBLIC_WEB_BASE_URL ?? "https://costa-go.com").replace(/\/$/, ""); }
 function cleanSource(value: unknown): z.infer<typeof sourceSchema> {
   const candidate = String(value ?? "WEB").trim().toUpperCase();
@@ -142,7 +167,7 @@ export function normalizeAdvertisingPlacement(value: unknown): z.infer<typeof cu
 function publicError(error: unknown, reply: FastifyReply) {
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.flatten() });
   const message = error instanceof Error ? error.message : "ERROR";
-  const status = message === "INVITATION_NOT_FOUND" ? 404 : message === "INVITATION_EXPIRED" ? 410 : message === "INVITATION_LOCKED" ? 409 : 500;
+  const status = ["INVITATION_NOT_FOUND","PAYMENT_UPLOAD_NOT_FOUND"].includes(message) ? 404 : ["INVITATION_EXPIRED","PAYMENT_UPLOAD_EXPIRED"].includes(message) ? 410 : ["INVITATION_LOCKED","PAYMENT_UPLOAD_LOCKED"].includes(message) ? 409 : 500;
   if (status < 500) return reply.code(status).send({ error: message });
   reply.log.error({ err: error }, "No se pudo completar la solicitud comercial");
   return reply.code(500).send({
@@ -203,6 +228,15 @@ function validProof(data: Buffer, mime: string): boolean {
   if (mime === "image/png") return data.subarray(1, 4).toString() === "PNG";
   return mime === "image/webp" && data.subarray(0, 4).toString() === "RIFF" && data.subarray(8, 12).toString() === "WEBP";
 }
+function emailHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
+}
+function bankInstructions(method: any): string {
+  const details = method?.account_details && typeof method.account_details === "object"
+    ? Object.entries(method.account_details).filter(([, value]) => value !== null && value !== "").map(([key, value]) => `${key}: ${String(value)}`).join("\n")
+    : "";
+  return [String(method?.instructions ?? "").trim(), details].filter(Boolean).join("\n");
+}
 async function transitionCampaign(campaignId: string, to: string, actor?: SessionUser, note = "") {
   const [current] = await database()`select campaign_status from affiliate_banners where id=${campaignId}`;
   if (!current) throw new Error("CAMPAIGN_NOT_FOUND");
@@ -239,7 +273,95 @@ export async function advertisingSchedulerTick(): Promise<void> {
 
 export async function registerCommercialRoutes(app: FastifyInstance) {
   app.get("/v1/public/advertising/plans", async () => database()`select id::text,code,name,description,placement,duration_days as "durationDays",price::float8,currency,default_weight as "defaultWeight",allowed_placements as "allowedPlacements" from advertising_plans where enabled=true and active=true order by sort_order,name`);
-  app.get("/v1/public/advertising/payment-methods", async () => database()`select id::text,code,name,instructions,account_details as "accountDetails",requires_proof as "requiresProof" from advertising_payment_methods where active=true order by sort_order,name`);
+  app.get("/v1/public/advertising/payment-methods", async () => database()`select id::text,code,case when code='COMMERCIAL_MANAGED' then 'Gestionado por un asesor' else name end as name,instructions,account_details as "accountDetails",requires_proof as "requiresProof" from advertising_payment_methods where active=true and code in ('BANK_TRANSFER','COMMERCIAL_MANAGED') order by sort_order,name`);
+  app.post("/v1/public/advertising/chat/submit", async (request, reply) => { try {
+    const body = chatSubmitSchema.parse({ ...(request.body as object), source: cleanSource((request.body as any)?.source) });
+    const [knownSubmission] = await database()`select 1 from advertising_leads where submission_key=${body.submissionKey}`;
+    if (!knownSubmission && !allowLead(request)) return reply.code(429).send({ error: "TOO_MANY_REQUESTS" });
+    const image = decodeBase64(body.campaign.imageBase64), dimensions = imageDimensions(image, body.campaign.imageMime);
+    const [settings] = await database()`select advertising_max_image_bytes as bytes,advertising_banner_width as width,advertising_banner_height as height from operational_settings where id=1`;
+    if (!dimensions || image.length > Number(settings?.bytes ?? 1_048_576) || dimensions.width !== Number(settings?.width ?? 1200) || dimensions.height !== Number(settings?.height ?? 400)) {
+      return reply.code(400).send({ error: "INVALID_BANNER_IMAGE", message: `El banner debe medir ${settings?.width ?? 1200}×${settings?.height ?? 400} px, ser JPG o PNG y pesar máximo ${Math.round(Number(settings?.bytes ?? 1_048_576) / 1_048_576)} MB.` });
+    }
+    const uploadToken = paymentUploadToken(body.submissionKey);
+    const result = await database().begin(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${body.submissionKey},0))`;
+      const [existing] = await tx`select lead.id::text,lead.code,lead.conversation_status,orders.code as order_code,orders.status,methods.code as method_code,methods.instructions,methods.account_details,plans.name as plan_name,orders.amount::float8,orders.currency
+        from advertising_leads lead left join advertising_orders orders on orders.lead_id=lead.id left join advertising_payments payments on payments.order_id=orders.id left join advertising_payment_methods methods on methods.id=payments.payment_method_id left join advertising_plans plans on plans.id=orders.plan_id
+        where lead.submission_key=${body.submissionKey} order by orders.created_at desc limit 1`;
+      if (existing?.order_code) return { leadCode: existing.code, orderCode: existing.order_code, status: "FINALIZADO", paymentMethod: existing.method_code, planName: existing.plan_name, amount: Number(existing.amount), currency: existing.currency, method: { instructions: existing.instructions, account_details: existing.account_details }, duplicate: true };
+      const [plan] = await tx`select * from advertising_plans where id=${body.planId} and enabled=true and active=true for share`;
+      if (!plan) throw new Error("PLAN_NOT_FOUND");
+      const [method] = await tx`select * from advertising_payment_methods where id=${body.paymentMethodId} and active=true and code in ('BANK_TRANSFER','COMMERCIAL_MANAGED')`;
+      if (!method) throw new Error("PAYMENT_METHOD_NOT_FOUND");
+      const isTransfer = method.code === "BANK_TRANSFER";
+      const [lead] = await tx`insert into advertising_leads(code,business_name,contact_name,phone_e164,email,city,business_type,interest,source,status,conversation_state,conversation_status,submission_key)
+        values ('LEAD-'||extract(year from now())::int||'-'||lpad(nextval('advertising_lead_code_seq')::text,6,'0'),${body.lead.businessName},${body.lead.contactName},${body.lead.phone},lower(${body.lead.email}),${body.lead.city},${body.lead.businessType},${body.lead.interest},${body.source},${isTransfer ? "QUALIFIED" : "REQUIRES_CONTACT"},${JSON.stringify({ status: "FINALIZADO", paymentMethod: method.code })}::jsonb,'FINALIZADO',${body.submissionKey}) returning id::text,code`;
+      if (!lead) throw new Error("LEAD_NOT_CREATED");
+      const [advertiser] = await tx`insert into advertisers(business_name,contact_name,phone_e164,email,city,business_type,status)
+        values (${body.lead.businessName},${body.lead.contactName},${body.lead.phone},lower(${body.lead.email}),${body.lead.city},${body.lead.businessType},'PROSPECT')
+        on conflict(lower(email),lower(business_name)) do update set contact_name=excluded.contact_name,phone_e164=excluded.phone_e164,city=excluded.city,business_type=excluded.business_type,updated_at=now() returning id::text`;
+      const amount = Number(plan.price ?? plan.monthly_price ?? 0), duration = Number(plan.duration_days ?? 30), start = new Date(body.campaign.startsAt), end = new Date(start.getTime() + duration * 86_400_000), placement = normalizeAdvertisingPlacement(plan.placement ?? plan.allowed_placements?.[0]);
+      const [order] = await tx`insert into advertising_orders(code,lead_id,advertiser_id,plan_id,status,amount,currency,plan_snapshot,requested_start_at,requested_end_at)
+        values ('PUB-'||extract(year from now())::int||'-'||lpad(nextval('advertising_request_code_seq')::text,6,'0'),${lead.id},${advertiser.id},${plan.id},'PENDING_PAYMENT',${amount},${plan.currency},${JSON.stringify({ code: plan.code, name: plan.name, durationDays: duration, price: amount })}::jsonb,${start.toISOString()},${end.toISOString()}) returning id::text,code`;
+      const [payment] = await tx`insert into advertising_payments(order_id,advertiser_id,amount,currency,payment_method_id,status,settlement_status)
+        values (${order.id},${advertiser.id},${amount},${plan.currency},${method.id},'PENDING','NOT_RECEIVED') returning id::text`;
+      const [campaign] = await tx`insert into affiliate_banners(title,advertiser_id,advertiser_name,advertising_plan_id,placement,weight,action_type,action_value,image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,order_id,submitted_at)
+        values (${body.campaign.title},${advertiser.id},${body.lead.businessName},${plan.id},${placement},${plan.default_weight},${body.campaign.actionType},${body.campaign.actionValue || null},${body.campaign.imageMime},${image},${body.campaign.actionType === "WEB" ? body.campaign.actionValue || null : null},${start.toISOString()},${end.toISOString()},false,'PENDING_PAYMENT',${plan.sort_order ?? 0},${order.id},now()) returning id::text`;
+      await tx`insert into campaign_status_history(campaign_id,to_status,note) values (${campaign.id},'PENDING_PAYMENT',${isTransfer ? "Esperando comprobante de transferencia" : "Pago gestionado por asesor"})`;
+      await tx`update advertising_leads set advertiser_id=${advertiser.id},updated_at=now() where id=${lead.id}`;
+      if (isTransfer) await tx`insert into advertising_payment_upload_tokens(order_id,payment_id,token_hash,status,expires_at) values (${order.id},${payment.id},${paymentUploadTokenHash(uploadToken)},'CREATED',now()+interval '7 days')`;
+      return { leadCode: lead.code, orderCode: order.code, campaignId: campaign.id, status: "FINALIZADO", paymentMethod: method.code, planName: plan.name, amount, currency: plan.currency, email: body.lead.email, contactName: body.lead.contactName, businessName: body.lead.businessName, method, duplicate: false };
+    });
+    if (result.paymentMethod === "BANK_TRANSFER") {
+      const uploadUrl = `${publicBase()}/anunciarme/comprobante/?token=${encodeURIComponent(uploadToken)}`;
+      const instructions = bankInstructions(result.method);
+      const mailSent = await sendTransactionalEmail({
+        to: String(result.email ?? body.lead.email), subject: `Datos para tu transferencia ${result.orderCode} · Costa-Go`,
+        text: `Hola ${result.contactName ?? body.lead.contactName}.\nCódigo de solicitud: ${result.leadCode}\nOrden: ${result.orderCode}\nPlan: ${result.planName}\nValor: ${result.currency} ${Number(result.amount).toFixed(2)}\n\n${instructions}\n\nCuando realices la transferencia, carga el comprobante en este enlace seguro único: ${uploadUrl}`,
+        html: `<p>Hola <strong>${emailHtml(result.contactName ?? body.lead.contactName)}</strong>.</p><p>Estos son los datos de tu solicitud comercial:</p><ul><li>Código: <strong>${emailHtml(result.leadCode)}</strong></li><li>Orden: <strong>${emailHtml(result.orderCode)}</strong></li><li>Plan: <strong>${emailHtml(result.planName)}</strong></li><li>Valor: <strong>${emailHtml(result.currency)} ${Number(result.amount).toFixed(2)}</strong></li></ul><p style="white-space:pre-line">${emailHtml(instructions)}</p><p><a href="${emailHtml(uploadUrl)}">Cargar comprobante de transferencia</a></p><p>Este enlace es único y vence en 7 días.</p>`
+      });
+      if (mailSent) await database()`update advertising_payment_upload_tokens set email_sent_at=coalesce(email_sent_at,now()),updated_at=now() where token_hash=${paymentUploadTokenHash(uploadToken)}`;
+      if (!mailSent) request.log.error({ leadCode: result.leadCode }, "No se pudo enviar el correo de transferencia comercial");
+    }
+    if (!result.duplicate) {
+      const [notificationSettings]=await database()`select advertising_commercial_emails as emails from operational_settings where id=1`;
+      for(const email of Array.isArray(notificationSettings?.emails)?notificationSettings.emails:[]){
+        void sendTransactionalEmail({to:String(email),subject:`Nueva solicitud comercial ${result.leadCode} · Costa-Go`,text:`${body.lead.businessName} finalizó la solicitud ${result.leadCode}. Orden ${result.orderCode}. Método: ${result.paymentMethod}.`,html:`<p>Se registró la solicitud <strong>${emailHtml(result.leadCode)}</strong>.</p><p><strong>${emailHtml(body.lead.businessName)}</strong><br>Orden ${emailHtml(result.orderCode)}<br>Método: ${emailHtml(result.paymentMethod)}</p>`}).catch(()=>false);
+      }
+    }
+    if (!result.duplicate) await publicAudit("ADVERTISING_CHAT_FINALIZED","ADVERTISING_LEAD",String(result.leadCode),String(result.paymentMethod));
+    const response = { leadCode: result.leadCode, orderCode: result.orderCode, status: "FINALIZADO", paymentMethod: result.paymentMethod, duplicate: result.duplicate };
+    return reply.code(result.duplicate ? 200 : 201).send(response);
+  } catch (error) { return publicError(error, reply); } });
+
+  app.get("/v1/public/advertising/payment-proof/:token", async (request, reply) => { try {
+    const token = z.string().min(32).max(200).parse((request.params as any).token);
+    const [item] = await database()`select upload.id::text,upload.status,upload.expires_at as "expiresAt",orders.code as "orderCode",orders.amount::float8,orders.currency,plans.name as "planName",advertisers.business_name as "businessName"
+      from advertising_payment_upload_tokens upload join advertising_orders orders on orders.id=upload.order_id join advertising_plans plans on plans.id=orders.plan_id join advertisers on advertisers.id=orders.advertiser_id where upload.token_hash=${paymentUploadTokenHash(token)}`;
+    if (!item) throw new Error("PAYMENT_UPLOAD_NOT_FOUND");
+    if (item.status === "SUBMITTED") return { ...item, received: true };
+    if (["EXPIRED","REVOKED"].includes(String(item.status)) || new Date(String(item.expiresAt)).getTime() <= Date.now()) { await database()`update advertising_payment_upload_tokens set status='EXPIRED',updated_at=now() where id=${item.id}`; throw new Error("PAYMENT_UPLOAD_EXPIRED"); }
+    await database()`update advertising_payment_upload_tokens set status='OPENED',opened_at=coalesce(opened_at,now()),updated_at=now() where id=${item.id} and status='CREATED'`;
+    return { ...item, status: "OPENED", received: false };
+  } catch (error) { return publicError(error, reply); } });
+
+  app.post("/v1/public/advertising/payment-proof/:token", async (request, reply) => { try {
+    const token = z.string().min(32).max(200).parse((request.params as any).token), body = paymentProofUploadSchema.parse(request.body), proof = decodeBase64(body.proof.fileBase64);
+    if (!validProof(proof, body.proof.fileMime)) return reply.code(400).send({ error: "INVALID_PAYMENT_PROOF" });
+    const result = await database().begin(async tx => {
+      const [upload] = await tx`select * from advertising_payment_upload_tokens where token_hash=${paymentUploadTokenHash(token)} for update`;
+      if (!upload) throw new Error("PAYMENT_UPLOAD_NOT_FOUND");
+      if (upload.status === "SUBMITTED") return { received: true, duplicate: true };
+      if (["EXPIRED","REVOKED"].includes(String(upload.status)) || new Date(String(upload.expires_at)).getTime() <= Date.now()) throw new Error("PAYMENT_UPLOAD_EXPIRED");
+      await tx`update advertising_payments set proof_mime=${body.proof.fileMime},proof_data=${proof},reference=${body.proof.reference},status='UNDER_REVIEW',settlement_status='PENDING_RECONCILIATION',updated_at=now() where id=${upload.payment_id}`;
+      await tx`update advertising_orders set status='PAYMENT_REVIEW',updated_at=now() where id=${upload.order_id}`;
+      await tx`update affiliate_banners set campaign_status='PAYMENT_REVIEW',review_requested_at=now(),updated_at=now() where order_id=${upload.order_id}`;
+      await tx`update advertising_payment_upload_tokens set status='SUBMITTED',submitted_at=now(),updated_at=now() where id=${upload.id}`;
+      return { received: true, duplicate: false };
+    });
+    return reply.code(result.duplicate ? 200 : 201).send(result);
+  } catch (error) { return publicError(error, reply); } });
   app.get("/v1/public/advertising/active", async (request, reply) => { try {
     const query=publicCampaignQuerySchema.parse(request.query);
     const campaigns=await database()`select banner.id::text,banner.title,banner.advertiser_name as "advertiserName",banner.action_type as "actionType",banner.action_value as "actionValue",case when banner.action_type='WEB' then banner.action_value else null end as "targetUrl",banner.placement,banner.starts_at as "startsAt",banner.ends_at as "endsAt",coalesce(banner.weight,plan.default_weight,1)::int as weight,banner.updated_at as "updatedAt",'/v1/banners/'||banner.id||'/image' as "imageUrl" from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id where banner.active=true and banner.campaign_status='ACTIVE' and banner.starts_at<=now() and (banner.ends_at is null or banner.ends_at>now()) and (${query.serviceAreaId??null}::uuid is null or banner.service_area_id is null or banner.service_area_id=${query.serviceAreaId??null}) and (${query.placement}=banner.placement or ${query.placement}=any(coalesce(plan.allowed_placements,array[banner.placement]))) order by banner.sort_order,banner.starts_at desc limit (select advertising_max_active_per_zone from operational_settings where id=1)`;

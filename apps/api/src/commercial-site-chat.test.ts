@@ -11,8 +11,13 @@ describe("chat comercial en costa-go.com", () => {
     ]);
     expect(home).toContain('/anunciarme/?embed=1&amp;source=WEB');
     expect(homeScript).toContain("commercial-assistant-panel");
-    expect(chat).toContain('/v1/public/advertising/leads');
+    expect(chat).toContain('/v1/public/advertising/chat/submit');
     expect(chat).toContain('/v1/public/advertising/plans');
     expect(chat).toContain('/v1/public/advertising/payment-methods');
+    expect(chat).toContain('Registra tu correo electrónico');
+    expect(chat).toContain('Hemos enviado a tu correo los datos para realizar la transferencia');
+    expect(chat).toContain('Un asesor de Costa-Go se comunicará contigo');
+    expect(chat).not.toContain('¿A qué correo enviamos el enlace seguro?');
+    expect(chat).not.toContain('["proof", "Comprobante de pago"');
   });
 });

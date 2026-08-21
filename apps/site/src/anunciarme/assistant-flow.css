@@ -19,6 +19,8 @@
 .assistant-floating .conversation {
   flex: 1;
   min-height: 0;
+  scroll-padding-bottom: 24px;
+  overscroll-behavior: contain;
 }
 
 .assistant-floating .assistant-form {
@@ -68,8 +70,9 @@
   }
 
   .assistant-floating .assistant-form {
-    position: sticky;
-    bottom: 0;
+    position: relative;
+    z-index: 2;
+    box-shadow: 0 -8px 18px #032b4910;
   }
 
   .assistant-form .primary {
