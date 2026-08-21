@@ -7,8 +7,7 @@ void main() {
     test('detecta un enlace web seguro dentro de la respuesta', () {
       final uri = firstWebUrl(
           'Consulta el tarifario en https://costa-go.com/fares.html.');
-      expect(uri?.toString(),
-          'https://costa-go.com/fares.html');
+      expect(uri?.toString(), 'https://costa-go.com/fares.html');
     });
 
     test('separa la URL del texto que se presenta al usuario', () {
@@ -32,7 +31,27 @@ void main() {
           NotificationTarget.activeTrip);
       expect(notificationTargetFor('COMPLETED'), NotificationTarget.tripDetail);
       expect(notificationTargetFor('TRIP_OFFER'), NotificationTarget.offers);
+      expect(notificationTargetFor('MEMBERSHIP_EXPIRING'),
+          NotificationTarget.membership);
     });
+  });
+
+  test('muestra fechas de membresía completamente en español', () {
+    expect(formatSpanishLongDate(DateTime(2026, 9, 30)),
+        'miércoles, 30 de septiembre de 2026');
+  });
+
+  test('el total de tarifa coincide con todos los conceptos mostrados', () {
+    final summary = tripFareBreakdown({
+      'baseFareCents': 155,
+      'platformCommissionCents': 10,
+      'stopSurchargeCents': 25,
+      'quotedTotalCents': 190,
+    });
+    expect(summary['journeys'], 165);
+    expect(summary['stops'], 25);
+    expect(summary['adjustments'], 0);
+    expect(summary['total'], summary['journeys']! + summary['stops']!);
   });
 
   test('normaliza la cancelación realtime para no mostrar una acción vacía',

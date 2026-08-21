@@ -170,7 +170,7 @@ class MainActivity : FlutterFragmentActivity() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, "costa_go_trip_offers_v1")
+            Notification.Builder(this, "costa_go_trip_offers_v2")
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
@@ -276,7 +276,7 @@ class MainActivity : FlutterFragmentActivity() {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
             val offerChannel = NotificationChannel(
-                "costa_go_trip_offers_v1",
+                "costa_go_trip_offers_v2",
                 "Nuevas solicitudes de viaje",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
@@ -288,7 +288,7 @@ class MainActivity : FlutterFragmentActivity() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             val tripChannel = NotificationChannel(
-                "costa_go_trip_updates_v1",
+                "costa_go_trip_updates_v2",
                 "Solicitudes y estados del viaje",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
@@ -298,7 +298,7 @@ class MainActivity : FlutterFragmentActivity() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             val arrivalChannel = NotificationChannel(
-                "costa_go_driver_arrival_v1",
+                "costa_go_driver_arrival_v2",
                 "Llegada del conductor",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
@@ -310,7 +310,7 @@ class MainActivity : FlutterFragmentActivity() {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             val chatChannel = NotificationChannel(
-                "costa_go_chat_v1",
+                "costa_go_chat_v2",
                 "Mensajes del viaje",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {

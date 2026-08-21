@@ -1484,9 +1484,16 @@ export async function buildApp() {
       quotedTotalCents: fare.totalCents,
       baseFareCents: fare.baseCents,
       journeyFareCents: fare.baseCents + fare.platformCommissionCents,
+      platformCommissionCents: fare.platformCommissionCents,
       stopSurchargeCents: fare.stopSurchargeCents,
       fareIsSuggested: fare.suggested,
-      fareLegs: fare.legs.map(leg => ({ order: leg.order, totalCents: leg.fareCents + leg.commissionCents, suggested: leg.suggested })),
+      fareLegs: fare.legs.map(leg => ({
+        order: leg.order,
+        fareCents: leg.fareCents,
+        commissionCents: leg.commissionCents,
+        totalCents: leg.fareCents + leg.commissionCents,
+        suggested: leg.suggested
+      })),
       distanceMeters: route.distanceMeters,
       durationSeconds: route.durationSeconds,
       routePoints: route.points

@@ -100,6 +100,7 @@ class LiveMap extends StatefulWidget {
     this.onSelectionMovementStarted,
     this.onUseCurrentLocation,
     this.onCenterCurrentLocation,
+    this.mapAccessory,
     this.currentLocation,
     this.height = 320,
     this.fillAvailable = false,
@@ -124,6 +125,10 @@ class LiveMap extends StatefulWidget {
   final VoidCallback? onSelectionMovementStarted;
   final VoidCallback? onUseCurrentLocation;
   final Future<LatLng?> Function()? onCenterCurrentLocation;
+
+  /// Control opcional del mapa, separado visual y táctilmente del botón de
+  /// ubicación.
+  final Widget? mapAccessory;
   final LatLng? currentLocation;
   final double height;
   final bool fillAvailable;
@@ -660,6 +665,12 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
 
     final mapContent = Stack(children: [
       mapSurface,
+      if (widget.editing == null && widget.mapAccessory != null)
+        Positioned(
+          right: 64,
+          bottom: widget.viewportPadding.bottom + 68,
+          child: widget.mapAccessory!,
+        ),
       if (widget.editing == null &&
           (widget.currentLocation != null ||
               widget.onUseCurrentLocation != null ||

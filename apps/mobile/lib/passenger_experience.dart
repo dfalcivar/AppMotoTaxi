@@ -101,10 +101,70 @@ String _dayGroup(dynamic value) {
   return 'Anteriores';
 }
 
-enum NotificationTarget { chat, activeTrip, tripDetail, support, offers, inbox }
+enum NotificationTarget {
+  chat,
+  activeTrip,
+  tripDetail,
+  support,
+  offers,
+  membership,
+  inbox
+}
+
+String formatSpanishLongDate(DateTime value) {
+  const weekdays = [
+    'lunes',
+    'martes',
+    'miércoles',
+    'jueves',
+    'viernes',
+    'sábado',
+    'domingo'
+  ];
+  const months = [
+    'enero',
+    'febrero',
+    'marzo',
+    'abril',
+    'mayo',
+    'junio',
+    'julio',
+    'agosto',
+    'septiembre',
+    'octubre',
+    'noviembre',
+    'diciembre'
+  ];
+  final local = value.toLocal();
+  return '${weekdays[local.weekday - 1]}, ${local.day} de ${months[local.month - 1]} de ${local.year}';
+}
+
+Map<String, int> tripFareBreakdown(Map<String, dynamic> preview) {
+  int cents(String key) => ((preview[key] as num?) ?? 0).round();
+  final base = cents('baseFareCents');
+  final service = cents('platformCommissionCents');
+  final stops = cents('stopSurchargeCents');
+  final quoted = cents('quotedTotalCents');
+  final journeys = base + service;
+  return {
+    // La comisión forma parte del valor del trayecto y no se expone como un
+    // concepto independiente al pasajero.
+    'journeys': journeys,
+    'stops': stops,
+    'adjustments': quoted - journeys - stops,
+    'total': quoted,
+  };
+}
 
 NotificationTarget notificationTargetFor(String? value) {
   final type = value?.toUpperCase();
+  if (type == 'CHAT') return NotificationTarget.chat;
+  if (type == 'ACTIVE_TRIP') return NotificationTarget.activeTrip;
+  if (type == 'TRIP_DETAIL') return NotificationTarget.tripDetail;
+  if (type == 'SUPPORT') return NotificationTarget.support;
+  if (type == 'TRIP_OFFERS') return NotificationTarget.offers;
+  if (type == 'MEMBERSHIP') return NotificationTarget.membership;
+  if (type == 'NOTIFICATIONS') return NotificationTarget.inbox;
   if (type == 'CHAT_MESSAGE') return NotificationTarget.chat;
   if (const {
     'TRIP_OFFER',
@@ -128,6 +188,9 @@ NotificationTarget notificationTargetFor(String? value) {
   }
   if (type?.startsWith('SUPPORT_') == true) {
     return NotificationTarget.support;
+  }
+  if (type?.startsWith('MEMBERSHIP_') == true) {
+    return NotificationTarget.membership;
   }
   return NotificationTarget.inbox;
 }

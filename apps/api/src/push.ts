@@ -85,6 +85,20 @@ export type PushConfigurationStatus = {
   errorCode?: string;
 };
 
+export function pushRouteForType(type: string | undefined): string {
+  const normalized = String(type ?? "").toUpperCase();
+  if (normalized === "CHAT_MESSAGE") return "CHAT";
+  if (normalized.startsWith("SUPPORT_")) return "SUPPORT";
+  if (["TRIP_OFFER", "TRIP_OFFER_CANCELLED", "SCHEDULED_TRIP_AVAILABLE"].includes(normalized)) return "TRIP_OFFERS";
+  if (["COMPLETED", "TRIP_CANCELLED"].includes(normalized)) return "TRIP_DETAIL";
+  if ([
+    "TRIP_ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS",
+    "SCHEDULED_TRIP_REMINDER", "SCHEDULED_DRIVER_REMINDER"
+  ].includes(normalized)) return "ACTIVE_TRIP";
+  if (normalized.startsWith("MEMBERSHIP_")) return "MEMBERSHIP";
+  return "NOTIFICATIONS";
+}
+
 export function pushConfigurationStatus(clientProjectId?: string): PushConfigurationStatus {
   try {
     const serviceAccount = firebaseCredential() as { project_id?: string } | undefined;
@@ -109,6 +123,7 @@ export function pushConfigurationStatus(clientProjectId?: string): PushConfigura
 export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}): Promise<PushResult> {
   const startedAt = performance.now();
   const eventType = data.type ?? "UNKNOWN";
+  data.notificationRoute ??= pushRouteForType(eventType);
   try {
     const notificationId = await persistUserNotification({ userId, title, message: body, type: eventType, data });
     if (notificationId) data.internalNotificationId = notificationId;
@@ -162,19 +177,20 @@ export async function sendPush(userId: string, title: string, body: string, data
         ttl,
         notification: {
           channelId: isChat
-            ? "costa_go_chat_v1"
+            ? "costa_go_chat_v2"
             : isTripOffer
-              ? "costa_go_trip_offers_v1"
+              ? "costa_go_trip_offers_v2"
               : isDriverArrival
-                ? "costa_go_driver_arrival_v1"
-              : "costa_go_trip_updates_v1",
+                ? "costa_go_driver_arrival_v2"
+              : "costa_go_trip_updates_v2",
           tag: notificationTag,
           priority: isTripOffer ? "max" : "high",
           icon: "ic_notification",
           color: "#00AEEF",
           sound: "default",
           defaultVibrateTimings: true,
-          visibility: "public"
+          visibility: "public",
+          clickAction: "FLUTTER_NOTIFICATION_CLICK"
         }
       },
       apns: {
@@ -183,7 +199,7 @@ export async function sendPush(userId: string, title: string, body: string, data
           aps: {
             sound: "default",
             badge: 1,
-            category: isTripOffer ? "TRIP_OFFER" : "TRIP_UPDATE",
+            category: data.notificationRoute,
             threadId: notificationTag
           }
         }

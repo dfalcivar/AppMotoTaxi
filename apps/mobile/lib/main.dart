@@ -5631,7 +5631,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   void handleOpenedPush(RemoteMessage push) {
-    final target = notificationTargetFor(push.data['type']);
+    final target = notificationTargetFor(
+        push.data['notificationRoute'] ?? push.data['type']);
     final tripId = push.data['tripId']?.toString();
     if (target == NotificationTarget.chat) {
       unawaited(openPassengerChat(tripId,
@@ -6854,6 +6855,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         routeDurationSeconds = (preview['durationSeconds'] as num?)?.toDouble();
         message = null;
       });
+      final fareBreakdown =
+          tripFareBreakdown(Map<String, dynamic>.from(preview as Map));
       return await showDialog<bool>(
             context: context,
             builder: (dialogContext) => AlertDialog(
@@ -6890,13 +6893,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                               'Destino ${leg['order']}: \$${(((leg['totalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}${leg['suggested'] == true ? ' · sugerido' : ''}')),
                       const SizedBox(height: 6),
                       Text(
-                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido de trayectos' : 'Subtotal de trayectos'}: \$${(((preview['journeyFareCents'] as num?) ?? (preview['baseFareCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}'),
-                      if (((preview['stopSurchargeCents'] as num?) ?? 0) > 0)
+                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido de trayectos' : 'Subtotal de trayectos'}: \$${(fareBreakdown['journeys']! / 100).toStringAsFixed(2)}'),
+                      if (fareBreakdown['stops']! > 0)
                         Text(
-                            'Adicional por paradas: \$${((preview['stopSurchargeCents'] as num) / 100).toStringAsFixed(2)}'),
+                            'Adicional por paradas: \$${(fareBreakdown['stops']! / 100).toStringAsFixed(2)}'),
+                      if (fareBreakdown['adjustments'] != 0)
+                        Text(
+                            'Otros ajustes: \$${(fareBreakdown['adjustments']! / 100).toStringAsFixed(2)}'),
                       const Divider(),
                       Text(
-                        'Total a pagar: \$${(((preview['quotedTotalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}',
+                        'Total a pagar: \$${(fareBreakdown['total']! / 100).toStringAsFixed(2)}',
                         style: Theme.of(dialogContext)
                             .textTheme
                             .titleLarge
@@ -8323,7 +8329,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   void handleOpenedPush(RemoteMessage push) {
-    final target = notificationTargetFor(push.data['type']);
+    final target = notificationTargetFor(
+        push.data['notificationRoute'] ?? push.data['type']);
     if (target == NotificationTarget.chat) {
       unawaited(openDriverChat(push.data['tripId'],
           notificationId: push.data['internalNotificationId']));
@@ -8336,6 +8343,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   widget.s, push.data['incidentId'].toString()))));
     } else if (push.data['type'] == 'SCHEDULED_DRIVER_REMINDER') {
       unawaited(syncActivatedScheduledTrip(force: true));
+    } else if (target == NotificationTarget.membership) {
+      unawaited(refreshMembership(force: true).then((_) {
+        if (mounted) return _showMembershipDetails();
+      }));
     } else if (target == NotificationTarget.inbox) {
       unawaited(Navigator.push(context,
           MaterialPageRoute(builder: (_) => NotificationCenterView(widget.s))));
@@ -9783,7 +9794,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         _ => 'Pendiente de activación',
       };
 
-  Widget _membershipCard(BuildContext context) {
+  Widget _membershipMapAccess(BuildContext context) {
     final data = membershipData;
     if (data == null) return const SizedBox.shrink();
     final membership =
@@ -9800,45 +9811,42 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Colors.red,
       _ => Colors.orange,
     };
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: _showMembershipDetails,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.fromLTRB(10, 7, 12, 7),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: .11),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: color.withValues(alpha: .35)),
+    return Semantics(
+      button: true,
+      label: 'Membresía Costa-Go, ${_membershipStatusLabel(status)}',
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Material(
+          color: Theme.of(context).colorScheme.surface.withValues(alpha: .92),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            child: Text('Membresía',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                  color: color, borderRadius: BorderRadius.circular(10)),
-              child: Icon(
-                eligible ? Icons.verified_rounded : Icons.lock_clock_rounded,
-                color: Colors.white,
-                size: 19,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'Membresía Costa-Go · ${_membershipStatusLabel(status)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: color, fontWeight: FontWeight.w900),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Icon(Icons.chevron_right_rounded, color: color, size: 20),
-          ]),
         ),
-      ),
+        const SizedBox(height: 4),
+        Material(
+          color: color,
+          elevation: 4,
+          shadowColor: Colors.black38,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: _showMembershipDetails,
+            child: SizedBox.square(
+              dimension: 46,
+              child: Icon(
+                eligible ? Icons.check_rounded : Icons.lock_clock_rounded,
+                color: Colors.white,
+                size: 26,
+              ),
+            ),
+          ),
+        ),
+      ]),
     );
   }
 
@@ -10126,13 +10134,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 Text('Plan actual: ${membership['planName']}'),
               if (membership['startsAt'] != null)
                 Text(
-                    'Inicio: ${MaterialLocalizations.of(sheetContext).formatMediumDate(DateTime.parse(membership['startsAt'].toString()).toLocal())}'),
+                    'Inicio: ${formatSpanishLongDate(DateTime.parse(membership['startsAt'].toString()))}'),
               if (membership['expiresAt'] != null)
                 Text(
-                    'Vigente hasta: ${MaterialLocalizations.of(sheetContext).formatMediumDate(DateTime.parse(membership['expiresAt'].toString()).toLocal())}'),
+                    'Vigente hasta: ${formatSpanishLongDate(DateTime.parse(membership['expiresAt'].toString()))}'),
               if (membership['graceEndsAt'] != null)
                 Text(
-                    'Gracia hasta: ${MaterialLocalizations.of(sheetContext).formatMediumDate(DateTime.parse(membership['graceEndsAt'].toString()).toLocal())}'),
+                    'Gracia hasta: ${formatSpanishLongDate(DateTime.parse(membership['graceEndsAt'].toString()))}'),
               if (membership['completedTrips'] != null)
                 Text('Viajes del ciclo: ${membership['completedTrips']}'),
               if (membership['estimatedNextRenewalAmount'] != null)
@@ -10253,7 +10261,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   : null,
             ),
           ),
-        _membershipCard(context),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Disponible para viajes'),
@@ -10503,6 +10510,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       selfDriverPosition:
                           active == null ? currentDriverPosition : null,
                       onCenterCurrentLocation: centerDriverCurrentLocation,
+                      mapAccessory: _membershipMapAccess(context),
                       driverPosition:
                           active == null ? null : currentDriverPosition,
                       driverBearing: currentDriverBearing,
