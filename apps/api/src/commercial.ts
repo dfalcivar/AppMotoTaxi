@@ -87,6 +87,7 @@ const paymentProofUploadSchema = z.object({
 const correctionSubmitSchema = z.object({ campaign: z.object({ imageBase64: z.string().min(100), imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]) }) });
 const listSchema = z.object({
   status: z.string().trim().max(50).optional(), source: sourceSchema.optional(),
+  scope: z.enum(["ACTIVE", "HISTORY", "ALL"]).optional(),
   search: z.string().trim().max(120).optional(), limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0)
 });
@@ -180,7 +181,7 @@ function adminError(error: unknown, reply: FastifyReply) {
   const message = error instanceof Error ? error.message : "ERROR";
   if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message });
   if (message === "FORBIDDEN") return reply.code(403).send({ error: message });
-  if (["PAYMENT_ALREADY_REVIEWED","PAYMENT_NOT_REFUNDABLE","PAYMENT_REQUIRES_CASH_CLOSURE","PAYMENT_NOT_READY_FOR_RECONCILIATION","PAYMENT_ALREADY_RECEIVED","PAYMENT_AMOUNT_MISMATCH","CASH_CLOSURE_ALREADY_EXISTS","CASH_CLOSURE_EMPTY","CASH_CLOSURE_ALREADY_REVIEWED","LEAD_CONVERSION_REQUIRES_PAID_ORDER","CONVERTED_LEAD_LOCKED"].includes(message)) return reply.code(409).send({ error: message });
+  if (["PAYMENT_ALREADY_REVIEWED","PAYMENT_NOT_REFUNDABLE","PAYMENT_REQUIRES_CASH_CLOSURE","PAYMENT_NOT_READY_FOR_RECONCILIATION","PAYMENT_ALREADY_RECEIVED","PAYMENT_AMOUNT_MISMATCH","CASH_CLOSURE_ALREADY_EXISTS","CASH_CLOSURE_EMPTY","CASH_CLOSURE_ALREADY_REVIEWED","LEAD_CONVERSION_REQUIRES_PAID_ORDER","CONVERTED_LEAD_LOCKED","LEAD_NOT_ACTIONABLE","LEAD_ALREADY_HAS_ORDER"].includes(message)) return reply.code(409).send({ error: message });
   if (message.endsWith("_NOT_FOUND")) return reply.code(404).send({ error: message });
   throw error;
 }
@@ -502,7 +503,23 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
     return row;
   } catch (error) { return adminError(error, reply); } });
   app.get("/v1/admin/commercial/leads", async (request, reply) => { try { const actor=requirePermission(request,"commercial:leads:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";
-    return database()`select l.id::text,l.code,l.business_name as "businessName",l.contact_name as "contactName",l.phone_e164 as phone,l.email,l.city,l.business_type as "businessType",l.interest,l.source,l.status,l.assigned_commercial_id::text as "assignedCommercialId",u.full_name as "assignedCommercial",l.created_at as "createdAt",l.updated_at as "updatedAt" from advertising_leads l left join users u on u.id=l.assigned_commercial_id where (not ${own} or l.assigned_commercial_id is null or l.assigned_commercial_id=${actor.id} or l.created_by=${actor.id}) and (${q.status ?? null}::text is null or l.status=${q.status ?? null}) and (${q.source ?? null}::text is null or l.source=${q.source ?? null}) and (${q.search ?? null}::text is null or l.business_name ilike ${q.search ? `%${q.search}%` : null} or l.contact_name ilike ${q.search ? `%${q.search}%` : null} or l.email ilike ${q.search ? `%${q.search}%` : null}) order by l.created_at desc limit ${q.limit} offset ${q.offset}`;
+    return database()`select l.id::text,l.code,l.business_name as "businessName",l.contact_name as "contactName",l.phone_e164 as phone,l.email,l.city,l.business_type as "businessType",l.interest,l.source,l.status,l.assigned_commercial_id::text as "assignedCommercialId",u.full_name as "assignedCommercial",l.created_at as "createdAt",l.updated_at as "updatedAt",latest_order.id::text as "orderId",latest_order.code as "orderCode",latest_order.status as "orderStatus",latest_order.advertiser_id::text as "advertiserId",latest_order.campaign_id::text as "campaignId"
+      from advertising_leads l
+      left join users u on u.id=l.assigned_commercial_id
+      left join lateral(
+        select o.id,o.code,o.status,o.advertiser_id,b.id as campaign_id
+        from advertising_orders o
+        left join affiliate_banners b on b.order_id=o.id
+        where o.lead_id=l.id
+        order by o.created_at desc,b.created_at desc
+        limit 1
+      )latest_order on true
+      where (not ${own} or l.assigned_commercial_id is null or l.assigned_commercial_id=${actor.id} or l.created_by=${actor.id})
+        and (${q.status ?? null}::text is null or l.status=${q.status ?? null})
+        and (${q.source ?? null}::text is null or l.source=${q.source ?? null})
+        and (${q.scope ?? null}::text is null or ${q.scope ?? null}::text='ALL' or (${q.scope ?? null}::text='ACTIVE' and l.status not in ('CONVERTED','LOST')) or (${q.scope ?? null}::text='HISTORY' and l.status in ('CONVERTED','LOST')))
+        and (${q.search ?? null}::text is null or l.business_name ilike ${q.search ? `%${q.search}%` : null} or l.contact_name ilike ${q.search ? `%${q.search}%` : null} or l.email ilike ${q.search ? `%${q.search}%` : null})
+      order by l.created_at desc limit ${q.limit} offset ${q.offset}`;
   }catch(error){return adminError(error,reply);} });
   app.post("/v1/admin/commercial/leads", async (request, reply) => { try {
     const actor=requirePermission(request,"commercial:leads:manage");
@@ -513,10 +530,24 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
     return reply.code(201).send(lead);
   } catch(error){return adminError(error,reply);} });
   app.patch("/v1/admin/commercial/leads/:id",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:leads:manage"),body=leadUpdateSchema.parse(request.body),id=z.string().uuid().parse((request.params as any).id);if(body.status==="CONVERTED")throw new Error("LEAD_CONVERSION_REQUIRES_PAID_ORDER");const item=await database().begin(async tx=>{const [current]=await tx`select id::text,status from advertising_leads where id=${id} and (${actor.role!=="COMMERCIAL"} or assigned_commercial_id=${actor.id} or created_by=${actor.id}) for update`;if(!current)throw new Error("LEAD_NOT_FOUND");if(current.status==="CONVERTED"&&body.status&&body.status!=="CONVERTED")throw new Error("CONVERTED_LEAD_LOCKED");const [updated]=await tx`update advertising_leads set status=coalesce(${body.status??null},status),assigned_commercial_id=case when ${body.assignedCommercialId===undefined} then assigned_commercial_id else ${body.assignedCommercialId??null}::uuid end,last_contact_at=case when ${body.note??null}::text is not null then now() else last_contact_at end,updated_at=now() where id=${id} returning id::text,code,status`;return updated;});await persistAudit(actor,"ADVERTISING_LEAD_UPDATED","ADVERTISING_LEAD",id,body.note||body.status||"Actualización comercial");return item;}catch(error){return adminError(error,reply);} });
-  app.post("/v1/admin/commercial/leads/:id/claim",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:leads:manage"),id=z.string().uuid().parse((request.params as any).id);const [item]=await database()`update advertising_leads set assigned_commercial_id=${actor.id},status=case when status='NEW' then 'IN_PROGRESS' else status end,updated_at=now() where id=${id} and (assigned_commercial_id is null or assigned_commercial_id=${actor.id} or ${actor.role!=="COMMERCIAL"}) returning id::text,code,status`;if(!item)return reply.code(409).send({error:"LEAD_ALREADY_ASSIGNED"});await persistAudit(actor,"ADVERTISING_LEAD_CLAIMED","ADVERTISING_LEAD",id,"Prospecto asignado");return item;}catch(error){return adminError(error,reply);} });
+  app.post("/v1/admin/commercial/leads/:id/claim",async(request,reply)=>{try{
+    const actor=requirePermission(request,"commercial:leads:manage"),id=z.string().uuid().parse((request.params as any).id);
+    const item=await database().begin(async tx=>{
+      const [lead]=await tx`select id::text,status,assigned_commercial_id::text as assigned_commercial_id,exists(select 1 from advertising_orders where lead_id=advertising_leads.id) as has_order from advertising_leads where id=${id} for update`;
+      if(!lead)throw new Error("LEAD_NOT_FOUND");
+      if(["CONVERTED","LOST"].includes(String(lead.status)))throw new Error("LEAD_NOT_ACTIONABLE");
+      if(lead.status==="QUALIFIED"&&lead.has_order)throw new Error("LEAD_ALREADY_HAS_ORDER");
+      const [claimed]=await tx`update advertising_leads set assigned_commercial_id=${actor.id},status=case when status='NEW' then 'IN_PROGRESS' else status end,updated_at=now() where id=${id} and (assigned_commercial_id is null or assigned_commercial_id=${actor.id} or ${actor.role!=="COMMERCIAL"}) returning id::text,code,status`;
+      if(!claimed)throw new Error("LEAD_ALREADY_ASSIGNED");
+      return claimed;
+    });
+    await persistAudit(actor,"ADVERTISING_LEAD_CLAIMED","ADVERTISING_LEAD",id,"Prospecto asignado");return item;
+  }catch(error){return adminError(error,reply);} });
   app.post("/v1/admin/commercial/invitations",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:leads:manage"),body=inviteSchema.parse(request.body),own=actor.role==="COMMERCIAL";
-    const [lead]=await database()`select id::text,contact_name,email,business_name,assigned_commercial_id::text as assigned_commercial_id from advertising_leads where id=${body.leadId} and (not ${own} or assigned_commercial_id is null or assigned_commercial_id=${actor.id} or created_by=${actor.id})`;
+    const [lead]=await database()`select id::text,contact_name,email,business_name,status,assigned_commercial_id::text as assigned_commercial_id,exists(select 1 from advertising_orders where lead_id=advertising_leads.id) as has_order from advertising_leads where id=${body.leadId} and (not ${own} or assigned_commercial_id is null or assigned_commercial_id=${actor.id} or created_by=${actor.id})`;
     if(!lead)throw new Error("LEAD_NOT_FOUND");
+    if(["CONVERTED","LOST"].includes(String(lead.status)))throw new Error("LEAD_NOT_ACTIONABLE");
+    if(lead.has_order)throw new Error("LEAD_ALREADY_HAS_ORDER");
     if(own&&lead.assigned_commercial_id===null)await database()`update advertising_leads set assigned_commercial_id=${actor.id},status=case when status='NEW' then 'IN_PROGRESS' else status end,updated_at=now() where id=${body.leadId} and assigned_commercial_id is null`;
     const invitation=await createInvitation(body.leadId,"COMMERCIAL",actor.id,body.purpose,body.correctionFields,body.campaignId);
     void sendTransactionalEmail({to:String(lead.email),subject:`Invitación comercial Costa-Go`,text:`Continúa la solicitud de ${lead.business_name}: ${invitation.url}`,html:`<p>Hola ${lead.contact_name}.</p><p><a href="${invitation.url}">Continuar solicitud comercial</a></p>`}).catch(()=>false);await persistAudit(actor,"ADVERTISING_INVITATION_CREATED","ADVERTISING_INVITATION",String(invitation.id),body.purpose);return reply.code(201).send(invitation);}catch(error){return adminError(error,reply);} });
