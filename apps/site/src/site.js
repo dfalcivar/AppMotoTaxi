@@ -48,3 +48,17 @@ document.querySelectorAll('.accordion details').forEach(item => item.addEventLis
 }));
 
 document.querySelector('#year').textContent = new Date().getFullYear();
+
+const commercialLauncher = document.querySelector('#commercial-assistant-launcher');
+const commercialPanel = document.querySelector('#commercial-assistant-panel');
+const commercialClose = document.querySelector('#commercial-assistant-close');
+const commercialFrame = commercialPanel?.querySelector('iframe');
+function setCommercialAssistant(open) {
+  if (!commercialPanel || !commercialLauncher) return;
+  if (open && commercialFrame && !commercialFrame.src) commercialFrame.src = commercialFrame.dataset.src;
+  commercialPanel.hidden = !open;
+  commercialLauncher.setAttribute('aria-expanded', String(open));
+  commercialLauncher.querySelector('span').textContent = open ? 'Ocultar asistente' : 'Anuncia tu negocio';
+}
+commercialLauncher?.addEventListener('click', () => setCommercialAssistant(commercialPanel?.hidden !== false));
+commercialClose?.addEventListener('click', () => setCommercialAssistant(false));

@@ -76,6 +76,25 @@ const listSchema = z.object({
 const inviteSchema = z.object({ leadId: z.string().uuid(), purpose: z.enum(["APPLICATION", "CORRECTION"]).default("APPLICATION"), correctionFields: z.array(z.string().max(80)).max(20).default([]), campaignId: z.string().uuid().optional() }).refine(value=>value.purpose!=="CORRECTION"||Boolean(value.campaignId),{message:"CAMPAIGN_REQUIRED",path:["campaignId"]});
 const leadUpdateSchema = z.object({ status: leadStatusSchema.optional(), assignedCommercialId: z.string().uuid().nullable().optional(), note: z.string().trim().max(1000).optional() });
 const paymentReviewSchema = z.object({ decision: z.enum(["APPROVE", "REJECT", "REFUND"]), reason: z.string().trim().max(1000).optional().default("") });
+const commercialPaymentSchema = z.object({
+  method: z.enum(["CASH", "BANK_TRANSFER"]),
+  amount: z.number().positive().max(100_000),
+  reference: z.string().trim().max(160).optional().default(""),
+  proof: z.object({
+    fileBase64: z.string().min(100).max(7_500_000),
+    fileMime: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"])
+  }).optional(),
+  idempotencyKey: z.string().uuid()
+}).superRefine((value, context) => {
+  if (value.method === "BANK_TRANSFER" && value.reference.length < 3) context.addIssue({ code: "custom", path: ["reference"], message: "REFERENCE_REQUIRED" });
+  if (value.method === "BANK_TRANSFER" && !value.proof) context.addIssue({ code: "custom", path: ["proof"], message: "PROOF_REQUIRED" });
+});
+const cashClosureSchema = z.object({ businessDate: z.string().date(), notes: z.string().trim().max(500).optional().default("") });
+const closureReviewSchema = z.object({ decision: z.enum(["RECONCILE", "REJECT"]), reference: z.string().trim().max(160).optional().default(""), note: z.string().trim().max(500).optional().default("") })
+  .superRefine((value, context) => {
+    if (value.decision === "RECONCILE" && value.reference.length < 3) context.addIssue({ code: "custom", path: ["reference"], message: "REFERENCE_REQUIRED" });
+    if (value.decision === "REJECT" && value.note.length < 5) context.addIssue({ code: "custom", path: ["note"], message: "REJECTION_REASON_REQUIRED" });
+  });
 const campaignActionSchema = z.object({ action: z.enum(["APPROVE", "REJECT", "REQUEST_CORRECTION", "PAUSE", "RESUME", "CANCEL"]), note: z.string().trim().max(1000).optional().default("") });
 const publicCampaignQuerySchema = z.object({
   placement: currentPlacementSchema,
@@ -136,7 +155,7 @@ function adminError(error: unknown, reply: FastifyReply) {
   const message = error instanceof Error ? error.message : "ERROR";
   if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message });
   if (message === "FORBIDDEN") return reply.code(403).send({ error: message });
-  if (["PAYMENT_ALREADY_REVIEWED","PAYMENT_NOT_REFUNDABLE","LEAD_CONVERSION_REQUIRES_PAID_ORDER","CONVERTED_LEAD_LOCKED"].includes(message)) return reply.code(409).send({ error: message });
+  if (["PAYMENT_ALREADY_REVIEWED","PAYMENT_NOT_REFUNDABLE","PAYMENT_REQUIRES_CASH_CLOSURE","PAYMENT_NOT_READY_FOR_RECONCILIATION","PAYMENT_ALREADY_RECEIVED","PAYMENT_AMOUNT_MISMATCH","CASH_CLOSURE_ALREADY_EXISTS","CASH_CLOSURE_EMPTY","CASH_CLOSURE_ALREADY_REVIEWED","LEAD_CONVERSION_REQUIRES_PAID_ORDER","CONVERTED_LEAD_LOCKED"].includes(message)) return reply.code(409).send({ error: message });
   if (message.endsWith("_NOT_FOUND")) return reply.code(404).send({ error: message });
   throw error;
 }
@@ -190,6 +209,25 @@ async function transitionCampaign(campaignId: string, to: string, actor?: Sessio
   await database()`update affiliate_banners set campaign_status=${to},active=${to === "ACTIVE"},rejection_reason=case when ${to}='REJECTED' then ${note || null} else rejection_reason end,correction_note=case when ${to}='PENDING_REVIEW' then ${note || null} else correction_note end,updated_at=now() where id=${campaignId}`;
   await database()`insert into campaign_status_history(campaign_id,from_status,to_status,note,changed_by) values (${campaignId},${current.campaign_status},${to},${note || null},${actor?.id ?? null})`;
   if (actor) await persistAudit(actor, "ADVERTISING_CAMPAIGN_STATUS_UPDATED", "AFFILIATE_BANNER", campaignId, `${current.campaign_status} → ${to}. ${note}`);
+}
+
+async function markAdvertisingOrdersPaid(tx: any, paymentIds: string[], actorId: string, note: string) {
+  if (!paymentIds.length) return { campaigns: [] as string[], leads: [] as string[], recipients: [] as Array<{email:string;contactName:string;orderCode:string}> };
+  const payments = await tx`select pay.id::text,pay.order_id::text,o.lead_id::text,o.code,a.email,a.contact_name
+    from advertising_payments pay join advertising_orders o on o.id=pay.order_id join advertisers a on a.id=o.advertiser_id
+    where pay.id=any(${paymentIds}::uuid[]) for update`;
+  const orderIds = payments.map((item:any)=>String(item.order_id));
+  await tx`update advertising_payments set status='APPROVED',settlement_status='RECONCILED',reviewed_by=${actorId},reviewed_at=now(),updated_at=now() where id=any(${paymentIds}::uuid[])`;
+  await tx`update advertising_orders set status='PAID',updated_at=now() where id=any(${orderIds}::uuid[])`;
+  await tx`update advertisers set status='ACTIVE',updated_at=now() where id in (select advertiser_id from advertising_orders where id=any(${orderIds}::uuid[]))`;
+  const campaigns=await tx`update affiliate_banners set campaign_status='PENDING_REVIEW',review_requested_at=now(),updated_at=now() where order_id=any(${orderIds}::uuid[]) returning id::text`;
+  const leads=await tx`update advertising_leads set status='CONVERTED',updated_at=now() where id in (select lead_id from advertising_orders where id=any(${orderIds}::uuid[]) and lead_id is not null) and status<>'CONVERTED' returning id::text`;
+  if(campaigns.length)await tx`insert into campaign_status_history(campaign_id,from_status,to_status,note,changed_by) select id,'PAYMENT_REVIEW','PENDING_REVIEW',${note},${actorId} from affiliate_banners where id=any(${campaigns.map((item:any)=>String(item.id))}::uuid[])`;
+  return { campaigns:campaigns.map((item:any)=>String(item.id)), leads:leads.map((item:any)=>String(item.id)), recipients:payments.map((item:any)=>({email:String(item.email),contactName:String(item.contact_name),orderCode:String(item.code)})) };
+}
+
+function sendAdvertisingPaymentConfirmed(recipients:Array<{email:string;contactName:string;orderCode:string}>){
+  for(const recipient of recipients)void sendTransactionalEmail({to:recipient.email,subject:`Pago confirmado ${recipient.orderCode} · Costa-Go`,text:`Hola ${recipient.contactName}. Confirmamos el pago de la orden ${recipient.orderCode}. La campaña pasó a revisión de contenido.`,html:`<p>Hola <strong>${recipient.contactName}</strong>.</p><p>Confirmamos el pago de la orden <strong>${recipient.orderCode}</strong>.</p><p>La campaña pasó a revisión de contenido; te notificaremos cualquier novedad.</p>`}).catch(()=>false);
 }
 
 export async function advertisingSchedulerTick(): Promise<void> {
@@ -361,10 +399,98 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
     const invitation=await createInvitation(body.leadId,"COMMERCIAL",actor.id,body.purpose,body.correctionFields,body.campaignId);
     void sendTransactionalEmail({to:String(lead.email),subject:`Invitación comercial Costa-Go`,text:`Continúa la solicitud de ${lead.business_name}: ${invitation.url}`,html:`<p>Hola ${lead.contact_name}.</p><p><a href="${invitation.url}">Continuar solicitud comercial</a></p>`}).catch(()=>false);await persistAudit(actor,"ADVERTISING_INVITATION_CREATED","ADVERTISING_INVITATION",String(invitation.id),body.purpose);return reply.code(201).send(invitation);}catch(error){return adminError(error,reply);} });
   app.get("/v1/admin/commercial/advertisers",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:advertisers:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select a.id::text,a.business_name as "businessName",a.contact_name as "contactName",a.phone_e164 as phone,a.email,a.city,a.business_type as "businessType",a.status,a.assigned_commercial_id::text as "assignedCommercialId",u.full_name as "assignedCommercial",a.created_at as "createdAt" from advertisers a left join users u on u.id=a.assigned_commercial_id where (not ${own} or a.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or a.status=${q.status??null}) and (${q.search??null}::text is null or a.business_name ilike ${q.search?`%${q.search}%`:null} or a.email ilike ${q.search?`%${q.search}%`:null}) order by a.updated_at desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
-  app.get("/v1/admin/commercial/orders",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:orders:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select o.id::text,o.code,o.status,o.amount::float8,o.currency,o.requested_start_at as "requestedStartAt",o.requested_end_at as "requestedEndAt",o.created_at as "createdAt",a.business_name as "businessName",p.name as "planName",u.full_name as "assignedCommercial" from advertising_orders o join advertisers a on a.id=o.advertiser_id join advertising_plans p on p.id=o.plan_id left join users u on u.id=o.assigned_commercial_id where (not ${own} or o.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or o.status=${q.status??null}) order by o.created_at desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
-  app.get("/v1/admin/commercial/payments",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:payments:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select pay.id::text,pay.status,pay.amount::float8,pay.currency,pay.reference,pay.proof_mime as "proofMime",pay.created_at as "createdAt",o.code as "orderCode",a.business_name as "businessName",m.name as "paymentMethod" from advertising_payments pay join advertising_orders o on o.id=pay.order_id join advertisers a on a.id=pay.advertiser_id join advertising_payment_methods m on m.id=pay.payment_method_id where (not ${own} or o.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or pay.status=${q.status??null}) order by pay.created_at desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
+  app.get("/v1/admin/commercial/orders",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:orders:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select o.id::text,o.code,o.status,o.amount::float8,o.currency,o.requested_start_at as "requestedStartAt",o.requested_end_at as "requestedEndAt",o.created_at as "createdAt",a.business_name as "businessName",p.name as "planName",u.full_name as "assignedCommercial",pay.status as "paymentStatus",pay.settlement_status as "settlementStatus",pay.received_at as "receivedAt" from advertising_orders o join advertisers a on a.id=o.advertiser_id join advertising_plans p on p.id=o.plan_id left join users u on u.id=o.assigned_commercial_id left join lateral(select status,settlement_status,received_at from advertising_payments where order_id=o.id order by created_at desc limit 1)pay on true where (not ${own} or o.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or o.status=${q.status??null}) order by o.created_at desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
+  app.post("/v1/admin/commercial/orders/:id/payments",async(request,reply)=>{try{
+    const actor=requirePermission(request,"commercial:orders:manage"),id=z.string().uuid().parse((request.params as any).id),body=commercialPaymentSchema.parse(request.body);
+    const result=await database().begin(async tx=>{
+      const [duplicate]=await tx`select id::text,status,settlement_status as "settlementStatus" from advertising_payments where idempotency_key=${body.idempotencyKey}`;
+      if(duplicate)return {...duplicate,duplicate:true};
+      const [order]=await tx`select o.*,a.id::text as advertiser_id from advertising_orders o join advertisers a on a.id=o.advertiser_id where o.id=${id} and (${actor.role!=="COMMERCIAL"} or o.assigned_commercial_id=${actor.id}) for update`;
+      if(!order)throw new Error("ORDER_NOT_FOUND");
+      if(!["PENDING_PAYMENT","PAYMENT_REVIEW"].includes(String(order.status)))throw new Error("PAYMENT_ALREADY_RECEIVED");
+      if(Math.abs(Number(order.amount)-body.amount)>0.009)throw new Error("PAYMENT_AMOUNT_MISMATCH");
+      const [method]=await tx`select id::text from advertising_payment_methods where code=${body.method} and active=true`;
+      if(!method)throw new Error("PAYMENT_METHOD_NOT_FOUND");
+      let proof:Buffer|null=null;
+      if(body.proof){proof=decodeBase64(body.proof.fileBase64);if(!validProof(proof,body.proof.fileMime))throw new Error("INVALID_PAYMENT_PROOF");}
+      const settlementStatus=body.method==="CASH"?"PENDING_CLOSURE":"PENDING_RECONCILIATION";
+      const [payment]=await tx`update advertising_payments set amount=${body.amount},payment_method_id=${method.id},proof_mime=${body.proof?.fileMime??null},proof_data=${proof},reference=${body.reference||null},status='RECEIVED',received_by=${actor.id},received_at=now(),receiver_role=${actor.role},settlement_status=${settlementStatus},idempotency_key=${body.idempotencyKey},reviewed_by=null,reviewed_at=null,rejection_reason=null,updated_at=now() where id=(select id from advertising_payments where order_id=${id} order by created_at desc limit 1) and status in ('PENDING','UNDER_REVIEW','REJECTED') returning id::text,status,settlement_status as "settlementStatus",received_at as "receivedAt"`;
+      if(!payment)throw new Error("PAYMENT_ALREADY_RECEIVED");
+      await tx`update advertising_orders set status='PAYMENT_REVIEW',updated_at=now() where id=${id}`;
+      await tx`update affiliate_banners set campaign_status='PAYMENT_REVIEW',active=false,updated_at=now() where order_id=${id}`;
+      return {...payment,duplicate:false};
+    });
+    if(!result.duplicate)await persistAudit(actor,"ADVERTISING_PAYMENT_RECEIVED","ADVERTISING_PAYMENT",String(result.id),`${body.method}: ${body.amount.toFixed(2)}`);
+    return reply.code(result.duplicate?200:201).send(result);
+  }catch(error){return adminError(error,reply);} });
+  app.get("/v1/admin/commercial/payments",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:payments:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select pay.id::text,pay.status,pay.settlement_status as "settlementStatus",pay.amount::float8,pay.currency,pay.reference,pay.proof_mime as "proofMime",pay.received_at as "receivedAt",pay.created_at as "createdAt",o.code as "orderCode",a.business_name as "businessName",m.name as "paymentMethod",receiver.full_name as "receivedBy" from advertising_payments pay join advertising_orders o on o.id=pay.order_id join advertisers a on a.id=pay.advertiser_id join advertising_payment_methods m on m.id=pay.payment_method_id left join users receiver on receiver.id=pay.received_by where (not ${own} or o.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or pay.status=${q.status??null}) order by coalesce(pay.received_at,pay.created_at) desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
+  app.get("/v1/admin/commercial/cash-closures",async(request,reply)=>{try{
+    const actor=requirePermission(request,"commercial:payments:view"),own=actor.role==="COMMERCIAL";
+    const unclosed=await database()`select (pay.received_at at time zone 'America/Guayaquil')::date::text as "businessDate",count(*)::int as "paymentCount",sum(pay.amount)::float8 as total from advertising_payments pay join advertising_orders o on o.id=pay.order_id join advertising_payment_methods method on method.id=pay.payment_method_id where method.code='CASH' and pay.status='RECEIVED' and pay.settlement_status='PENDING_CLOSURE' and pay.cash_closure_id is null and (not ${own} or pay.received_by=${actor.id}) group by 1 order by 1 desc`;
+    const closures=await database()`select closure.id::text,closure.business_date::text as "businessDate",closure.status,closure.payment_count as "paymentCount",closure.cash_total::float8 as total,closure.currency,closure.notes,closure.closed_at as "closedAt",closure.reconciliation_reference as "reconciliationReference",commercial.full_name as commercial from advertising_cash_closures closure join users commercial on commercial.id=closure.commercial_id where (not ${own} or closure.commercial_id=${actor.id}) order by closure.business_date desc,closure.created_at desc limit 200`;
+    return {unclosed,closures};
+  }catch(error){return adminError(error,reply);} });
+  app.post("/v1/admin/commercial/cash-closures",async(request,reply)=>{try{
+    const actor=requirePermission(request,"commercial:orders:manage"),body=cashClosureSchema.parse(request.body);
+    const closure=await database().begin(async tx=>{
+      const [existing]=await tx`select id::text from advertising_cash_closures where commercial_id=${actor.id} and business_date=${body.businessDate}::date`;
+      if(existing)throw new Error("CASH_CLOSURE_ALREADY_EXISTS");
+      const payments=await tx`select pay.id::text,pay.amount::float8 from advertising_payments pay join advertising_payment_methods method on method.id=pay.payment_method_id where pay.received_by=${actor.id} and method.code='CASH' and pay.status='RECEIVED' and pay.settlement_status='PENDING_CLOSURE' and pay.cash_closure_id is null and (pay.received_at at time zone 'America/Guayaquil')::date=${body.businessDate}::date for update`;
+      if(!payments.length)throw new Error("CASH_CLOSURE_EMPTY");
+      const total=payments.reduce((sum:number,item:any)=>sum+Number(item.amount),0);
+      const [created]=await tx`insert into advertising_cash_closures(commercial_id,business_date,payment_count,cash_total,notes) values(${actor.id},${body.businessDate}::date,${payments.length},${total},${body.notes||null}) returning id::text,status,payment_count as "paymentCount",cash_total::float8 as total,business_date::text as "businessDate"`;
+      await tx`update advertising_payments set cash_closure_id=${created.id},settlement_status='PENDING_RECONCILIATION',updated_at=now() where id=any(${payments.map((item:any)=>String(item.id))}::uuid[])`;
+      return created;
+    });
+    await persistAudit(actor,"ADVERTISING_CASH_CLOSURE_CREATED","ADVERTISING_CASH_CLOSURE",String(closure.id),`${closure.businessDate}: ${Number(closure.total).toFixed(2)}`);
+    return reply.code(201).send(closure);
+  }catch(error){return adminError(error,reply);} });
+  app.post("/v1/admin/commercial/cash-closures/:id/review",async(request,reply)=>{try{
+    const actor=requirePermission(request,"commercial:payments:review"),id=z.string().uuid().parse((request.params as any).id),body=closureReviewSchema.parse(request.body);
+    const result=await database().begin(async tx=>{
+      const [closure]=await tx`select * from advertising_cash_closures where id=${id} for update`;
+      if(!closure)throw new Error("CASH_CLOSURE_NOT_FOUND");
+      if(closure.status!=="PENDING_RECONCILIATION")throw new Error("CASH_CLOSURE_ALREADY_REVIEWED");
+      const paymentIds=(await tx`select id::text from advertising_payments where cash_closure_id=${id} and status='RECEIVED' for update`).map((item:any)=>String(item.id));
+      if(!paymentIds.length)throw new Error("CASH_CLOSURE_EMPTY");
+      if(body.decision==="REJECT"){
+        await tx`update advertising_cash_closures set status='REJECTED',reconciled_by=${actor.id},reconciled_at=now(),rejection_reason=${body.note},updated_at=now() where id=${id}`;
+        await tx`update advertising_payments set settlement_status='REJECTED',updated_at=now() where id=any(${paymentIds}::uuid[])`;
+        return {status:"REJECTED",recipients:[]};
+      }
+      await tx`update advertising_cash_closures set status='RECONCILED',reconciled_by=${actor.id},reconciled_at=now(),reconciliation_reference=${body.reference},updated_at=now() where id=${id}`;
+      const paid=await markAdvertisingOrdersPaid(tx,paymentIds,String(actor.id),`Caja conciliada: ${body.reference}`);
+      return {status:"RECONCILED",recipients:paid.recipients};
+    });
+    sendAdvertisingPaymentConfirmed(result.recipients);
+    await persistAudit(actor,"ADVERTISING_CASH_CLOSURE_REVIEWED","ADVERTISING_CASH_CLOSURE",id,`${body.decision}: ${body.reference||body.note}`);
+    return {id,status:result.status};
+  }catch(error){return adminError(error,reply);} });
   app.get("/v1/admin/commercial/payments/:id/proof",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:payments:view"),own=actor.role==="COMMERCIAL";const id=z.string().uuid().parse((request.params as any).id);const [file]=await database()`select pay.proof_mime,pay.proof_data from advertising_payments pay join advertising_orders o on o.id=pay.order_id where pay.id=${id} and (not ${own} or o.assigned_commercial_id=${actor.id})`;if(!file?.proof_data)throw new Error("PAYMENT_PROOF_NOT_FOUND");return reply.header("content-type",String(file.proof_mime)).header("cache-control","private, no-store").send(file.proof_data);}catch(error){return adminError(error,reply);} });
-  app.post("/v1/admin/commercial/payments/:id/review",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:payments:review"),id=z.string().uuid().parse((request.params as any).id),body=paymentReviewSchema.parse(request.body);if(body.decision==="REJECT"&&body.reason.length<5)return reply.code(400).send({error:"REASON_REQUIRED"});const result=await database().begin(async tx=>{const [pay]=await tx`select pay.*,o.id as order_id,o.advertiser_id,o.lead_id from advertising_payments pay join advertising_orders o on o.id=pay.order_id where pay.id=${id} for update`;if(!pay)throw new Error("PAYMENT_NOT_FOUND");if(body.decision!=="REFUND"&&!['PENDING','UNDER_REVIEW','REJECTED'].includes(String(pay.status)))throw new Error("PAYMENT_ALREADY_REVIEWED");if(body.decision==="REFUND"&&pay.status!=="APPROVED")throw new Error("PAYMENT_NOT_REFUNDABLE");const status=body.decision==="APPROVE"?"APPROVED":body.decision==="REJECT"?"REJECTED":"REFUNDED";await tx`update advertising_payments set status=${status},reviewed_by=${actor.id},reviewed_at=now(),rejection_reason=${body.reason||null},updated_at=now() where id=${id}`;const orderStatus=status==="APPROVED"?"PAID":status==="REFUNDED"?"REFUNDED":"PENDING_PAYMENT";await tx`update advertising_orders set status=${orderStatus},updated_at=now() where id=${pay.order_id}`;if(status==="APPROVED")await tx`update advertisers set status='ACTIVE',updated_at=now() where id=${pay.advertiser_id}`;let convertedLeadId:string|undefined;if(status==="APPROVED"&&pay.lead_id){const [converted]=await tx`update advertising_leads set status='CONVERTED',updated_at=now() where id=${pay.lead_id} and status<>'CONVERTED' returning id::text`;convertedLeadId=converted?.id;}const [campaign]=await tx`update affiliate_banners set campaign_status=${status==="APPROVED"?"PENDING_REVIEW":"PENDING_PAYMENT"},review_requested_at=case when ${status}='APPROVED' then now() else review_requested_at end,updated_at=now() where order_id=${pay.order_id} returning id::text`;return {status,campaignId:campaign?.id,convertedLeadId};});if(result.campaignId)await database()`insert into campaign_status_history(campaign_id,from_status,to_status,note,changed_by) values (${result.campaignId},'PAYMENT_REVIEW',${result.status==="APPROVED"?"PENDING_REVIEW":"PENDING_PAYMENT"},${body.reason||"Pago revisado"},${actor.id})`;if(result.convertedLeadId)await persistAudit(actor,"ADVERTISING_LEAD_CONVERTED","ADVERTISING_LEAD",result.convertedLeadId,"Conversión automática por primer pago aprobado");await persistAudit(actor,"ADVERTISING_PAYMENT_REVIEWED","ADVERTISING_PAYMENT",id,`${body.decision}: ${body.reason}`);return result;}catch(error){return adminError(error,reply);} });
+  app.post("/v1/admin/commercial/payments/:id/review",async(request,reply)=>{try{
+    const actor=requirePermission(request,"commercial:payments:review"),id=z.string().uuid().parse((request.params as any).id),body=paymentReviewSchema.parse(request.body);
+    if(body.decision==="REJECT"&&body.reason.length<5)return reply.code(400).send({error:"REASON_REQUIRED"});
+    const result=await database().begin(async tx=>{
+      const [pay]=await tx`select pay.*,method.code as method_code from advertising_payments pay join advertising_payment_methods method on method.id=pay.payment_method_id where pay.id=${id} for update`;
+      if(!pay)throw new Error("PAYMENT_NOT_FOUND");
+      if(pay.method_code==="CASH"&&body.decision!=="REFUND")throw new Error("PAYMENT_REQUIRES_CASH_CLOSURE");
+      if(body.decision==="APPROVE"&&(pay.method_code!=="BANK_TRANSFER"||!pay.proof_data||!pay.reference))throw new Error("PAYMENT_NOT_READY_FOR_RECONCILIATION");
+      if(body.decision!=="REFUND"&&!['PENDING','RECEIVED','UNDER_REVIEW','REJECTED'].includes(String(pay.status)))throw new Error("PAYMENT_ALREADY_REVIEWED");
+      if(body.decision==="REFUND"&&pay.status!=="APPROVED")throw new Error("PAYMENT_NOT_REFUNDABLE");
+      if(body.decision==="APPROVE"){
+        const paid=await markAdvertisingOrdersPaid(tx,[id],String(actor.id),body.reason||"Transferencia conciliada");
+        return {status:"APPROVED",recipients:paid.recipients};
+      }
+      const status=body.decision==="REJECT"?"REJECTED":"REFUNDED",settlement=status==="REJECTED"?"REJECTED":"RECONCILED";
+      await tx`update advertising_payments set status=${status},settlement_status=${settlement},reviewed_by=${actor.id},reviewed_at=now(),rejection_reason=${body.reason||null},updated_at=now() where id=${id}`;
+      await tx`update advertising_orders set status=${status==="REFUNDED"?"REFUNDED":"PENDING_PAYMENT"},updated_at=now() where id=${pay.order_id}`;
+      await tx`update affiliate_banners set campaign_status='PENDING_PAYMENT',active=false,updated_at=now() where order_id=${pay.order_id}`;
+      return {status,recipients:[]};
+    });
+    sendAdvertisingPaymentConfirmed(result.recipients);
+    await persistAudit(actor,"ADVERTISING_PAYMENT_REVIEWED","ADVERTISING_PAYMENT",id,`${body.decision}: ${body.reason}`);
+    return {id,status:result.status};
+  }catch(error){return adminError(error,reply);} });
   app.get("/v1/admin/commercial/campaigns",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:campaigns:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select b.id::text,b.title,b.advertiser_name as "advertiserName",b.placement,b.campaign_status as status,b.starts_at as "startsAt",b.ends_at as "endsAt",b.active,b.rejection_reason as "rejectionReason",b.correction_note as "correctionNote",o.code as "orderCode",coalesce((select count(*) from advertising_events e where e.campaign_id=b.id and e.event_type='IMPRESSION'),0)::int as impressions,coalesce((select count(*) from advertising_events e where e.campaign_id=b.id and e.event_type in ('CLICK','ACTION')),0)::int as clicks from affiliate_banners b left join advertising_orders o on o.id=b.order_id where (not ${own} or o.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or b.campaign_status=${q.status??null}) order by b.created_at desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
   app.post("/v1/admin/commercial/campaigns/:id/action",async(request,reply)=>{try{const body=campaignActionSchema.parse(request.body),reviewAction=["APPROVE","REJECT","REQUEST_CORRECTION"].includes(body.action),actor=requirePermission(request,reviewAction?"commercial:campaigns:review":"commercial:campaigns:manage"),own=actor.role==="COMMERCIAL",id=z.string().uuid().parse((request.params as any).id);if(["REJECT","REQUEST_CORRECTION"].includes(body.action)&&body.note.length<5)return reply.code(400).send({error:"NOTE_REQUIRED"});const [campaign]=await database()`select b.starts_at,b.ends_at,b.campaign_status from affiliate_banners b left join advertising_orders o on o.id=b.order_id where b.id=${id} and (not ${own} or o.assigned_commercial_id=${actor.id})`;if(!campaign)throw new Error("CAMPAIGN_NOT_FOUND");const allowed:Record<string,string[]>={APPROVE:["PENDING_REVIEW"],REJECT:["PENDING_REVIEW"],REQUEST_CORRECTION:["PENDING_REVIEW"],PAUSE:["ACTIVE","SCHEDULED"],RESUME:["PAUSED"],CANCEL:["DRAFT","PENDING_PAYMENT","PAYMENT_REVIEW","PENDING_REVIEW","SCHEDULED","ACTIVE","PAUSED","REJECTED"]};if(!allowed[body.action]?.includes(String(campaign.campaign_status)))return reply.code(409).send({error:"INVALID_CAMPAIGN_TRANSITION"});let to:string;if(body.action==="APPROVE")to=new Date(String(campaign.starts_at))>new Date()?"SCHEDULED":"ACTIVE";else to={REJECT:"REJECTED",REQUEST_CORRECTION:"PENDING_REVIEW",PAUSE:"PAUSED",RESUME:new Date(String(campaign.starts_at))>new Date()?"SCHEDULED":"ACTIVE",CANCEL:"CANCELLED"}[body.action]!;await transitionCampaign(id,to,actor,body.note);if(body.action==="REQUEST_CORRECTION"){const [lead]=await database()`select o.lead_id::text as id from affiliate_banners b join advertising_orders o on o.id=b.order_id where b.id=${id}`;if(lead?.id){const invitation=await createInvitation(String(lead.id),"ADMIN",actor.id,"CORRECTION",["campaign.image"],id);const [recipient]=await database()`select contact_name,email from advertising_leads where id=${lead.id}`;if(recipient)void sendTransactionalEmail({to:String(recipient.email),subject:"Corrección solicitada para tu campaña · Costa-Go",text:`Costa-Go solicitó una corrección: ${body.note}. ${invitation.url}`,html:`<p>Hola ${recipient.contact_name}.</p><p>Necesitamos una corrección en tu campaña:</p><p><strong>${body.note}</strong></p><p><a href="${invitation.url}">Corregir banner</a></p>`}).catch(()=>false);}}return {id,status:to};}catch(error){return adminError(error,reply);} });
   app.get("/v1/admin/commercial/plans",async(request,reply)=>{try{requirePermission(request,"commercial:campaigns:view");return database()`select id::text,code,name,description,placement,duration_days as "durationDays",price::float8,currency,default_weight as "defaultWeight",allowed_placements as "allowedPlacements",active,enabled,sort_order as "sortOrder",updated_at as "updatedAt" from advertising_plans order by sort_order,name`;}catch(error){return adminError(error,reply);} });

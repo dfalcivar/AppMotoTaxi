@@ -1,0 +1,36 @@
+.embedded-assistant {
+  min-height: 100vh;
+  overflow: hidden;
+  background: #eef7f9;
+}
+
+.embedded-assistant > .portal-header,
+.embedded-assistant > main,
+.embedded-assistant > footer,
+.embedded-assistant > .assistant-widget > .assistant-launcher {
+  display: none !important;
+}
+
+.embedded-assistant .assistant-widget {
+  position: static;
+}
+
+.embedded-assistant .assistant-card,
+.embedded-assistant .assistant-card[hidden] {
+  position: fixed !important;
+  inset: 0 !important;
+  display: flex !important;
+  flex-direction: column;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.embedded-assistant .assistant-header { border-radius: 0; }
+.embedded-assistant #assistant-minimize { display: none; }
+.embedded-assistant .conversation { flex: 1; max-height: none; }
+.embedded-assistant .assistant-form { margin-top: auto; }
