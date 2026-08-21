@@ -66,7 +66,52 @@
     else if (type.startsWith("file")) html = `<input id="field" type="file"${current ? "" : " required"} accept="${type === "file-image" ? "image/png,image/jpeg" : "image/png,image/jpeg,image/webp,application/pdf"}"><small>${current ? "El archivo anterior sigue seleccionado. Puedes continuar o elegir uno diferente." : type === "file-image" ? "JPG o PNG · exactamente 1200 × 400 px · máximo 1 MB" : "Imagen o PDF · máximo 5 MB"}</small>`;
     else html = fieldMarkup([name,label,type], current); dynamicField.innerHTML = html;if(type!=="plan-confirm")submitButton.hidden=false;scrollConversation(); }
   dynamicField.addEventListener("click",async event=>{const button=event.target.closest("[data-plan-confirm]");if(!button||state.busy)return;if(button.dataset.planConfirm==="no"){message("Quiero elegir otro plan","user","wizard-answer-plan-confirmation");delete state.answers.planId;delete state.answers.confirmedPlanId;state.step=0;submitButton.hidden=false;return renderWizardStep();}const plan=selectedPlan();state.answers.confirmedPlanId=plan?.id;state.answers.placement=plan?.placement||plan?.allowedPlacements?.[0]||"PASSENGER_SEARCHING_DRIVER";message("Confirmo este plan","user","wizard-answer-plan-confirmation");state.step+=1;state.busy=true;try{if(state.token)await saveDraft();else saveLeadProgress();renderWizardStep();}catch(error){state.step-=1;delete state.answers.confirmedPlanId;toast(error.message,true);}finally{state.busy=false;}});
-  async function submitWizardStep() { if(state.busy)return;const originalStep=state.step,step = activeWizardSteps()[state.step], field = $("#field"); if (!step || !field) return; const [name,,type] = step;state.busy=true;submitButton.disabled=true; try { if (type.startsWith("file")) { const selected=field.files?.[0];if(selected)state.answers[name]=await readFile(selected,type === "file-image" ? 1_048_576 : 5_000_000);else if(!state.answers[name])throw new Error("Selecciona un archivo."); } else { if (!field.value.trim()) return; state.answers[name] = field.value.trim(); } const answerText=name==="planId"?"Plan seleccionado":type.startsWith("file") ? field.files?.[0]?.name || "Archivo seleccionado" : field.options?.[field.selectedIndex]?.text || field.value;message(answerText, "user",`wizard-answer-${name}`); state.step += 1; if(state.token&&state.invitation?.purpose!=="CORRECTION")await saveDraft();else saveLeadProgress(); renderWizardStep(); } catch (error) { state.step=originalStep;toast(error.message, true); }finally{state.busy=false;submitButton.disabled=false;} }
+  async function submitWizardStep() {
+    if (state.busy) return;
+    const originalStep = state.step;
+    const steps = activeWizardSteps();
+    const step = steps[state.step];
+    const field = $("#field");
+    if (!step || !field) return;
+
+    const [name,,type] = step;
+    let shouldSubmit = false;
+    state.busy = true;
+    submitButton.disabled = true;
+    try {
+      if (type.startsWith("file")) {
+        const selected = field.files?.[0];
+        if (selected) state.answers[name] = await readFile(selected, type === "file-image" ? 1_048_576 : 5_000_000);
+        else if (!state.answers[name]) throw new Error("Selecciona un archivo.");
+      } else {
+        if (!field.value.trim()) return;
+        state.answers[name] = field.value.trim();
+      }
+
+      const answerText = name === "planId"
+        ? "Plan seleccionado"
+        : type.startsWith("file")
+          ? field.files?.[0]?.name || "Archivo seleccionado"
+          : field.options?.[field.selectedIndex]?.text || field.value;
+      message(answerText, "user", `wizard-answer-${name}`);
+      state.step += 1;
+      if (state.token && state.invitation?.purpose !== "CORRECTION") await saveDraft();
+      else saveLeadProgress();
+
+      shouldSubmit = state.step >= steps.length;
+      if (!shouldSubmit) renderWizardStep();
+    } catch (error) {
+      state.step = originalStep;
+      toast(error.message, true);
+    } finally {
+      state.busy = false;
+      submitButton.disabled = false;
+    }
+
+    // El ultimo paso debe enviarse despues de liberar el bloqueo usado para
+    // evitar doble clic. De lo contrario submitApplication se cancela solo.
+    if (shouldSubmit) await submitApplication();
+  }
   async function saveDraft() { const payload = { step:Math.min(state.step,20),business:pick(state.answers,["businessName","contactName","phone","email","city","businessType"]),campaign:pick(state.answers,["placement","title","actionType","actionValue","startsAt"]),planId:state.answers.planId,confirmedPlanId:state.answers.confirmedPlanId,paymentMethodId:state.answers.paymentMethodId,submissionKey:state.submissionKey }; await request(`/v1/public/advertising/invitations/${encodeURIComponent(state.token)}`, { method:"PATCH", body:JSON.stringify(payload) }); }
   function renderFinalizedConversation(){conversation.replaceChildren();const result=state.finalized||{};if(result.leadCode)message(`Tu código de solicitud es ${result.leadCode}.`,"bot","final-code");if(result.paymentMethod==="BANK_TRANSFER")message("Hemos enviado a tu correo los datos para realizar la transferencia y el enlace seguro para cargar tu comprobante.","bot","final-transfer");else message("Tu solicitud fue registrada correctamente. Un asesor de Costa-Go se comunicará contigo y te indicará los siguientes pasos.","bot","final-advisor");message("Gracias por preferir Costa-Go.","bot","final-thanks");dynamicField.replaceChildren();submitButton.hidden=true;form.hidden=true;}
   async function submitApplication() { if(state.busy)return;state.busy=true;submitButton.disabled = true; try { const image = state.answers.image;if(state.token){const payload=state.invitation?.purpose==="CORRECTION"?{submissionKey:state.submissionKey,campaign:{imageBase64:image.base64,imageMime:image.mime}}:{submissionKey:state.submissionKey,business:pick(state.answers,["businessName","contactName","phone","email","city","businessType"]),campaign:{title:state.answers.title,placement:state.answers.placement,actionType:state.answers.actionType,actionValue:state.answers.actionValue||"",startsAt:new Date(state.answers.startsAt).toISOString(),imageBase64:image.base64,imageMime:image.mime},planId:state.answers.planId,paymentMethodId:state.answers.paymentMethodId};const result=await request(`/v1/public/advertising/invitations/${encodeURIComponent(state.token)}/submit`,{method:"POST",body:JSON.stringify(payload)});conversation.replaceChildren();message(`Orden ${result.orderCode} enviada correctamente.`,"bot","wizard-completed");form.hidden=true;return;}const payload={submissionKey:state.submissionKey,source:new URLSearchParams(location.search).get("source")?.toUpperCase()||"WEB",lead:pick(state.answers,["businessName","contactName","phone","email","city","businessType","interest"]),campaign:{title:state.answers.title,placement:state.answers.placement,actionType:state.answers.actionType,actionValue:state.answers.actionValue||"",startsAt:new Date(state.answers.startsAt).toISOString(),imageBase64:image.base64,imageMime:image.mime},planId:state.answers.planId,paymentMethodId:state.answers.paymentMethodId};const result=await request("/v1/public/advertising/chat/submit",{method:"POST",body:JSON.stringify(payload)});state.phase="finalized";state.finalized=result;saveLeadProgress();renderFinalizedConversation();} catch (error) { toast(error.message, true); } finally { state.busy=false;submitButton.disabled = false; } }

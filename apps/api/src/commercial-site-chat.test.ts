@@ -19,5 +19,7 @@ describe("chat comercial en costa-go.com", () => {
     expect(chat).toContain('Un asesor de Costa-Go se comunicará contigo');
     expect(chat).not.toContain('¿A qué correo enviamos el enlace seguro?');
     expect(chat).not.toContain('["proof", "Comprobante de pago"');
+    expect(chat).toContain('if (shouldSubmit) await submitApplication()');
+    expect(chat.indexOf('state.busy = false')).toBeLessThan(chat.indexOf('if (shouldSubmit) await submitApplication()'));
   });
 });
