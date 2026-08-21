@@ -23,6 +23,15 @@
   overscroll-behavior: contain;
 }
 
+.assistant-floating .message {
+  white-space: pre-line;
+}
+
+.assistant-floating .message strong {
+  color: inherit;
+  font-weight: 850;
+}
+
 .assistant-floating .assistant-form {
   flex: 0 0 auto;
   margin-top: 0;

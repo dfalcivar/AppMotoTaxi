@@ -19,9 +19,9 @@
       <form id="proof-form" hidden>
         <label>Referencia de la transferencia<input id="reference" required minlength="3" maxlength="160" placeholder="Número o referencia bancaria"></label>
         <label>Comprobante<input id="proof-file" type="file" required accept="image/png,image/jpeg,image/webp,application/pdf"><small>Imagen o PDF · máximo 5 MB</small></label>
-        <button class="primary" type="submit">Enviar comprobante</button>
+        <button id="proof-submit" class="primary proof-submit" type="submit"><span>Enviar comprobante</span></button>
       </form>
-      <div id="proof-result" class="proof-result" hidden></div>
+      <div id="proof-result" class="proof-result" role="status" aria-live="polite" hidden></div>
       <a href="/" class="secondary proof-home">Volver a Costa-Go</a>
     </section>
   </main>

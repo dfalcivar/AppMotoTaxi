@@ -55,10 +55,10 @@ const commercialClose = document.querySelector('#commercial-assistant-close');
 const commercialFrame = commercialPanel?.querySelector('iframe');
 function setCommercialAssistant(open) {
   if (!commercialPanel || !commercialLauncher) return;
-  if (open && commercialFrame && !commercialFrame.src) commercialFrame.src = commercialFrame.dataset.src;
+  if (open && commercialFrame && !commercialFrame.hasAttribute('src')) commercialFrame.setAttribute('src', commercialFrame.dataset.src);
   commercialPanel.hidden = !open;
   commercialLauncher.setAttribute('aria-expanded', String(open));
-  commercialLauncher.querySelector('span').textContent = open ? 'Ocultar asistente' : 'Anuncia tu negocio';
+  if (!open && commercialFrame?.hasAttribute('src')) commercialFrame.removeAttribute('src');
 }
 commercialLauncher?.addEventListener('click', () => setCommercialAssistant(commercialPanel?.hidden !== false));
 commercialClose?.addEventListener('click', () => setCommercialAssistant(false));

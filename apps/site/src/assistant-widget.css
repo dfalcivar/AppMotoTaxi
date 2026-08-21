@@ -1,0 +1,53 @@
+.commercial-assistant-launcher {
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  padding: 9px;
+  transition: width 240ms ease, box-shadow 240ms ease, transform 240ms ease;
+}
+
+.commercial-assistant-launcher img {
+  flex: 0 0 38px;
+}
+
+.commercial-assistant-launcher span {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform: translateX(-7px);
+  transition: max-width 240ms ease, opacity 180ms ease, transform 240ms ease;
+}
+
+.commercial-assistant-launcher:hover,
+.commercial-assistant-launcher:focus-visible {
+  width: 220px;
+  box-shadow: 0 18px 46px rgba(2, 38, 61, 0.38);
+  transform: translateY(-2px);
+}
+
+.commercial-assistant-launcher:hover span,
+.commercial-assistant-launcher:focus-visible span {
+  max-width: 155px;
+  opacity: 1;
+  transform: none;
+}
+
+@media (max-width: 580px) {
+  .commercial-assistant-launcher:hover,
+  .commercial-assistant-launcher:focus-visible {
+    width: 56px;
+    transform: none;
+  }
+
+  .commercial-assistant-launcher span {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commercial-assistant-launcher,
+  .commercial-assistant-launcher span {
+    transition: none;
+  }
+}
