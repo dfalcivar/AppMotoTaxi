@@ -91,12 +91,46 @@ export function pushRouteForType(type: string | undefined): string {
   if (normalized.startsWith("SUPPORT_")) return "SUPPORT";
   if (["TRIP_OFFER", "TRIP_OFFER_CANCELLED", "SCHEDULED_TRIP_AVAILABLE"].includes(normalized)) return "TRIP_OFFERS";
   if (["COMPLETED", "TRIP_CANCELLED"].includes(normalized)) return "TRIP_DETAIL";
+  if (normalized.startsWith("SCHEDULED_TRIP_") || normalized === "SCHEDULED_DRIVER_REMINDER") return "SCHEDULED_TRIPS";
   if ([
     "TRIP_ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS",
     "SCHEDULED_TRIP_REMINDER", "SCHEDULED_DRIVER_REMINDER"
   ].includes(normalized)) return "ACTIVE_TRIP";
   if (normalized.startsWith("MEMBERSHIP_")) return "MEMBERSHIP";
   return "NOTIFICATIONS";
+}
+
+export function pushPresentationForType(
+  type: string | undefined,
+  fallbackTitle: string,
+  fallbackBody: string
+): { title: string; body: string } {
+  const fixed: Record<string, { title: string; body: string }> = {
+    TRIP_ASSIGNED: {
+      title: "Viaje confirmado",
+      body: "Un conductor aceptó tu solicitud y ya va en camino."
+    },
+    DRIVER_EN_ROUTE: {
+      title: "Conductor en camino",
+      body: "Tu conductor ya se dirige al punto de recogida."
+    },
+    DRIVER_ARRIVED: {
+      title: "Tu conductor llegó",
+      body: "Tu conductor está en el punto de recogida."
+    },
+    IN_PROGRESS: {
+      title: "Viaje iniciado",
+      body: "Tu viaje ya está en curso."
+    },
+    COMPLETED: {
+      title: "Viaje finalizado",
+      body: "El recorrido terminó correctamente. Puedes calificar tu experiencia."
+    }
+  };
+  return fixed[String(type ?? "").toUpperCase()] ?? {
+    title: fallbackTitle,
+    body: fallbackBody
+  };
 }
 
 export function pushConfigurationStatus(clientProjectId?: string): PushConfigurationStatus {
@@ -123,6 +157,10 @@ export function pushConfigurationStatus(clientProjectId?: string): PushConfigura
 export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}): Promise<PushResult> {
   const startedAt = performance.now();
   const eventType = data.type ?? "UNKNOWN";
+  const presentation = pushPresentationForType(eventType, title, body);
+  title = presentation.title;
+  body = presentation.body;
+  data.eventType ??= eventType;
   data.notificationRoute ??= pushRouteForType(eventType);
   try {
     const notificationId = await persistUserNotification({ userId, title, message: body, type: eventType, data });
@@ -154,7 +192,13 @@ export async function sendPush(userId: string, title: string, body: string, data
       console.warn("Push omitido: FIREBASE_SERVICE_ACCOUNT_BASE64 no está configurado.");
       return finish({ sent: 0, skipped: true, errorCode: "firebase/not-configured" });
     }
-    const rows = await database()`select distinct token from device_tokens where user_id=${userId} and last_seen_at > now() - interval '90 days'`;
+    const rows = await database()`
+      select distinct device.token, account.role::text as "userType"
+      from device_tokens device
+      join users account on account.id=device.user_id
+      where device.user_id=${userId} and device.last_seen_at > now() - interval '90 days'
+    `;
+    if (rows[0]?.userType) data.userType ??= String(rows[0].userType);
     const tokens = rows.map(row => String(row.token));
     if (!tokens.length) {
       console.warn("Push omitido: el usuario no tiene un dispositivo registrado.", { type: data.type ?? "unknown" });
@@ -190,7 +234,6 @@ export async function sendPush(userId: string, title: string, body: string, data
           sound: "default",
           defaultVibrateTimings: true,
           visibility: "public",
-          clickAction: "FLUTTER_NOTIFICATION_CLICK"
         }
       },
       apns: {

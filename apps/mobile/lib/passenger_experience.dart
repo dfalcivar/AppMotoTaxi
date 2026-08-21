@@ -105,6 +105,7 @@ enum NotificationTarget {
   chat,
   activeTrip,
   tripDetail,
+  scheduledTrips,
   support,
   offers,
   membership,
@@ -161,6 +162,7 @@ NotificationTarget notificationTargetFor(String? value) {
   if (type == 'CHAT') return NotificationTarget.chat;
   if (type == 'ACTIVE_TRIP') return NotificationTarget.activeTrip;
   if (type == 'TRIP_DETAIL') return NotificationTarget.tripDetail;
+  if (type == 'SCHEDULED_TRIPS') return NotificationTarget.scheduledTrips;
   if (type == 'SUPPORT') return NotificationTarget.support;
   if (type == 'TRIP_OFFERS') return NotificationTarget.offers;
   if (type == 'MEMBERSHIP') return NotificationTarget.membership;
@@ -173,13 +175,15 @@ NotificationTarget notificationTargetFor(String? value) {
   }.contains(type)) {
     return NotificationTarget.offers;
   }
+  if (type?.startsWith('SCHEDULED_TRIP_') == true ||
+      type == 'SCHEDULED_DRIVER_REMINDER') {
+    return NotificationTarget.scheduledTrips;
+  }
   if (const {
     'TRIP_ASSIGNED',
     'DRIVER_EN_ROUTE',
     'DRIVER_ARRIVED',
     'IN_PROGRESS',
-    'SCHEDULED_TRIP_REMINDER',
-    'SCHEDULED_DRIVER_REMINDER',
   }.contains(type)) {
     return NotificationTarget.activeTrip;
   }

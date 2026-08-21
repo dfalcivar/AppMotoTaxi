@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pushDeliveryStatus, pushRouteForType } from "./push.js";
+import { pushDeliveryStatus, pushPresentationForType, pushRouteForType } from "./push.js";
 
 describe("pushDeliveryStatus", () => {
   it("clasifica entregas completas, parciales, fallidas y omitidas", () => {
@@ -18,5 +18,19 @@ describe("pushRouteForType", () => {
     expect(pushRouteForType("COMPLETED")).toBe("TRIP_DETAIL");
     expect(pushRouteForType("SUPPORT_UPDATE")).toBe("SUPPORT");
     expect(pushRouteForType("MEMBERSHIP_EXPIRING")).toBe("MEMBERSHIP");
+    expect(pushRouteForType("SCHEDULED_TRIP_ASSIGNED")).toBe("SCHEDULED_TRIPS");
+  });
+});
+
+describe("pushPresentationForType", () => {
+  it("usa la misma presentación canónica para el ciclo del viaje", () => {
+    expect(pushPresentationForType("TRIP_ASSIGNED", "Otro", "Otro")).toEqual({
+      title: "Viaje confirmado",
+      body: "Un conductor aceptó tu solicitud y ya va en camino."
+    });
+    expect(pushPresentationForType("CHAT_MESSAGE", "Mensaje de Ana", "Hola")).toEqual({
+      title: "Mensaje de Ana",
+      body: "Hola"
+    });
   });
 });

@@ -33,6 +33,8 @@ void main() {
       expect(notificationTargetFor('TRIP_OFFER'), NotificationTarget.offers);
       expect(notificationTargetFor('MEMBERSHIP_EXPIRING'),
           NotificationTarget.membership);
+      expect(notificationTargetFor('SCHEDULED_TRIP_ASSIGNED'),
+          NotificationTarget.scheduledTrips);
     });
   });
 

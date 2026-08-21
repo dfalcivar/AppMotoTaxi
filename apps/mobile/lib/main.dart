@@ -5637,6 +5637,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (target == NotificationTarget.chat) {
       unawaited(openPassengerChat(tripId,
           notificationId: push.data['internalNotificationId']));
+    } else if (target == NotificationTarget.scheduledTrips) {
+      unawaited(showScheduledTrips());
     } else if (const {
       NotificationTarget.activeTrip,
       NotificationTarget.tripDetail,
@@ -8175,6 +8177,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             message.data['type'] == 'TRIP_CANCELLED') {
           refresh();
         }
+        if (message.data['type']?.toString().startsWith('MEMBERSHIP_') ==
+            true) {
+          unawaited(refreshMembership(force: true));
+        }
         if (const {
           'SCHEDULED_TRIP_AVAILABLE',
           'SCHEDULED_TRIP_ACCEPTED',
@@ -8341,8 +8347,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           MaterialPageRoute(
               builder: (_) => SupportIncidentDetail(
                   widget.s, push.data['incidentId'].toString()))));
-    } else if (push.data['type'] == 'SCHEDULED_DRIVER_REMINDER') {
-      unawaited(syncActivatedScheduledTrip(force: true));
+    } else if (target == NotificationTarget.scheduledTrips) {
+      if (push.data['type'] == 'SCHEDULED_DRIVER_REMINDER') {
+        unawaited(syncActivatedScheduledTrip(force: true));
+      } else {
+        unawaited(showDriverScheduledTrips());
+      }
     } else if (target == NotificationTarget.membership) {
       unawaited(refreshMembership(force: true).then((_) {
         if (mounted) return _showMembershipDetails();
@@ -8522,13 +8532,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     await positionSubscription?.cancel();
     final activeStatus = active?['status']?.toString();
     final foregroundTitle = activeStatus == null
-        ? 'Costa-Go · Disponible'
-        : 'Costa-Go · Viaje activo';
+        ? 'Costa-Go · Ubicación disponible'
+        : 'Costa-Go · Ubicación del viaje';
     final foregroundText = switch (activeStatus) {
-      'ASSIGNED' || 'DRIVER_EN_ROUTE' => 'Dirigiéndote al punto de recogida.',
-      'DRIVER_ARRIVED' => 'Esperando iniciar el viaje.',
-      'IN_PROGRESS' => 'Compartiendo ubicación durante el viaje.',
-      _ => 'Actualizando ubicación para recibir viajes cercanos.'
+      'ASSIGNED' ||
+      'DRIVER_EN_ROUTE' =>
+        'Seguimiento GPS activo mientras vas al punto de recogida.',
+      'DRIVER_ARRIVED' =>
+        'Seguimiento GPS activo mientras esperas al pasajero.',
+      'IN_PROGRESS' => 'Seguimiento GPS activo durante el recorrido.',
+      _ => 'Ubicación activa para recibir viajes cercanos.'
     };
     positionSubscription = Geolocator.getPositionStream(
             locationSettings: AndroidSettings(
@@ -9800,53 +9813,45 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final membership =
         Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final status = membership['status']?.toString() ?? 'PENDING';
-    final eligible = data['eligibility']?['eligible'] != false;
     final color = switch (status) {
-      'ACTIVE' => Colors.green,
-      'EXPIRING' ||
-      'GRACE_PERIOD' ||
+      'ACTIVE' => const Color(0xff24964f),
+      'EXPIRING' => const Color(0xffd58a00),
+      'GRACE_PERIOD' => const Color(0xffe17313),
       'PAYMENT_DUE' ||
       'SUSPENSION_PENDING_ACTIVE_TRIP' =>
-        Colors.orange,
-      'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Colors.red,
-      _ => Colors.orange,
+        const Color(0xffd85b22),
+      'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => const Color(0xffc93f3f),
+      _ => const Color(0xff607d8b),
+    };
+    final icon = switch (status) {
+      'ACTIVE' => Icons.verified_rounded,
+      'EXPIRING' => Icons.timer_outlined,
+      'GRACE_PERIOD' => Icons.hourglass_bottom_rounded,
+      'PAYMENT_DUE' => Icons.payments_outlined,
+      'SUSPENSION_PENDING_ACTIVE_TRIP' => Icons.warning_amber_rounded,
+      'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Icons.lock_clock_rounded,
+      _ => Icons.schedule_rounded,
     };
     return Semantics(
       button: true,
       label: 'Membresía Costa-Go, ${_membershipStatusLabel(status)}',
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Material(
-          color: Theme.of(context).colorScheme.surface.withValues(alpha: .92),
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            child: Text('Membresía',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Material(
-          color: color,
-          elevation: 4,
-          shadowColor: Colors.black38,
+      child: Material(
+        color: color.withValues(alpha: .18),
+        elevation: 4,
+        shadowColor: Colors.black38,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(14),
-            onTap: _showMembershipDetails,
-            child: SizedBox.square(
-              dimension: 46,
-              child: Icon(
-                eligible ? Icons.check_rounded : Icons.lock_clock_rounded,
-                color: Colors.white,
-                size: 26,
-              ),
-            ),
+          side: BorderSide(color: color.withValues(alpha: .72), width: 1.4),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: _showMembershipDetails,
+          child: SizedBox.square(
+            dimension: 46,
+            child: Icon(icon, color: color, size: 27),
           ),
         ),
-      ]),
+      ),
     );
   }
 

@@ -667,7 +667,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       mapSurface,
       if (widget.editing == null && widget.mapAccessory != null)
         Positioned(
-          right: 64,
+          right: 12,
           bottom: widget.viewportPadding.bottom + 68,
           child: widget.mapAccessory!,
         ),
