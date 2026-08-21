@@ -1,0 +1,9 @@
+flowchart LR
+  APPROVED[Conductor aprobado] --> GRACE[Gracia/Pendiente]
+  GRACE --> ORDER[Orden QR]
+  ORDER --> PAYMENT[Pago verificado]
+  PAYMENT --> ACTIVE[Activa]
+  ACTIVE --> EXPIRING[Próxima a vencer]
+  EXPIRING --> DUE[Pago pendiente]
+  DUE --> SUSPENDED[Suspendida]
+  DUE --> PAYMENT

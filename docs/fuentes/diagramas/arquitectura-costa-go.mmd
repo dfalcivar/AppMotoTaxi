@@ -1,0 +1,18 @@
+flowchart TB
+  P[Pasajeros] --> M[Aplicación Flutter]
+  D[Conductores] --> M
+  V[Visitantes y comercios] --> S[Sitio costa-go.com]
+  A[Administración y roles] --> W[Panel React/Vite]
+  C[Recaudadores] --> W
+  M -->|HTTPS / WebSocket| API[API Fastify]
+  S -->|HTTPS| API
+  W -->|HTTPS| API
+  API --> DB[(PostgreSQL + PostGIS)]
+  API --> FCM[Firebase Cloud Messaging]
+  API --> MAIL[Resend]
+  API --> GM[Google Maps Platform]
+  API --> ORS[OpenRouteService fallback]
+  API --> OBS[Sentry / OpenTelemetry]
+  R[Render] -. despliega .-> API
+  R -. despliega .-> W
+  R -. despliega .-> S

@@ -1,0 +1,9 @@
+flowchart LR
+  CHAT[Chat web/app] --> LEAD[Lead]
+  LEAD --> ADV[Anunciante]
+  ADV --> ORDER[Orden]
+  ORDER --> PAY[Pago recibido]
+  PAY --> CLOSE[Cierre de caja si efectivo]
+  CLOSE --> FIN[Conciliación Finanzas]
+  FIN --> REVIEW[Campaña a revisión]
+  REVIEW --> ACTIVE[Campaña activa]

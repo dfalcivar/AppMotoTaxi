@@ -1,0 +1,18 @@
+erDiagram
+  USERS ||--o| DRIVERS : "perfil conductor"
+  USERS ||--o{ TRIPS : "solicita o conduce"
+  COOPERATIVES ||--o{ USERS : agrupa
+  TRIPS ||--o{ TRIP_STOPS : contiene
+  TRIPS ||--o{ TRIP_EVENTS : registra
+  USERS ||--o{ SUPPORT_TICKETS : crea
+  SERVICE_AREAS ||--o{ SERVICE_AREA_VERSIONS : versiona
+  DRIVERS ||--o{ DRIVER_MEMBERSHIPS : mantiene
+  MEMBERSHIP_PLANS ||--o{ DRIVER_MEMBERSHIPS : define
+  MEMBERSHIP_PAYMENT_ORDERS ||--o{ MEMBERSHIP_PAYMENTS : liquida
+  COLLECTION_POINTS ||--o{ COLLECTION_POINT_CLOSURES : cierra
+  ADVERTISING_LEADS ||--o| ADVERTISERS : convierte
+  ADVERTISERS ||--o{ ADVERTISING_ORDERS : contrata
+  ADVERTISING_ORDERS ||--o{ ADVERTISING_PAYMENTS : recibe
+  ADVERTISING_ORDERS ||--o{ ADVERTISING_CAMPAIGNS : habilita
+  ADVERTISING_CAMPAIGNS ||--o{ AFFILIATE_BANNERS : publica
+  USERS ||--o{ AUDIT_LOG : ejecuta

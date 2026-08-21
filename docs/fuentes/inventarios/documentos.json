@@ -1,0 +1,98 @@
+[
+  {
+    "source": "docs/fuentes/html/00_Indice_General_Manuales_Web.html",
+    "pdf": "docs/manuales_usuario/00_Indice_General_Manuales_Web.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/01_Sitio_Publico_Costa_Go.html",
+    "pdf": "docs/manuales_usuario/01_Sitio_Publico_Costa_Go.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/02_Acceso_Usuarios_Roles.html",
+    "pdf": "docs/manuales_usuario/02_Acceso_Usuarios_Roles.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/03_Tablero_Operaciones_Alertas.html",
+    "pdf": "docs/manuales_usuario/03_Tablero_Operaciones_Alertas.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/04_Gestion_Viajes.html",
+    "pdf": "docs/manuales_usuario/04_Gestion_Viajes.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/05_Conductores_Aprobacion_Documentos.html",
+    "pdf": "docs/manuales_usuario/05_Conductores_Aprobacion_Documentos.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/06_Pasajeros_Cooperativas.html",
+    "pdf": "docs/manuales_usuario/06_Pasajeros_Cooperativas.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/07_Membresias_Planes_Gracia.html",
+    "pdf": "docs/manuales_usuario/07_Membresias_Planes_Gracia.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/08_Recaudacion_Membresias.html",
+    "pdf": "docs/manuales_usuario/08_Recaudacion_Membresias.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/09_Tarifas_Sectores_Radio.html",
+    "pdf": "docs/manuales_usuario/09_Tarifas_Sectores_Radio.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/10_Zonas_Cobertura.html",
+    "pdf": "docs/manuales_usuario/10_Zonas_Cobertura.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/11_Publicidad_Banners.html",
+    "pdf": "docs/manuales_usuario/11_Publicidad_Banners.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/12_Comercial_Leads_Anunciantes.html",
+    "pdf": "docs/manuales_usuario/12_Comercial_Leads_Anunciantes.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/13_Comercial_Ordenes_Pagos_Campanas.html",
+    "pdf": "docs/manuales_usuario/13_Comercial_Ordenes_Pagos_Campanas.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/14_Soporte_Incidentes_FAQ.html",
+    "pdf": "docs/manuales_usuario/14_Soporte_Incidentes_FAQ.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/15_Auditoria_Base_Datos_Configuracion.html",
+    "pdf": "docs/manuales_usuario/15_Auditoria_Base_Datos_Configuracion.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/01_Arquitectura_Costa_Go.html",
+    "pdf": "docs/tecnica/01_Arquitectura_Costa_Go.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/02_Modelo_Base_Datos.html",
+    "pdf": "docs/tecnica/02_Modelo_Base_Datos.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/03_Diccionario_Datos.html",
+    "pdf": "docs/tecnica/03_Diccionario_Datos.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/04_API_Servicios.html",
+    "pdf": "docs/tecnica/04_API_Servicios.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/05_Reglas_Negocio_Estados.html",
+    "pdf": "docs/tecnica/05_Reglas_Negocio_Estados.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/06_Seguridad_Privacidad.html",
+    "pdf": "docs/tecnica/06_Seguridad_Privacidad.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/07_Despliegue_Operacion.html",
+    "pdf": "docs/tecnica/07_Despliegue_Operacion.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/08_Matriz_Trazabilidad.html",
+    "pdf": "docs/tecnica/08_Matriz_Trazabilidad.pdf"
+  }
+]
