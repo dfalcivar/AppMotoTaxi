@@ -15,6 +15,7 @@ type LooseSql = {
 const database = rawDatabase as unknown as () => LooseSql;
 
 const sourceSchema = z.enum(["INSTAGRAM", "FACEBOOK", "WHATSAPP", "WEB", "COMMERCIAL", "ADMIN", "OTHER"]);
+const currentPlacementSchema = z.enum(["PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]);
 const leadStatusSchema = z.enum(["NEW", "IN_PROGRESS", "QUALIFIED", "REQUIRES_CONTACT", "CONVERTED", "LOST"]);
 const campaignStatusSchema = z.enum(["DRAFT", "PENDING_PAYMENT", "PAYMENT_REVIEW", "PENDING_REVIEW", "APPROVED", "SCHEDULED", "ACTIVE", "PAUSED", "REJECTED", "EXPIRED", "CANCELLED"]);
 const leadSchema = z.object({
@@ -47,7 +48,7 @@ const submitSchema = z.object({
   }),
   campaign: z.object({
     title: z.string().trim().min(3).max(120),
-    placement: z.enum(["PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]).optional(),
+    placement: currentPlacementSchema.optional(),
     serviceAreaId: z.string().uuid().nullable().optional(),
     actionType: z.enum(["WEB", "PHONE", "WHATSAPP", "MAPS", "NONE"]).default("NONE"),
     actionValue: z.string().trim().max(500).optional().default(""),
@@ -73,7 +74,7 @@ const leadUpdateSchema = z.object({ status: leadStatusSchema.optional(), assigne
 const paymentReviewSchema = z.object({ decision: z.enum(["APPROVE", "REJECT", "REFUND"]), reason: z.string().trim().max(1000).optional().default("") });
 const campaignActionSchema = z.object({ action: z.enum(["APPROVE", "REJECT", "REQUEST_CORRECTION", "PAUSE", "RESUME", "CANCEL"]), note: z.string().trim().max(1000).optional().default("") });
 const publicCampaignQuerySchema = z.object({
-  placement: z.enum(["PASSENGER_SEARCHING_DRIVER", "PASSENGER_WAITING_DRIVER", "PASSENGER_TRIP_IN_PROGRESS"]),
+  placement: currentPlacementSchema,
   serviceAreaId: z.string().uuid().optional()
 });
 const publicEventSchema = z.object({
@@ -111,12 +112,20 @@ function cleanSource(value: unknown): z.infer<typeof sourceSchema> {
   const candidate = String(value ?? "WEB").trim().toUpperCase();
   return sourceSchema.safeParse(candidate).success ? candidate as z.infer<typeof sourceSchema> : "OTHER";
 }
+export function normalizeAdvertisingPlacement(value: unknown): z.infer<typeof currentPlacementSchema> {
+  if (value === "PASSENGER_WAITING_DRIVER" || value === "PASSENGER_TRIP_IN_PROGRESS") return value;
+  return "PASSENGER_SEARCHING_DRIVER";
+}
 function publicError(error: unknown, reply: FastifyReply) {
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.flatten() });
   const message = error instanceof Error ? error.message : "ERROR";
   const status = message === "INVITATION_NOT_FOUND" ? 404 : message === "INVITATION_EXPIRED" ? 410 : message === "INVITATION_LOCKED" ? 409 : 500;
   if (status < 500) return reply.code(status).send({ error: message });
-  throw error;
+  reply.log.error({ err: error }, "No se pudo completar la solicitud comercial");
+  return reply.code(500).send({
+    error: "COMMERCIAL_SUBMISSION_FAILED",
+    message: "No pudimos guardar la solicitud comercial. Tus datos siguen en pantalla; intenta enviarla nuevamente en unos minutos."
+  });
 }
 function adminError(error: unknown, reply: FastifyReply) {
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.flatten() });
@@ -245,7 +254,7 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
         values (${body.business.businessName},${body.business.contactName},${body.business.phone},lower(${body.business.email}),${body.business.city},${body.business.businessType},'PROSPECT',${invitation.created_by})
         on conflict(lower(email),lower(business_name)) do update set contact_name=excluded.contact_name,phone_e164=excluded.phone_e164,city=excluded.city,business_type=excluded.business_type,updated_at=now() returning id::text`;
       if (!advertiser) throw new Error("ADVERTISER_NOT_CREATED");
-      const amount = Number(plan.price ?? plan.monthly_price ?? 0), duration = Number(plan.duration_days ?? 30), start = new Date(body.campaign.startsAt), end = new Date(start.getTime() + duration * 86_400_000), campaignPlacement = String(plan.placement ?? plan.allowed_placements?.[0] ?? "PASSENGER_SEARCHING_DRIVER");
+      const amount = Number(plan.price ?? plan.monthly_price ?? 0), duration = Number(plan.duration_days ?? 30), start = new Date(body.campaign.startsAt), end = new Date(start.getTime() + duration * 86_400_000), campaignPlacement = normalizeAdvertisingPlacement(plan.placement ?? plan.allowed_placements?.[0]);
       const [order] = await tx`insert into advertising_orders(code,lead_id,advertiser_id,plan_id,assigned_commercial_id,status,amount,currency,plan_snapshot,requested_start_at,requested_end_at)
         values ('PUB-'||extract(year from now())::int||'-'||lpad(nextval('advertising_request_code_seq')::text,6,'0'),${invitation.lead_id},${advertiser.id},${plan.id},${invitation.created_by},'PENDING_PAYMENT',${amount},${plan.currency},${JSON.stringify({ code: plan.code, name: plan.name, durationDays: duration, price: amount })}::jsonb,${start.toISOString()},${end.toISOString()}) returning id::text,code`;
       if (!order) throw new Error("ORDER_NOT_CREATED");
