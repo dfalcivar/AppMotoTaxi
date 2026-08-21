@@ -28,6 +28,7 @@ const leadSchema = z.object({
   interest: z.string().trim().min(2).max(300),
   source: sourceSchema.default("WEB"),
   requiresContact: z.boolean().default(false),
+  submissionKey: z.string().uuid().optional(),
   conversationState: z.record(z.string(), z.unknown()).default({})
 });
 const draftSchema = z.object({
@@ -35,10 +36,13 @@ const draftSchema = z.object({
   business: z.record(z.string(), z.unknown()).optional(),
   campaign: z.record(z.string(), z.unknown()).optional(),
   planId: z.string().uuid().optional(),
+  confirmedPlanId: z.string().uuid().optional(),
   paymentMethodId: z.string().uuid().optional(),
+  submissionKey: z.string().uuid().optional(),
   notes: z.string().trim().max(2000).optional()
 }).strict();
 const submitSchema = z.object({
+  submissionKey: z.string().uuid().optional(),
   business: z.object({
     businessName: z.string().trim().min(2).max(160),
     contactName: z.string().trim().min(2).max(120),
@@ -160,6 +164,18 @@ async function invitationFor(token: string, lock = false) {
   }
   return invitation;
 }
+
+async function submittedApplicationFor(sql: LooseSql, invitation: any) {
+  const [item] = await sql`select orders.code as "orderCode",banner.id::text as "campaignId",
+      coalesce(payment.status,orders.status) as status
+    from advertising_orders orders
+    left join affiliate_banners banner on banner.order_id=orders.id
+    left join advertising_payments payment on payment.order_id=orders.id
+    where orders.invitation_id=${invitation.id}
+       or (orders.invitation_id is null and orders.lead_id=${invitation.lead_id})
+    order by orders.created_at desc limit 1`;
+  return item ?? null;
+}
 function decodeBase64(value: string): Buffer { return Buffer.from(value.replace(/^data:[^;]+;base64,/, ""), "base64"); }
 function validProof(data: Buffer, mime: string): boolean {
   if (data.length < 100 || data.length > 5_000_000) return false;
@@ -197,11 +213,20 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
     return reply.code(202).send({accepted:true});
   } catch(error){ return publicError(error,reply); } });
   app.post("/v1/public/advertising/leads", async (request, reply) => { try {
-    if (!allowLead(request)) return reply.code(429).send({ error: "TOO_MANY_REQUESTS" });
     const body = leadSchema.parse({ ...(request.body as object), source: cleanSource((request.body as any)?.source) });
-    const [lead] = await database()`insert into advertising_leads(code,business_name,contact_name,phone_e164,email,city,business_type,interest,source,status,conversation_state)
-      values ('LEAD-'||extract(year from now())::int||'-'||lpad(nextval('advertising_lead_code_seq')::text,6,'0'),${body.businessName},${body.contactName},${body.phone},lower(${body.email}),${body.city},${body.businessType},${body.interest},${body.source},${body.requiresContact ? "REQUIRES_CONTACT" : "NEW"},${JSON.stringify(body.conversationState)}::jsonb)
+    if (body.submissionKey) {
+      const [existing] = await database()`select code,status from advertising_leads where submission_key=${body.submissionKey}`;
+      if (existing) return reply.code(200).send({ leadCode: existing.code, status: existing.status, duplicate: true });
+    }
+    if (!allowLead(request)) return reply.code(429).send({ error: "TOO_MANY_REQUESTS" });
+    const [lead] = await database()`insert into advertising_leads(code,business_name,contact_name,phone_e164,email,city,business_type,interest,source,status,conversation_state,submission_key)
+      values ('LEAD-'||extract(year from now())::int||'-'||lpad(nextval('advertising_lead_code_seq')::text,6,'0'),${body.businessName},${body.contactName},${body.phone},lower(${body.email}),${body.city},${body.businessType},${body.interest},${body.source},${body.requiresContact ? "REQUIRES_CONTACT" : "NEW"},${JSON.stringify(body.conversationState)}::jsonb,${body.submissionKey ?? null})
+      on conflict(submission_key) where submission_key is not null do nothing
       returning id::text,code,status,email,business_name as "businessName"`;
+    if (!lead) {
+      const [existing] = body.submissionKey ? await database()`select code,status from advertising_leads where submission_key=${body.submissionKey}` : [];
+      return reply.code(200).send({ leadCode: existing?.code, status: existing?.status, duplicate: true });
+    }
     if (!lead) throw new Error("LEAD_NOT_CREATED");
     await publicAudit("ADVERTISING_LEAD_CREATED","ADVERTISING_LEAD",String(lead.id),body.source);
     const invitation = await createInvitation(String(lead.id), body.source);
@@ -229,25 +254,50 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
     const token = z.string().min(32).max(200).parse((request.params as any).token); const invitation = await invitationFor(token);
     if (invitation.status === "SUBMITTED") throw new Error("INVITATION_LOCKED"); const draft = draftSchema.parse(request.body);
     const serialized = JSON.stringify(draft); if (Buffer.byteLength(serialized) > 50_000) return reply.code(413).send({ error: "DRAFT_TOO_LARGE" });
-    await database()`update advertising_invitations set draft_data=draft_data||${serialized}::jsonb,status='IN_PROGRESS',updated_at=now() where id=${invitation.id}`;
-    await publicAudit("ADVERTISING_APPLICATION_SAVED","ADVERTISING_INVITATION",String(invitation.id),`Paso ${draft.step??"actualizado"}`);
-    return { saved: true, status: "IN_PROGRESS" };
+    const [saved] = await database()`update advertising_invitations set draft_data=draft_data||${serialized}::jsonb,status='IN_PROGRESS',updated_at=now()
+      where id=${invitation.id} and draft_data is distinct from draft_data||${serialized}::jsonb returning id`;
+    if (saved) await publicAudit("ADVERTISING_APPLICATION_SAVED","ADVERTISING_INVITATION",String(invitation.id),`Paso ${draft.step??"actualizado"}`);
+    return { saved: true, status: "IN_PROGRESS", duplicate: !saved };
   } catch (error) { return publicError(error, reply); } });
   app.post("/v1/public/advertising/invitations/:token/submit", async (request, reply) => { try {
-    const token = z.string().min(32).max(200).parse((request.params as any).token); const invitation = await invitationFor(token); if (invitation.status === "SUBMITTED") throw new Error("INVITATION_LOCKED");
+    const token = z.string().min(32).max(200).parse((request.params as any).token); const invitation = await invitationFor(token);
+    if (invitation.status === "SUBMITTED") {
+      const existing = await submittedApplicationFor(database(), invitation);
+      if (!existing) throw new Error("INVITATION_LOCKED");
+      return reply.code(200).send({ ...existing, duplicate: true });
+    }
     if(invitation.purpose==="CORRECTION"){
       const correction=correctionSubmitSchema.parse(request.body),image=decodeBase64(correction.campaign.imageBase64),dimensions=imageDimensions(image,correction.campaign.imageMime);
       const [settings]=await database()`select advertising_max_image_bytes as bytes,advertising_banner_width as width,advertising_banner_height as height from operational_settings where id=1`;
       if(!invitation.campaign_id)throw new Error("CAMPAIGN_NOT_FOUND");
       if(!dimensions||image.length>Number(settings?.bytes??1_048_576)||dimensions.width!==Number(settings?.width??1200)||dimensions.height!==Number(settings?.height??400))return reply.code(400).send({error:"INVALID_BANNER_IMAGE",message:`El banner debe medir ${settings?.width??1200}×${settings?.height??400} px.`});
-      const result=await database().begin(async tx=>{const [campaign]=await tx`update affiliate_banners set image_mime=${correction.campaign.imageMime},image_data=${image},campaign_status='PENDING_REVIEW',active=false,correction_note=null,review_requested_at=now(),updated_at=now() where id=${invitation.campaign_id} returning id::text,order_id`;if(!campaign)throw new Error("CAMPAIGN_NOT_FOUND");await tx`insert into campaign_status_history(campaign_id,from_status,to_status,note) values (${campaign.id},'PENDING_REVIEW','PENDING_REVIEW','Banner corregido y reenviado')`;await tx`update advertising_invitations set status='SUBMITTED',submitted_at=now(),draft_data=${JSON.stringify({campaign:{imageMime:correction.campaign.imageMime},corrected:true})}::jsonb,updated_at=now() where id=${invitation.id}`;const [order]=await tx`select code from advertising_orders where id=${campaign.order_id}`;return {orderCode:order?.code??invitation.lead_code,campaignId:campaign.id,status:"PENDING_REVIEW"};});
-      await publicAudit("ADVERTISING_CORRECTION_SUBMITTED","AFFILIATE_BANNER",String(result.campaignId),"Pieza reenviada");
-      return reply.code(201).send(result);
+      const result=await database().begin(async tx=>{
+        await tx`select pg_advisory_xact_lock(hashtextextended(${String(invitation.id)},0))`;
+        const [latest]=await tx`select status from advertising_invitations where id=${invitation.id}`;
+        if(latest?.status==="SUBMITTED"){
+          const existing=await submittedApplicationFor(tx,invitation);
+          return {...(existing??{orderCode:invitation.lead_code,campaignId:invitation.campaign_id,status:"PENDING_REVIEW"}),duplicate:true};
+        }
+        const [campaign]=await tx`update affiliate_banners set image_mime=${correction.campaign.imageMime},image_data=${image},campaign_status='PENDING_REVIEW',active=false,correction_note=null,review_requested_at=now(),updated_at=now() where id=${invitation.campaign_id} returning id::text,order_id`;
+        if(!campaign)throw new Error("CAMPAIGN_NOT_FOUND");
+        await tx`insert into campaign_status_history(campaign_id,from_status,to_status,note) values (${campaign.id},'PENDING_REVIEW','PENDING_REVIEW','Banner corregido y reenviado')`;
+        await tx`update advertising_invitations set status='SUBMITTED',submitted_at=now(),draft_data=${JSON.stringify({campaign:{imageMime:correction.campaign.imageMime},corrected:true})}::jsonb,updated_at=now() where id=${invitation.id}`;
+        const [order]=await tx`select code from advertising_orders where id=${campaign.order_id}`;
+        return {orderCode:order?.code??invitation.lead_code,campaignId:campaign.id,status:"PENDING_REVIEW",duplicate:false};
+      });
+      if(!result.duplicate)await publicAudit("ADVERTISING_CORRECTION_SUBMITTED","AFFILIATE_BANNER",String(result.campaignId),"Pieza reenviada");
+      return reply.code(result.duplicate?200:201).send(result);
     }
     const body = submitSchema.parse(request.body), image = decodeBase64(body.campaign.imageBase64), dimensions = imageDimensions(image, body.campaign.imageMime);
     const [settings] = await database()`select advertising_max_image_bytes as bytes,advertising_banner_width as width,advertising_banner_height as height from operational_settings where id=1`;
     if (!dimensions || image.length > Number(settings?.bytes ?? 1_048_576) || dimensions.width !== Number(settings?.width ?? 1200) || dimensions.height !== Number(settings?.height ?? 400)) return reply.code(400).send({ error: "INVALID_BANNER_IMAGE", message: `El banner debe medir ${settings?.width ?? 1200}×${settings?.height ?? 400} px.` });
     const result = await database().begin(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${String(invitation.id)},0))`;
+      const [latest]=await tx`select status from advertising_invitations where id=${invitation.id}`;
+      if(latest?.status==="SUBMITTED"){
+        const existing=await submittedApplicationFor(tx,invitation);
+        if(existing)return {...existing,duplicate:true};
+      }
       const [plan] = await tx`select * from advertising_plans where id=${body.planId} and enabled=true and active=true for share`; if (!plan) throw new Error("PLAN_NOT_FOUND");
       const [method] = await tx`select * from advertising_payment_methods where id=${body.paymentMethodId} and active=true`; if (!method) throw new Error("PAYMENT_METHOD_NOT_FOUND");
       const [advertiser] = await tx`insert into advertisers(business_name,contact_name,phone_e164,email,city,business_type,status,assigned_commercial_id)
@@ -255,9 +305,14 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
         on conflict(lower(email),lower(business_name)) do update set contact_name=excluded.contact_name,phone_e164=excluded.phone_e164,city=excluded.city,business_type=excluded.business_type,updated_at=now() returning id::text`;
       if (!advertiser) throw new Error("ADVERTISER_NOT_CREATED");
       const amount = Number(plan.price ?? plan.monthly_price ?? 0), duration = Number(plan.duration_days ?? 30), start = new Date(body.campaign.startsAt), end = new Date(start.getTime() + duration * 86_400_000), campaignPlacement = normalizeAdvertisingPlacement(plan.placement ?? plan.allowed_placements?.[0]);
-      const [order] = await tx`insert into advertising_orders(code,lead_id,advertiser_id,plan_id,assigned_commercial_id,status,amount,currency,plan_snapshot,requested_start_at,requested_end_at)
-        values ('PUB-'||extract(year from now())::int||'-'||lpad(nextval('advertising_request_code_seq')::text,6,'0'),${invitation.lead_id},${advertiser.id},${plan.id},${invitation.created_by},'PENDING_PAYMENT',${amount},${plan.currency},${JSON.stringify({ code: plan.code, name: plan.name, durationDays: duration, price: amount })}::jsonb,${start.toISOString()},${end.toISOString()}) returning id::text,code`;
-      if (!order) throw new Error("ORDER_NOT_CREATED");
+      const [order] = await tx`insert into advertising_orders(code,lead_id,advertiser_id,plan_id,assigned_commercial_id,status,amount,currency,plan_snapshot,requested_start_at,requested_end_at,invitation_id)
+        values ('PUB-'||extract(year from now())::int||'-'||lpad(nextval('advertising_request_code_seq')::text,6,'0'),${invitation.lead_id},${advertiser.id},${plan.id},${invitation.created_by},'PENDING_PAYMENT',${amount},${plan.currency},${JSON.stringify({ code: plan.code, name: plan.name, durationDays: duration, price: amount })}::jsonb,${start.toISOString()},${end.toISOString()},${invitation.id})
+        on conflict(invitation_id) where invitation_id is not null do nothing returning id::text,code`;
+      if (!order) {
+        const existing = await submittedApplicationFor(tx, invitation);
+        if (!existing) throw new Error("ORDER_NOT_CREATED");
+        return { ...existing, duplicate: true };
+      }
       let paymentStatus = method.requires_proof ? "PENDING" : "UNDER_REVIEW"; let proof: Buffer | null = null;
       if (body.proof) { proof = decodeBase64(body.proof.fileBase64); if (!validProof(proof, body.proof.fileMime)) throw new Error("INVALID_PAYMENT_PROOF"); paymentStatus = "UNDER_REVIEW"; }
       await tx`insert into advertising_payments(order_id,advertiser_id,amount,currency,payment_method_id,proof_mime,proof_data,reference,status)
@@ -269,10 +324,10 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
       const submittedSummary={business:body.business,campaign:{title:body.campaign.title,placement:campaignPlacement,serviceAreaId:body.campaign.serviceAreaId,actionType:body.campaign.actionType,actionValue:body.campaign.actionValue,startsAt:body.campaign.startsAt,imageMime:body.campaign.imageMime},planId:body.planId,paymentMethodId:body.paymentMethodId,orderCode:order.code};
       await tx`update advertising_invitations set status='SUBMITTED',submitted_at=now(),advertiser_id=${advertiser.id},draft_data=${JSON.stringify(submittedSummary)}::jsonb,updated_at=now() where id=${invitation.id}`;
       await tx`update advertising_leads set status='QUALIFIED',advertiser_id=${advertiser.id},updated_at=now() where id=${invitation.lead_id}`;
-      return { orderCode: order.code, campaignId: campaign.id, status: paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT" };
+      return { orderCode: order.code, campaignId: campaign.id, status: paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT", duplicate: false };
     });
-    await publicAudit("ADVERTISING_APPLICATION_SUBMITTED","AFFILIATE_BANNER",String(result.campaignId),String(result.orderCode));
-    return reply.code(201).send(result);
+    if (!result.duplicate) await publicAudit("ADVERTISING_APPLICATION_SUBMITTED","AFFILIATE_BANNER",String(result.campaignId),String(result.orderCode));
+    return reply.code(result.duplicate ? 200 : 201).send(result);
   } catch (error) { return publicError(error, reply); } });
 
   app.get("/v1/admin/commercial/dashboard", async (request, reply) => { try { const actor = requirePermission(request, "commercial:dashboard"), actorId=actor.id ?? null, own = actor.role === "COMMERCIAL";
