@@ -1,13 +1,18 @@
 .commercial-assistant-launcher {
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   overflow: hidden;
-  padding: 9px;
+  padding: 6px;
   transition: width 240ms ease, box-shadow 240ms ease, transform 240ms ease;
 }
 
 .commercial-assistant-launcher img {
-  flex: 0 0 38px;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  padding: 0;
+  background: transparent;
+  object-fit: contain;
 }
 
 .commercial-assistant-launcher span {
@@ -36,7 +41,7 @@
 @media (max-width: 580px) {
   .commercial-assistant-launcher:hover,
   .commercial-assistant-launcher:focus-visible {
-    width: 56px;
+    width: 60px;
     transform: none;
   }
 

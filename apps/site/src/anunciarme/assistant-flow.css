@@ -67,7 +67,66 @@
   margin-top: 5px;
 }
 
+.assistant-widget > .assistant-launcher {
+  width: 60px;
+  height: 60px;
+  overflow: hidden;
+  padding: 6px;
+  gap: 10px;
+  transition: width 240ms ease, box-shadow 240ms ease, transform 240ms ease;
+}
+
+.assistant-widget > .assistant-launcher img {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  padding: 0;
+  background: transparent;
+  object-fit: contain;
+}
+
+.assistant-widget > .assistant-launcher span {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform: translateX(-7px);
+  transition: max-width 240ms ease, opacity 180ms ease, transform 240ms ease;
+}
+
+.assistant-widget > .assistant-launcher:hover,
+.assistant-widget > .assistant-launcher:focus-visible {
+  width: 226px;
+  transform: translateY(-2px);
+  box-shadow: 0 18px 46px #032b4960;
+}
+
+.assistant-widget > .assistant-launcher:hover span,
+.assistant-widget > .assistant-launcher:focus-visible span {
+  max-width: 156px;
+  opacity: 1;
+  transform: none;
+}
+
+.assistant-header img {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  object-fit: contain;
+}
+
 @media (max-width: 760px) {
+  .assistant-widget > .assistant-launcher:hover,
+  .assistant-widget > .assistant-launcher:focus-visible {
+    width: 60px;
+    transform: none;
+  }
+
+  .assistant-widget > .assistant-launcher span {
+    display: none;
+  }
+
   .assistant-floating {
     height: min(680px, calc(100dvh - 96px));
     max-height: calc(100dvh - 96px);
@@ -86,5 +145,12 @@
 
   .assistant-form .primary {
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-widget > .assistant-launcher,
+  .assistant-widget > .assistant-launcher span {
+    transition: none;
   }
 }
