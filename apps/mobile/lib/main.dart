@@ -41,6 +41,22 @@ const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 String normalizePassengerTripUpdateType(String type) =>
     type == 'CANCELLED' ? 'TRIP_CANCELLED' : type;
 
+String membershipPlanName(dynamic snapshot) {
+  dynamic value = snapshot;
+  if (value is String) {
+    try {
+      value = jsonDecode(value);
+    } catch (_) {
+      return 'Membresía';
+    }
+  }
+  if (value is Map) {
+    final name = value['name']?.toString().trim();
+    if (name != null && name.isNotEmpty) return name;
+  }
+  return 'Membresía';
+}
+
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
 /// by the passenger.
 class OriginSelectionGuard {
@@ -10422,13 +10438,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ) ??
         false;
     observation.dispose();
-    if (confirmed) {
-      await refreshMembership(force: true);
-      if (hostContext.mounted) {
-        ScaffoldMessenger.of(hostContext).showSnackBar(const SnackBar(
-            content: Text('La orden fue anulada correctamente.')));
-      }
-    }
     return confirmed;
   }
 
@@ -10448,7 +10457,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _showMembershipPaymentOrder(
+  Future<bool> _showMembershipPaymentOrder(
       BuildContext hostContext, Map<String, dynamic> order) async {
     final status = order['status']?.toString() ?? 'PENDING';
     final qrUrl = order['qrUrl']?.toString();
@@ -10456,7 +10465,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final expiresAt = DateTime.tryParse(order['expiresAt']?.toString() ?? '');
     final breakdown = Map<String, dynamic>.from(
         order['breakdown'] as Map? ?? const <String, dynamic>{});
-    await showDialog<void>(
+    final cancelled = await showDialog<bool>(
       context: hostContext,
       builder: (dialogContext) => AlertDialog(
         icon: Image.asset('assets/images/costa-go-emblem.png',
@@ -10610,7 +10619,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 final cancelled =
                     await _cancelMembershipOrder(dialogContext, order);
                 if (cancelled && dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
+                  Navigator.pop(dialogContext, true);
                 }
               },
               icon: const Icon(Icons.cancel_outlined),
@@ -10622,7 +10631,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           ),
         ],
       ),
-    );
+    ) ?? false;
+    if (cancelled) {
+      await refreshMembership(force: true);
+      if (hostContext.mounted) {
+        ScaffoldMessenger.of(hostContext).showSnackBar(const SnackBar(
+            content: Text('La orden fue anulada correctamente.')));
+      }
+    }
+    return cancelled;
   }
 
   Future<void> _showMembershipPaymentHistory(
@@ -10681,7 +10698,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   ? Icons.block_rounded
                                   : Icons.receipt_long_outlined),
                               title: Text(
-                                  '${order['plan']?['name'] ?? 'Membresía'} · $statusLabel'),
+                                  '${membershipPlanName(order['plan'])} · $statusLabel'),
                               subtitle: Text([
                                 'Código ${order['shortCode']}',
                                 if (created != null)
@@ -10720,7 +10737,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final membership =
         Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final plans = List<dynamic>.from(data['plans'] ?? const []);
-    final pendingOrder = data['pendingOrder'] is Map
+    var pendingOrder = data['pendingOrder'] is Map
         ? Map<String, dynamic>.from(data['pendingOrder'] as Map)
         : null;
     await showModalBottomSheet<void>(
@@ -10728,9 +10745,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,
-      builder: (sheetContext) => FractionallySizedBox(
-        heightFactor: .78,
-        child: ListView(
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => FractionallySizedBox(
+          heightFactor: .78,
+          child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
             children: [
               Text('Membresía Costa-Go',
@@ -10769,14 +10787,19 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   color: Theme.of(sheetContext).colorScheme.primaryContainer,
                   child: ListTile(
                     leading: const Icon(Icons.qr_code_2_rounded),
-                    title: Text(pendingOrder['status'] == 'PENDING_VERIFICATION'
+                    title: Text(pendingOrder!['status'] == 'PENDING_VERIFICATION'
                         ? 'Pago en revisión'
                         : 'Orden de pago vigente'),
                     subtitle: Text(
-                        'Código ${pendingOrder['shortCode']} · vence ${DateTime.tryParse(pendingOrder['expiresAt']?.toString() ?? '') == null ? 'próximamente' : formatEcuadorLongDateTime(DateTime.parse(pendingOrder['expiresAt'].toString()))}'),
+                        'Código ${pendingOrder!['shortCode']} · vence ${DateTime.tryParse(pendingOrder!['expiresAt']?.toString() ?? '') == null ? 'próximamente' : formatEcuadorLongDateTime(DateTime.parse(pendingOrder!['expiresAt'].toString()))}'),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () =>
-                        _showMembershipPaymentOrder(sheetContext, pendingOrder),
+                    onTap: () async {
+                      final cancelled = await _showMembershipPaymentOrder(
+                          sheetContext, pendingOrder!);
+                      if (cancelled && sheetContext.mounted) {
+                        setSheetState(() => pendingOrder = null);
+                      }
+                    },
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -10793,8 +10816,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     final order = await api.createMembershipPaymentOrder(
                         widget.s.token, plan['id'].toString(), 'CASH');
                     if (!sheetContext.mounted) return;
-                    await _showMembershipPaymentOrder(
-                        sheetContext, Map<String, dynamic>.from(order as Map));
+                    final createdOrder =
+                        Map<String, dynamic>.from(order as Map);
+                    setSheetState(() => pendingOrder = createdOrder);
+                    final cancelled = await _showMembershipPaymentOrder(
+                        sheetContext, createdOrder);
+                    if (cancelled && sheetContext.mounted) {
+                      setSheetState(() => pendingOrder = null);
+                    }
                     await refreshMembership(force: true);
                   } catch (error) {
                     if (sheetContext.mounted) {
@@ -10830,7 +10859,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         onPressed: pendingOrder == null
                             ? createRenewalOrder
                             : () => _showMembershipPaymentOrder(
-                                sheetContext, pendingOrder),
+                                sheetContext, pendingOrder!),
                         child: Text(
                             pendingOrder == null ? price : 'Ver orden vigente'),
                       );
@@ -10857,6 +10886,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               const Text(
                   'Si la membresía vence, tu cuenta, historial, documentos, perfil y soporte permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'),
             ]),
+        ),
       ),
     );
     unawaited(refreshMembership(force: true));

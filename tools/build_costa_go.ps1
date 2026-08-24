@@ -67,7 +67,7 @@ if ($Production) {
 $defines = @(
   "--dart-define=MAP_PROVIDER=$MapProvider",
   "--dart-define=API_BASE_URL=$ApiBaseUrl",
-  "--dart-define=APP_ENVIRONMENT=$Environment"
+  "--dart-define=APP_ENV=$Environment"
 )
 if (-not [string]::IsNullOrWhiteSpace($ApiHttpProxy)) {
   $defines += "--dart-define=API_HTTP_PROXY=$ApiHttpProxy"

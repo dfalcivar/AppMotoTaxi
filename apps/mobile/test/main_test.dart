@@ -45,6 +45,13 @@ void main() {
         'miércoles, 30 de septiembre de 2026');
   });
 
+  test('acepta snapshots de plan como objeto o texto JSON', () {
+    expect(membershipPlanName({'name': 'Mensual'}), 'Mensual');
+    expect(membershipPlanName('{"name":"Trimestral"}'), 'Trimestral');
+    expect(membershipPlanName('dato histórico inválido'), 'Membresía');
+    expect(membershipPlanName(null), 'Membresía');
+  });
+
   group('ubicación provisional al iniciar', () {
     final now = DateTime(2026, 8, 23, 15);
 
