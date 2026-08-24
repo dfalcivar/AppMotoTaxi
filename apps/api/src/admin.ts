@@ -1354,6 +1354,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return await database()`
       select t.id::text, t.status, t.passengers, t.service_zone as zone,
         t.quoted_total_cents as "quotedTotalCents", t.requested_at as "requestedAt",
+        t.pricing_version as "pricingVersion", t.pricing_snapshot as "pricingSnapshot",
         t.scheduled_for as "scheduledFor", t.schedule_status as "scheduleStatus",
         passenger.full_name as passenger, coalesce(driver.full_name, 'Sin asignar') as driver,
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",

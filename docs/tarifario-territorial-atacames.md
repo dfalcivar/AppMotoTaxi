@@ -8,8 +8,9 @@ entre ellos se almacenan en `fare_route_rules`.
 
 La coordenada exacta elegida por el pasajero se evalúa con `ST_Covers`. Si hay
 superposición, gana primero el sector con mayor prioridad y después el polígono
-más pequeño. Esto permite que Club del Pacífico o Cabaplan prevalezcan sobre el
-polígono general de Tonsupa.
+más pequeño. Club del Pacífico y Cabaplan prevalecen sobre el polígono general
+de Tonsupa únicamente cuando la coordenada pertenece realmente a su geometría
+específica.
 
 ## Matriz cargada
 
@@ -48,8 +49,18 @@ Ejemplo con una comisión vigente de $0,10 por tramo:
 - OpenStreetMap/GeoNames para Cabaplan, Club del Pacífico y recintos rurales.
 - Estudio PUCE de las cuencas de los ríos Atacames y Súa.
 
-Los buffers cargados por la migración 050 son límites operativos iniciales, no
-límites político-administrativos. Se pueden ajustar visualmente desde
+Los buffers generales cargados por la migración 050 son límites operativos
+iniciales, no límites político-administrativos. La migración 054 reemplaza los
+buffers circulares superpuestos de Cabaplan y Club del Pacífico por geometrías
+específicas:
+
+- Cabaplan usa el polígono residencial de OpenStreetMap `way/646844238`.
+- Club del Pacífico usa una envolvente de referencias cartográficas públicas
+  de la avenida y un margen operativo de 150 m para sus predios colindantes.
+- El punto de control genérico de Tonsupa `0.89018, -79.81023` queda únicamente
+  en `TONSUPA_CABECERA`; no puede ser absorbido por los sectores específicos.
+
+Las tres geometrías se pueden ajustar visualmente desde
 **Tarifas → Tarifa territorial → Sectores y trayectos** sin publicar otra APK.
 Después de ajustar un polígono, las nuevas cotizaciones usan inmediatamente la
 nueva geometría.

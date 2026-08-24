@@ -2262,3 +2262,90 @@ El error debe mostrarse en una zona visible, sin dejar un indicador girando inde
 - GPS disponible y no disponible mientras la API funciona;
 - regreso desde background y reactivación del GPS;
 - verificar que una respuesta GPS tardía no sobrescriba un origen seleccionado manualmente.
+
+---
+
+## Paquete pendiente: solicitud segura y métricas de ofertas
+
+Estos dos cambios deben implementarse y validarse juntos en una próxima entrega. El primero corrige un bloqueo crítico de la aplicación móvil; el segundo mejora la trazabilidad del proceso de búsqueda sin alterar la aceptación atómica ni las rondas progresivas existentes.
+
+### P0 — Evitar el bloqueo `Null check operator used on a null value`
+
+#### Causa identificada
+
+El formulario construye un payload válido y abre el resumen de confirmación. Después de esperar la respuesta del modal vuelve a leer variables mutables y anulables como `pickup`, destino final y destinos serializados utilizando el operador forzado `!`. Si durante esa espera una actualización de GPS, ruta, tarifa, estado de pantalla o una acción del usuario modifica esos valores, la confirmación intenta usar un dato que ya es `null`.
+
+El manejador actual muestra además `e.toString()` directamente en la interfaz, por lo que el pasajero ve un error técnico de Flutter y el formulario puede quedar bloqueado.
+
+#### Corrección requerida
+
+- Crear antes del resumen un snapshot inmutable de origen, destinos, paradas, programación, pasajeros, pago, ruta, tarifa y payload.
+- Utilizar exactamente ese snapshot tanto para mostrar el resumen como para crear la solicitud después de confirmar.
+- No volver a leer con `!` el estado mutable del formulario después de un `await`.
+- Eliminar del camino de creación los force unwrap de `pickup!`, `_finalDestinationPoint!`, `_serializedDestinations()!` y `_currentRequestPayload()!`.
+- Si el estado cambió mientras el resumen estaba abierto, cancelar el envío de forma segura, conservar los datos todavía válidos y mostrar:
+
+> La información del viaje cambió. Revisa el origen y los destinos antes de continuar.
+
+- Restablecer siempre el botón **Solicitar mototaxi** después de un error recuperable.
+- Evitar solicitudes duplicadas mediante un identificador/idempotency key y bloqueo solamente mientras existe una petición vigente.
+- No mostrar excepciones, stack traces ni mensajes internos al usuario.
+- Registrar en diagnóstico un código sanitizado como `TRIP_REQUEST_STATE_INVALIDATED`, sin direcciones, coordenadas precisas ni datos personales.
+
+#### Pruebas obligatorias
+
+- solicitud inmediata con un destino;
+- solicitud programada;
+- solicitud con múltiples paradas;
+- abrir el resumen y modificar/eliminar un destino antes de confirmar;
+- recibir una actualización tardía de GPS, ruta o tarifa con el resumen abierto;
+- fallo del preview o de la API y reintento posterior;
+- doble toque en confirmar sin crear dos viajes;
+- verificar que el formulario nunca muestre un error técnico ni quede inutilizable.
+
+### P1 — Motivos explícitos de respuesta a ofertas
+
+La tabla `driver_offers` ya permite conocer si una oferta fue aceptada y cuándo fue respondida, pero `accepted = false` agrupa situaciones distintas. Esto impide separar un rechazo voluntario de una expiración, una cancelación o una carrera tomada por otro conductor.
+
+#### Modelo compatible
+
+Mantener `accepted` para compatibilidad y agregar de forma aditiva un campo equivalente a `response_reason`, o un evento normalizado asociado a la oferta, con al menos:
+
+- `DRIVER_REJECTED`;
+- `OFFER_EXPIRED`;
+- `TAKEN_BY_ANOTHER_DRIVER`;
+- `DRIVER_BUSY`;
+- `PASSENGER_CANCELLED`;
+- `TRIP_NO_LONGER_AVAILABLE`.
+
+Cada camino actual del backend debe registrar el motivo real de manera idempotente. Un conductor que rechazó explícitamente no debe volver a recibir la misma solicitud en otra ronda.
+
+#### Métricas requeridas
+
+- ofertas enviadas y notificadas;
+- aceptaciones;
+- rechazos explícitos;
+- ofertas expiradas o sin respuesta;
+- ofertas cerradas porque otro conductor aceptó;
+- cancelaciones del pasajero;
+- tiempo de respuesta por conductor;
+- resultados por ronda y franja de distancia;
+- tasa de aceptación con denominador documentado.
+
+No se debe penalizar al conductor por una oferta que no recibió, por una cancelación del pasajero ni porque otro conductor aceptó primero. Los viajes programados deben mostrarse por separado o normalizarse con el mismo catálogo de motivos sin mezclarlos silenciosamente con los inmediatos.
+
+#### Validaciones
+
+- un solo registro lógico por viaje y conductor;
+- rechazo explícito sin nueva notificación en rondas posteriores;
+- progresión hacia el siguiente rango sin reenviar a rangos anteriores;
+- aceptación atómica que detenga las rondas restantes;
+- eventos repetidos sin duplicar respuestas ni métricas;
+- dashboard general y detalle por conductor con etiquetas visibles en español.
+
+### Entrega conjunta
+
+- La corrección P0 requiere una nueva compilación móvil y, por tanto, nuevos APK/AAB.
+- La mejora P1 requiere migración aditiva, actualización de API y ajustes del panel de métricas.
+- Primero se validará P0 en dispositivos; después se desplegará la migración compatible y finalmente se generará el AAB destinado a pruebas cerradas.
+- Ninguno de estos puntos se considera implementado por el solo hecho de constar en este documento.

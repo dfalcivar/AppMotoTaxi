@@ -11,6 +11,7 @@ import "./responsive.css";
 import "./operations.css";
 import "./service-areas.css";
 import "./brand.css";
+import "./fare-audit.css";
 import { MembershipAdmin } from "./memberships-admin.js";
 import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
@@ -72,7 +73,8 @@ const stateLabels: Record<string, string> = {
   SCHEDULED_ASSIGNED: "Programado con conductor", SCHEDULED_READY: "Próximo a iniciar",
   ACTIVATED: "Activado", URBAN: "Urbana", EXTENDED: "Extendida",
   NUEVO: "Nuevo", ASIGNADO: "Asignado", EN_REVISION: "En revisión",
-  ESPERANDO_USUARIO: "Esperando usuario", RESUELTO: "Resuelto", CERRADO: "Cerrado"
+  ESPERANDO_USUARIO: "Esperando usuario", RESUELTO: "Resuelto", CERRADO: "Cerrado",
+  SUGGESTED: "Valor sugerido", CONFIGURED: "Regla territorial"
 };
 
 function errorText(error: unknown) {
@@ -244,14 +246,69 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
   </div>;
 }
 
+function fareSectorLabel(value: unknown) {
+  const code = typeof value === "string" ? value : "";
+  const known: Record<string, string> = {
+    ATACAMES_CABECERA: "Atacames · cabecera cantonal",
+    TONSUPA_CABECERA: "Tonsupa · centro parroquial",
+    TONSUPA_CABAPLAN: "Tonsupa · Cabaplan",
+    CLUB_DEL_PACIFICO: "Club del Pacífico",
+    SUA_CABECERA: "Súa · centro parroquial",
+    TONSUPA_RURAL_ESTE: "Salima · Taseche · Estero del Medio",
+    SUA_GUACHAL_MUCHIN: "Guachal · Muchín",
+    LAS_BRISAS: "Las Brisas",
+    LA_UNION: "La Unión",
+    CUMBA: "Cumba",
+    LA_LUCHA: "La Lucha",
+    LAS_VEGAS: "Las Vegas"
+  };
+  return known[code] ?? (code ? code.toLowerCase().split("_").map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "Fuera de sector configurado");
+}
+
+function fareLegs(trip: any): any[] {
+  return Array.isArray(trip?.pricingSnapshot?.legs) ? trip.pricingSnapshot.legs : [];
+}
+
+function fareRangeSummary(trip: any) {
+  const legs = fareLegs(trip);
+  if (!legs.length) return "Sin detalle histórico";
+  return legs.map(leg => {
+    const origin = fareSectorLabel(leg.originSector);
+    const destination = fareSectorLabel(leg.destinationSector);
+    return origin === destination ? `Dentro de ${origin}` : `${origin} → ${destination}`;
+  }).join(" · ");
+}
+
+function FareAuditDialog({ trip, onClose }: { trip: any; onClose: () => void }) {
+  const snapshot = trip.pricingSnapshot ?? {};
+  const legs = fareLegs(trip);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card fare-audit-modal" role="dialog" aria-modal="true"><Header eyebrow="AUDITORÍA TARIFARIA" title="Cómo se calculó este viaje" action={`Versión ${trip.pricingVersion ?? snapshot.version ?? "—"}`} /><p><strong>{trip.originReference ?? "Origen"}</strong> → {trip.destinationReference ?? "Destino"}</p>{legs.length ? <Table headers={["Tramo", "Rango tarifario", "Tarifa", "Comisión", "Aplicación"]} rows={legs.map((leg, index) => [Number(leg.order ?? index + 1), `${fareSectorLabel(leg.originSector)} → ${fareSectorLabel(leg.destinationSector)}`, money(Number(leg.fareCents ?? 0)), money(Number(leg.commissionCents ?? 0)), leg.suggested ? <Badge value="SUGGESTED" /> : <Badge value="CONFIGURED" />])} /> : <Empty text="Este viaje es anterior al detalle tarifario por tramos." />}<div className="metric-grid fare-audit-summary"><article className="metric"><span>Tarifa de trayectos</span><strong>{money(Number(snapshot.baseCents ?? 0))}</strong></article><article className="metric"><span>Comisión operativa</span><strong>{money(Number(snapshot.platformCommissionCents ?? 0))}</strong></article><article className="metric"><span>Adicional por paradas</span><strong>{money(Number(snapshot.stopSurchargeCents ?? 0))}</strong></article><article className="metric"><span>Total cotizado</span><strong>{money(Number(trip.quotedTotalCents ?? snapshot.totalCents ?? 0))}</strong></article></div><small>{snapshot.suggested ? "Se utilizó al menos un valor sugerido porque no existía una regla territorial exacta." : "Se aplicaron reglas territoriales configuradas vigentes al momento de solicitar el viaje."}</small><div className="modal-actions"><button className="primary" type="button" onClick={onClose}>Cerrar</button></div></section></div>;
+}
+
 function Trips({ token, admin }: { token: string; admin: boolean }) {
   const [data, setData] = useState<any[]>([]); const [error, setError] = useState("");
   const [cancelTrip, setCancelTrip] = useState<any | null>(null); const [cancelling, setCancelling] = useState(false);
+  const [fareTrip, setFareTrip] = useState<any | null>(null);
   const [filters, setFilters] = useState({ scheduled: "ALL", status: "", passenger: "", driver: "", from: "", to: "", unassigned: false });
   const load = () => { const query = new URLSearchParams(); Object.entries(filters).forEach(([key, value]) => { if (value !== "" && value !== false && value !== "ALL") query.set(key, String(value)); }); return apiFetch<any[]>(`/v1/admin/trips${query.size ? `?${query}` : ""}`, token).then(setData).catch(reason => setError(errorText(reason))); };
   useEffect(() => { void load(); const id = setInterval(load, 15000); return () => clearInterval(id); }, [token, filters]);
   async function cancel(reason: string) { if (!cancelTrip) return; setCancelling(true); setError(""); try { await apiFetch(`/v1/admin/trips/${cancelTrip.id}/action`, token, { method: "POST", body: JSON.stringify({ action: "CANCEL", reason }) }); setCancelTrip(null); await load(); } catch (cause) { setError(errorText(cause)); } finally { setCancelling(false); } }
-  return <><section className="card"><Header eyebrow="FILTROS" title="Viajes inmediatos y programados" action={`${data.filter(t => !["COMPLETED", "CANCELLED", "NO_DRIVER"].includes(t.status)).length} activos`} /><div className="filter-grid"><label>Tipo<select value={filters.scheduled} onChange={event => setFilters({ ...filters, scheduled: event.target.value })}><option value="ALL">Todos</option><option value="IMMEDIATE">Inmediatos</option><option value="SCHEDULED">Programados</option></select></label><label>Estado<select value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{["SEARCHING", "ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED"].map(value => <option key={value} value={value}>{stateLabels[value]}</option>)}</select></label><label>Pasajero<input value={filters.passenger} onChange={event => setFilters({ ...filters, passenger: event.target.value })} /></label><label>Conductor<input value={filters.driver} onChange={event => setFilters({ ...filters, driver: event.target.value })} /></label><label>Desde<input type="date" value={filters.from} onChange={event => setFilters({ ...filters, from: event.target.value })} /></label><label>Hasta<input type="date" value={filters.to} onChange={event => setFilters({ ...filters, to: event.target.value })} /></label><label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={event => setFilters({ ...filters, unassigned: event.target.checked })} /> Solo sin conductor</label></div></section><section className="card"><Header eyebrow="OPERACIÓN" title="Viajes y asignaciones" /><Notice error={error} />{data.length ? <Table headers={["Fecha del viaje", "Pasajero", "Conductor", "Itinerario", "Estado", "Total", "Creado", "Acción"]} rows={data.map(t => [t.scheduledFor ? new Date(t.scheduledFor).toLocaleString() : "Ahora", t.passenger, t.driver, <div><strong>{t.originReference ?? "Origen"}</strong>{(t.stops?.length ? t.stops : [{ reference: t.destinationReference }]).map((stop: any, index: number) => <small key={index} className="table-line">→ {index + 1}. {stop.reference ?? "Destino"}</small>)}</div>, <div><Badge value={t.scheduleStatus ?? t.status} /><small className="table-line">{stateLabels[t.status] ?? String(t.status).replaceAll("_"," ")}</small></div>, money(t.quotedTotalCents), new Date(t.requestedAt).toLocaleString(), admin && !["COMPLETED", "CANCELLED", "NO_DRIVER"].includes(t.status) ? <button className="link" onClick={() => { setError(""); setCancelTrip(t); }}>Cancelar</button> : "—"])} /> : <Empty text="No hay viajes para los filtros seleccionados." />}</section>{cancelTrip && <DecisionDialog title="Cancelar viaje" description={<>Esta acción avisará a <strong>{cancelTrip.passenger}</strong>{cancelTrip.driver ? <> y a <strong>{cancelTrip.driver}</strong></> : null}.</>} fieldLabel="Motivo de cancelación" initialValue="Cancelado desde el panel administrativo" required confirmLabel="Cancelar viaje" dangerous busy={cancelling} error={error} onCancel={() => { if (!cancelling) { setCancelTrip(null); setError(""); } }} onConfirm={cancel} />}</>;
+  return <>
+    <section className="card"><Header eyebrow="FILTROS" title="Viajes inmediatos y programados" action={`${data.filter(t => !["COMPLETED", "CANCELLED", "NO_DRIVER"].includes(t.status)).length} activos`} /><div className="filter-grid"><label>Tipo<select value={filters.scheduled} onChange={event => setFilters({ ...filters, scheduled: event.target.value })}><option value="ALL">Todos</option><option value="IMMEDIATE">Inmediatos</option><option value="SCHEDULED">Programados</option></select></label><label>Estado<select value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{["SEARCHING", "ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED"].map(value => <option key={value} value={value}>{stateLabels[value]}</option>)}</select></label><label>Pasajero<input value={filters.passenger} onChange={event => setFilters({ ...filters, passenger: event.target.value })} /></label><label>Conductor<input value={filters.driver} onChange={event => setFilters({ ...filters, driver: event.target.value })} /></label><label>Desde<input type="date" value={filters.from} onChange={event => setFilters({ ...filters, from: event.target.value })} /></label><label>Hasta<input type="date" value={filters.to} onChange={event => setFilters({ ...filters, to: event.target.value })} /></label><label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={event => setFilters({ ...filters, unassigned: event.target.checked })} /> Solo sin conductor</label></div></section>
+    <section className="card"><Header eyebrow="OPERACIÓN" title="Viajes y asignaciones" /><Notice error={error} />{data.length ? <Table headers={["Fecha del viaje", "Pasajero", "Conductor", "Itinerario", "Rango tarifario", "Estado", "Total", "Creado", "Acción"]} rows={data.map(t => [
+      t.scheduledFor ? new Date(t.scheduledFor).toLocaleString() : "Ahora",
+      t.passenger,
+      t.driver,
+      <div><strong>{t.originReference ?? "Origen"}</strong>{(t.stops?.length ? t.stops : [{ reference: t.destinationReference }]).map((stop: any, index: number) => <small key={index} className="table-line">→ {index + 1}. {stop.reference ?? "Destino"}</small>)}</div>,
+      <div className="fare-range-cell"><strong>{fareRangeSummary(t)}</strong>{fareLegs(t).length ? <><small className="table-line">{t.pricingSnapshot?.suggested ? "Valor sugerido" : "Regla territorial"}</small><button className="link" type="button" onClick={() => setFareTrip(t)}>Ver cálculo</button></> : null}</div>,
+      <div><Badge value={t.scheduleStatus ?? t.status} /><small className="table-line">{stateLabels[t.status] ?? String(t.status).replaceAll("_", " ")}</small></div>,
+      money(t.quotedTotalCents),
+      new Date(t.requestedAt).toLocaleString(),
+      admin && !["COMPLETED", "CANCELLED", "NO_DRIVER"].includes(t.status) ? <button className="link" onClick={() => { setError(""); setCancelTrip(t); }}>Cancelar</button> : "—"
+    ])} /> : <Empty text="No hay viajes para los filtros seleccionados." />}</section>
+    {cancelTrip && <DecisionDialog title="Cancelar viaje" description={<>Esta acción avisará a <strong>{cancelTrip.passenger}</strong>{cancelTrip.driver ? <> y a <strong>{cancelTrip.driver}</strong></> : null}.</>} fieldLabel="Motivo de cancelación" initialValue="Cancelado desde el panel administrativo" required confirmLabel="Cancelar viaje" dangerous busy={cancelling} error={error} onCancel={() => { if (!cancelling) { setCancelTrip(null); setError(""); } }} onConfirm={cancel} />}
+    {fareTrip && <FareAuditDialog trip={fareTrip} onClose={() => setFareTrip(null)} />}
+  </>;
 }
 
 function PasswordReset({ token, userId, userName }: { token: string; userId: string; userName: string }) {

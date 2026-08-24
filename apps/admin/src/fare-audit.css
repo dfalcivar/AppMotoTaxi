@@ -1,0 +1,58 @@
+.fare-range-cell {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+  max-width: 330px;
+}
+
+.fare-range-cell strong {
+  color: #17343c;
+  font-size: .79rem;
+  line-height: 1.35;
+}
+
+.fare-range-cell .link {
+  justify-self: start;
+  padding: 2px 0;
+}
+
+.fare-audit-modal {
+  width: min(960px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.fare-audit-modal > p {
+  color: #587178;
+}
+
+.fare-audit-summary {
+  margin: 22px 0 14px;
+}
+
+.badge.suggested {
+  background: #fff1ca;
+  color: #775a12;
+}
+
+.badge.configured {
+  background: #ddf3e6;
+  color: #286044;
+}
+
+@media (max-width: 720px) {
+  .fare-audit-modal {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .fare-audit-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 460px) {
+  .fare-audit-summary {
+    grid-template-columns: 1fr;
+  }
+}
