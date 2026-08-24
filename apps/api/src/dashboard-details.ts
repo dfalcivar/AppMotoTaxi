@@ -144,21 +144,33 @@ export async function dashboardMetricDetails(filters: DashboardFilters, metric: 
       : metric === "acceptanceRate" ? sql`o.accepted=true` : sql`true`;
     const rows = await sql`
       select count(*) over()::int __total, o.id::text id, o.trip_id::text as "tripId",
+        passenger.full_name passenger,
+        coalesce(nullif(trim(t.origin_reference),''),'Origen sin referencia') || ' → ' ||
+          coalesce(nullif(trim(t.destination_reference),''),'Destino sin referencia') as "tripRoute",
         u.full_name driver, coalesce(c.name,'Sin cooperativa') cooperative,
         o.offered_at as "offeredAt", o.responded_at as "respondedAt",
-        case when o.accepted then 'Aceptada' when o.responded_at is null then 'Sin respuesta'
-          else coalesce(o.response_reason,'Rechazada') end result,
+        case when o.response_reason='DRIVER_REJECTED' then 'Rechazada por el conductor'
+          when o.response_reason='OFFER_EXPIRED' then 'Tiempo de respuesta agotado'
+          when o.response_reason='TAKEN_BY_ANOTHER_DRIVER' then 'Aceptada por otro conductor'
+          when o.response_reason='DRIVER_CANCELLED_AFTER_ACCEPTANCE' then 'Cancelada por el conductor'
+          when o.accepted then 'Aceptada' when o.responded_at is null then 'Sin respuesta'
+          else 'No aceptada' end result,
         case when o.responded_at is null then null else round(extract(epoch from(o.responded_at-o.offered_at)))::int end "responseSeconds"
       from driver_offers o join trips t on t.id=o.trip_id join users u on u.id=o.driver_id
+      join users passenger on passenger.id=t.passenger_id
       left join cooperatives c on c.id=u.cooperative_id
       where ${tripScope(sql, filters)} and ${condition}
-        and (${options.search.trim()}='' or u.full_name ilike ${search} or o.trip_id::text ilike ${search})
+        and (${options.search.trim()}='' or u.full_name ilike ${search} or passenger.full_name ilike ${search}
+          or o.trip_id::text ilike ${search} or coalesce(t.origin_reference,'') ilike ${search}
+          or coalesce(t.destination_reference,'') ilike ${search})
       order by o.offered_at desc limit ${options.pageSize} offset ${offset}
     `;
     return result(metric, options, rows, [
-      { key:"tripId",label:"Viaje" }, { key:"driver",label:"Conductor" },
+      { key:"tripRoute",label:"Trayecto" }, { key:"passenger",label:"Pasajero" },
+      { key:"driver",label:"Conductor" },
       { key:"cooperative",label:"Cooperativa" }, { key:"result",label:"Resultado" },
-      { key:"offeredAt",label:"Enviada",type:"date" }, { key:"responseSeconds",label:"Respuesta (s)" }
+      { key:"offeredAt",label:"Enviada",type:"date" },
+      { key:"responseSeconds",label:"Tiempo de respuesta",type:"duration" }
     ]);
   }
 

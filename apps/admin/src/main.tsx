@@ -184,6 +184,12 @@ function dashboardCell(value: unknown, type?: string) {
   if (type === "date") return new Date(String(value)).toLocaleString("es-EC");
   if (type === "money") return money(Number(value));
   if (type === "percent") return `${Number(value).toLocaleString("es-EC")}%`;
+  if (type === "duration") {
+    const seconds = Math.max(0, Math.round(Number(value)));
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    return minutes ? `${minutes} min${remainder ? ` ${remainder} s` : ""}` : `${remainder} s`;
+  }
   if (type === "status") return <Badge value={String(value)} />;
   return typeof value === "boolean" ? value ? "Sí" : "No" : String(value);
 }
