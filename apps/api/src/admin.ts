@@ -1415,6 +1415,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
           else 'VISIBLE'
         end as "displayStatus"
       from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id
+      where banner.order_id is null
       order by banner.active desc,banner.sort_order,banner.starts_at desc
     `;
   } catch(e) { return guardError(e, reply); } });
@@ -1450,6 +1451,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const id = (request.params as { id: string }).id;
     const [current] = await database()`select * from affiliate_banners where id=${id}`;
     if (!current) return reply.code(404).send({ error: "NOT_FOUND" });
+    if (current.order_id) return reply.code(409).send({
+      error: "COMMERCIAL_WORKFLOW_REQUIRED",
+      message: "Esta campaña pertenece al módulo comercial. Verifica y concilia el pago antes de revisarla desde Comercial y publicidad."
+    });
     const image = body.imageBase64
       ? Buffer.from(body.imageBase64.replace(/^data:[^;]+;base64,/, ""), "base64")
       : current.image_data;

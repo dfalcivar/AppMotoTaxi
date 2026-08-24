@@ -32,7 +32,7 @@ const labels: Record<Module, string> = {
   pricing: "Tarifas",
   zones: "Zonas de cobertura",
   settings: "Radio de búsqueda",
-  advertising: "Publicidad",
+  advertising: "Publicidad interna",
   commercial: "Comercial y publicidad",
   incidents: "Soporte e incidentes",
   access: "Usuarios y roles",
@@ -81,6 +81,8 @@ function errorText(error: unknown) {
   if (message === "WEAK_PASSWORD") return "Usa 10+ caracteres con mayúscula, minúscula, número y símbolo.";
   if (message === "EMAIL_ALREADY_EXISTS") return "Este correo ya está registrado.";
   if (message === "PHONE_ALREADY_EXISTS") return "Este teléfono ya está registrado.";
+  if (message === "COMMERCIAL_WORKFLOW_REQUIRED") return "Esta campaña pertenece al flujo comercial. Debes gestionarla desde Comercial y publicidad después de conciliar el pago.";
+  if (message === "PAYMENT_NOT_RECONCILED") return "La campaña todavía no puede aprobarse porque su pago no ha sido conciliado por Finanzas.";
   return message || "No se pudo completar la operación.";
 }
 
@@ -413,9 +415,9 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
   async function toggle(item: any) { try { await apiFetch(`/v1/admin/banners/${item.id}`, token, { method: "PATCH", body: JSON.stringify({ active: !item.active }) }); setSuccess(item.active ? "Publicidad desactivada." : "Publicidad activada."); await load(); } catch (reason) { setError(errorText(reason)); } }
   return <div className="advertising-layout">
     <section className="card">
-      <Header eyebrow="COMERCIOS AFILIADOS" title="Banners publicados" action={`${data.filter(item => item.active).length} activos`} />
+      <Header eyebrow="CONTENIDO PROPIO" title="Publicidad interna" action={`${data.filter(item => item.active).length} activas`} />
       <Notice error={error} success={success} />
-      <p className="note">Las campañas aparecen al pasajero durante su vigencia y se retiran automáticamente al llegar la fecha final. Cuando no hay campañas se muestra permanentemente la pieza fija «Tu publicidad aquí».</p>
+      <p className="note">Este espacio es únicamente para piezas institucionales o de respaldo de Costa-Go. Las campañas de comercios se revisan en «Comercial y publicidad» y requieren pago conciliado antes de aprobarse.</p>
       <div className="banner-grid">
         <article className="banner-placeholder-card permanent"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Tu publicidad aquí · pieza fija</strong><p>Respaldo permanente de la app. Se muestra automáticamente cuando no existen campañas vigentes.</p></div></article>
         {data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}>
@@ -426,7 +428,7 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
       </div>
     </section>
     {admin && <form className="card form-card advertising-form" onSubmit={save}>
-      <Header eyebrow={editingId ? "EDITAR BANNER" : "NUEVO BANNER"} title={editingId ? "Modificar publicidad" : "Publicar anuncio"} />
+      <Header eyebrow={editingId ? "EDITAR PIEZA" : "NUEVA PIEZA"} title={editingId ? "Modificar publicidad interna" : "Publicar contenido propio"} />
       <p className="banner-spec">1200×400 px · JPG, PNG o WebP · máximo 1 MB</p>
       <div className="placement-note"><strong>Campaña con vigencia automática</strong><span>La pieza «Tu publicidad aquí» queda como respaldo permanente cuando no existan campañas activas.</span></div>
       <label>Comercio o campaña<input required minLength={3} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
