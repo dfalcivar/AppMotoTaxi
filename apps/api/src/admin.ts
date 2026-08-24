@@ -161,7 +161,10 @@ const operationalSettingsSchema = z.object({
   driverSearchRoundWaitSeconds: z.number().int().min(5).max(300),
   scheduledTripLeadMinutes: z.number().int().min(5).max(60),
   scheduledTripMinimumNoticeMinutes: z.number().int().min(5).max(720),
-  documentExpiryAlertDays: z.number().int().min(1).max(180)
+  documentExpiryAlertDays: z.number().int().min(1).max(180),
+  distanceFareCentsPerKm: z.number().int().min(1).max(10000).default(50),
+  localFareMaxDistanceMeters: z.number().int().min(100).max(50000).default(2000),
+  distanceFareMinimumCents: z.number().int().min(0).max(100000).default(0)
 }).refine(value => value.scheduledTripMinimumNoticeMinutes >= value.scheduledTripLeadMinutes + 5, {
   message: "MINIMUM_NOTICE_MUST_EXCEED_ACTIVATION_LEAD",
   path: ["scheduledTripMinimumNoticeMinutes"]
@@ -1475,8 +1478,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       driver_search_initial_radius_meters as "driverSearchInitialRadiusMeters",
       driver_search_radius_increment_meters as "driverSearchRadiusIncrementMeters",
       driver_search_round_wait_seconds as "driverSearchRoundWaitSeconds",
-      scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt" from operational_settings where id=1`;
-    return settings ?? { searchRadiusMeters: 3000, driverSearchInitialRadiusMeters: 1000, driverSearchRadiusIncrementMeters: 1000, driverSearchRoundWaitSeconds: 15, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30, documentExpiryAlertDays: 30 };
+      scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays",
+      distance_fare_cents_per_km as "distanceFareCentsPerKm", local_fare_max_distance_meters as "localFareMaxDistanceMeters",
+      distance_fare_minimum_cents as "distanceFareMinimumCents", updated_at as "updatedAt" from operational_settings where id=1`;
+    return settings ?? { searchRadiusMeters: 3000, driverSearchInitialRadiusMeters: 1000, driverSearchRadiusIncrementMeters: 1000, driverSearchRoundWaitSeconds: 15, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30, documentExpiryAlertDays: 30, distanceFareCentsPerKm: 50, localFareMaxDistanceMeters: 2000, distanceFareMinimumCents: 0 };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/settings", async (request, reply) => { try {
     const user = requirePermission(request, "settings:manage");
@@ -1484,24 +1489,34 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const [settings] = await database()`
       insert into operational_settings (id, search_radius_meters, driver_search_initial_radius_meters,
         driver_search_radius_increment_meters, driver_search_round_wait_seconds,
-        scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, document_expiry_alert_days, updated_at, updated_by)
+        scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, document_expiry_alert_days,
+        distance_fare_cents_per_km, local_fare_max_distance_meters, distance_fare_minimum_cents,
+        updated_at, updated_by)
       values (1, ${body.searchRadiusMeters}, ${body.driverSearchInitialRadiusMeters},
         ${body.driverSearchRadiusIncrementMeters}, ${body.driverSearchRoundWaitSeconds},
-        ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, ${body.documentExpiryAlertDays}, now(), ${user.id!})
+        ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, ${body.documentExpiryAlertDays},
+        ${body.distanceFareCentsPerKm}, ${body.localFareMaxDistanceMeters}, ${body.distanceFareMinimumCents},
+        now(), ${user.id!})
       on conflict (id) do update set search_radius_meters=excluded.search_radius_meters,
         driver_search_initial_radius_meters=excluded.driver_search_initial_radius_meters,
         driver_search_radius_increment_meters=excluded.driver_search_radius_increment_meters,
         driver_search_round_wait_seconds=excluded.driver_search_round_wait_seconds,
         scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes,
         scheduled_trip_minimum_notice_minutes=excluded.scheduled_trip_minimum_notice_minutes,
-        document_expiry_alert_days=excluded.document_expiry_alert_days, updated_at=now(), updated_by=excluded.updated_by
+        document_expiry_alert_days=excluded.document_expiry_alert_days,
+        distance_fare_cents_per_km=excluded.distance_fare_cents_per_km,
+        local_fare_max_distance_meters=excluded.local_fare_max_distance_meters,
+        distance_fare_minimum_cents=excluded.distance_fare_minimum_cents,
+        updated_at=now(), updated_by=excluded.updated_by
       returning search_radius_meters as "searchRadiusMeters",
         driver_search_initial_radius_meters as "driverSearchInitialRadiusMeters",
         driver_search_radius_increment_meters as "driverSearchRadiusIncrementMeters",
         driver_search_round_wait_seconds as "driverSearchRoundWaitSeconds",
-        scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt"
+        scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays",
+        distance_fare_cents_per_km as "distanceFareCentsPerKm", local_fare_max_distance_meters as "localFareMaxDistanceMeters",
+        distance_fare_minimum_cents as "distanceFareMinimumCents", updated_at as "updatedAt"
     `;
-    await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Búsqueda progresiva: ${body.driverSearchInitialRadiusMeters} m + ${body.driverSearchRadiusIncrementMeters} m por ronda, máximo ${body.searchRadiusMeters} m, espera ${body.driverSearchRoundWaitSeconds} s`);
+    await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Búsqueda progresiva: ${body.driverSearchInitialRadiusMeters} m + ${body.driverSearchRadiusIncrementMeters} m por ronda, máximo ${body.searchRadiusMeters} m, espera ${body.driverSearchRoundWaitSeconds} s. Tarifa por distancia: ${body.distanceFareCentsPerKm} ctvs/km desde ${body.localFareMaxDistanceMeters} m, mínimo ${body.distanceFareMinimumCents} ctvs.`);
     return settings;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.get("/v1/admin/banners", async (request, reply) => { try {

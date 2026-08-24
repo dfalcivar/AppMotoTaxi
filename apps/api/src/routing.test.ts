@@ -23,6 +23,7 @@ describe("rutas de Google", () => {
       routes: [{
         distanceMeters: 1250,
         duration: "240s",
+        legs: [{ distanceMeters: 1250, duration: "240s" }],
         polyline: { encodedPolyline: "_p~iF~ps|U_ulLnnqC_mqNvxq`@" }
       }]
     }), { status: 200, headers: { "content-type": "application/json" } }));
@@ -34,6 +35,7 @@ describe("rutas de Google", () => {
     const second = await computeRoute(origin, destination);
 
     expect(first).toMatchObject({ provider: "GOOGLE", cacheHit: false });
+    expect(first.legs).toEqual([{ distanceMeters: 1250, durationSeconds: 240 }]);
     expect(second).toMatchObject({ provider: "GOOGLE", cacheHit: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -41,11 +43,11 @@ describe("rutas de Google", () => {
   it("envía las paradas intermedias en el orden indicado", async () => {
     process.env.GOOGLE_MAPS_SERVER_API_KEY = "test-key";
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      routes: [{ distanceMeters: 2500, duration: "480s", polyline: { encodedPolyline: "" } }]
+      routes: [{ distanceMeters: 2500, duration: "480s", legs: [{ distanceMeters: 800, duration: "150s" }, { distanceMeters: 900, duration: "170s" }, { distanceMeters: 800, duration: "160s" }], polyline: { encodedPolyline: "" } }]
     }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await computeRoute(
+    const route = await computeRoute(
       { latitude: -2.9, longitude: -79.0 },
       { latitude: -2.93, longitude: -79.03 },
       [
@@ -60,6 +62,7 @@ describe("rutas de Google", () => {
       { location: { latLng: { latitude: -2.91, longitude: -79.01 } } },
       { location: { latLng: { latitude: -2.92, longitude: -79.02 } } }
     ]);
+    expect(route.legs.map(leg => leg.distanceMeters)).toEqual([800, 900, 800]);
   });
 
   it("solicita un route token solo para una sesión de navegación", async () => {

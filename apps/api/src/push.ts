@@ -227,7 +227,7 @@ export async function sendPush(userId: string, title: string, body: string, data
           channelId: isChat
             ? "costa_go_chat_v2"
             : isTripOffer
-              ? "costa_go_trip_offers_v2"
+              ? "costa_go_trip_offers_v3"
               : isDriverArrival
                 ? "costa_go_driver_arrival_v2"
               : "costa_go_trip_updates_v2",

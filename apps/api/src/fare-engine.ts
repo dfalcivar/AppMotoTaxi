@@ -12,7 +12,12 @@ interface PricingRow {
   group_promotion_total_cents: number;
   stop_surcharge_cents: number;
   platform_commission_cents_per_leg: number;
+  distance_fare_cents_per_km: number;
+  local_fare_max_distance_meters: number;
+  distance_fare_minimum_cents: number;
 }
+
+export type FareMethod = "CONFIGURED" | "DISTANCE" | "SUGGESTED";
 
 export interface TerritorialFare {
   pricingVersion: number;
@@ -21,6 +26,11 @@ export interface TerritorialFare {
   platformCommissionCents: number;
   totalCents: number;
   suggested: boolean;
+  distancePolicy: {
+    centsPerKm: number;
+    localMaximumMeters: number;
+    minimumCents: number;
+  };
   legs: Array<{
     order: number;
     originSector: string | null;
@@ -28,6 +38,8 @@ export interface TerritorialFare {
     fareCents: number;
     commissionCents: number;
     suggested: boolean;
+    method: FareMethod;
+    distanceMeters: number | null;
   }>;
 }
 
@@ -67,6 +79,36 @@ export function suggestedInterSectorFare(price: PricingRow, passengers: number, 
     return Number(price.night_cents_per_passenger) * Math.min(passengers, 2);
   }
   return Number(price.extended_cents_per_passenger) * passengers;
+}
+
+export function distanceBasedFare(
+  distanceMeters: number,
+  centsPerKm: number,
+  minimumCents: number
+): number {
+  const proportional = Math.round((Math.max(0, distanceMeters) / 1000) * Math.max(0, centsPerKm));
+  return Math.max(Math.max(0, minimumCents), proportional);
+}
+
+export function resolveFareMethod(input: {
+  configuredFareCents?: number;
+  distanceMeters: number | null;
+  localMaximumMeters: number;
+  distanceCentsPerKm: number;
+  distanceMinimumCents: number;
+  suggestedFareCents: number;
+}): { fareCents: number; method: FareMethod } {
+  if (input.configuredFareCents != null) {
+    return { fareCents: input.configuredFareCents, method: "CONFIGURED" };
+  }
+  if (input.distanceMeters == null) throw new Error("ROUTE_DISTANCE_REQUIRED");
+  if (input.distanceMeters > input.localMaximumMeters) {
+    return {
+      fareCents: distanceBasedFare(input.distanceMeters, input.distanceCentsPerKm, input.distanceMinimumCents),
+      method: "DISTANCE"
+    };
+  }
+  return { fareCents: input.suggestedFareCents, method: "SUGGESTED" };
 }
 
 async function sectorAt(serviceAreaId: string, point: FarePoint) {
@@ -112,13 +154,17 @@ export async function calculateTerritorialFare(input: {
   destinations: FarePoint[];
   passengers: number;
   travelAt: Date;
+  routeLegDistancesMeters?: Array<number | null>;
 }): Promise<TerritorialFare> {
   const [price] = await database()`
     select version, urban_day_cents_per_passenger, night_cents_per_passenger,
       extended_cents_per_passenger,
       group_promotion_enabled, group_promotion_passengers, group_promotion_total_cents,
-      stop_surcharge_cents, coalesce(platform_commission_cents_per_leg,5) as platform_commission_cents_per_leg
-    from pricing_versions
+      stop_surcharge_cents, coalesce(platform_commission_cents_per_leg,5) as platform_commission_cents_per_leg,
+      settings.distance_fare_cents_per_km,
+      settings.local_fare_max_distance_meters,
+      settings.distance_fare_minimum_cents
+    from pricing_versions cross join operational_settings settings
     where active_from<=${input.travelAt} and (active_until is null or active_until>${input.travelAt})
     order by active_from desc,version desc limit 1
   ` as unknown as PricingRow[];
@@ -133,20 +179,37 @@ export async function calculateTerritorialFare(input: {
     const destinationSector = sectors[index + 1];
     const configured = await configuredLegFare(
       input.serviceAreaId, originSector?.id, destinationSector?.id, input.passengers, input.travelAt);
-    const isConfiguredLocalSector = Boolean(originSector?.id && originSector.id === destinationSector?.id);
+    const distanceMeters = input.routeLegDistancesMeters?.[index] ?? null;
+    const fallbackFare = originSector?.id && destinationSector?.id && originSector.id !== destinationSector.id
+      ? suggestedInterSectorFare(price, input.passengers, input.travelAt)
+      : suggestedLocalFare(price, input.passengers, input.travelAt);
+    const resolved = resolveFareMethod({
+      configuredFareCents: configured,
+      distanceMeters,
+      localMaximumMeters: Number(price.local_fare_max_distance_meters),
+      distanceCentsPerKm: Number(price.distance_fare_cents_per_km),
+      distanceMinimumCents: Number(price.distance_fare_minimum_cents),
+      suggestedFareCents: fallbackFare
+    });
     legs.push({
       order: index + 1,
       originSector: originSector?.code ?? null,
       destinationSector: destinationSector?.code ?? null,
-      fareCents: configured ?? (originSector?.id && destinationSector?.id && originSector.id !== destinationSector.id
-        ? suggestedInterSectorFare(price, input.passengers, input.travelAt)
-        : suggestedLocalFare(price, input.passengers, input.travelAt)),
+      fareCents: resolved.fareCents,
       commissionCents: commissionPerLeg,
-      suggested: configured == null && !isConfiguredLocalSector
+      suggested: resolved.method === "SUGGESTED",
+      method: resolved.method,
+      distanceMeters
     });
   }
   const summary = summarizeFare(legs, Number(price.stop_surcharge_cents ?? 0));
   return {
-    pricingVersion: Number(price.version), ...summary, legs
+    pricingVersion: Number(price.version), ...summary,
+    distancePolicy: {
+      centsPerKm: Number(price.distance_fare_cents_per_km),
+      localMaximumMeters: Number(price.local_fare_max_distance_meters),
+      minimumCents: Number(price.distance_fare_minimum_cents)
+    },
+    legs
   };
 }

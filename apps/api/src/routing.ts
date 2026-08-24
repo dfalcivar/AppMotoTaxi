@@ -7,9 +7,15 @@ export interface RouteResult {
   points: RoutePoint[];
   distanceMeters: number | null;
   durationSeconds: number | null;
+  legs: RouteLegResult[];
   provider: "GOOGLE" | "ORS";
   cacheHit: boolean;
   routeToken?: string;
+}
+
+export interface RouteLegResult {
+  distanceMeters: number | null;
+  durationSeconds: number | null;
 }
 
 export interface RouteOptions {
@@ -67,7 +73,7 @@ async function googleRoute(
         "Content-Type": "application/json",
         "X-Goog-Api-Key": key,
         "X-Goog-FieldMask":
-          `routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline${includeRouteToken ? ",routes.routeToken" : ""}`
+          `routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration,routes.polyline.encodedPolyline${includeRouteToken ? ",routes.routeToken" : ""}`
       },
       body: JSON.stringify({
         origin: { location: { latLng: origin } },
@@ -88,6 +94,7 @@ async function googleRoute(
     routes?: Array<{
       distanceMeters?: number;
       duration?: string;
+      legs?: Array<{ distanceMeters?: number; duration?: string }>;
       polyline?: { encodedPolyline?: string };
       routeToken?: string;
     }>;
@@ -102,6 +109,13 @@ async function googleRoute(
     durationSeconds: route.duration
       ? Number(route.duration.replace(/s$/, ""))
       : null,
+    legs: route.legs?.map(leg => ({
+      distanceMeters: leg.distanceMeters ?? null,
+      durationSeconds: leg.duration ? Number(leg.duration.replace(/s$/, "")) : null
+    })) ?? [{
+      distanceMeters: route.distanceMeters ?? null,
+      durationSeconds: route.duration ? Number(route.duration.replace(/s$/, "")) : null
+    }],
     provider: "GOOGLE",
     cacheHit: false,
     ...(route.routeToken ? { routeToken: route.routeToken } : {})
@@ -132,7 +146,10 @@ async function openRouteServiceRoute(
   const payload = (await response.json()) as {
     features?: Array<{
       geometry?: { coordinates?: number[][] };
-      properties?: { summary?: { distance?: number; duration?: number } };
+      properties?: {
+        summary?: { distance?: number; duration?: number };
+        segments?: Array<{ distance?: number; duration?: number }>;
+      };
     }>;
   };
   const feature = payload.features?.[0];
@@ -144,6 +161,13 @@ async function openRouteServiceRoute(
       })) ?? [],
     distanceMeters: feature?.properties?.summary?.distance ?? null,
     durationSeconds: feature?.properties?.summary?.duration ?? null,
+    legs: feature?.properties?.segments?.map(segment => ({
+      distanceMeters: segment.distance ?? null,
+      durationSeconds: segment.duration ?? null
+    })) ?? [{
+      distanceMeters: feature?.properties?.summary?.distance ?? null,
+      durationSeconds: feature?.properties?.summary?.duration ?? null
+    }],
     provider: "ORS",
     cacheHit: false
   };

@@ -13,7 +13,7 @@ import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
 import { reverseLocation, searchLocations, searchLocationsInArea } from "./geocoding.js";
-import { computeRoute } from "./routing.js";
+import { computeRoute, type RouteResult } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
 import { captureOperationalError } from "./observability.js";
 import { sendTransactionalEmail } from "./email.js";
@@ -45,6 +45,20 @@ import {
 // Solo se aplica en redes que definen un proxy; en producción no se configura.
 const outboundProxy = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
 if (outboundProxy) setGlobalDispatcher(new ProxyAgent(outboundProxy));
+
+function routeLegDistances(route: RouteResult | undefined, expectedLegs: number): Array<number | null> | undefined {
+  if (!route) return undefined;
+  if (route.legs.length === expectedLegs) return route.legs.map(leg => leg.distanceMeters);
+  if (expectedLegs === 1) return [route.distanceMeters];
+  return undefined;
+}
+
+function fareErrorResponse(error: unknown, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
+  if (!(error instanceof Error)) throw error;
+  if (error.message === "PRICING_UNAVAILABLE") return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
+  if (error.message === "ROUTE_DISTANCE_REQUIRED") return reply.code(503).send({ error: "ROUTE_DISTANCE_UNAVAILABLE" });
+  throw error;
+}
 
 const quoteSchema = z.object({
   zone: z.enum(["URBAN", "EXTENDED"]),
@@ -1561,13 +1575,18 @@ export async function buildApp() {
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const fare = await calculateTerritorialFare({
-      serviceAreaId: operationalArea.id, origin: input.origin,
-      destinations: destinations.map(stop => stop.location), passengers: input.passengers,
-      travelAt: scheduledFor ?? new Date()
-    }).catch(error => error instanceof Error && error.message === "PRICING_UNAVAILABLE" ? undefined : Promise.reject(error));
-    if (!fare) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
     const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location));
+    let fare: Awaited<ReturnType<typeof calculateTerritorialFare>>;
+    try {
+      fare = await calculateTerritorialFare({
+        serviceAreaId: operationalArea.id, origin: input.origin,
+        destinations: destinations.map(stop => stop.location), passengers: input.passengers,
+        travelAt: scheduledFor ?? new Date(),
+        routeLegDistancesMeters: routeLegDistances(route, destinations.length)
+      });
+    } catch (error) {
+      return fareErrorResponse(error, reply);
+    }
     return {
       scheduledFor: scheduledFor?.toISOString() ?? null,
       serviceArea: { id: operationalArea.id, code: operationalArea.code, name: operationalArea.name },
@@ -1581,12 +1600,15 @@ export async function buildApp() {
       platformCommissionCents: fare.platformCommissionCents,
       stopSurchargeCents: fare.stopSurchargeCents,
       fareIsSuggested: fare.suggested,
+      fareDistancePolicy: fare.distancePolicy,
       fareLegs: fare.legs.map(leg => ({
         order: leg.order,
         fareCents: leg.fareCents,
         commissionCents: leg.commissionCents,
         totalCents: leg.fareCents + leg.commissionCents,
-        suggested: leg.suggested
+        suggested: leg.suggested,
+        method: leg.method,
+        distanceMeters: leg.distanceMeters
       })),
       distanceMeters: route.distanceMeters,
       durationSeconds: route.durationSeconds,
@@ -1627,18 +1649,23 @@ export async function buildApp() {
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const fare = await calculateTerritorialFare({
-      serviceAreaId: operationalArea.id, origin: input.origin,
-      destinations: destinations.map(stop => stop.location), passengers: input.passengers,
-      travelAt: scheduledFor ?? new Date()
-    }).catch(error => error instanceof Error && error.message === "PRICING_UNAVAILABLE" ? undefined : Promise.reject(error));
-    if (!fare) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
-    const total = fare.totalCents;
     const route = await computeRoute(
       input.origin,
       finalDestination.location,
       destinations.slice(0, -1).map(stop => stop.location)
     ).catch(() => undefined);
+    let fare: Awaited<ReturnType<typeof calculateTerritorialFare>>;
+    try {
+      fare = await calculateTerritorialFare({
+        serviceAreaId: operationalArea.id, origin: input.origin,
+        destinations: destinations.map(stop => stop.location), passengers: input.passengers,
+        travelAt: scheduledFor ?? new Date(),
+        routeLegDistancesMeters: routeLegDistances(route, destinations.length)
+      });
+    } catch (error) {
+      return fareErrorResponse(error, reply);
+    }
+    const total = fare.totalCents;
     const trip = await sql.begin(async tx => {
       const [created] = await tx`
         insert into trips (
@@ -1652,7 +1679,7 @@ export async function buildApp() {
           ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
           ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           ${input.originReference ?? null}, ${finalDestination.reference}, ${input.notes || null}, ${zone},
-           ${fare.pricingVersion}, ${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, legs: fare.legs })}::jsonb,
+           ${fare.pricingVersion}, ${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: fare.legs })}::jsonb,
           ${total}, ${scheduledFor ?? null}, ${scheduledFor ? "SCHEDULED" : null},
           ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
@@ -1917,14 +1944,19 @@ export async function buildApp() {
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const fare = await calculateTerritorialFare({
-      serviceAreaId: operationalArea.id, origin: input.origin,
-      destinations: destinations.map(stop => stop.location), passengers: input.passengers,
-      travelAt: scheduledFor
-    }).catch(error => error instanceof Error && error.message === "PRICING_UNAVAILABLE" ? undefined : Promise.reject(error));
-    if (!fare) return reply.code(503).send({ error: "PRICING_UNAVAILABLE" });
-    const total = fare.totalCents;
     const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location)).catch(() => undefined);
+    let fare: Awaited<ReturnType<typeof calculateTerritorialFare>>;
+    try {
+      fare = await calculateTerritorialFare({
+        serviceAreaId: operationalArea.id, origin: input.origin,
+        destinations: destinations.map(stop => stop.location), passengers: input.passengers,
+        travelAt: scheduledFor,
+        routeLegDistancesMeters: routeLegDistances(route, destinations.length)
+      });
+    } catch (error) {
+      return fareErrorResponse(error, reply);
+    }
+    const total = fare.totalCents;
     const tripId = (request.params as { tripId: string }).tripId;
     const updated = await sql.begin(async tx => {
       const [trip] = await tx`
@@ -1933,7 +1965,7 @@ export async function buildApp() {
           destination=ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           origin_reference=${input.originReference ?? null}, destination_reference=${finalDestination.reference},
           passenger_notes=${input.notes || null}, service_zone=${zone}, pricing_version=${fare.pricingVersion},
-          pricing_snapshot=${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, legs: fare.legs })}::jsonb,
+          pricing_snapshot=${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: fare.legs })}::jsonb,
           quoted_total_cents=${total}, scheduled_for=${scheduledFor},
           estimated_distance_meters=${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},

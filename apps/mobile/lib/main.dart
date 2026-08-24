@@ -8616,34 +8616,41 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       return;
     }
     announcedOfferIds[tripId] = now;
-    final shown = InAppNotificationBanner.show(
-      context,
-      id: 'trip-offer-$tripId',
-      title: title ?? 'Nuevo viaje disponible',
-      message: body ?? 'Un pasajero solicita un viaje cercano.',
-      actionLabel: 'Ver viaje',
-      onTap: () {
-        _moveDriverSheet(.58);
-        unawaited(refresh());
-      },
-    );
+    var nativeNotificationShown = false;
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        nativeNotificationShown =
+            await nativeActions.invokeMethod<bool>('showForegroundTripOffer', {
+                  'tripId': tripId,
+                  'title': title ?? 'Nuevo viaje disponible',
+                  'body': body ?? 'Un pasajero solicita un viaje cercano.',
+                }) ??
+                false;
+      } on PlatformException catch (error) {
+        debugPrint(
+            'No se pudo mostrar la alerta sonora del viaje: ${error.code}');
+      }
+    }
+    // Android muestra una notificación nativa con sonido. El banner queda como
+    // respaldo para otras plataformas o cuando el permiso fue rechazado, para
+    // no presentar dos avisos distintos por la misma oferta.
+    final shown = nativeNotificationShown ||
+        InAppNotificationBanner.show(
+          context,
+          id: 'trip-offer-$tripId',
+          title: title ?? 'Nuevo viaje disponible',
+          message: body ?? 'Un pasajero solicita un viaje cercano.',
+          actionLabel: 'Ver viaje',
+          onTap: () {
+            _moveDriverSheet(.58);
+            unawaited(refresh());
+          },
+        );
     if (!shown) return;
     final generatedAt = eventAt == null ? null : DateTime.tryParse(eventAt);
     if (generatedAt != null) {
       debugPrint(
           'Solicitud visible ${DateTime.now().difference(generatedAt).inMilliseconds} ms después del evento.');
-    }
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      try {
-        await nativeActions.invokeMethod<bool>('showForegroundTripOffer', {
-          'tripId': tripId,
-          'title': title ?? 'Nuevo viaje disponible',
-          'body': body ?? 'Un pasajero solicita un viaje cercano.',
-        });
-      } on PlatformException catch (error) {
-        debugPrint(
-            'No se pudo mostrar la alerta sonora del viaje: ${error.code}');
-      }
     }
   }
 

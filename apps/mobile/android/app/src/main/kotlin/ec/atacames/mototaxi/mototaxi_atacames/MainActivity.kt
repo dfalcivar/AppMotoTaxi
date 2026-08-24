@@ -170,7 +170,7 @@ class MainActivity : FlutterFragmentActivity() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, "costa_go_trip_offers_v2")
+            Notification.Builder(this, "costa_go_trip_offers_v3")
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
@@ -276,7 +276,7 @@ class MainActivity : FlutterFragmentActivity() {
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
             val offerChannel = NotificationChannel(
-                "costa_go_trip_offers_v2",
+                "costa_go_trip_offers_v3",
                 "Nuevas solicitudes de viaje",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
