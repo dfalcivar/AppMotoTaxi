@@ -57,6 +57,21 @@ describe("consola administrativa", () => {
     expect(response.json().error).toBe("DATABASE_UNAVAILABLE");
   });
 
+  it("valida la métrica solicitada y no inventa su detalle sin base", async () => {
+    const invalid = await app.inject({ method: "GET", url: "/v1/admin/dashboard/details/desconocida", headers: { authorization: `Bearer ${adminToken}` } });
+    expect(invalid.statusCode).toBe(404);
+    expect(invalid.json().error).toBe("DASHBOARD_METRIC_NOT_FOUND");
+    const valid = await app.inject({ method: "GET", url: "/v1/admin/dashboard/details/connectedDrivers", headers: { authorization: `Bearer ${adminToken}` } });
+    expect(valid.statusCode).toBe(503);
+    expect(valid.json().error).toBe("DATABASE_UNAVAILABLE");
+  });
+
+  it("no expone una ficha de cooperativa inexistente sin base", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/admin/cooperatives/11111111-1111-4111-8111-111111111111/overview", headers: { authorization: `Bearer ${adminToken}` } });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error).toBe("DATABASE_UNAVAILABLE");
+  });
+
   it("protege los centros operativos y no inventa datos sin base", async () => {
     const supportOperations = await app.inject({ method: "GET", url: "/v1/admin/operations", headers: { authorization: `Bearer ${supportToken}` } });
     const supportAlerts = await app.inject({ method: "GET", url: "/v1/admin/alerts", headers: { authorization: `Bearer ${supportToken}` } });

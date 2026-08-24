@@ -1,11 +1,13 @@
 export type Zone = "URBAN" | "EXTENDED";
 export type AdminRole = "ADMIN" | "SUPPORT" | "SUPER_ADMIN" | "ADMIN_OPERACIONES" | "SOPORTE" | "ANALISTA_COOPERATIVA" | "COLLECTOR" | "FINANCE" | "COMMERCIAL";
 export interface SessionUser {
+  id?: string;
   email: string;
   name: string;
   role: AdminRole;
   permissions: string[];
   cooperativeId?: string;
+  mustChangePassword?: boolean;
   expiresAt?: number;
 }
 export interface Session { token: string; user: SessionUser }
@@ -32,7 +34,9 @@ export async function apiFetch<T>(path: string, token?: string, init: RequestIni
   if (init.body) headers.set("content-type", "application/json");
   if (token) headers.set("authorization", `Bearer ${token}`);
   try {
-    return parse<T>(await fetcher(`${base}${persistentPath(path, init.method)}`, { ...init, headers }));
+    const response=await fetcher(`${base}${persistentPath(path, init.method)}`, { ...init, headers });
+    if(response.status===401&&path!=="/v1/admin/session"&&typeof window!=="undefined")window.dispatchEvent(new CustomEvent("admin-session-expired"));
+    return parse<T>(response);
   } catch (error) {
     if (error instanceof TypeError) {
       captureAdminError(error, { path, method: init.method ?? "GET", kind: "network" });
@@ -42,6 +46,7 @@ export async function apiFetch<T>(path: string, token?: string, init: RequestIni
   }
 }
 export function login(email: string, password: string) { return apiFetch<Session>("/v1/admin/session", undefined, { method: "POST", body: JSON.stringify({ email, password }) }); }
+export function changeAdminPassword(token: string, password: string) { return apiFetch<Session>("/v1/admin/change-password", token, { method: "POST", body: JSON.stringify({ password }) }); }
 export async function requestQuote(input: QuoteRequest, signal?: AbortSignal, fetcher: typeof fetch = fetch): Promise<Quote> {
   return apiFetch<Quote>("/v1/quotes", undefined, { method: "POST", body: JSON.stringify(input), signal }, fetcher);
 }

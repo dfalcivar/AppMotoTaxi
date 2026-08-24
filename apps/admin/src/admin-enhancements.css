@@ -1,0 +1,17 @@
+.interactive-metric,.interactive-signal{font:inherit;color:inherit;text-align:left;cursor:pointer;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+.interactive-metric:hover,.interactive-signal:hover,.interactive-metric:focus-visible,.interactive-signal:focus-visible{transform:translateY(-2px);border-color:#8fc5cc;box-shadow:0 16px 34px rgba(25,70,78,.11);outline:2px solid transparent}
+.interactive-metric small,.interactive-signal small{color:#087f8c}
+.interactive-signal{width:100%;display:grid;gap:6px}
+.metric-detail-modal{width:min(1120px,94vw);max-height:88vh;overflow:auto}
+.metric-detail-search,.module-toolbar,.cooperative-tabs,.metric-detail-footer{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.metric-detail-search input,.module-toolbar input,.cooperative-tabs input{flex:1;min-width:220px}
+.metric-detail-footer{justify-content:space-between;margin-top:18px}
+.cooperatives-module{display:grid;gap:18px}
+.cooperative-create{max-width:none}
+.record-link{display:grid;text-align:left;gap:3px}
+.record-link small{font-weight:500}
+.cooperative-overview-modal{width:min(1180px,95vw);max-height:90vh;overflow:auto}
+.cooperative-stats{grid-template-columns:repeat(4,minmax(145px,1fr));margin-top:18px}
+.cooperative-tabs{margin:4px 0 18px}
+.cooperative-tabs button{white-space:nowrap}
+@media(max-width:720px){.metric-detail-modal,.cooperative-overview-modal{width:96vw;max-height:94vh;padding:18px}.cooperative-stats{grid-template-columns:repeat(2,1fr)}.metric-detail-footer{align-items:flex-start}.metric-detail-footer .row-actions{width:100%;overflow:auto}}

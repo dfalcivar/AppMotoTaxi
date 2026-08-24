@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
@@ -24,6 +24,8 @@ import { sendPush } from "./push.js";
 import { notifyDriverApproved } from "./approval-notifications.js";
 import { dashboardFilters } from "./dashboard-filters.js";
 import { dashboardAnalytics, driverDashboardProfile } from "./dashboard-analytics.js";
+import { dashboardDetailMetrics, dashboardMetricDetails } from "./dashboard-details.js";
+import { cooperativeOverview } from "./cooperative-analytics.js";
 import { serviceAreaPublishSchema, serviceAreaRoleSchema } from "./service-areas.js";
 
 export type { AdminRole, Permission } from "./permissions.js";
@@ -332,18 +334,37 @@ function guardError(error: unknown, reply: any) { const message = error instance
 export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   publishTripStatus(tripId: string, status: string): void;
 }) {
+  app.addHook("preHandler", async (request, reply) => {
+    const path = request.url.split("?", 1)[0] ?? "";
+    if (!process.env.DATABASE_URL || !path.startsWith("/v1/admin/") || path === "/v1/admin/session") return;
+    const authorization = request.headers.authorization;
+    const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
+    const user = userFrom(request);
+    if (!token || !user || !isAdminRole(user.role)) return;
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    const [session] = await database()`
+      select 1 from admin_sessions
+      where token_hash=${tokenHash} and revoked_at is null and expires_at>now()
+    `;
+    if (!session) return reply.code(401).send({ error: "ADMIN_SESSION_REVOKED" });
+    if (user.mustChangePassword && !["/v1/admin/me", "/v1/admin/change-password"].includes(path)) {
+      return reply.code(428).send({ error: "PASSWORD_CHANGE_REQUIRED" });
+    }
+  });
+
   app.post("/v1/admin/session", async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOGIN" });
     if (process.env.DATABASE_URL) {
       const rows = await database()`
-        select id, email, full_name, role, cooperative_id::text as "cooperativeId"
+        select id, email, full_name, role, cooperative_id::text as "cooperativeId",
+          must_change_password as "mustChangePassword"
         from users
         where lower(email) = lower(${parsed.data.email})
           and password_hash = crypt(${parsed.data.password}, password_hash)
           and status = 'ACTIVE'
           and role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE', 'COMMERCIAL')
       `;
-      const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole; cooperativeId?: string } | undefined;
+      const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole; cooperativeId?: string; mustChangePassword: boolean } | undefined;
       if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
       const overrides = await database()`
         select permission, allowed
@@ -356,11 +377,23 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         name: account.full_name,
         role: account.role,
         cooperativeId: account.cooperativeId,
+        sessionId: randomUUID(),
+        mustChangePassword: Boolean(account.mustChangePassword),
         permissions: permissionsForRole(account.role, overrides),
         expiresAt: Date.now() + 8 * 60 * 60 * 1000
       };
+      const sessionId = user.sessionId!;
+      const expiresAt = user.expiresAt!;
+      const token = tokenFor(user);
+      const tokenHash = createHash("sha256").update(token).digest("hex");
+      await database().begin(async tx => {
+        await tx`update users set active_session_id=${sessionId}::uuid where id=${account.id}`;
+        await tx`update admin_sessions set revoked_at=coalesce(revoked_at,now()) where user_id=${account.id} and revoked_at is null`;
+        await tx`insert into admin_sessions(id,user_id,token_hash,expires_at) values (${sessionId}::uuid,${account.id},${tokenHash},${new Date(expiresAt)})`;
+        await tx`delete from admin_sessions where expires_at<now()-interval '7 days'`;
+      });
       audit(user, "LOGIN", "SESSION", "Inicio de sesión administrativo");
-      return { token: tokenFor(user), user };
+      return { token, user };
     }
     const adminEmail = process.env.ADMIN_EMAIL ?? "admin@mototaxi.local";
     const adminPassword = process.env.ADMIN_PASSWORD ?? "Mototaxi2026!";
@@ -374,6 +407,38 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return { token: tokenFor(user), user };
   });
 
+  app.post("/v1/admin/change-password", async (request, reply) => { try {
+    const actor = requireAdminSession(request);
+    const body = passwordResetSchema.parse(request.body);
+    if (!process.env.DATABASE_URL || !actor.id) return reply.code(503).send({ error:"DATABASE_UNAVAILABLE" });
+    const [updated] = await database()`
+      update users set password_hash=crypt(${body.password},gen_salt('bf')),
+        must_change_password=false,active_session_id=null,updated_at=now()
+      where id=${actor.id} and not(password_hash=crypt(${body.password},password_hash))
+      returning id::text,email,full_name,role,cooperative_id::text as "cooperativeId"
+    `;
+    if (!updated) return reply.code(409).send({ error:"PASSWORD_MUST_BE_DIFFERENT" });
+    const overrides = await database()`select permission,allowed from admin_permission_overrides where user_id=${actor.id}` as unknown as PermissionOverride[];
+    const user: SessionUser = {
+      id:String(updated.id),email:String(updated.email),name:String(updated.full_name),role:updated.role as AdminRole,
+      cooperativeId:updated.cooperativeId ? String(updated.cooperativeId) : undefined,
+      sessionId:randomUUID(),mustChangePassword:false,
+      permissions:permissionsForRole(updated.role as AdminRole,overrides),expiresAt:Date.now()+8*60*60*1000
+    };
+    const sessionId=user.sessionId!; const expiresAt=user.expiresAt!; const actorId=actor.id;
+    const token=tokenFor(user); const tokenHash=createHash("sha256").update(token).digest("hex");
+    await database().begin(async tx=>{
+      await tx`update admin_sessions set revoked_at=coalesce(revoked_at,now()) where user_id=${actorId} and revoked_at is null`;
+      await tx`insert into admin_sessions(id,user_id,token_hash,expires_at) values (${sessionId}::uuid,${actorId},${tokenHash},${new Date(expiresAt)})`;
+      await tx`update users set active_session_id=${sessionId}::uuid where id=${actorId}`;
+    });
+    await persistAudit(user,"ADMIN_PASSWORD_CHANGED","USER",String(actor.id),"Contraseña temporal reemplazada por el usuario");
+    return { token,user };
+  } catch(e) {
+    if(e instanceof z.ZodError)return reply.code(400).send({error:"WEAK_PASSWORD",message:passwordPolicyMessage});
+    return guardError(e,reply);
+  } });
+
   app.get("/v1/admin/me", async (request, reply) => { try { return requireAdminSession(request); } catch (e) { return guardError(e, reply); } });
   app.get("/v1/admin/access/roles", async (request, reply) => { try {
     requirePermission(request, "roles:manage");
@@ -385,6 +450,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return await database()`
       select u.id::text, u.full_name as name, u.email, u.role,
         u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName",
+        u.status, u.must_change_password as "mustChangePassword", u.updated_at as "updatedAt",
         coalesce(jsonb_agg(jsonb_build_object('permission', permission.permission, 'allowed', permission.allowed))
           filter (where permission.permission is not null), '[]'::jsonb) as overrides
       from users u
@@ -412,10 +478,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const [account] = await database()`
       insert into users
         (phone_e164, full_name, email, password_hash, role, status,
-          cooperative_id, phone_verified_at, terms_accepted_at)
+          cooperative_id, phone_verified_at, terms_accepted_at, must_change_password)
       values (${normalizedPhone}, ${body.fullName}, ${normalizedEmail},
         crypt(${body.password}, gen_salt('bf')), ${body.role}, 'ACTIVE',
-        ${body.cooperativeId ?? null}, now(), now())
+        ${body.cooperativeId ?? null}, now(), now(), true)
       returning id::text, full_name as name, email, role,
         cooperative_id::text as "cooperativeId"
     `;
@@ -481,10 +547,11 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       select c.id::text, c.name, c.legal_name as "legalName",
         c.registration_number as "registrationNumber", c.email,
         c.phone_e164 as phone, c.status, c.created_at as "createdAt",
-        count(distinct driver.id)::int as drivers
-      from cooperatives c
-      left join users driver on driver.cooperative_id=c.id and driver.role='DRIVER'
-      group by c.id order by c.name
+        (select count(*)::int from users u where u.cooperative_id=c.id and u.role='DRIVER' and u.deleted_at is null) drivers,
+        (select count(*)::int from users u where u.cooperative_id=c.id and u.role='DRIVER' and u.status='ACTIVE' and u.deleted_at is null) as "activeDrivers",
+        (select count(*)::int from users u join drivers d on d.user_id=u.id where u.cooperative_id=c.id and u.role='DRIVER' and u.status='ACTIVE' and u.deleted_at is null and d.last_location_at>now()-interval '5 minutes') as "connectedDrivers",
+        (select count(*)::int from trips t where t.cooperative_id=c.id and t.requested_at>=date_trunc('month',now())) as "tripsThisMonth"
+      from cooperatives c order by c.name
     `;
   } catch (e) { return guardError(e, reply); } });
   app.post("/v1/admin/cooperatives", async (request, reply) => { try {
@@ -543,10 +610,25 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!summary) return reply.code(404).send({ error: "COOPERATIVE_NOT_FOUND" });
     return summary;
   } catch (e) { return guardError(e, reply); } });
+  app.get("/v1/admin/cooperative-dashboard/overview", async (request, reply) => { try {
+    const user=requirePermission(request,"cooperative_dashboard:view");
+    if(!process.env.DATABASE_URL)return reply.code(503).send({error:"DATABASE_UNAVAILABLE"});
+    const overview=await cooperativeOverview(String(user.cooperativeId));
+    if(!overview)return reply.code(404).send({error:"COOPERATIVE_NOT_FOUND"});
+    return overview;
+  } catch(e){return guardError(e,reply);} });
+  app.get("/v1/admin/cooperatives/:id/overview", async (request, reply) => { try {
+    requirePermission(request,"cooperatives:view");
+    if(!process.env.DATABASE_URL)return reply.code(503).send({error:"DATABASE_UNAVAILABLE"});
+    const overview=await cooperativeOverview((request.params as {id:string}).id);
+    if(!overview)return reply.code(404).send({error:"COOPERATIVE_NOT_FOUND"});
+    return overview;
+  } catch(e){return guardError(e,reply);} });
   app.post("/v1/admin/users/:id/reset-password", async (request, reply) => { try {
     const user = requirePermission(request, "users:manage");
     const body = passwordResetSchema.parse(request.body);
     const id = (request.params as { id: string }).id;
+    if (user.id === id) return reply.code(409).send({ error:"CANNOT_RESET_CURRENT_USER" });
     if (!process.env.DATABASE_URL) {
       const account = drivers.find(item => item.id === id) ?? passengers.find(item => item.id === id);
       if (!account) return reply.code(404).send({ error: "NOT_FOUND" });
@@ -560,10 +642,11 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
             active_session_id=null,
             must_change_password=true,
             updated_at=now()
-        where id=${id} and role in ('PASSENGER','DRIVER')
+        where id=${id} and deleted_at is null
         returning id::text, role
       `;
       if (updated) {
+        await tx`update admin_sessions set revoked_at=coalesce(revoked_at,now()) where user_id=${id} and revoked_at is null`;
         await tx`delete from device_tokens where user_id=${id}`;
         await tx`delete from biometric_credentials where user_id=${id}`;
       }
@@ -596,6 +679,18 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DASHBOARD_FILTERS", details: e.issues });
     return guardError(e, reply);
   } });
+  app.get("/v1/admin/dashboard/details/:metric", async (request, reply) => { try {
+    requirePermission(request,"dashboard:view");
+    const metric=String((request.params as {metric:string}).metric);
+    if(!(dashboardDetailMetrics as readonly string[]).includes(metric))return reply.code(404).send({error:"DASHBOARD_METRIC_NOT_FOUND"});
+    if(!process.env.DATABASE_URL)return reply.code(503).send({error:"DATABASE_UNAVAILABLE"});
+    const query=request.query as Record<string,unknown>;
+    const filters=dashboardFilters(query);
+    const search=typeof query.search==="string"?query.search.slice(0,120):"";
+    const page=Math.max(1,Math.min(10000,Number(query.page)||1));
+    const pageSize=Math.max(5,Math.min(50,Number(query.pageSize)||15));
+    return await dashboardMetricDetails(filters,metric as typeof dashboardDetailMetrics[number],{search,page,pageSize});
+  } catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DASHBOARD_FILTERS",details:e.issues});return guardError(e,reply);} });
   app.get("/v1/admin/operations", async (request, reply) => { try {
     requirePermission(request, "operations:view");
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
