@@ -43,6 +43,34 @@ void main() {
         'miércoles, 30 de septiembre de 2026');
   });
 
+  group('ubicación provisional al iniciar', () {
+    final now = DateTime(2026, 8, 23, 15);
+
+    test('acepta una ubicación reciente y con precisión suficiente', () {
+      expect(
+          isUsableProvisionalLocation(
+              timestamp: now.subtract(const Duration(minutes: 4)),
+              accuracyMeters: 35,
+              now: now),
+          isTrue);
+    });
+
+    test('rechaza una ubicación antigua o imprecisa', () {
+      expect(
+          isUsableProvisionalLocation(
+              timestamp: now.subtract(const Duration(minutes: 11)),
+              accuracyMeters: 35,
+              now: now),
+          isFalse);
+      expect(
+          isUsableProvisionalLocation(
+              timestamp: now.subtract(const Duration(minutes: 2)),
+              accuracyMeters: 140,
+              now: now),
+          isFalse);
+    });
+  });
+
   test('el total de tarifa coincide con todos los conceptos mostrados', () {
     final summary = tripFareBreakdown({
       'baseFareCents': 155,

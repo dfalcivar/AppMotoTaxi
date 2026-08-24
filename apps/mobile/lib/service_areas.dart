@@ -46,6 +46,27 @@ class ServiceArea {
       polygon.isNotEmpty &&
       _insideRing(point, polygon.first) &&
       !polygon.skip(1).any((hole) => _insideRing(point, hole)));
+
+  /// Centro aproximado de los límites publicados. Se utiliza únicamente para
+  /// mostrar el mapa mientras llega el GPS; nunca representa al usuario ni se
+  /// confirma como punto de origen.
+  LatLng? get referenceCenter {
+    final points = polygons
+        .expand((polygon) => polygon.isEmpty ? const <LatLng>[] : polygon.first)
+        .toList();
+    if (points.isEmpty) return null;
+    final minLatitude =
+        points.map((point) => point.latitude).reduce((a, b) => a < b ? a : b);
+    final maxLatitude =
+        points.map((point) => point.latitude).reduce((a, b) => a > b ? a : b);
+    final minLongitude =
+        points.map((point) => point.longitude).reduce((a, b) => a < b ? a : b);
+    final maxLongitude =
+        points.map((point) => point.longitude).reduce((a, b) => a > b ? a : b);
+    return LatLng(
+        (minLatitude + maxLatitude) / 2, (minLongitude + maxLongitude) / 2);
+  }
+
   static bool _insideRing(LatLng point, List<LatLng> ring) {
     var inside = false;
     for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -78,6 +99,14 @@ class ServiceAreaCatalog {
   ServiceArea? get reviewArea {
     for (final area in areas) {
       if (area.reviewLocation != null) return area;
+    }
+    return null;
+  }
+
+  LatLng? get referenceCenter {
+    for (final area in areas) {
+      final center = area.reviewLocation ?? area.referenceCenter;
+      if (center != null) return center;
     }
     return null;
   }

@@ -694,7 +694,7 @@ Future<bool> ensureLocationDisclosure(BuildContext context) async {
   return accepted;
 }
 
-Future<Position> currentGpsPosition(BuildContext context) async {
+Future<void> ensureLocationPermission(BuildContext context) async {
   if (!await Geolocator.isLocationServiceEnabled()) {
     throw const ApiException(
         'Activa la ubicación GPS del teléfono para continuar.');
@@ -712,15 +712,31 @@ Future<Position> currentGpsPosition(BuildContext context) async {
     throw const ApiException(
         'Permite el acceso a la ubicación en los ajustes del teléfono.');
   }
+}
+
+bool isUsableProvisionalLocation({
+  required DateTime timestamp,
+  required double accuracyMeters,
+  DateTime? now,
+  Duration maximumAge = const Duration(minutes: 10),
+  double maximumAccuracyMeters = 100,
+}) {
+  final age = (now ?? DateTime.now()).difference(timestamp);
+  return !age.isNegative &&
+      age <= maximumAge &&
+      accuracyMeters >= 0 &&
+      accuracyMeters <= maximumAccuracyMeters;
+}
+
+Future<Position> currentGpsPosition(BuildContext context) async {
+  await ensureLocationPermission(context);
   try {
     return await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)));
+            accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 15)));
   } on TimeoutException {
-    final lastPosition = await Geolocator.getLastKnownPosition();
-    if (lastPosition != null) return lastPosition;
     throw const ApiException(
-        'No se pudo obtener la ubicación. Verifica el GPS e inténtalo nuevamente.');
+        'El GPS está tardando. Inténtalo nuevamente o elige el punto en el mapa.');
   }
 }
 
@@ -5284,6 +5300,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   DateTime? scheduledFor;
   String? editingScheduledTripId;
   LatLng? currentLocation;
+  LatLng? mapReferenceLocation;
   LatLng? driverPosition;
   double driverBearing = 0;
   final Map<String, LatLng> nearbyDrivers = {};
@@ -5315,6 +5332,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   bool reviewLocationActive = false;
   bool coverageDialogOpen = false;
   bool initialPushHandled = false;
+  bool initialLocationLoading = false;
+  bool usingProvisionalLocation = false;
   @override
   void initState() {
     super.initState();
@@ -5392,7 +5411,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     loadSchedulingSettings();
     loadFavoritePlaces();
     loadServiceAreas();
-    Future.microtask(() => useCurrentLocation(explicit: false));
+    Future.microtask(initializePassengerLocation);
     timer = Timer.periodic(const Duration(seconds: 15), (_) {
       unawaited(load());
       unawaited(refreshNearbyDrivers());
@@ -5423,6 +5442,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       setState(() {
         selectedOriginArea =
             pickup == null ? null : serviceAreaCatalog?.find(pickup!);
+        mapReferenceLocation ??= serviceAreaCatalog?.referenceCenter;
       });
     } catch (error) {
       debugPrint('No se pudo actualizar el catálogo de zonas: $error');
@@ -6065,6 +6085,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               hasOrigin: pickup != null);
       setState(() {
         currentLocation = point;
+        mapReferenceLocation = point;
+        usingProvisionalLocation = false;
         if (!applyAsOrigin) return;
         if (explicit) originSelectionGuard.commitExplicitGps();
         pickup = point;
@@ -6100,6 +6122,100 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       }
     } catch (e) {
       if (mounted) setState(() => message = e.toString());
+    }
+  }
+
+  Future<void> initializePassengerLocation() async {
+    if (active != null || initialLocationLoading) return;
+    final gpsRequestRevision = originSelectionGuard.startGpsRequest();
+    if (mounted) {
+      setState(() {
+        initialLocationLoading = true;
+        message = 'Obteniendo tu ubicación GPS…';
+      });
+    }
+    try {
+      await ensureLocationPermission(context);
+      final freshPosition = Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: Duration(seconds: 15)));
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (mounted && active == null && lastKnown != null) {
+        final provisional = LatLng(lastKnown.latitude, lastKnown.longitude);
+        final usable = isUsableProvisionalLocation(
+            timestamp: lastKnown.timestamp, accuracyMeters: lastKnown.accuracy);
+        final provisionalArea = serviceAreaCatalog?.find(provisional);
+        final applyAsOrigin = usable &&
+            (serviceAreaCatalog == null || provisionalArea != null) &&
+            originSelectionGuard.canApplyAutomaticGps(gpsRequestRevision,
+                hasOrigin: pickup != null);
+        setState(() {
+          mapReferenceLocation =
+              usable ? provisional : serviceAreaCatalog?.referenceCenter;
+          if (usable) currentLocation = provisional;
+          if (applyAsOrigin) {
+            pickup = provisional;
+            selectedOriginArea = provisionalArea;
+            origin.text = 'Ubicación aproximada';
+            usingProvisionalLocation = true;
+            message =
+                'Mostrando tu última ubicación mientras confirmamos el GPS…';
+          }
+        });
+      }
+      final position = await freshPosition;
+      if (!mounted || active != null) return;
+      final point = LatLng(position.latitude, position.longitude);
+      final applyAsOrigin = originSelectionGuard.canApplyAutomaticGps(
+          gpsRequestRevision,
+          hasOrigin: pickup != null && !usingProvisionalLocation);
+      setState(() {
+        currentLocation = point;
+        mapReferenceLocation = point;
+        usingProvisionalLocation = false;
+        if (applyAsOrigin) {
+          pickup = point;
+          selectedOriginArea = serviceAreaCatalog?.find(point);
+          origin.text = 'Mi ubicación actual';
+          message = 'Ubicación GPS confirmada.';
+        }
+      });
+      if (!applyAsOrigin) return;
+      if (serviceAreaCatalog != null && selectedOriginArea == null) {
+        final code = await resolveCoverageErrorCode(point);
+        if (!mounted || pickup != point || active != null) return;
+        final coverageMessage = mensajeApi(code);
+        setState(() => message = coverageMessage);
+        unawaited(showPassengerCoverageError(code, coverageMessage));
+        return;
+      }
+      realtime.subscribeNearby(point.latitude, point.longitude);
+      unawaited(refreshNearbyDrivers(point));
+      try {
+        final result = await api.reverse(widget.s.token, point);
+        if (!mounted || pickup != point || active != null) return;
+        setState(() {
+          origin.text = cleanAddressLabel(result['label'],
+              fallback: 'Mi ubicación actual');
+          message = 'Origen actualizado con tu ubicación GPS.';
+        });
+      } catch (_) {
+        if (mounted && pickup == point) {
+          setState(() => message =
+              'Origen confirmado por GPS; la dirección escrita no está disponible.');
+        }
+      }
+    } on TimeoutException {
+      if (mounted) {
+        setState(() => message = usingProvisionalLocation
+            ? 'Usamos temporalmente tu última ubicación. Pulsa ubicación actual para actualizarla.'
+            : 'El GPS está tardando. Puedes elegir el origen en el mapa o volver a intentarlo.');
+      }
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => initialLocationLoading = false);
     }
   }
 
@@ -7993,6 +8109,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                               : _destinationPoints.sublist(
                                   0, _destinationPoints.length - 1)),
                       currentLocation: currentLocation,
+                      referenceLocation: mapReferenceLocation ??
+                          serviceAreaCatalog?.referenceCenter,
                       driverPosition: driverPosition,
                       driverBearing: driverBearing,
                       routePoints: routePoints,

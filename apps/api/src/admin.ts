@@ -123,7 +123,8 @@ const fareRuleSchema = z.object({
   originSectorId: z.string().uuid(), destinationSectorId: z.string().uuid(),
   minimumPassengers: z.number().int().min(1).max(3), maximumPassengers: z.number().int().min(1).max(3),
   dayTotalCents: z.number().int().nonnegative(), nightTotalCents: z.number().int().nonnegative(),
-  bidirectional: z.boolean().default(true), enabled: z.boolean().default(false)
+  bidirectional: z.boolean().default(true), enabled: z.boolean().default(false),
+  priority: z.number().int().min(-1000).max(1000).default(0)
 }).refine(value => value.maximumPassengers >= value.minimumPassengers, { message: "INVALID_PASSENGER_RANGE" });
 const serviceAreaStatusSchema = z.object({ enabled: z.boolean() });
 const serviceAreaAccessSchema = z.object({
@@ -1271,23 +1272,25 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return database()`select r.id::text,r.service_area_id::text as "serviceAreaId",r.origin_sector_id::text as "originSectorId",
       origin.name as "originSector",r.destination_sector_id::text as "destinationSectorId",destination.name as "destinationSector",
       r.minimum_passengers as "minimumPassengers",r.maximum_passengers as "maximumPassengers",
-      r.day_total_cents as "dayTotalCents",r.night_total_cents as "nightTotalCents",r.bidirectional,r.enabled
+      r.day_total_cents as "dayTotalCents",r.night_total_cents as "nightTotalCents",r.bidirectional,r.enabled,r.priority
       from fare_route_rules r join fare_sectors origin on origin.id=r.origin_sector_id
       join fare_sectors destination on destination.id=r.destination_sector_id order by origin.name,destination.name,r.minimum_passengers`;
   } catch(e) { return guardError(e,reply); } });
   app.post("/v1/admin/fare-rules", async (request, reply) => { try {
     const user=requirePermission(request,"pricing:manage");const body=fareRuleSchema.parse(request.body);
-    const [valid]=await database()`select count(*)::int count from fare_sectors where id in (${body.originSectorId}::uuid,${body.destinationSectorId}::uuid) and service_area_id=${body.serviceAreaId}::uuid`;
-    if(Number(valid?.count)!==2)return reply.code(400).send({error:"FARE_SECTORS_MUST_SHARE_SERVICE_AREA"});
+    const [valid]=await database()`select
+      exists(select 1 from fare_sectors where id=${body.originSectorId}::uuid and service_area_id=${body.serviceAreaId}::uuid) origin_valid,
+      exists(select 1 from fare_sectors where id=${body.destinationSectorId}::uuid and service_area_id=${body.serviceAreaId}::uuid) destination_valid`;
+    if(!valid?.origin_valid||!valid?.destination_valid)return reply.code(400).send({error:"FARE_SECTORS_MUST_SHARE_SERVICE_AREA"});
     const [item]=body.id
       ? await database()`update fare_route_rules set origin_sector_id=${body.originSectorId}::uuid,destination_sector_id=${body.destinationSectorId}::uuid,
           minimum_passengers=${body.minimumPassengers},maximum_passengers=${body.maximumPassengers},day_total_cents=${body.dayTotalCents},
-          night_total_cents=${body.nightTotalCents},bidirectional=${body.bidirectional},enabled=${body.enabled},updated_by=${user.id!},updated_at=now()
+          night_total_cents=${body.nightTotalCents},bidirectional=${body.bidirectional},enabled=${body.enabled},priority=${body.priority},updated_by=${user.id!},updated_at=now()
           where id=${body.id}::uuid returning id::text`
       : await database()`insert into fare_route_rules(service_area_id,origin_sector_id,destination_sector_id,minimum_passengers,maximum_passengers,
-          day_total_cents,night_total_cents,bidirectional,enabled,created_by,updated_by)
+          day_total_cents,night_total_cents,bidirectional,enabled,priority,created_by,updated_by)
           values(${body.serviceAreaId}::uuid,${body.originSectorId}::uuid,${body.destinationSectorId}::uuid,${body.minimumPassengers},${body.maximumPassengers},
-          ${body.dayTotalCents},${body.nightTotalCents},${body.bidirectional},false,${user.id!},${user.id!}) returning id::text`;
+          ${body.dayTotalCents},${body.nightTotalCents},${body.bidirectional},false,${body.priority},${user.id!},${user.id!}) returning id::text`;
     if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,body.id?"FARE_RULE_UPDATED":"FARE_RULE_CREATED","FARE_RULE",item.id,`${body.dayTotalCents}/${body.nightTotalCents}`);
     return reply.code(body.id?200:201).send(item);

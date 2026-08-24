@@ -102,6 +102,7 @@ class LiveMap extends StatefulWidget {
     this.onCenterCurrentLocation,
     this.mapAccessory,
     this.currentLocation,
+    this.referenceLocation,
     this.height = 320,
     this.fillAvailable = false,
     this.viewportPadding = EdgeInsets.zero,
@@ -130,6 +131,10 @@ class LiveMap extends StatefulWidget {
   /// ubicación.
   final Widget? mapAccessory;
   final LatLng? currentLocation;
+
+  /// Referencia visual para evitar una pantalla bloqueada mientras llega el
+  /// GPS. No genera marcador ni se utiliza como ubicación real del usuario.
+  final LatLng? referenceLocation;
   final double height;
   final bool fillAvailable;
   final EdgeInsets viewportPadding;
@@ -370,7 +375,10 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       widget.selfDriverPosition ??
       widget.currentLocation ??
       widget.dropoff ??
-      (widget.nearbyDrivers.isEmpty ? null : widget.nearbyDrivers.values.first);
+      (widget.nearbyDrivers.isEmpty
+          ? null
+          : widget.nearbyDrivers.values.first) ??
+      widget.referenceLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -383,9 +391,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         ),
         child: const Center(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            CircularProgressIndicator(),
+            Icon(Icons.map_outlined, size: 38),
             SizedBox(height: 12),
-            Text('Obteniendo tu ubicación GPS…'),
+            Text('Preparando el mapa…'),
           ]),
         ),
       );

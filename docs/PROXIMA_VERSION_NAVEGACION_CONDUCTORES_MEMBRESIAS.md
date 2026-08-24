@@ -2160,3 +2160,105 @@ Pendientes deliberados que no bloquean la prueba cerrada inicial:
 - reglas comerciales definitivas de comisión por punto y límites de saldo pendiente;
 - Navigation SDK nativo para iOS; el fallback de mapas externos mantiene el viaje operativo;
 - actualización futura de Gradle 8.13 a 8.14 o superior, una vez validada la compatibilidad de plugins.
+
+## 13. Pendiente: arranque rápido y adquisición inicial de ubicación
+
+### Problema observado
+
+Al abrir la aplicación del pasajero, el mapa puede permanecer demasiado tiempo en **Obteniendo tu ubicación GPS…** aunque la sesión y el formulario ya estén disponibles. El flujo actual solicita primero una posición nueva de alta precisión y espera hasta 20 segundos antes de consultar la última posición conocida. Si no existe una posición anterior y el GPS no entrega una coordenada, el mapa conserva su estado de carga sin una salida visible adecuada.
+
+Este comportamiento debe tratarse como adquisición de ubicación y no confundirse con el reposo o arranque de la API de Render. Las métricas deben separar explícitamente:
+
+- restauración de sesión local;
+- conectividad con API;
+- descarga/caché de zonas de cobertura;
+- primera posición conocida del sistema;
+- primera posición GPS actual;
+- inicialización y primera visualización del mapa.
+
+### Flujo propuesto
+
+1. Consultar inmediatamente la última ubicación conocida proporcionada por Android/iOS.
+2. Utilizarla únicamente como referencia provisional cuando sea reciente y tenga una precisión aceptable.
+3. Mostrar el mapa sin esperar de forma bloqueante una nueva fijación GPS.
+4. Solicitar en paralelo una posición actual de alta precisión.
+5. Reemplazar la referencia provisional cuando llegue una coordenada más reciente o precisa.
+6. Validar tanto la posición provisional como la definitiva contra el catálogo actual de `ServiceArea`.
+7. Si no existe ubicación conocida, mostrar una vista general de la zona autorizada sin convertir su centro en origen ni simular que el usuario se encuentra allí.
+8. Si el GPS no responde dentro del umbral configurado, mantener la pantalla utilizable y ofrecer **Reintentar**, **Usar ubicación actual** y selección manual en el mapa.
+
+### Usuario nuevo o teléfono sin ubicación conocida
+
+La última ubicación conocida pertenece al sistema operativo, no a Costa-Go ni a una zona operativa. Por eso un usuario nuevo puede tener una coordenada reciente obtenida previamente por GPS, Wi-Fi o redes móviles, pero también puede no tener ninguna.
+
+Cuando no exista una posición conocida:
+
+- no inventar coordenadas;
+- no ubicar automáticamente al usuario en Atacames, Cuenca ni en el centro de otra zona;
+- no confirmar un origen de viaje;
+- permitir visualizar una zona autorizada como referencia cartográfica;
+- informar claramente que todavía se está buscando la ubicación real;
+- permitir seleccionar manualmente el origen mientras se obtiene el GPS.
+
+### Acción **Ubicación actual**
+
+Al pulsar **Ubicación actual**, la aplicación debe solicitar una posición nueva y ubicar al usuario donde realmente se encuentre según la precisión disponible del dispositivo. Esta acción no debe limitarse a reutilizar la coordenada provisional.
+
+Comportamiento obligatorio:
+
+- solicitar una fijación GPS actual;
+- reemplazar la ubicación provisional cuando la nueva posición sea válida;
+- actualizar el marcador, la cámara y el origen solamente si la solicitud sigue vigente;
+- identificar la `ServiceArea` de la coordenada obtenida;
+- rechazar la confirmación si está fuera de una zona autorizada;
+- realizar geocodificación inversa para mostrar una dirección legible;
+- conservar la coordenada exacta aunque la dirección textual sea aproximada;
+- mostrar precisión o advertencia cuando la posición tenga un margen de error elevado;
+- permitir ajuste manual del pin;
+- nunca trasladar silenciosamente al usuario al centro de una zona.
+
+### Criterios para una posición provisional
+
+Los umbrales deberán poder ajustarse después de medir dispositivos reales. Como referencia inicial:
+
+- antigüedad máxima para usarla como origen provisional: 10 minutos;
+- precisión máxima aceptable para confirmación automática: configurable;
+- una ubicación más antigua o imprecisa puede servir para centrar aproximadamente el mapa, pero no para confirmar el origen;
+- la confirmación de viaje debe utilizar la última coordenada validada y no una referencia caducada.
+
+### Estados y mensajes de interfaz
+
+La interfaz debe diferenciar:
+
+- buscando ubicación actual;
+- usando temporalmente una ubicación conocida;
+- ubicación actualizada;
+- GPS desactivado;
+- permiso rechazado;
+- ubicación poco precisa;
+- fuera de cobertura;
+- error de red al obtener dirección o zonas.
+
+Mensaje de respaldo recomendado:
+
+> No pudimos actualizar tu ubicación. Activa la ubicación precisa, reintenta o selecciona el origen en el mapa.
+
+El error debe mostrarse en una zona visible, sin dejar un indicador girando indefinidamente.
+
+### Pruebas mínimas
+
+- usuario nuevo con GPS activo y fijación inmediata;
+- usuario nuevo sin última ubicación conocida;
+- teléfono con ubicación conocida reciente;
+- ubicación conocida antigua o imprecisa;
+- apertura dentro de un edificio con señal GPS débil;
+- permiso concedido, rechazado y rechazado permanentemente;
+- servicio de ubicación desactivado;
+- pulsar **Ubicación actual** después de cargar una posición provisional;
+- posición dentro de `ATACAMES_PROD`;
+- tester dentro de `CUENCA_TEST`;
+- posición fuera de cobertura;
+- API disponible y no disponible mientras el GPS funciona;
+- GPS disponible y no disponible mientras la API funciona;
+- regreso desde background y reactivación del GPS;
+- verificar que una respuesta GPS tardía no sobrescriba un origen seleccionado manualmente.

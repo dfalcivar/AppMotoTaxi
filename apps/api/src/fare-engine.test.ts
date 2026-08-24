@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { suggestedLocalFare, summarizeFare } from "./fare-engine.js";
+import { suggestedInterSectorFare, suggestedLocalFare, summarizeFare } from "./fare-engine.js";
 
 const pricing = {
   version: 1,
   urban_day_cents_per_passenger: 50,
   night_cents_per_passenger: 100,
+  extended_cents_per_passenger: 100,
   group_promotion_enabled: true,
   group_promotion_passengers: 3,
   group_promotion_total_cents: 100,
@@ -16,6 +17,28 @@ describe("motor tarifario territorial", () => {
   it("usa el valor local sugerido para sectores todavía no configurados", () => {
     expect(suggestedLocalFare(pricing, 1, new Date("2026-08-14T12:00:00-05:00"))).toBe(50);
     expect(suggestedLocalFare(pricing, 3, new Date("2026-08-14T23:00:00-05:00"))).toBe(200);
+  });
+
+  it("usa la tarifa extendida cuando el trayecto cruza sectores sin una regla exacta", () => {
+    expect(suggestedInterSectorFare(pricing, 1, new Date("2026-08-23T14:52:07-05:00"))).toBe(100);
+    expect(suggestedInterSectorFare(pricing, 2, new Date("2026-08-23T14:52:07-05:00"))).toBe(200);
+    expect(suggestedInterSectorFare(pricing, 1, new Date("2026-08-23T23:00:00-05:00"))).toBe(100);
+  });
+
+  it("calcula $1,10 como respaldo sugerido para dos sectores sin regla oficial", () => {
+    const result = summarizeFare([
+      {
+        order: 1,
+        originSector: "SECTOR_ORIGEN",
+        destinationSector: "SECTOR_DESTINO",
+        fareCents: suggestedInterSectorFare(pricing, 1, new Date("2026-08-23T14:52:07-05:00")),
+        commissionCents: 10,
+        suggested: true
+      }
+    ], 0);
+
+    expect(result.totalCents).toBe(110);
+    expect(result.suggested).toBe(true);
   });
 
   it("suma comisión por tramo y recargo por una parada sin desglosar la comisión", () => {
