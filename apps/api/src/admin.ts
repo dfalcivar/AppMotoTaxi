@@ -196,6 +196,7 @@ const adminUserCreateSchema = z.object({
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
   message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
 });
+const internalCampaignTypeSchema = z.enum(["COSTA_GO", "PAYMENT_POINT", "STRATEGIC_ALLIANCE", "COURTESY"]);
 const bannerSchema = z.object({
   title: z.string().trim().min(3).max(120),
   advertiserName: z.string().trim().min(2).max(120),
@@ -211,9 +212,14 @@ const bannerSchema = z.object({
   startsAt: z.string().datetime({ offset: true }),
   endsAt: z.string().datetime({ offset: true }),
   active: z.boolean().default(true),
-  sortOrder: z.number().int().min(0).max(999).default(0)
-}).refine(value => !value.endsAt || new Date(value.endsAt) > new Date(value.startsAt), {
-  message: "INVALID_BANNER_DATES"
+  sortOrder: z.number().int().min(0).max(999).default(0),
+  internalCampaignType: internalCampaignTypeSchema,
+  internalPartnerName: z.string().trim().max(160).optional().default(""),
+  internalReason: z.string().trim().min(5).max(500),
+  internalReference: z.string().trim().max(300).optional().default("")
+}).superRefine((value, context) => {
+  if (new Date(value.endsAt) <= new Date(value.startsAt)) context.addIssue({ code:"custom",path:["endsAt"],message:"INVALID_BANNER_DATES" });
+  if (value.internalCampaignType !== "COSTA_GO" && value.internalPartnerName.length < 2) context.addIssue({ code:"custom",path:["internalPartnerName"],message:"PARTNER_REQUIRED" });
 });
 const bannerUpdateSchema = z.object({
   title: z.string().trim().min(3).max(120).optional(),
@@ -230,7 +236,11 @@ const bannerUpdateSchema = z.object({
   startsAt: z.string().datetime({ offset: true }).optional(),
   endsAt: z.string().datetime({ offset: true }).optional().or(z.literal("")),
   active: z.boolean().optional(),
-  sortOrder: z.number().int().min(0).max(999).optional()
+  sortOrder: z.number().int().min(0).max(999).optional(),
+  internalCampaignType: internalCampaignTypeSchema.optional(),
+  internalPartnerName: z.string().trim().max(160).optional(),
+  internalReason: z.string().trim().min(5).max(500).optional(),
+  internalReference: z.string().trim().max(300).optional()
 }).refine(value => Boolean(value.imageBase64) === Boolean(value.imageMime), {
   message: "INVALID_BANNER_IMAGE"
 });
@@ -1407,7 +1417,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         octet_length(banner.image_data) as "imageBytes",banner.created_at as "createdAt",banner.updated_at as "updatedAt",
         banner.weight,banner.action_type as "actionType",banner.action_value as "actionValue",
         banner.service_area_id::text as "serviceAreaId",coalesce(plan.code,'BASIC') as "planCode",
-        banner.campaign_status as "campaignStatus",
+        banner.campaign_status as "campaignStatus",banner.internal_campaign_type as "internalCampaignType",
+        banner.internal_partner_name as "internalPartnerName",banner.internal_reason as "internalReason",
+        banner.internal_reference as "internalReference",banner.internal_authorized_at as "internalAuthorizedAt",
+        authorizer.full_name as "internalAuthorizedBy",
         case
           when not banner.active or banner.campaign_status <> 'ACTIVE' then 'INACTIVE'
           when banner.starts_at > now() then 'SCHEDULED'
@@ -1415,6 +1428,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
           else 'VISIBLE'
         end as "displayStatus"
       from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id
+      left join users authorizer on authorizer.id=banner.internal_authorized_by
       where banner.order_id is null
       order by banner.active desc,banner.sort_order,banner.starts_at desc
     `;
@@ -1432,17 +1446,19 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const [item] = await database()`
       insert into affiliate_banners
         (title,advertiser_name,advertising_plan_id,placement,service_area_id,weight,action_type,action_value,
-         image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,created_by)
+         image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,created_by,
+         internal_campaign_type,internal_partner_name,internal_reason,internal_reference,internal_authorized_by,internal_authorized_at)
       select ${body.title},${body.advertiserName},plan.id,${body.placement},${body.serviceAreaId ?? null},
         ${body.weight},${body.actionType},${body.actionValue || null},${body.imageMime},${image},${body.targetUrl || null},
-        ${body.startsAt},${body.endsAt},${body.active},${body.active ? "ACTIVE" : "PAUSED"},${body.sortOrder},${user.id!}
+        ${body.startsAt},${body.endsAt},${body.active},${body.active ? "ACTIVE" : "PAUSED"},${body.sortOrder},${user.id!},
+        ${body.internalCampaignType},${body.internalPartnerName||null},${body.internalReason},${body.internalReference||null},${user.id!},now()
       from advertising_plans plan where plan.code=${body.planCode} and plan.enabled=true
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
         ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
         octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
     `;
     if (!item) return reply.code(500).send({ error: "BANNER_NOT_CREATED" });
-    await persistAudit(user, "BANNER_CREATED", "AFFILIATE_BANNER", String(item.id), body.title);
+    await persistAudit(user, "INSTITUTIONAL_ADVERTISING_CREATED", "AFFILIATE_BANNER", String(item.id), `${body.internalCampaignType} · ${body.internalPartnerName||"Costa-Go"} · ${body.internalReason}${body.internalReference?` · Ref. ${body.internalReference}`:""}`);
     return reply.code(201).send(item);
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA",details:e.flatten()}); return guardError(e,reply); } });
   app.patch("/v1/admin/banners/:id", async (request, reply) => { try {
@@ -1469,6 +1485,11 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const startsAt = body.startsAt ?? current.starts_at;
     const endsAt = body.endsAt === "" ? null : (body.endsAt ?? current.ends_at);
     const placement = normalizedBannerPlacement(body.placement ?? current.placement);
+    const internalCampaignType = body.internalCampaignType ?? current.internal_campaign_type ?? "COSTA_GO";
+    const internalPartnerName = body.internalPartnerName ?? current.internal_partner_name ?? "";
+    const internalReason = body.internalReason ?? current.internal_reason ?? "Contenido institucional existente";
+    const internalReference = body.internalReference ?? current.internal_reference ?? "";
+    if (internalCampaignType !== "COSTA_GO" && String(internalPartnerName).trim().length < 2) return reply.code(400).send({ error:"PARTNER_REQUIRED",message:"Selecciona o registra el aliado relacionado con esta publicación." });
     if (endsAt && new Date(endsAt) <= new Date(startsAt)) return reply.code(400).send({ error: "INVALID_BANNER_DATES" });
     const [item] = await database()`
       update affiliate_banners set
@@ -1483,13 +1504,15 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         action_value=${body.actionValue === "" ? null : (body.actionValue ?? current.action_value)},
         image_mime=${imageMime}, image_data=${image}, starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
         campaign_status=case when ${body.active ?? current.active} then 'ACTIVE' else 'PAUSED' end,
-        sort_order=${body.sortOrder ?? current.sort_order}, updated_at=now()
+        sort_order=${body.sortOrder ?? current.sort_order},internal_campaign_type=${internalCampaignType},
+        internal_partner_name=${internalPartnerName||null},internal_reason=${internalReason},internal_reference=${internalReference||null},
+        internal_authorized_by=${user.id!},internal_authorized_at=now(),updated_at=now()
       where id=${id}
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
         ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
         octet_length(image_data) as "imageBytes", created_at as "createdAt", updated_at as "updatedAt"
     `;
-    await persistAudit(user, "BANNER_UPDATED", "AFFILIATE_BANNER", id, body.active === false ? "Banner desactivado" : "Banner actualizado");
+    await persistAudit(user, "INSTITUTIONAL_ADVERTISING_UPDATED", "AFFILIATE_BANNER", id, `${internalCampaignType} · ${internalPartnerName||"Costa-Go"} · ${internalReason}${internalReference?` · Ref. ${internalReference}`:""}${body.active===false?" · Desactivada":""}`);
     return item;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA",details:e.flatten()}); return guardError(e,reply); } });
   app.post("/v1/admin/trips/:id/action", async (request, reply) => { try {

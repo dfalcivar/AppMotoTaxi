@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { commercialCampaignReviewBlock } from "./commercial.js";
+import { advertisingRenewalWindow, commercialCampaignReviewBlock } from "./commercial.js";
 
 describe("aprobación financiera de campañas",()=>{
   it("bloquea campañas sin orden comercial",()=>{
@@ -22,5 +22,26 @@ describe("aprobación financiera de campañas",()=>{
     expect(migration).toContain("enforce_commercial_campaign_payment");
     expect(migration).toContain("payment.settlement_status = 'RECONCILED'");
     expect(migration).toContain("SET active = false");
+  });
+
+  it("conserva los días pagados al renovar anticipadamente",()=>{
+    const now=new Date("2026-08-23T12:00:00.000Z"),currentEnd=new Date("2026-09-23T12:00:00.000Z");
+    const window=advertisingRenewalWindow(currentEnd,30,now);
+    expect(window.startsAt.toISOString()).toBe(currentEnd.toISOString());
+    expect(window.endsAt.toISOString()).toBe("2026-10-23T12:00:00.000Z");
+  });
+
+  it("inicia inmediatamente si la campaña ya venció",()=>{
+    const now=new Date("2026-10-01T12:00:00.000Z"),window=advertisingRenewalWindow("2026-09-01T12:00:00.000Z",15,now);
+    expect(window.startsAt.toISOString()).toBe(now.toISOString());
+    expect(window.endsAt.toISOString()).toBe("2026-10-16T12:00:00.000Z");
+  });
+
+  it("migra renovaciones y clasifica alianzas institucionales",async()=>{
+    const migration=await readFile(resolve(process.cwd(),"migrations/053_advertising_renewals_and_institutional_alliances.sql"),"utf8");
+    expect(migration).toContain("renewal_of_campaign_id");
+    expect(migration).toContain("content_reused");
+    expect(migration).toContain("PAYMENT_POINT");
+    expect(migration).toContain("internal_authorized_by");
   });
 });

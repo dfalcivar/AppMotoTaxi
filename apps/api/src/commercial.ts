@@ -114,6 +114,7 @@ const closureReviewSchema = z.object({ decision: z.enum(["RECONCILE", "REJECT"])
     if (value.decision === "REJECT" && value.note.length < 5) context.addIssue({ code: "custom", path: ["note"], message: "REJECTION_REASON_REQUIRED" });
   });
 const campaignActionSchema = z.object({ action: z.enum(["APPROVE", "REJECT", "REQUEST_CORRECTION", "PAUSE", "RESUME", "CANCEL"]), note: z.string().trim().max(1000).optional().default("") });
+const campaignRenewalSchema = z.object({ planId: z.string().uuid(), note: z.string().trim().max(500).optional().default("") });
 const publicCampaignQuerySchema = z.object({
   placement: currentPlacementSchema,
   serviceAreaId: z.string().uuid().optional()
@@ -170,6 +171,11 @@ export function commercialCampaignReviewBlock(campaign:{order_id?:unknown;order_
   if(campaign.order_status!=="PAID"||campaign.payment_verified!==true)return "PAYMENT_NOT_RECONCILED";
   return null;
 }
+export function advertisingRenewalWindow(sourceEndsAt: unknown, durationDays: number, now = new Date()): { startsAt: Date; endsAt: Date } {
+  const candidate = new Date(String(sourceEndsAt ?? ""));
+  const startsAt = Number.isFinite(candidate.getTime()) && candidate > now ? candidate : now;
+  return { startsAt, endsAt: new Date(startsAt.getTime() + Math.max(1, Math.trunc(durationDays)) * 86_400_000) };
+}
 function publicError(error: unknown, reply: FastifyReply) {
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.flatten() });
   const message = error instanceof Error ? error.message : "ERROR";
@@ -186,7 +192,7 @@ function adminError(error: unknown, reply: FastifyReply) {
   const message = error instanceof Error ? error.message : "ERROR";
   if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message });
   if (message === "FORBIDDEN") return reply.code(403).send({ error: message });
-  if (["PAYMENT_ALREADY_REVIEWED","PAYMENT_NOT_REFUNDABLE","PAYMENT_REQUIRES_CASH_CLOSURE","PAYMENT_NOT_READY_FOR_RECONCILIATION","PAYMENT_ALREADY_RECEIVED","PAYMENT_AMOUNT_MISMATCH","PAYMENT_NOT_RECONCILED","COMMERCIAL_ORDER_REQUIRED","CASH_CLOSURE_ALREADY_EXISTS","CASH_CLOSURE_EMPTY","CASH_CLOSURE_ALREADY_REVIEWED","LEAD_CONVERSION_REQUIRES_PAID_ORDER","CONVERTED_LEAD_LOCKED","LEAD_NOT_ACTIONABLE","LEAD_ALREADY_HAS_ORDER"].includes(message)) return reply.code(409).send({ error: message });
+  if (["PAYMENT_ALREADY_REVIEWED","PAYMENT_NOT_REFUNDABLE","PAYMENT_REQUIRES_CASH_CLOSURE","PAYMENT_NOT_READY_FOR_RECONCILIATION","PAYMENT_ALREADY_RECEIVED","PAYMENT_AMOUNT_MISMATCH","PAYMENT_NOT_RECONCILED","COMMERCIAL_ORDER_REQUIRED","CASH_CLOSURE_ALREADY_EXISTS","CASH_CLOSURE_EMPTY","CASH_CLOSURE_ALREADY_REVIEWED","LEAD_CONVERSION_REQUIRES_PAID_ORDER","CONVERTED_LEAD_LOCKED","LEAD_NOT_ACTIONABLE","LEAD_ALREADY_HAS_ORDER","CAMPAIGN_NOT_RENEWABLE","CAMPAIGN_RENEWAL_ALREADY_EXISTS"].includes(message)) return reply.code(409).send({ error: message });
   if (message.endsWith("_NOT_FOUND")) return reply.code(404).send({ error: message });
   throw error;
 }
@@ -252,22 +258,35 @@ async function transitionCampaign(campaignId: string, to: string, actor?: Sessio
 }
 
 async function markAdvertisingOrdersPaid(tx: any, paymentIds: string[], actorId: string, note: string) {
-  if (!paymentIds.length) return { campaigns: [] as string[], leads: [] as string[], recipients: [] as Array<{email:string;contactName:string;orderCode:string}> };
-  const payments = await tx`select pay.id::text,pay.order_id::text,o.lead_id::text,o.code,a.email,a.contact_name
+  if (!paymentIds.length) return { campaigns: [] as string[], leads: [] as string[], recipients: [] as Array<{email:string;contactName:string;orderCode:string;contentReused:boolean}> };
+  const payments = await tx`select pay.id::text,pay.order_id::text,o.lead_id::text,o.code,o.content_reused,a.email,a.contact_name
     from advertising_payments pay join advertising_orders o on o.id=pay.order_id join advertisers a on a.id=o.advertiser_id
     where pay.id=any(${paymentIds}::uuid[]) for update`;
   const orderIds = payments.map((item:any)=>String(item.order_id));
   await tx`update advertising_payments set status='APPROVED',settlement_status='RECONCILED',reviewed_by=${actorId},reviewed_at=now(),updated_at=now() where id=any(${paymentIds}::uuid[])`;
   await tx`update advertising_orders set status='PAID',updated_at=now() where id=any(${orderIds}::uuid[])`;
   await tx`update advertisers set status='ACTIVE',updated_at=now() where id in (select advertiser_id from advertising_orders where id=any(${orderIds}::uuid[]))`;
-  const campaigns=await tx`update affiliate_banners set campaign_status='PENDING_REVIEW',review_requested_at=now(),updated_at=now() where order_id=any(${orderIds}::uuid[]) returning id::text`;
+  const campaigns=await tx`
+    with candidates as (
+      select banner.id,banner.campaign_status as old_status,banner.starts_at,orders.content_reused
+      from affiliate_banners banner join advertising_orders orders on orders.id=banner.order_id
+      where banner.order_id=any(${orderIds}::uuid[])
+    )
+    update affiliate_banners banner set
+      campaign_status=case when candidates.content_reused then case when candidates.starts_at>now() then 'SCHEDULED' else 'ACTIVE' end else 'PENDING_REVIEW' end,
+      active=case when candidates.content_reused and candidates.starts_at<=now() then true else false end,
+      review_requested_at=case when candidates.content_reused then banner.review_requested_at else now() end,
+      updated_at=now()
+    from candidates where banner.id=candidates.id
+    returning banner.id::text,candidates.old_status,banner.campaign_status as new_status
+  `;
   const leads=await tx`update advertising_leads set status='CONVERTED',updated_at=now() where id in (select lead_id from advertising_orders where id=any(${orderIds}::uuid[]) and lead_id is not null) and status<>'CONVERTED' returning id::text`;
-  if(campaigns.length)await tx`insert into campaign_status_history(campaign_id,from_status,to_status,note,changed_by) select id,'PAYMENT_REVIEW','PENDING_REVIEW',${note},${actorId} from affiliate_banners where id=any(${campaigns.map((item:any)=>String(item.id))}::uuid[])`;
-  return { campaigns:campaigns.map((item:any)=>String(item.id)), leads:leads.map((item:any)=>String(item.id)), recipients:payments.map((item:any)=>({email:String(item.email),contactName:String(item.contact_name),orderCode:String(item.code)})) };
+  for(const campaign of campaigns)await tx`insert into campaign_status_history(campaign_id,from_status,to_status,note,changed_by) values (${campaign.id},${campaign.old_status},${campaign.new_status},${note},${actorId})`;
+  return { campaigns:campaigns.map((item:any)=>String(item.id)), leads:leads.map((item:any)=>String(item.id)), recipients:payments.map((item:any)=>({email:String(item.email),contactName:String(item.contact_name),orderCode:String(item.code),contentReused:Boolean(item.content_reused)})) };
 }
 
-function sendAdvertisingPaymentConfirmed(recipients:Array<{email:string;contactName:string;orderCode:string}>){
-  for(const recipient of recipients)void sendTransactionalEmail({to:recipient.email,subject:`Pago confirmado ${recipient.orderCode} · Costa-Go`,text:`Hola ${recipient.contactName}. Confirmamos el pago de la orden ${recipient.orderCode}. La campaña pasó a revisión de contenido.`,html:`<p>Hola <strong>${recipient.contactName}</strong>.</p><p>Confirmamos el pago de la orden <strong>${recipient.orderCode}</strong>.</p><p>La campaña pasó a revisión de contenido; te notificaremos cualquier novedad.</p>`}).catch(()=>false);
+function sendAdvertisingPaymentConfirmed(recipients:Array<{email:string;contactName:string;orderCode:string;contentReused:boolean}>){
+  for(const recipient of recipients){const detail=recipient.contentReused?"La renovación quedó programada automáticamente porque conserva la pieza aprobada.":"La campaña pasó a revisión de contenido; te notificaremos cualquier novedad.";void sendTransactionalEmail({to:recipient.email,subject:`Pago confirmado ${recipient.orderCode} · Costa-Go`,text:`Hola ${recipient.contactName}. Confirmamos el pago de la orden ${recipient.orderCode}. ${detail}`,html:`<p>Hola <strong>${recipient.contactName}</strong>.</p><p>Confirmamos el pago de la orden <strong>${recipient.orderCode}</strong>.</p><p>${detail}</p>`}).catch(()=>false)}
 }
 
 export async function advertisingSchedulerTick(): Promise<void> {
@@ -649,7 +668,26 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
     await persistAudit(actor,"ADVERTISING_PAYMENT_REVIEWED","ADVERTISING_PAYMENT",id,`${body.decision}: ${body.reason}`);
     return {id,status:result.status};
   }catch(error){return adminError(error,reply);} });
-  app.get("/v1/admin/commercial/campaigns",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:campaigns:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select b.id::text,b.title,b.advertiser_name as "advertiserName",b.placement,b.campaign_status as status,b.starts_at as "startsAt",b.ends_at as "endsAt",b.active,b.rejection_reason as "rejectionReason",b.correction_note as "correctionNote",o.code as "orderCode",o.status as "orderStatus",coalesce((select bool_or(pay.status='APPROVED' and pay.settlement_status='RECONCILED') from advertising_payments pay where pay.order_id=o.id),false) as "paymentVerified",coalesce((select count(*) from advertising_events e where e.campaign_id=b.id and e.event_type='IMPRESSION'),0)::int as impressions,coalesce((select count(*) from advertising_events e where e.campaign_id=b.id and e.event_type in ('CLICK','ACTION')),0)::int as clicks from affiliate_banners b join advertising_orders o on o.id=b.order_id where (not ${own} or o.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or b.campaign_status=${q.status??null}) order by b.created_at desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
+  app.get("/v1/admin/commercial/campaigns",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:campaigns:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select b.id::text,b.title,b.advertiser_name as "advertiserName",b.placement,b.campaign_status as status,b.starts_at as "startsAt",b.ends_at as "endsAt",b.active,b.rejection_reason as "rejectionReason",b.correction_note as "correctionNote",o.code as "orderCode",o.status as "orderStatus",o.plan_id::text as "planId",plan.name as "planName",renewal.code as "renewalOrderCode",renewal.status as "renewalOrderStatus",coalesce((select bool_or(pay.status='APPROVED' and pay.settlement_status='RECONCILED') from advertising_payments pay where pay.order_id=o.id),false) as "paymentVerified",coalesce((select count(*) from advertising_events e where e.campaign_id=b.id and e.event_type='IMPRESSION'),0)::int as impressions,coalesce((select count(*) from advertising_events e where e.campaign_id=b.id and e.event_type in ('CLICK','ACTION')),0)::int as clicks from affiliate_banners b join advertising_orders o on o.id=b.order_id join advertising_plans plan on plan.id=o.plan_id left join lateral(select child.code,child.status from advertising_orders child where child.renewal_of_campaign_id=b.id and child.status not in ('CANCELLED','REFUNDED') order by child.created_at desc limit 1)renewal on true where (not ${own} or o.assigned_commercial_id=${actor.id}) and (${q.status??null}::text is null or b.campaign_status=${q.status??null}) order by b.created_at desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
+  app.post("/v1/admin/commercial/campaigns/:id/renew",async(request,reply)=>{try{
+    const actor=requirePermission(request,"commercial:campaigns:manage"),body=campaignRenewalSchema.parse(request.body),own=actor.role==="COMMERCIAL",id=z.string().uuid().parse((request.params as any).id);
+    const result=await database().begin(async tx=>{
+      const [source]=await tx`select banner.*,orders.lead_id,orders.advertiser_id,orders.assigned_commercial_id from affiliate_banners banner join advertising_orders orders on orders.id=banner.order_id where banner.id=${id} and (not ${own} or orders.assigned_commercial_id=${actor.id}) for update`;
+      if(!source)throw new Error("CAMPAIGN_NOT_FOUND");
+      if(!["ACTIVE","SCHEDULED","PAUSED","EXPIRED"].includes(String(source.campaign_status)))throw new Error("CAMPAIGN_NOT_RENEWABLE");
+      const [existing]=await tx`select code,status from advertising_orders where renewal_of_campaign_id=${id} and status not in ('CANCELLED','REFUNDED') limit 1`;
+      if(existing)throw new Error("CAMPAIGN_RENEWAL_ALREADY_EXISTS");
+      const [plan]=await tx`select * from advertising_plans where id=${body.planId} and enabled=true and active=true`;
+      if(!plan)throw new Error("PLAN_NOT_FOUND");
+      const duration=Number(plan.duration_days??30),amount=Number(plan.price??plan.monthly_price??0),window=advertisingRenewalWindow(source.ends_at,duration),placement=normalizeAdvertisingPlacement(plan.placement??plan.allowed_placements?.[0]);
+      const [order]=await tx`insert into advertising_orders(code,lead_id,advertiser_id,plan_id,assigned_commercial_id,status,amount,currency,plan_snapshot,requested_start_at,requested_end_at,notes,created_by,renewal_of_campaign_id,content_reused) values ('PUB-'||extract(year from now())::int||'-'||lpad(nextval('advertising_request_code_seq')::text,6,'0'),${source.lead_id},${source.advertiser_id},${plan.id},${source.assigned_commercial_id??actor.id},'PENDING_PAYMENT',${amount},${plan.currency},${JSON.stringify({code:plan.code,name:plan.name,durationDays:duration,price:amount,renewal:true})}::jsonb,${window.startsAt.toISOString()},${window.endsAt.toISOString()},${body.note||`Renovación de ${source.title}`},${actor.id},${id},true) returning id::text,code,status,amount::float8,currency,requested_start_at as "startsAt",requested_end_at as "endsAt"`;
+      const [campaign]=await tx`insert into affiliate_banners(title,advertiser_name,advertiser_id,advertising_plan_id,placement,service_area_id,weight,action_type,action_value,image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,created_by,order_id,submitted_at) values (${source.title},${source.advertiser_name},${source.advertiser_id},${plan.id},${placement},${source.service_area_id},${Number(plan.default_weight??source.weight??1)},${source.action_type},${source.action_value},${source.image_mime},${source.image_data},${source.target_url},${window.startsAt.toISOString()},${window.endsAt.toISOString()},false,'PENDING_PAYMENT',${source.sort_order},${actor.id},${order.id},now()) returning id::text`;
+      await tx`insert into campaign_status_history(campaign_id,from_status,to_status,note,changed_by) values (${campaign.id},null,'PENDING_PAYMENT',${`Renovación creada desde ${id}. ${body.note}`},${actor.id})`;
+      return {...order,campaignId:String(campaign.id)};
+    });
+    await persistAudit(actor,"ADVERTISING_CAMPAIGN_RENEWAL_CREATED","AFFILIATE_BANNER",id,`Orden ${result.code}; vigencia ${result.startsAt} — ${result.endsAt}`);
+    return reply.code(201).send(result);
+  }catch(error){return adminError(error,reply);} });
   app.post("/v1/admin/commercial/campaigns/:id/action",async(request,reply)=>{try{const body=campaignActionSchema.parse(request.body),reviewAction=["APPROVE","REJECT","REQUEST_CORRECTION"].includes(body.action),actor=requirePermission(request,reviewAction?"commercial:campaigns:review":"commercial:campaigns:manage"),own=actor.role==="COMMERCIAL",id=z.string().uuid().parse((request.params as any).id);if(["REJECT","REQUEST_CORRECTION"].includes(body.action)&&body.note.length<5)return reply.code(400).send({error:"NOTE_REQUIRED"});const [campaign]=await database()`select b.starts_at,b.ends_at,b.campaign_status,o.id::text as order_id,o.status as order_status,coalesce((select bool_or(pay.status='APPROVED' and pay.settlement_status='RECONCILED') from advertising_payments pay where pay.order_id=o.id),false) as payment_verified from affiliate_banners b left join advertising_orders o on o.id=b.order_id where b.id=${id} and (not ${own} or o.assigned_commercial_id=${actor.id})`;if(!campaign)throw new Error("CAMPAIGN_NOT_FOUND");const reviewBlock=reviewAction?commercialCampaignReviewBlock(campaign):null;if(reviewBlock)throw new Error(reviewBlock);const allowed:Record<string,string[]>={APPROVE:["PENDING_REVIEW"],REJECT:["PENDING_REVIEW"],REQUEST_CORRECTION:["PENDING_REVIEW"],PAUSE:["ACTIVE","SCHEDULED"],RESUME:["PAUSED"],CANCEL:["DRAFT","PENDING_PAYMENT","PAYMENT_REVIEW","PENDING_REVIEW","SCHEDULED","ACTIVE","PAUSED","REJECTED"]};if(!allowed[body.action]?.includes(String(campaign.campaign_status)))return reply.code(409).send({error:"INVALID_CAMPAIGN_TRANSITION"});let to:string;if(body.action==="APPROVE")to=new Date(String(campaign.starts_at))>new Date()?"SCHEDULED":"ACTIVE";else to={REJECT:"REJECTED",REQUEST_CORRECTION:"PENDING_REVIEW",PAUSE:"PAUSED",RESUME:new Date(String(campaign.starts_at))>new Date()?"SCHEDULED":"ACTIVE",CANCEL:"CANCELLED"}[body.action]!;await transitionCampaign(id,to,actor,body.note);if(body.action==="REQUEST_CORRECTION"){const [lead]=await database()`select o.lead_id::text as id from affiliate_banners b join advertising_orders o on o.id=b.order_id where b.id=${id}`;if(lead?.id){const invitation=await createInvitation(String(lead.id),"ADMIN",actor.id,"CORRECTION",["campaign.image"],id);const [recipient]=await database()`select contact_name,email from advertising_leads where id=${lead.id}`;if(recipient)void sendTransactionalEmail({to:String(recipient.email),subject:"Corrección solicitada para tu campaña · Costa-Go",text:`Costa-Go solicitó una corrección: ${body.note}. ${invitation.url}`,html:`<p>Hola ${recipient.contact_name}.</p><p>Necesitamos una corrección en tu campaña:</p><p><strong>${body.note}</strong></p><p><a href="${invitation.url}">Corregir banner</a></p>`}).catch(()=>false);}}return {id,status:to};}catch(error){return adminError(error,reply);} });
   app.get("/v1/admin/commercial/plans",async(request,reply)=>{try{requirePermission(request,"commercial:campaigns:view");return database()`select id::text,code,name,description,placement,duration_days as "durationDays",price::float8,currency,default_weight as "defaultWeight",allowed_placements as "allowedPlacements",active,enabled,sort_order as "sortOrder",updated_at as "updatedAt" from advertising_plans order by sort_order,name`;}catch(error){return adminError(error,reply);} });
   app.post("/v1/admin/commercial/plans",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:plans:manage"),body=planSchema.parse(request.body);const [item]=await database()`insert into advertising_plans(code,name,description,placement,duration_days,price,monthly_price,currency,default_weight,allowed_placements,active,enabled,sort_order,created_by,updated_by) values (${body.code},${body.name},${body.description},${body.placement},${body.durationDays},${body.price},${body.price},${body.currency.toUpperCase()},${body.defaultWeight},${body.allowedPlacements},${body.active},${body.active},${body.sortOrder},${actor.id},${actor.id}) returning id::text,code,name`;await persistAudit(actor,"ADVERTISING_PLAN_CREATED","ADVERTISING_PLAN",String(item.id),body.name);return reply.code(201).send(item);}catch(error){return adminError(error,reply);} });

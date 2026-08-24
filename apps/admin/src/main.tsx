@@ -32,7 +32,7 @@ const labels: Record<Module, string> = {
   pricing: "Tarifas",
   zones: "Zonas de cobertura",
   settings: "Radio de búsqueda",
-  advertising: "Publicidad interna",
+  advertising: "Publicidad institucional",
   commercial: "Comercial y publicidad",
   incidents: "Soporte e incidentes",
   access: "Usuarios y roles",
@@ -372,8 +372,9 @@ function DocumentExpirySettings({ token, admin }: { token: string; admin: boolea
 
 function Advertising({ token, admin }: { token: string; admin: boolean }) {
   const placementLabels:Record<string,string>={PASSENGER_SEARCHING_DRIVER:"Buscando conductor",PASSENGER_WAITING_DRIVER:"Esperando conductor",PASSENGER_TRIP_IN_PROGRESS:"Viaje en curso"};
+  const institutionalTypeLabels:Record<string,string>={COSTA_GO:"Costa-Go",PAYMENT_POINT:"Punto de pago",STRATEGIC_ALLIANCE:"Alianza estratégica",COURTESY:"Campaña de cortesía"};
   const displayStatusLabels:Record<string,string>={VISIBLE:"Visible en la aplicación",SCHEDULED:"Pendiente por fecha de inicio",EXPIRED:"Vigencia finalizada",INACTIVE:"Inactiva"};
-  const emptyForm = () => ({ title: "", advertiserName:"", planCode:"BASIC", placement: "PASSENGER_SEARCHING_DRIVER", serviceAreaId:"", weight:1, actionType:"WEB", actionValue:"", targetUrl: "", startsAt: localDateTimeInput(), endsAt: localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: 0, active: true, imageBase64: "", imageMime: "" });
+  const emptyForm = () => ({ title: "", advertiserName:"Costa-Go", planCode:"BASIC", placement: "PASSENGER_SEARCHING_DRIVER", serviceAreaId:"", weight:1, actionType:"WEB", actionValue:"", targetUrl: "", startsAt: localDateTimeInput(), endsAt: localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: 0, active: true, imageBase64: "", imageMime: "", internalCampaignType:"COSTA_GO", internalPartnerName:"", internalReason:"", internalReference:"" });
   const [data, setData] = useState<any[]>([]); const [zones, setZones] = useState<any[]>([]); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -384,7 +385,7 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
     setError(""); setSuccess(""); setEditingId(item.id);
     const placement=Object.hasOwn(placementLabels,item.placement)?item.placement:"PASSENGER_SEARCHING_DRIVER";
     const planCode=item.planCode==="PREMIUM"?"PREMIUM":"BASIC";
-    setForm({ title: item.title, advertiserName:item.advertiserName??item.title, planCode, placement, serviceAreaId:item.serviceAreaId??"", weight:item.weight??1, actionType:item.actionType??"WEB", actionValue:item.actionValue??item.targetUrl??"", targetUrl: item.targetUrl ?? "", startsAt: localDateTimeInput(item.startsAt), endsAt: item.endsAt ? localDateTimeInput(item.endsAt) : localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: item.sortOrder, active: item.active, imageBase64: "", imageMime: "" });
+    setForm({ title: item.title, advertiserName:item.advertiserName??item.title, planCode, placement, serviceAreaId:item.serviceAreaId??"", weight:item.weight??1, actionType:item.actionType??"WEB", actionValue:item.actionValue??item.targetUrl??"", targetUrl: item.targetUrl ?? "", startsAt: localDateTimeInput(item.startsAt), endsAt: item.endsAt ? localDateTimeInput(item.endsAt) : localDateTimeInput(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), sortOrder: item.sortOrder, active: item.active, imageBase64: "", imageMime: "", internalCampaignType:item.internalCampaignType??"COSTA_GO",internalPartnerName:item.internalPartnerName??"",internalReason:item.internalReason??"Contenido institucional existente",internalReference:item.internalReference??"" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function choose(file?: File) {
@@ -415,24 +416,27 @@ function Advertising({ token, admin }: { token: string; admin: boolean }) {
   async function toggle(item: any) { try { await apiFetch(`/v1/admin/banners/${item.id}`, token, { method: "PATCH", body: JSON.stringify({ active: !item.active }) }); setSuccess(item.active ? "Publicidad desactivada." : "Publicidad activada."); await load(); } catch (reason) { setError(errorText(reason)); } }
   return <div className="advertising-layout">
     <section className="card">
-      <Header eyebrow="CONTENIDO PROPIO" title="Publicidad interna" action={`${data.filter(item => item.active).length} activas`} />
+      <Header eyebrow="CONTENIDO PROPIO Y CONVENIOS" title="Publicidad institucional y alianzas" action={`${data.filter(item => item.active).length} activas`} />
       <Notice error={error} success={success} />
-      <p className="note">Este espacio es únicamente para piezas institucionales o de respaldo de Costa-Go. Las campañas de comercios se revisan en «Comercial y publicidad» y requieren pago conciliado antes de aprobarse.</p>
+      <p className="note">Publica piezas propias, puntos de pago, alianzas o cortesías autorizadas. Las campañas vendidas a comercios permanecen en «Comercial y publicidad» y requieren pago conciliado.</p>
       <div className="banner-grid">
         <article className="banner-placeholder-card permanent"><img src="/advertising-placeholder.png" alt="Tu publicidad aquí" /><div><strong>Tu publicidad aquí · pieza fija</strong><p>Respaldo permanente de la app. Se muestra automáticamente cuando no existen campañas vigentes.</p></div></article>
         {data.map(item => <article className={`banner-card ${item.active ? "" : "inactive"}`} key={item.id}>
         <img src={apiUrl(`/v1/banners/${item.id}/image?v=${encodeURIComponent(item.updatedAt)}`)} alt={item.title} />
-        <div><strong>{item.title}</strong><small>{item.planCode==="PREMIUM"?"Premium":"Básico"} · {item.planCode==="PREMIUM"?"Búsqueda, espera y viaje en curso":placementLabels[item.placement]??"Buscando conductor"} · peso {item.weight}</small><small>{new Date(item.startsAt).toLocaleString()} — {item.endsAt ? new Date(item.endsAt).toLocaleString() : "sin fecha final"}</small><small><strong>{displayStatusLabels[item.displayStatus]??"Estado por verificar"}</strong></small></div>
+        <div><strong>{item.title}</strong><small><strong>{institutionalTypeLabels[item.internalCampaignType]??"Costa-Go"}</strong>{item.internalPartnerName?` · ${item.internalPartnerName}`:""}</small><small>{item.internalReason??"Sin motivo registrado"}{item.internalReference?` · Ref. ${item.internalReference}`:""}</small><small>{item.planCode==="PREMIUM"?"Premium":"Básico"} · {item.planCode==="PREMIUM"?"Búsqueda, espera y viaje en curso":placementLabels[item.placement]??"Buscando conductor"} · peso {item.weight}</small><small>{new Date(item.startsAt).toLocaleString()} — {item.endsAt ? new Date(item.endsAt).toLocaleString() : "sin fecha final"}</small><small><strong>{displayStatusLabels[item.displayStatus]??"Estado por verificar"}</strong>{item.internalAuthorizedBy?` · autorizado por ${item.internalAuthorizedBy}`:""}</small></div>
         {admin && <div className="banner-actions"><button className="secondary" onClick={() => edit(item)}>Editar</button><button className="secondary" onClick={() => toggle(item)}>{item.active ? "Desactivar" : "Activar"}</button></div>}
         </article>)}
       </div>
     </section>
     {admin && <form className="card form-card advertising-form" onSubmit={save}>
-      <Header eyebrow={editingId ? "EDITAR PIEZA" : "NUEVA PIEZA"} title={editingId ? "Modificar publicidad interna" : "Publicar contenido propio"} />
+      <Header eyebrow={editingId ? "EDITAR PIEZA" : "NUEVA PIEZA"} title={editingId ? "Modificar publicidad institucional" : "Publicar contenido o alianza"} />
       <p className="banner-spec">1200×400 px · JPG, PNG o WebP · máximo 1 MB</p>
       <div className="placement-note"><strong>Campaña con vigencia automática</strong><span>La pieza «Tu publicidad aquí» queda como respaldo permanente cuando no existan campañas activas.</span></div>
+      <div className="form-grid"><label>Tipo de publicación<select value={form.internalCampaignType} onChange={e=>setForm({...form,internalCampaignType:e.target.value,internalPartnerName:e.target.value==="COSTA_GO"?"":form.internalPartnerName})}>{Object.entries(institutionalTypeLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label>Aliado relacionado<input required={form.internalCampaignType!=="COSTA_GO"} minLength={form.internalCampaignType!=="COSTA_GO"?2:undefined} value={form.internalPartnerName} onChange={e=>setForm({...form,internalPartnerName:e.target.value})} placeholder={form.internalCampaignType==="PAYMENT_POINT"?"Nombre del punto de pago":"Nombre del aliado"}/></label></div>
       <label>Comercio o campaña<input required minLength={3} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
       <label>Nombre del anunciante<input required minLength={2} value={form.advertiserName} onChange={e=>setForm({...form,advertiserName:e.target.value})}/></label>
+      <label>Motivo de autorización<textarea required minLength={5} maxLength={500} value={form.internalReason} onChange={e=>setForm({...form,internalReason:e.target.value})} placeholder="Ej. Beneficio acordado por operar como punto de pago autorizado"/></label>
+      <label>Referencia del convenio o respaldo<input maxLength={300} value={form.internalReference} onChange={e=>setForm({...form,internalReference:e.target.value})} placeholder="Opcional: convenio, acta, ticket o autorización"/></label>
       <div className="form-grid">
         <label>Plan<select value={form.planCode} onChange={e=>setForm({...form,planCode:e.target.value,placement:"PASSENGER_SEARCHING_DRIVER",weight:e.target.value==="PREMIUM"?2:1})}><option value="BASIC">Básico</option><option value="PREMIUM">Premium</option></select></label>
         <div className="advertising-placement-summary"><span>Dónde aparecerá</span><strong>{form.planCode==="PREMIUM"?"Búsqueda, espera y viaje en curso":"Solo mientras se busca conductor"}</strong><small>La ubicación la define el plan automáticamente.</small></div>
