@@ -154,12 +154,18 @@ const faqSchema = z.object({
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
 const operationalSettingsSchema = z.object({
   searchRadiusMeters: z.number().int().min(500).max(20000),
+  driverSearchInitialRadiusMeters: z.number().int().min(100).max(20000),
+  driverSearchRadiusIncrementMeters: z.number().int().min(100).max(20000),
+  driverSearchRoundWaitSeconds: z.number().int().min(5).max(300),
   scheduledTripLeadMinutes: z.number().int().min(5).max(60),
   scheduledTripMinimumNoticeMinutes: z.number().int().min(5).max(720),
   documentExpiryAlertDays: z.number().int().min(1).max(180)
 }).refine(value => value.scheduledTripMinimumNoticeMinutes >= value.scheduledTripLeadMinutes + 5, {
   message: "MINIMUM_NOTICE_MUST_EXCEED_ACTIVATION_LEAD",
   path: ["scheduledTripMinimumNoticeMinutes"]
+}).refine(value => value.driverSearchInitialRadiusMeters <= value.searchRadiusMeters, {
+  message: "INITIAL_RADIUS_MUST_NOT_EXCEED_MAXIMUM",
+  path: ["driverSearchInitialRadiusMeters"]
 });
 const cooperativeSchema = z.object({
   name: z.string().trim().min(3).max(120),
@@ -1358,19 +1364,37 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_TRIP_FILTERS"}); return guardError(e, reply); } });
   app.get("/v1/admin/settings", async (request, reply) => { try {
     requirePermission(request, "settings:view");
-    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt" from operational_settings where id=1`;
-    return settings ?? { searchRadiusMeters: 3000, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30, documentExpiryAlertDays: 30 };
+    const [settings] = await database()`select search_radius_meters as "searchRadiusMeters",
+      driver_search_initial_radius_meters as "driverSearchInitialRadiusMeters",
+      driver_search_radius_increment_meters as "driverSearchRadiusIncrementMeters",
+      driver_search_round_wait_seconds as "driverSearchRoundWaitSeconds",
+      scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt" from operational_settings where id=1`;
+    return settings ?? { searchRadiusMeters: 3000, driverSearchInitialRadiusMeters: 1000, driverSearchRadiusIncrementMeters: 1000, driverSearchRoundWaitSeconds: 15, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30, documentExpiryAlertDays: 30 };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/settings", async (request, reply) => { try {
     const user = requirePermission(request, "settings:manage");
     const body = operationalSettingsSchema.parse(request.body);
     const [settings] = await database()`
-      insert into operational_settings (id, search_radius_meters, scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, document_expiry_alert_days, updated_at, updated_by)
-      values (1, ${body.searchRadiusMeters}, ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, ${body.documentExpiryAlertDays}, now(), ${user.id!})
-      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters, scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes=excluded.scheduled_trip_minimum_notice_minutes, document_expiry_alert_days=excluded.document_expiry_alert_days, updated_at=now(), updated_by=excluded.updated_by
-      returning search_radius_meters as "searchRadiusMeters", scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt"
+      insert into operational_settings (id, search_radius_meters, driver_search_initial_radius_meters,
+        driver_search_radius_increment_meters, driver_search_round_wait_seconds,
+        scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, document_expiry_alert_days, updated_at, updated_by)
+      values (1, ${body.searchRadiusMeters}, ${body.driverSearchInitialRadiusMeters},
+        ${body.driverSearchRadiusIncrementMeters}, ${body.driverSearchRoundWaitSeconds},
+        ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, ${body.documentExpiryAlertDays}, now(), ${user.id!})
+      on conflict (id) do update set search_radius_meters=excluded.search_radius_meters,
+        driver_search_initial_radius_meters=excluded.driver_search_initial_radius_meters,
+        driver_search_radius_increment_meters=excluded.driver_search_radius_increment_meters,
+        driver_search_round_wait_seconds=excluded.driver_search_round_wait_seconds,
+        scheduled_trip_lead_minutes=excluded.scheduled_trip_lead_minutes,
+        scheduled_trip_minimum_notice_minutes=excluded.scheduled_trip_minimum_notice_minutes,
+        document_expiry_alert_days=excluded.document_expiry_alert_days, updated_at=now(), updated_by=excluded.updated_by
+      returning search_radius_meters as "searchRadiusMeters",
+        driver_search_initial_radius_meters as "driverSearchInitialRadiusMeters",
+        driver_search_radius_increment_meters as "driverSearchRadiusIncrementMeters",
+        driver_search_round_wait_seconds as "driverSearchRoundWaitSeconds",
+        scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays", updated_at as "updatedAt"
     `;
-    await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Radio de búsqueda: ${body.searchRadiusMeters} metros`);
+    await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Búsqueda progresiva: ${body.driverSearchInitialRadiusMeters} m + ${body.driverSearchRadiusIncrementMeters} m por ronda, máximo ${body.searchRadiusMeters} m, espera ${body.driverSearchRoundWaitSeconds} s`);
     return settings;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_DATA"}); return guardError(e,reply); } });
   app.get("/v1/admin/banners", async (request, reply) => { try {

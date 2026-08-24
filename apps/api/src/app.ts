@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { calculateTerritorialFare } from "./fare-engine.js";
+import { firstSearchBounds, nextSearchBounds, type DriverSearchSettings } from "./driver-search.js";
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
@@ -294,9 +295,18 @@ async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRI
   return "DELETED";
 }
 
-async function configuredSearchRadius(): Promise<number> {
-  const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
-  return Number(settings?.search_radius_meters ?? 3000);
+async function configuredDriverSearch(): Promise<DriverSearchSettings> {
+  const [settings] = await database()`select search_radius_meters as "maximumRadiusMeters",
+    driver_search_initial_radius_meters as "initialRadiusMeters",
+    driver_search_radius_increment_meters as "radiusIncrementMeters",
+    driver_search_round_wait_seconds as "roundWaitSeconds"
+    from operational_settings where id=1`;
+  return {
+    initialRadiusMeters: Number(settings?.initialRadiusMeters ?? 1000),
+    radiusIncrementMeters: Number(settings?.radiusIncrementMeters ?? 1000),
+    maximumRadiusMeters: Number(settings?.maximumRadiusMeters ?? 3000),
+    roundWaitSeconds: Number(settings?.roundWaitSeconds ?? 15)
+  };
 }
 
 export interface ScheduledTripPolicy {
@@ -498,27 +508,75 @@ export async function buildApp() {
       .send(banner.image_data);
   });
 
-  // Cuando un conductor se libera, vuelve a publicar la solicitud más antigua
-  // que ya no tenga una oferta vigente. Así una carrera no queda abandonada
-  // por haber llegado mientras todos los conductores estaban ocupados.
-  async function redispatchOldestTrip(): Promise<{ tripId: string; passengers: number; originReference: string | null; destinationReference: string | null; driverIds: string[] } | null> {
-    const searchRadius = await configuredSearchRadius();
+  // Despacha una sola franja geográfica por ronda. El estado vive en la base
+  // para que reinicios o varias instancias de la API no repitan conductores.
+  async function redispatchOldestTrip(targetTripId?: string): Promise<{
+    kind: "DISPATCHED" | "NO_DRIVER";
+    tripId: string;
+    passengerId: string;
+    passengers?: number;
+    originReference?: string | null;
+    destinationReference?: string | null;
+    driverIds?: string[];
+    round?: number;
+    lowerMeters?: number;
+    upperMeters?: number;
+  } | null> {
+    const settings = await configuredDriverSearch();
     const dispatched = await database().begin(async tx => {
       const [trip] = await tx`
-        select t.id::text as "tripId", t.passengers, t.payment_method as "paymentMethod",
+        select t.id::text as "tripId", t.passenger_id::text as "passengerId",
+          t.passengers, t.payment_method as "paymentMethod",
           t.origin_reference as "originReference", t.destination_reference as "destinationReference",
-          ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude"
+          ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
+          t.driver_search_round as "searchRound",
+          t.driver_search_upper_meters as "searchUpperMeters",
+          t.driver_search_next_round_at as "nextRoundAt"
         from trips t
         where t.status='SEARCHING'
           and (t.scheduled_for is null or t.schedule_status='SCHEDULED_READY')
-          and not exists (select 1 from driver_offers o where o.trip_id=t.id and o.responded_at is null and o.expires_at > now())
+          and (${targetTripId ?? null}::uuid is null or t.id=${targetTripId ?? null}::uuid)
+          and (${targetTripId ?? null}::uuid is not null or t.driver_search_round=0 or t.driver_search_next_round_at<=now())
         order by t.requested_at
         limit 1 for update skip locked
       `;
       if (!trip) return null;
+
+      const currentRound = Number(trip.searchRound ?? 0);
+      const nextRoundAt = trip.nextRoundAt == null ? undefined : new Date(trip.nextRoundAt as string | Date);
+      if (currentRound > 0 && nextRoundAt && nextRoundAt.getTime() > Date.now()) return null;
+      const bounds = currentRound === 0
+        ? firstSearchBounds(settings)
+        : nextSearchBounds({ round: currentRound, upperMeters: Number(trip.searchUpperMeters) }, settings);
+
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false)
+        where trip_id=${trip.tripId} and responded_at is null and expires_at<=now()`;
+
+      if (!bounds) {
+        const [finished] = await tx`update trips set status='NO_DRIVER', driver_search_finished_at=now(),
+          driver_search_next_round_at=null where id=${trip.tripId} and status='SEARCHING' returning id`;
+        if (!finished) return null;
+        await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata)
+          values (${trip.tripId}, 'SEARCHING', 'NO_DRIVER', 'MAXIMUM_SEARCH_RADIUS_REACHED',
+            ${JSON.stringify({ maximumRadiusMeters: settings.maximumRadiusMeters, rounds: currentRound })}::jsonb)`;
+        return { kind: "NO_DRIVER" as const, tripId: String(trip.tripId), passengerId: String(trip.passengerId) };
+      }
+
+      const [advanced] = await tx`update trips set driver_search_round=${bounds.round},
+        driver_search_lower_meters=${bounds.lowerMeters}, driver_search_upper_meters=${bounds.upperMeters},
+        driver_search_next_round_at=now() + (${settings.roundWaitSeconds} * interval '1 second')
+        where id=${trip.tripId} and status='SEARCHING' returning id`;
+      if (!advanced) return null;
+
       const candidates = await tx`
-        select d.user_id from drivers d join users u on u.id=d.user_id
-        where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
+        insert into driver_offers (trip_id, driver_id, expires_at, search_round, distance_meters)
+        select ${trip.tripId}, candidate.user_id,
+          now() + (${settings.roundWaitSeconds} * interval '1 second'), ${bounds.round}, candidate.distance_meters
+        from (
+          select d.user_id,
+            round(ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography))::int as distance_meters
+          from drivers d join users u on u.id=d.user_id
+          where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
             or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
               and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
@@ -526,28 +584,53 @@ export async function buildApp() {
           and (${trip.paymentMethod}='CASH' or d.deuna_enabled=true)
           and d.last_location_at > now() - interval '5 minutes'
           and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'))
-          and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography, ${searchRadius})
-        order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography)
-        limit 3
+          and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography, ${bounds.upperMeters})
+        ) candidate
+        where (${bounds.round}=1 or candidate.distance_meters>${bounds.lowerMeters})
+          and candidate.distance_meters<=${bounds.upperMeters}
+        order by candidate.distance_meters
+        on conflict (trip_id, driver_id) do nothing
+        returning driver_id::text as "driverId"
       `;
-      for (const candidate of candidates) await tx`
-        insert into driver_offers (trip_id, driver_id, expires_at) values (${trip.tripId}, ${candidate.user_id}, now() + interval '2 minutes')
-        on conflict (trip_id, driver_id) do update set offered_at=now(), expires_at=excluded.expires_at, responded_at=null, accepted=null
-      `;
-      return { tripId: String(trip.tripId), passengers: Number(trip.passengers), originReference: trip.originReference as string | null, destinationReference: trip.destinationReference as string | null, driverIds: candidates.map(candidate => String(candidate.user_id)) };
+      await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata)
+        values (${trip.tripId}, 'SEARCHING', 'SEARCHING', 'DRIVER_SEARCH_ROUND',
+          ${JSON.stringify({ round: bounds.round, lowerMeters: bounds.lowerMeters, upperMeters: bounds.upperMeters, candidates: candidates.length })}::jsonb)`;
+      return { kind: "DISPATCHED" as const, tripId: String(trip.tripId), passengerId: String(trip.passengerId),
+        passengers: Number(trip.passengers), originReference: trip.originReference as string | null,
+        destinationReference: trip.destinationReference as string | null,
+        driverIds: candidates.map(candidate => String(candidate.driverId)), round: bounds.round,
+        lowerMeters: bounds.lowerMeters, upperMeters: bounds.upperMeters };
     });
-    if (dispatched) {
+    if (dispatched?.kind === "NO_DRIVER") {
+      realtime.publishToUser(dispatched.passengerId, { type: "trip:status", tripId: dispatched.tripId, status: "NO_DRIVER" });
+      await sendPush(dispatched.passengerId, "No encontramos conductores disponibles", "La búsqueda alcanzó el radio máximo configurado. Puedes intentarlo nuevamente.", { tripId: dispatched.tripId, type: "NO_DRIVER" });
+      realtime.publishTripStatus(dispatched.tripId, "NO_DRIVER");
+    } else if (dispatched?.kind === "DISPATCHED") {
       const eventAt = new Date().toISOString();
-      for (const driverId of dispatched.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: dispatched.tripId, eventAt });
-      const pushes = await Promise.all(dispatched.driverIds.map(driverId => sendPush(driverId, "Nuevo viaje cercano", `${dispatched.passengers} pasajero(s): ${dispatched.originReference ?? "Origen"} → ${dispatched.destinationReference ?? "Destino"}`, { tripId: dispatched.tripId, type: "TRIP_OFFER", eventAt })));
+      for (const driverId of dispatched.driverIds ?? []) realtime.publishToUser(driverId, { type: "trip:offer", tripId: dispatched.tripId, eventAt });
+      const pushes = await Promise.all((dispatched.driverIds ?? []).map(async driverId => {
+        const push = await sendPush(driverId, "Nuevo viaje cercano", `${dispatched.passengers} pasajero(s): ${dispatched.originReference ?? "Origen"} → ${dispatched.destinationReference ?? "Destino"}`, { tripId: dispatched.tripId, type: "TRIP_OFFER", eventAt });
+        if (push.sent > 0) await database()`update driver_offers set notification_sent_at=now() where trip_id=${dispatched.tripId} and driver_id=${driverId}`;
+        return push;
+      }));
       const failed = pushes.filter(push => push.sent === 0);
       if (failed.length) app.log.warn({
         type: "TRIP_OFFER", tripId: dispatched.tripId,
-        recipients: dispatched.driverIds.length, undelivered: failed.length,
+        recipients: dispatched.driverIds?.length ?? 0, undelivered: failed.length,
         errorCodes: failed.map(push => push.errorCode ?? "firebase/no-delivery")
       }, "trip_offer_push_not_delivered");
+      app.log.info({ tripId: dispatched.tripId, round: dispatched.round,
+        lowerMeters: dispatched.lowerMeters, upperMeters: dispatched.upperMeters,
+        recipients: dispatched.driverIds?.length ?? 0 }, "driver_search_round_dispatched");
     }
     return dispatched;
+  }
+
+  async function processDueDriverSearchRounds(): Promise<void> {
+    for (let processed = 0; processed < 25; processed++) {
+      const result = await redispatchOldestTrip();
+      if (!result) break;
+    }
   }
 
   async function activateScheduledTrips(): Promise<void> {
@@ -623,10 +706,10 @@ export async function buildApp() {
           sendPush(String(item.passengerId), "Buscando otro conductor", "La reserva fue liberada y se está ofreciendo nuevamente.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_RELEASED" }),
           sendPush(String(item.driverId), "Reserva liberada", "No fue posible iniciar el viaje programado mientras tenías otro viaje activo.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_RELEASED" })
         ]);
-        await redispatchOldestTrip();
+        await redispatchOldestTrip(String(item.tripId));
       } else if (activated === "UNASSIGNED") {
         await sendPush(String(item.passengerId), "Buscando conductor", "Tu viaje programado ya está próximo; iniciamos la búsqueda.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" });
-        await redispatchOldestTrip();
+        await redispatchOldestTrip(String(item.tripId));
       }
     }
   }
@@ -1525,7 +1608,6 @@ export async function buildApp() {
       if (error) return reply.code(400).send({ error, minimumNoticeMinutes: policy.minimumNoticeMinutes, maximumAdvanceMinutes: policy.maximumAdvanceMinutes });
     }
     const sql = database();
-    const searchRadius = await configuredSearchRadius();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
     const fare = await calculateTerritorialFare({
@@ -1573,31 +1655,16 @@ export async function buildApp() {
         `;
       }
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, ${JSON.stringify({ scheduledFor: scheduledFor?.toISOString() ?? null, scheduleStatus: scheduledFor ? "SCHEDULED" : null, stops: destinations.length })}::jsonb)`;
-      const candidates = await tx`select d.user_id from drivers d join users u on u.id=d.user_id where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO' and (${input.paymentMethod}='CASH' or d.deuna_enabled=true) and d.last_location is not null and d.last_location_at > now() - interval '5 minutes' and ((select not membership_enforcement_enabled from operational_settings where id=1) or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true)) and (dm.suspension_at is null or dm.suspension_at>now()))) and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')) and ST_DWithin(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography, ${searchRadius}) order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) limit 3`;
-      if (!scheduledFor) for (const candidate of candidates) await tx`insert into driver_offers (trip_id, driver_id, expires_at) values (${created!.id}, ${candidate.user_id}, now() + interval '2 minutes')`;
-      return { id: created!.id, offers: candidates.length, driverIds: candidates.map(candidate => String(candidate.user_id)) };
+      return { id: created!.id };
     });
-    const eventAt = new Date().toISOString();
-    const offerPushes = await Promise.all(trip.driverIds.map(driverId => sendPush(
-      driverId,
-      scheduledFor ? "Nuevo viaje programado" : "Nuevo viaje cercano",
-      `${input.passengers} pasajero(s): ${input.originReference ?? "Origen"} → ${finalDestination.reference}`,
-      { tripId: String(trip.id), type: scheduledFor ? "SCHEDULED_TRIP_AVAILABLE" : "TRIP_OFFER", eventAt }
-    )));
-    const undelivered = offerPushes.filter(push => push.sent === 0);
-    if (undelivered.length) request.log.warn({
-      type: scheduledFor ? "SCHEDULED_TRIP_AVAILABLE" : "TRIP_OFFER", tripId: String(trip.id),
-      recipients: trip.driverIds.length, undelivered: undelivered.length,
-      errorCodes: undelivered.map(push => push.errorCode ?? "firebase/no-delivery")
-    }, "trip_offer_push_not_delivered");
-    if (!scheduledFor) for (const driverId of trip.driverIds) realtime.publishToUser(driverId, { type: "trip:offer", tripId: String(trip.id), eventAt });
+    const firstRound = scheduledFor ? null : await redispatchOldestTrip(String(trip.id));
     if (scheduledFor) await sendPush(user.id!, "Viaje programado", `Tu solicitud quedó guardada para ${scheduledFor.toLocaleString("es-EC", { timeZone: "America/Guayaquil" })}.`, { tripId: String(trip.id), type: "SCHEDULED_TRIP_CREATED" });
     return reply.code(201).send({
       tripId: trip.id,
       status: "SEARCHING",
       scheduleStatus: scheduledFor ? "SCHEDULED" : null,
       scheduledFor: scheduledFor?.toISOString() ?? null,
-      offers: scheduledFor ? 0 : trip.offers,
+      offers: firstRound?.kind === "DISPATCHED" ? firstRound.driverIds?.length ?? 0 : 0,
       quotedTotalCents: total,
       fareIsSuggested: fare.suggested,
       distanceMeters: route?.distanceMeters ?? null,
@@ -2358,9 +2425,14 @@ export async function buildApp() {
   const scheduledTimer = process.env.DATABASE_URL
     ? setInterval(() => void activateScheduledTrips().catch(error => app.log.error({ error }, "scheduled_trip_activation_failed")), 60_000)
     : undefined;
+  const driverSearchTimer = process.env.DATABASE_URL
+    ? setInterval(() => void processDueDriverSearchRounds().catch(error => app.log.error({ error }, "driver_search_round_failed")), 2_000)
+    : undefined;
   scheduledTimer?.unref();
+  driverSearchTimer?.unref();
   app.addHook("onClose", async () => {
     if (scheduledTimer) clearInterval(scheduledTimer);
+    if (driverSearchTimer) clearInterval(driverSearchTimer);
   });
 
   return app;
