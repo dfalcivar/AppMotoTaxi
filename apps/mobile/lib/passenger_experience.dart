@@ -140,6 +140,22 @@ String formatSpanishLongDate(DateTime value) {
   return '${weekdays[local.weekday - 1]}, ${local.day} de ${months[local.month - 1]} de ${local.year}';
 }
 
+String formatEcuadorLongDateTime(DateTime value) {
+  const weekdays = [
+    'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'
+  ];
+  const months = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+  ];
+  // America/Guayaquil permanece en UTC-5 y no aplica horario de verano.
+  final operational = value.toUtc().subtract(const Duration(hours: 5));
+  final hour = operational.hour.toString().padLeft(2, '0');
+  final minute = operational.minute.toString().padLeft(2, '0');
+  return '${weekdays[operational.weekday - 1]}, ${operational.day} de '
+      '${months[operational.month - 1]} de ${operational.year} · $hour:$minute';
+}
+
 Map<String, int> tripFareBreakdown(Map<String, dynamic> preview) {
   int cents(String key) => ((preview[key] as num?) ?? 0).round();
   final base = cents('baseFareCents');
@@ -184,6 +200,7 @@ NotificationTarget notificationTargetFor(String? value) {
     'DRIVER_EN_ROUTE',
     'DRIVER_ARRIVED',
     'IN_PROGRESS',
+    'DRIVER_CANCELLED_REASSIGNING',
   }.contains(type)) {
     return NotificationTarget.activeTrip;
   }

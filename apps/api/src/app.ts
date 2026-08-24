@@ -119,12 +119,22 @@ const tripRequestSchema = z.object({
   originReference: z.string().max(200).optional(),
   destinationReference: z.string().max(200).optional(),
   notes: z.string().trim().max(300).optional(),
-  scheduledFor: z.string().datetime({ offset: true }).optional()
+  scheduledFor: z.string().datetime({ offset: true }).optional(),
+  idempotencyKey: z.string().trim().min(8).max(120).optional()
 }).refine(value => Boolean(value.destination) !== Boolean(value.destinations), {
   message: "ONE_DESTINATION_FORMAT_REQUIRED",
   path: ["destinations"]
 });
 const tripActionSchema = z.object({ action: z.enum(["EN_ROUTE", "ARRIVED", "START", "COMPLETE"]) });
+const driverTripCancellationSchema = z.object({
+  reason: z.enum(["VEHICLE_PROBLEM", "PERSONAL_EMERGENCY", "CANNOT_REACH_PICKUP", "PASSENGER_CONTACT_ISSUE", "OTHER"]),
+  observation: z.string().trim().max(500).optional(),
+  idempotencyKey: z.string().trim().min(8).max(120)
+}).superRefine((value, context) => {
+  if (value.reason === "OTHER" && (value.observation?.length ?? 0) < 3) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["observation"], message: "OBSERVATION_REQUIRED" });
+  }
+});
 const ratingSchema = z.object({ score: z.number().int().min(1).max(5), comment: z.string().trim().max(500).optional(), tags: z.array(z.string().trim().min(1).max(50)).max(5).optional() });
 const locationSearchSchema = z.object({
   q: z.string().trim().min(3).max(160),
@@ -549,7 +559,8 @@ export async function buildApp() {
         ? firstSearchBounds(settings)
         : nextSearchBounds({ round: currentRound, upperMeters: Number(trip.searchUpperMeters) }, settings);
 
-      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false)
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()),
+        accepted=coalesce(accepted, false), response_reason=coalesce(response_reason,'OFFER_EXPIRED')
         where trip_id=${trip.tripId} and responded_at is null and expires_at<=now()`;
 
       if (!bounds) {
@@ -674,7 +685,7 @@ export async function buildApp() {
           if (!ready) return "SKIPPED" as const;
           await tx`update drivers set is_available=false where user_id=${item.driverId}`;
           await tx`
-            update driver_offers set responded_at=now(), accepted=false
+            update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_BUSY'
             where driver_id=${item.driverId} and responded_at is null
           `;
           await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata) values (${item.tripId}, 'SEARCHING', 'ASSIGNED', 'SCHEDULED_READY', ${JSON.stringify({ leadMinutes })}::jsonb)`;
@@ -1588,6 +1599,12 @@ export async function buildApp() {
     if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
     const parsed = tripRequestSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_TRIP_REQUEST", details: parsed.error.issues });
     const input = parsed.data;
+    if (input.idempotencyKey) {
+      const [existing] = await database()`select id::text as "tripId", status,
+        quoted_total_cents as "quotedTotalCents", scheduled_for as "scheduledFor"
+        from trips where passenger_id=${user.id!} and client_request_id=${input.idempotencyKey}`;
+      if (existing) return reply.code(200).send({ ...existing, idempotentReplay: true });
+    }
     const destinations = input.destinations ?? [{
       location: input.destination!,
       reference: input.destinationReference?.trim() || "Destino"
@@ -1629,7 +1646,7 @@ export async function buildApp() {
           origin_reference, destination_reference, passenger_notes, service_zone,
           pricing_version, pricing_snapshot, quoted_total_cents, scheduled_for,
           schedule_status, estimated_distance_meters, estimated_duration_seconds,
-          service_area_id, service_area_version_id, route_snapshot
+          service_area_id, service_area_version_id, route_snapshot, client_request_id
         ) values (
           ${user.id!}, ${input.passengers}, ${input.paymentMethod},
           ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
@@ -1640,9 +1657,18 @@ export async function buildApp() {
           ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
           ${operationalArea.id}::uuid, ${operationalArea.versionId}::uuid,
-          ${route ? JSON.stringify({ points: route.points, provider: route.provider }) : null}::jsonb
-        ) returning id
+          ${route ? JSON.stringify({ points: route.points, provider: route.provider }) : null}::jsonb,
+          ${input.idempotencyKey ?? null}
+        )
+        on conflict (passenger_id, client_request_id) where client_request_id is not null
+        do nothing returning id
       `;
+      if (!created) {
+        const [existing] = await tx`select id from trips
+          where passenger_id=${user.id!} and client_request_id=${input.idempotencyKey ?? null}`;
+        if (!existing) throw new Error("TRIP_IDEMPOTENCY_CONFLICT");
+        return { id: existing.id, replay: true };
+      }
       for (let index = 0; index < destinations.length; index++) {
         const stop = destinations[index]!;
         await tx`
@@ -1655,10 +1681,10 @@ export async function buildApp() {
         `;
       }
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, ${JSON.stringify({ scheduledFor: scheduledFor?.toISOString() ?? null, scheduleStatus: scheduledFor ? "SCHEDULED" : null, stops: destinations.length })}::jsonb)`;
-      return { id: created!.id };
+      return { id: created.id, replay: false };
     });
-    const firstRound = scheduledFor ? null : await redispatchOldestTrip(String(trip.id));
-    if (scheduledFor) await sendPush(user.id!, "Viaje programado", `Tu solicitud quedó guardada para ${scheduledFor.toLocaleString("es-EC", { timeZone: "America/Guayaquil" })}.`, { tripId: String(trip.id), type: "SCHEDULED_TRIP_CREATED" });
+    const firstRound = scheduledFor || trip.replay ? null : await redispatchOldestTrip(String(trip.id));
+    if (scheduledFor && !trip.replay) await sendPush(user.id!, "Viaje programado", `Tu solicitud quedó guardada para ${scheduledFor.toLocaleString("es-EC", { timeZone: "America/Guayaquil" })}.`, { tripId: String(trip.id), type: "SCHEDULED_TRIP_CREATED" });
     return reply.code(201).send({
       tripId: trip.id,
       status: "SEARCHING",
@@ -1671,7 +1697,8 @@ export async function buildApp() {
       durationSeconds: route?.durationSeconds ?? null,
       stops: destinations,
       zone,
-      serviceArea: { id: operationalArea.id, code: operationalArea.code, name: operationalArea.name }
+      serviceArea: { id: operationalArea.id, code: operationalArea.code, name: operationalArea.name },
+      idempotentReplay: trip.replay
     });
   });
 
@@ -1693,7 +1720,9 @@ export async function buildApp() {
       `;
       if (!trip) return null;
       const drivers = await tx`select driver_id from driver_offers where trip_id=${tripId} and responded_at is null`;
-      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${tripId}`;
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()),
+        accepted=coalesce(accepted, false), response_reason=coalesce(response_reason,'PASSENGER_CANCELLED')
+        where trip_id=${tripId}`;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code) values (${tripId}, 'SEARCHING', 'CANCELLED', ${user.id!}, 'PASSENGER_CANCELLED')`;
       return {
         driverIds: [...new Set([
@@ -2256,6 +2285,54 @@ export async function buildApp() {
     return rating;
   });
 
+  app.post("/v1/driver/trips/:tripId/cancel", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = driverTripCancellationSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_DRIVER_CANCELLATION", details: parsed.error.issues });
+    const tripId = (request.params as { tripId: string }).tripId;
+    const result = await database().begin(async tx => {
+      const [replay] = await tx`select trip_id::text as "tripId" from trip_driver_cancellations
+        where idempotency_key=${parsed.data.idempotencyKey} and driver_id=${user.id!}`;
+      if (replay) return { tripId: String(replay.tripId), replay: true, passengerId: null as string | null };
+      const [trip] = await tx`select passenger_id::text as "passengerId", status
+        from trips where id=${tripId} and driver_id=${user.id!} for update`;
+      if (!trip) return { error: "TRIP_NOT_ASSIGNED_TO_DRIVER" as const };
+      if (trip.status !== "ASSIGNED" && trip.status !== "DRIVER_EN_ROUTE") {
+        return { error: "TRIP_NOT_CANCELLABLE_BY_DRIVER" as const };
+      }
+      await tx`insert into trip_driver_cancellations
+        (trip_id,driver_id,trip_status,reason_code,observation,idempotency_key)
+        values (${tripId},${user.id!},${trip.status},${parsed.data.reason},${parsed.data.observation ?? null},${parsed.data.idempotencyKey})`;
+      await tx`update driver_offers set response_reason='DRIVER_CANCELLED_AFTER_ACCEPTANCE'
+        where trip_id=${tripId} and driver_id=${user.id!} and accepted=true`;
+      await tx`update driver_offers set responded_at=coalesce(responded_at,now()),
+        accepted=coalesce(accepted,false), response_reason=coalesce(response_reason,'TRIP_NO_LONGER_AVAILABLE')
+        where trip_id=${tripId} and responded_at is null`;
+      await tx`update trips set driver_id=null, cooperative_id=null, status='SEARCHING', assigned_at=null,
+        driver_search_round=0, driver_search_lower_meters=0, driver_search_upper_meters=0,
+        driver_search_next_round_at=null, driver_search_finished_at=null
+        where id=${tripId}`;
+      await tx`update drivers set is_available=true where user_id=${user.id!}`;
+      await tx`insert into trip_events (trip_id,from_status,to_status,actor_id,reason_code,metadata)
+        values (${tripId},${trip.status},'SEARCHING',${user.id!},'DRIVER_CANCELLED_REASSIGNING',
+          ${JSON.stringify({ cancellationReason: parsed.data.reason, observation: parsed.data.observation ?? null })}::jsonb)`;
+      return { tripId, replay: false, passengerId: String(trip.passengerId) };
+    });
+    if ("error" in result) return reply.code(409).send(result);
+    if (!result.replay && result.passengerId) {
+      realtime.publishToUser(result.passengerId, { type: "trip:status", tripId, status: "SEARCHING", reason: "DRIVER_CANCELLED_REASSIGNING" });
+      realtime.publishTripStatus(tripId, "SEARCHING");
+      await Promise.all([
+        redispatchOldestTrip(tripId),
+        sendPush(result.passengerId, "Buscando otro conductor",
+          "El conductor canceló el traslado. Costa-Go ya está buscando otro conductor.",
+          { tripId, type: "DRIVER_CANCELLED_REASSIGNING" })
+      ]);
+    }
+    return { tripId: result.tripId, status: "SEARCHING", idempotentReplay: result.replay };
+  });
+
   app.get("/v1/driver/offers", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
@@ -2268,7 +2345,7 @@ export async function buildApp() {
     `;
     if (activeTrip) {
       await database()`
-        update driver_offers set responded_at=now(), accepted=false
+        update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_BUSY'
         where driver_id=${user.id!} and responded_at is null
       `;
       return [];
@@ -2332,13 +2409,13 @@ export async function buildApp() {
       const [offer] = await tx`select trip_id from driver_offers where id=${offerId} and driver_id=${user.id!} and responded_at is null and expires_at > now() for update`;
       if (!offer) return { error: "OFFER_UNAVAILABLE" };
       if (!body.data.accept) {
-        await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
+        await tx`update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_REJECTED' where id=${offerId}`;
         return { status: "REJECTED", tripId: String(offer.trip_id), otherDriverIds: [] as string[] };
       }
       await tx`select pg_advisory_xact_lock(hashtext(${user.id!}::text))`;
       const activeTrips = await tx`select id from trips where driver_id=${user.id!} and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS') limit 1 for update`;
       if (activeTrips.length) {
-        await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
+        await tx`update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_BUSY' where id=${offerId}`;
         return { error: "DRIVER_BUSY" };
       }
       const accepted = await tx`
@@ -2349,7 +2426,7 @@ export async function buildApp() {
         returning id
       `;
       if (!accepted.length) {
-        await tx`update driver_offers set responded_at=now(), accepted=false where id=${offerId}`;
+        await tx`update driver_offers set responded_at=now(), accepted=false, response_reason='TAKEN_BY_ANOTHER_DRIVER' where id=${offerId}`;
         return { error: "TRIP_ALREADY_ASSIGNED" };
       }
       const otherDrivers = await tx`
@@ -2357,9 +2434,11 @@ export async function buildApp() {
         where trip_id=${offer.trip_id} and id<>${offerId}
           and responded_at is null and expires_at > now()
       `;
-      await tx`update driver_offers set responded_at=now(), accepted=true where id=${offerId}`;
-      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${offer.trip_id} and id<>${offerId}`;
-      await tx`update driver_offers set responded_at=now(), accepted=false where driver_id=${user.id!} and id<>${offerId} and responded_at is null`;
+      await tx`update driver_offers set responded_at=now(), accepted=true, response_reason='ACCEPTED' where id=${offerId}`;
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false),
+        response_reason=coalesce(response_reason,'TAKEN_BY_ANOTHER_DRIVER') where trip_id=${offer.trip_id} and id<>${offerId}`;
+      await tx`update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_BUSY'
+        where driver_id=${user.id!} and id<>${offerId} and responded_at is null`;
       await tx`update drivers set is_available=false where user_id=${user.id!}`;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id) values (${offer.trip_id}, 'SEARCHING', 'DRIVER_EN_ROUTE', ${user.id!})`;
       return {

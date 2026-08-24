@@ -740,6 +740,20 @@ Future<Position> currentGpsPosition(BuildContext context) async {
   }
 }
 
+String friendlyLocationFailure(Object error) {
+  if (error is ApiException) return error.message;
+  if (error is LocationServiceDisabledException) {
+    return 'El GPS está desactivado. Actívalo o selecciona el origen en el mapa.';
+  }
+  if (error is PermissionDeniedException) {
+    return 'No tenemos permiso de ubicación. Puedes habilitarlo en ajustes o elegir el origen en el mapa.';
+  }
+  if (error is TimeoutException) {
+    return 'El GPS está tardando. Puedes elegir el origen en el mapa o volver a intentarlo.';
+  }
+  return 'No pudimos confirmar tu ubicación. Reintenta o selecciona el origen en el mapa.';
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
@@ -977,6 +991,12 @@ String mensajeApi(dynamic code) =>
       'TRIP_ALREADY_ASSIGNED': 'Otro conductor ya aceptó este viaje.',
       'TRIP_NOT_CANCELLABLE':
           'La solicitud ya fue asignada y no puede cancelarse desde aquí.',
+      'TRIP_NOT_ASSIGNED_TO_DRIVER':
+          'Este viaje ya no está asignado a tu cuenta.',
+      'TRIP_NOT_CANCELLABLE_BY_DRIVER':
+          'La carrera ya avanzó y no puede cancelarse desde esta pantalla.',
+      'INVALID_DRIVER_CANCELLATION':
+          'Selecciona un motivo válido para cancelar la carrera.',
       'INVALID_TRIP_STATE':
           'Esta acción ya no está disponible para el estado actual del viaje.',
       'SCHEDULE_TOO_SOON': 'El viaje debe reservarse con mayor anticipación.',
@@ -1038,6 +1058,12 @@ String mensajeApi(dynamic code) =>
           'No fue posible consultar las direcciones en este momento. Revisa tu conexión e inténtalo nuevamente.',
       'INVALID_LOCATION_QUERY':
           'Escribe al menos tres letras y vuelve a buscar la dirección.',
+      'PAYMENT_ORDER_NOT_CANCELLABLE':
+          'Esta orden ya no puede anularse porque cambió de estado o tiene un comprobante en revisión.',
+      'PAYMENT_ORDER_NOT_FOUND':
+          'La orden de pago no existe o ya no está disponible.',
+      'PAYMENT_ORDER_NOT_PAYABLE':
+          'Esta orden ya no está disponible para recibir pagos.',
     }[code] ??
     'No se pudo completar la operación.';
 
@@ -1471,6 +1497,19 @@ class Api {
       call('POST',
           '/v1/driver/membership/payment-orders/$orderId/transfer-proof',
           token: t, body: proof);
+  Future<List<dynamic>> membershipPaymentOrders(String t) async =>
+      List<dynamic>.from(await call(
+          'GET', '/v1/driver/membership/payment-orders', token: t));
+  Future<dynamic> cancelMembershipPaymentOrder(String t, String orderId,
+          String reason, String? observation) =>
+      call('POST', '/v1/driver/membership/payment-orders/$orderId/cancel',
+          token: t,
+          body: {
+            'reason': reason,
+            if (observation != null && observation.trim().isNotEmpty)
+              'observation': observation.trim(),
+            'idempotencyKey': 'mobile-cancel-$orderId',
+          });
   Future<void> advertisingEvent(String t,
       {required String campaignId,
       required String eventType,
@@ -1548,6 +1587,9 @@ class Api {
             destinations: destinations,
             scheduledFor: scheduledFor,
           ));
+  Future<dynamic> createFromPayload(
+          String token, Map<String, dynamic> payload) =>
+      call('POST', '/v1/trips', token: token, body: payload);
   Future<Map<String, dynamic>> previewTrip(
           String t, Map<String, dynamic> payload) async =>
       Map<String, dynamic>.from(
@@ -1667,6 +1709,16 @@ class Api {
           token: t, body: {'accept': accept});
   Future<void> action(String t, String id, String a) =>
       call('POST', '/v1/trips/$id/action', token: t, body: {'action': a});
+  Future<void> cancelAssignedTrip(String token, String tripId,
+          {required String reason,
+          String? observation,
+          required String idempotencyKey}) =>
+      call('POST', '/v1/driver/trips/$tripId/cancel', token: token, body: {
+        'reason': reason,
+        if (observation?.trim().isNotEmpty == true)
+          'observation': observation!.trim(),
+        'idempotencyKey': idempotencyKey,
+      });
   Future<void> rate(
           String t, String id, int score, List<String> tags, String comment) =>
       call('POST', '/v1/trips/$id/ratings',
@@ -5334,6 +5386,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   bool initialPushHandled = false;
   bool initialLocationLoading = false;
   bool usingProvisionalLocation = false;
+  bool requestSubmitting = false;
   @override
   void initState() {
     super.initState();
@@ -5692,6 +5745,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (!mounted) return;
     final normalizedType = normalizePassengerTripUpdateType(type);
     final defaults = <String, List<String>>{
+      'DRIVER_CANCELLED_REASSIGNING': [
+        'Buscando otro conductor',
+        'El conductor canceló el traslado. Costa-Go ya está buscando otro conductor.'
+      ],
       'DRIVER_EN_ROUTE': [
         'Conductor en camino',
         'Tu conductor se dirige hacia el origen.'
@@ -5744,7 +5801,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (status == 'COMPLETED' || status == 'TRIP_CANCELLED') return;
     setState(() {
       active = {...Map<String, dynamic>.from(active as Map), 'status': status};
+      if (status == 'SEARCHING') {
+        driverPosition = null;
+        driverBearing = 0;
+      }
       message = {
+        'SEARCHING': 'Buscando otro conductor cercano.',
         'DRIVER_EN_ROUTE':
             '${active['driverName'] ?? 'Tu conductor'} va en camino.',
         'DRIVER_ARRIVED': 'El conductor ya llegó.',
@@ -6050,10 +6112,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 (t['destinationLongitude'] as num).toDouble());
           }
         }
-        if (t['driverLatitude'] != null) {
+        if (t['driverLatitude'] != null && t['status'] != 'SEARCHING') {
           driverPosition = LatLng((t['driverLatitude'] as num).toDouble(),
               (t['driverLongitude'] as num).toDouble());
           driverBearing = (t['driverBearing'] as num?)?.toDouble() ?? 0;
+        } else {
+          driverPosition = null;
+          driverBearing = 0;
         }
         nearbyDrivers.clear();
         message = {
@@ -6121,7 +6186,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         }
       }
     } catch (e) {
-      if (mounted) setState(() => message = e.toString());
+      if (mounted) setState(() => message = friendlyLocationFailure(e));
     }
   }
 
@@ -6213,7 +6278,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             : 'El GPS está tardando. Puedes elegir el origen en el mapa o volver a intentarlo.');
       }
     } catch (error) {
-      if (mounted) setState(() => message = error.toString());
+      if (mounted) setState(() => message = friendlyLocationFailure(error));
     } finally {
       if (mounted) setState(() => initialLocationLoading = false);
     }
@@ -6236,7 +6301,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+            .showSnackBar(SnackBar(content: Text(friendlyLocationFailure(error))));
       }
       return null;
     }
@@ -6867,9 +6932,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Map<String, dynamic>? _currentRequestPayload() {
     final destinations = _serializedDestinations();
-    if (pickup == null || destinations == null) return null;
+    final selectedOrigin = pickup;
+    if (selectedOrigin == null || destinations == null || destinations.isEmpty) {
+      return null;
+    }
+    final lastLocation = Map<String, dynamic>.from(
+        destinations.last['location'] as Map);
+    final selectedDestination = LatLng(
+        (lastLocation['latitude'] as num).toDouble(),
+        (lastLocation['longitude'] as num).toDouble());
     if (serviceAreaCatalog != null) {
-      final area = serviceAreaCatalog!.find(pickup!);
+      final area = serviceAreaCatalog!.find(selectedOrigin);
       if (area == null ||
           destinations.any((destination) {
             final location =
@@ -6887,8 +6960,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       passengers: people,
       originReference: origin.text,
       destinationReference: destination.text,
-      selectedOrigin: pickup!,
-      selectedDestination: _finalDestinationPoint!,
+      selectedOrigin: selectedOrigin,
+      selectedDestination: selectedDestination,
       paymentMethod: paymentMethod,
       notes: notes.text,
       destinations: destinations,
@@ -7402,33 +7475,32 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   Future<void> create() async {
-    final payload = _currentRequestPayload();
-    if (payload == null) {
+    if (requestSubmitting) return;
+    final draft = _currentRequestPayload();
+    if (draft == null) {
       setState(() => message =
           'Marca el origen y todos los destinos en el mapa antes de solicitar.');
       return;
     }
+    final requestKey =
+        'trip-${DateTime.now().microsecondsSinceEpoch}-${math.Random.secure().nextInt(1 << 32)}';
+    final payload = Map<String, dynamic>.from(
+        jsonDecode(jsonEncode({...draft, 'idempotencyKey': requestKey})) as Map);
+    final editingId = editingScheduledTripId;
     if (!await confirmTripSummary(payload)) return;
+    if (!mounted) return;
+    setState(() {
+      requestSubmitting = true;
+      message = 'Creando tu solicitud…';
+    });
     try {
       ratingPrompted = false;
-      // Freeze the coordinates represented by the confirmed markers. The
-      // request body, fare/route context and driver search all use this exact
-      // origin rather than currentLocation.
-      final requestedOrigin = pickup!;
-      final requestedDestination = _finalDestinationPoint!;
-      final destinations = _serializedDestinations()!;
-      final payload = _currentRequestPayload()!;
-      final editingId = editingScheduledTripId;
       final t = editingId == null
-          ? await api.create(widget.s.token, people, origin.text,
-              destination.text, requestedOrigin, requestedDestination,
-              paymentMethod: paymentMethod,
-              notes: notes.text,
-              destinations: destinations,
-              scheduledFor: scheduledFor)
+          ? await api.createFromPayload(widget.s.token, payload)
           : await api.updateScheduled(widget.s.token, editingId, payload);
+      final isScheduled = payload['scheduledFor'] != null;
       setState(() {
-        if (scheduledFor == null) {
+        if (!isScheduled) {
           active = {'tripId': t['tripId'], 'status': 'SEARCHING'};
           sheetExtent = .46;
         } else {
@@ -7443,6 +7515,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (!mounted) return;
       final text = e.toString();
       setState(() => message = text);
+      debugPrint('TRIP_REQUEST_FAILED code=${e is ApiException ? e.code : 'TRIP_REQUEST_STATE_INVALIDATED'}');
       if (e is ApiException && coverageErrorCodes.contains(e.code)) {
         await showPassengerCoverageError(
             e.code ?? 'OUTSIDE_SERVICE_AREA', text);
@@ -7451,6 +7524,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           clearInvalidDestinationsForCoverage();
         }
       }
+    } finally {
+      if (mounted) setState(() => requestSubmitting = false);
     }
   }
 
@@ -8054,10 +8129,31 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
               child: Text(message!)),
+        if (active == null && pickup == null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: OutlinedButton.icon(
+              onPressed: initialLocationLoading
+                  ? null
+                  : () => unawaited(initializePassengerLocation()),
+              icon: initialLocationLoading
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.my_location_outlined),
+              label: Text(initialLocationLoading
+                  ? 'Confirmando ubicación…'
+                  : 'Volver a intentar GPS'),
+            ),
+          ),
         _routeSummary(context),
         FilledButton(
-            onPressed: _currentRequestPayload() == null ? null : create,
-            child: const Text('Solicitar mototaxi')),
+            onPressed: requestSubmitting || _currentRequestPayload() == null
+                ? null
+                : create,
+            child: Text(requestSubmitting
+                ? 'Creando solicitud…'
+                : 'Solicitar mototaxi')),
       ];
 
   @override
@@ -9558,6 +9654,93 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> cancelAcceptedTrip() async {
+    final tripId = active?['tripId']?.toString();
+    final status = active?['status']?.toString();
+    if (tripId == null || !const {'ASSIGNED', 'DRIVER_EN_ROUTE'}.contains(status)) {
+      return;
+    }
+    var reason = 'VEHICLE_PROBLEM';
+    final observation = TextEditingController();
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              icon: const Icon(Icons.cancel_outlined),
+              title: const Text('Cancelar carrera'),
+              content: SingleChildScrollView(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Text(
+                      'El pasajero será informado y Costa-Go buscará automáticamente otro conductor.'),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: reason,
+                    decoration: const InputDecoration(labelText: 'Motivo'),
+                    items: const [
+                      DropdownMenuItem(value: 'VEHICLE_PROBLEM', child: Text('Problema con la mototaxi')),
+                      DropdownMenuItem(value: 'PERSONAL_EMERGENCY', child: Text('Emergencia personal')),
+                      DropdownMenuItem(value: 'CANNOT_REACH_PICKUP', child: Text('No puedo llegar al punto de recogida')),
+                      DropdownMenuItem(value: 'PASSENGER_CONTACT_ISSUE', child: Text('No logro contactar al pasajero')),
+                      DropdownMenuItem(value: 'OTHER', child: Text('Otro')),
+                    ],
+                    onChanged: (value) => setDialogState(() => reason = value!),
+                  ),
+                  if (reason == 'OTHER') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: observation,
+                      onChanged: (_) => setDialogState(() {}),
+                      maxLength: 500,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                          labelText: 'Explica brevemente el motivo'),
+                    ),
+                  ],
+                ]),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Volver')),
+                FilledButton(
+                  onPressed: reason == 'OTHER' && observation.text.trim().length < 3
+                      ? null
+                      : () => Navigator.pop(dialogContext, true),
+                  child: const Text('Confirmar cancelación'),
+                ),
+              ],
+            ),
+          ),
+        ) ??
+        false;
+    if (!confirmed) {
+      observation.dispose();
+      return;
+    }
+    final idempotencyKey =
+        'driver-cancel-$tripId-${DateTime.now().microsecondsSinceEpoch}';
+    try {
+      await api.cancelAssignedTrip(widget.s.token, tripId,
+          reason: reason,
+          observation: observation.text,
+          idempotencyKey: idempotencyKey);
+      if (!mounted) return;
+      setState(() {
+        active = null;
+        routePoints = [];
+        available = true;
+        driverMessage =
+            'Carrera cancelada. El pasajero está buscando otro conductor.';
+      });
+      await restore();
+      await refresh();
+    } catch (error) {
+      if (mounted) setState(() => driverMessage = error.toString());
+    } finally {
+      observation.dispose();
+    }
+  }
+
   Future<void> promptDriverRating(String tripId) async {
     if (!mounted || promptedRatingTripId == tripId) return;
     promptedRatingTripId = tripId;
@@ -10140,21 +10323,153 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     return submitted;
   }
 
+  String _membershipCancellationLabel(String? code) => const {
+        'ORDER_GENERATION_ERROR': 'Error al generar la orden',
+        'WRONG_MEMBERSHIP': 'Seleccionó una membresía incorrecta',
+        'CHANGED_MIND': 'Cambió de opinión',
+        'DUPLICATE_ORDER': 'Orden duplicada',
+        'OTHER': 'Otro motivo',
+      }[code] ?? 'Sin detalle';
+
+  Future<bool> _cancelMembershipOrder(
+      BuildContext hostContext, Map<String, dynamic> order) async {
+    var reason = 'ORDER_GENERATION_ERROR';
+    var sending = false;
+    final observation = TextEditingController();
+    final confirmed = await showDialog<bool>(
+          context: hostContext,
+          builder: (context) => StatefulBuilder(builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Anular orden'),
+              content: SingleChildScrollView(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Text(
+                      'La orden quedará en el histórico y su QR dejará de funcionar.'),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: reason,
+                    decoration: const InputDecoration(labelText: 'Motivo'),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'ORDER_GENERATION_ERROR',
+                          child: Text('Error al generar la orden')),
+                      DropdownMenuItem(
+                          value: 'WRONG_MEMBERSHIP',
+                          child: Text('Membresía incorrecta')),
+                      DropdownMenuItem(
+                          value: 'CHANGED_MIND',
+                          child: Text('Cambié de opinión')),
+                      DropdownMenuItem(
+                          value: 'DUPLICATE_ORDER',
+                          child: Text('Orden duplicada')),
+                      DropdownMenuItem(value: 'OTHER', child: Text('Otro')),
+                    ],
+                    onChanged: sending
+                        ? null
+                        : (value) => setState(() => reason = value ?? reason),
+                  ),
+                  if (reason == 'OTHER') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: observation,
+                      minLines: 2,
+                      maxLines: 4,
+                      maxLength: 500,
+                      decoration: const InputDecoration(
+                          labelText: 'Observación',
+                          hintText: 'Explica brevemente el motivo'),
+                    ),
+                  ],
+                ]),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: sending ? null : () => Navigator.pop(context, false),
+                    child: const Text('Volver')),
+                FilledButton(
+                  onPressed: sending
+                      ? null
+                      : () async {
+                          if (reason == 'OTHER' &&
+                              observation.text.trim().length < 3) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Escribe una observación para continuar.')));
+                            return;
+                          }
+                          setState(() => sending = true);
+                          try {
+                            await api.cancelMembershipPaymentOrder(
+                                widget.s.token,
+                                order['id'].toString(),
+                                reason,
+                                observation.text);
+                            if (context.mounted) Navigator.pop(context, true);
+                          } catch (error) {
+                            setState(() => sending = false);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(error.toString())));
+                            }
+                          }
+                        },
+                  child: Text(sending ? 'Anulando...' : 'Anular orden'),
+                ),
+              ],
+            );
+          }),
+        ) ??
+        false;
+    observation.dispose();
+    if (confirmed) {
+      await refreshMembership(force: true);
+      if (hostContext.mounted) {
+        ScaffoldMessenger.of(hostContext).showSnackBar(const SnackBar(
+            content: Text('La orden fue anulada correctamente.')));
+      }
+    }
+    return confirmed;
+  }
+
+  Widget _membershipAmountRow(BuildContext context, String label, num value,
+      {bool emphasized = false}) {
+    final style = emphasized
+        ? Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: Theme.of(context).colorScheme.primary)
+        : Theme.of(context).textTheme.bodyMedium;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Expanded(child: Text(label, style: style)),
+        Text('\$${value.toDouble().toStringAsFixed(2)}', style: style),
+      ]),
+    );
+  }
+
   Future<void> _showMembershipPaymentOrder(
       BuildContext hostContext, Map<String, dynamic> order) async {
     final status = order['status']?.toString() ?? 'PENDING';
     final qrUrl = order['qrUrl']?.toString();
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
-    final expiresAt =
-        DateTime.tryParse(order['expiresAt']?.toString() ?? '')?.toLocal();
+    final expiresAt = DateTime.tryParse(order['expiresAt']?.toString() ?? '');
+    final breakdown = Map<String, dynamic>.from(
+        order['breakdown'] as Map? ?? const <String, dynamic>{});
     await showDialog<void>(
       context: hostContext,
       builder: (dialogContext) => AlertDialog(
         icon: Image.asset('assets/images/costa-go-emblem.png',
             width: 42, height: 42),
-        title: Text(status == 'PENDING_VERIFICATION'
-            ? 'Pago pendiente de verificación'
-            : 'QR de membresía'),
+        title: Text(const {
+              'PENDING': 'QR de membresía',
+              'PENDING_VERIFICATION': 'Pago pendiente de verificación',
+              'PAID': 'Orden pagada',
+              'REJECTED': 'Orden rechazada',
+              'EXPIRED': 'Orden vencida',
+              'CANCELLED': 'Orden anulada',
+            }[status] ??
+            'Orden de membresía'),
         content: SingleChildScrollView(
           child: SizedBox(
             width: 300,
@@ -10181,21 +10496,79 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     'Presenta este QR en un punto de recaudación autorizado.',
                     textAlign: TextAlign.center),
               ] else
-                const Icon(Icons.hourglass_top_rounded, size: 58),
+                Icon(
+                    status == 'CANCELLED'
+                        ? Icons.block_rounded
+                        : status == 'PAID'
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.hourglass_top_rounded,
+                    size: 58),
               const SizedBox(height: 12),
               Text('Código ${order['shortCode']}',
                   style: Theme.of(dialogContext)
                       .textTheme
                       .titleMedium
                       ?.copyWith(fontWeight: FontWeight.w900)),
-              Text('Total: \$${amount.toStringAsFixed(2)}',
-                  style: Theme.of(dialogContext)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 12),
+              _membershipAmountRow(dialogContext, 'Membresía',
+                  (breakdown['baseAmount'] as num?) ?? order['baseAmount'] ?? 0),
+              if (breakdown['includedTrips'] != null)
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                        'Viajes incluidos: ${breakdown['includedTrips']}')),
+              if (breakdown['extraTrips'] != null &&
+                  (breakdown['extraTrips'] as num) > 0) ...[
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                        'Viajes realizados que generan excedente: ${breakdown['extraTrips']}')),
+                if (breakdown['extraTripUnitAmount'] != null)
+                  _membershipAmountRow(dialogContext,
+                      'Valor por viaje excedente',
+                      breakdown['extraTripUnitAmount'] as num),
+                if (breakdown['extraTripSharePercent'] != null &&
+                    breakdown['passengerServiceAdditional'] != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Cada excedente corresponde al ${breakdown['extraTripSharePercent']}% del adicional de servicio al pasajero (\$${(breakdown['passengerServiceAdditional'] as num).toDouble().toStringAsFixed(2)}).',
+                      style: Theme.of(dialogContext).textTheme.bodySmall,
+                    ),
+                  ),
+                if (breakdown['rawExtraAmount'] != null &&
+                    breakdown['maximumExtraAmount'] != null &&
+                    (breakdown['rawExtraAmount'] as num) >
+                        (breakdown['maximumExtraAmount'] as num))
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Se aplicó el tope del plan de \$${(breakdown['maximumExtraAmount'] as num).toDouble().toStringAsFixed(2)} para excedentes.',
+                      style: Theme.of(dialogContext).textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+              _membershipAmountRow(
+                  dialogContext,
+                  'Excedente',
+                  (breakdown['billableExtraAmount'] as num?) ??
+                      order['priorUsageAmount'] ??
+                      0),
+              if (((breakdown['adjustmentAmount'] as num?) ??
+                      order['adjustmentAmount'] ??
+                      0) !=
+                  0)
+                _membershipAmountRow(
+                    dialogContext,
+                    'Ajustes',
+                    (breakdown['adjustmentAmount'] as num?) ??
+                        order['adjustmentAmount'] as num),
+              const Divider(height: 18),
+              _membershipAmountRow(dialogContext, 'Total a pagar', amount,
+                  emphasized: true),
               if (expiresAt != null)
                 Text(
-                    'Válido hasta ${MaterialLocalizations.of(dialogContext).formatFullDate(expiresAt)} · ${TimeOfDay.fromDateTime(expiresAt).format(dialogContext)}',
+                    'Válido hasta ${formatEcuadorLongDateTime(expiresAt)}',
                     textAlign: TextAlign.center),
               if (status == 'PENDING_VERIFICATION')
                 const Padding(
@@ -10204,6 +10577,20 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       'Tu comprobante ya fue enviado. No generes otra orden mientras se realiza la revisión.',
                       textAlign: TextAlign.center),
                 ),
+              if (status == 'CANCELLED')
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    '${_membershipCancellationLabel(order['cancellationReason']?.toString())}${order['cancellationObservation'] == null ? '' : '\n${order['cancellationObservation']}'}',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              if (status == 'PENDING') ...[
+                const SizedBox(height: 14),
+                const Text(
+                    'Si su pago es mediante transferencia, suba aquí su comprobante.',
+                    textAlign: TextAlign.center),
+              ],
             ]),
           ),
         ),
@@ -10217,6 +10604,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               icon: const Icon(Icons.upload_file_outlined),
               label: const Text('Adjuntar transferencia'),
             ),
+          if (status == 'PENDING')
+            TextButton.icon(
+              onPressed: () async {
+                final cancelled =
+                    await _cancelMembershipOrder(dialogContext, order);
+                if (cancelled && dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+              },
+              icon: const Icon(Icons.cancel_outlined),
+              label: const Text('Anular orden'),
+            ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cerrar'),
@@ -10224,6 +10623,95 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+
+  Future<void> _showMembershipPaymentHistory(
+      BuildContext hostContext) async {
+    try {
+      final raw = await api.membershipPaymentOrders(widget.s.token);
+      final orders = raw
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      if (!hostContext.mounted) return;
+      await showModalBottomSheet<void>(
+        context: hostContext,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (context) => FractionallySizedBox(
+          heightFactor: .72,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Mis pagos',
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 4),
+              const Text('Órdenes vigentes, pagadas, vencidas y anuladas.'),
+              const SizedBox(height: 12),
+              Expanded(
+                child: orders.isEmpty
+                    ? const Center(child: Text('Aún no tienes órdenes de pago.'))
+                    : ListView.separated(
+                        itemCount: orders.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final order = orders[index];
+                          final status = order['status']?.toString() ?? 'PENDING';
+                          final created = DateTime.tryParse(
+                              order['createdAt']?.toString() ?? '');
+                          final statusLabel = const {
+                                'PENDING': 'Pendiente',
+                                'PENDING_VERIFICATION': 'En revisión',
+                                'PAID': 'Pagada',
+                                'REJECTED': 'Rechazada',
+                                'EXPIRED': 'Vencida',
+                                'CANCELLED': 'Anulada',
+                              }[status] ??
+                              status;
+                          final color = status == 'CANCELLED'
+                              ? Theme.of(context).colorScheme.errorContainer
+                              : Theme.of(context).colorScheme.surfaceContainerHigh;
+                          return Card(
+                            color: color,
+                            child: ListTile(
+                              leading: Icon(status == 'CANCELLED'
+                                  ? Icons.block_rounded
+                                  : Icons.receipt_long_outlined),
+                              title: Text(
+                                  '${order['plan']?['name'] ?? 'Membresía'} · $statusLabel'),
+                              subtitle: Text([
+                                'Código ${order['shortCode']}',
+                                if (created != null)
+                                  formatEcuadorLongDateTime(created),
+                                if (status == 'CANCELLED')
+                                  _membershipCancellationLabel(
+                                      order['cancellationReason']?.toString()),
+                                if (status == 'CANCELLED' &&
+                                    order['cancellationObservation'] != null)
+                                  order['cancellationObservation'].toString(),
+                              ].join('\n')),
+                              trailing: Text(
+                                  '\$${((order['totalAmount'] as num?) ?? 0).toDouble().toStringAsFixed(2)}'),
+                              onTap: () => _showMembershipPaymentOrder(
+                                  context, order),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ]),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (hostContext.mounted) {
+        ScaffoldMessenger.of(hostContext)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
   }
 
   Future<void> _showMembershipDetails() async {
@@ -10269,6 +10757,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               if (membership['estimatedNextRenewalAmount'] != null)
                 Text(
                     'Renovación estimada: \$${(membership['estimatedNextRenewalAmount'] as num).toStringAsFixed(2)}'),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => _showMembershipPaymentHistory(sheetContext),
+                icon: const Icon(Icons.receipt_long_outlined),
+                label: const Text('Mis pagos'),
+              ),
               const SizedBox(height: 18),
               if (pendingOrder != null) ...[
                 Card(
@@ -10279,7 +10773,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         ? 'Pago en revisión'
                         : 'Orden de pago vigente'),
                     subtitle: Text(
-                        'Código ${pendingOrder['shortCode']} · vence ${DateTime.tryParse(pendingOrder['expiresAt']?.toString() ?? '')?.toLocal().toString().substring(0, 16) ?? 'próximamente'}'),
+                        'Código ${pendingOrder['shortCode']} · vence ${DateTime.tryParse(pendingOrder['expiresAt']?.toString() ?? '') == null ? 'próximamente' : formatEcuadorLongDateTime(DateTime.parse(pendingOrder['expiresAt'].toString()))}'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () =>
                         _showMembershipPaymentOrder(sheetContext, pendingOrder),
@@ -10573,6 +11067,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       Text('Preparando ruta...'),
                     ])
                   : Text(label(action)),
+            ),
+          if (const {'ASSIGNED', 'DRIVER_EN_ROUTE'}
+              .contains(active['status']?.toString()))
+            OutlinedButton.icon(
+              onPressed: cancelAcceptedTrip,
+              icon: const Icon(Icons.cancel_outlined),
+              label: const Text('Cancelar carrera'),
             ),
         ],
         if (offers.isNotEmpty) _offerCarousel(context),

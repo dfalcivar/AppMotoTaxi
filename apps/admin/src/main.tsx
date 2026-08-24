@@ -214,9 +214,15 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
     averageTripSeconds: { label: "Duración promedio", icon: "↔", tone: "neutral" },
     openIncidents: { label: "Incidentes abiertos", icon: "!", tone: "negative" },
     acceptanceRate: { label: "Aceptación", icon: "%", tone: "positive" },
-    cancellationRate: { label: "Cancelación", icon: "%", tone: "negative" }
+    cancellationRate: { label: "Cancelación", icon: "%", tone: "negative" },
+    offersSent: { label: "Ofertas enviadas", icon: "↗", tone: "neutral" },
+    offersRejected: { label: "Ofertas rechazadas", icon: "×", tone: "warning" },
+    offersExpired: { label: "Ofertas vencidas", icon: "◷", tone: "warning" },
+    offersTakenByAnother: { label: "Tomadas por otro conductor", icon: "✓", tone: "neutral" },
+    driverCancellationsAfterAcceptance: { label: "Canceladas tras aceptar", icon: "!", tone: "negative" },
+    averageOfferResponseSeconds: { label: "Respuesta promedio a oferta", icon: "⌛", tone: "neutral" }
   };
-  const durations = new Set(["averageAssignmentSeconds", "averageWaitSeconds", "averageTripSeconds"]); const rates = new Set(["acceptanceRate", "cancellationRate"]);
+  const durations = new Set(["averageAssignmentSeconds", "averageWaitSeconds", "averageTripSeconds", "averageOfferResponseSeconds"]); const rates = new Set(["acceptanceRate", "cancellationRate"]);
   const metricValue = (key: string, value: unknown) => durations.has(key) ? `${Math.floor(Number(value) / 60)}m ${Number(value) % 60}s` : rates.has(key) ? `${value}%` : String(value ?? 0);
   const options = data?.options ?? { cooperatives: [], drivers: [], sectors: [], statuses: [] };
   const drivers = options.drivers.filter((driver: any) => !draft.cooperativeId || driver.cooperativeId === draft.cooperativeId);

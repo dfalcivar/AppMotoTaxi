@@ -1297,6 +1297,112 @@ No incluir cédula, nombre, `driver_id`, monto, días ni parámetros editables. 
 
 La duración del QR será configurable; referencia inicial: 24 horas. Expirar una orden conserva su historial. Un QR pagado muestra estado, fecha y método permitido, pero nunca vuelve a presentar el botón de confirmación.
 
+### Anulación y detalle verificable de la orden de membresía
+
+#### Anular una orden pendiente
+
+Agregar la acción **Anular orden** en el detalle/QR únicamente mientras la orden continúa pendiente de pago y no tiene un pago confirmado ni una evidencia en proceso de verificación. La interfaz debe mostrar `ANULADA`, reutilizando internamente el estado compatible `CANCELLED` si ese es el catálogo vigente; no crear dos estados equivalentes ni renombrar contratos existentes solo para traducir la UI.
+
+Antes de confirmar, abrir un modal de Costa-Go y solicitar obligatoriamente uno de estos motivos normalizados:
+
+- error al generar la orden;
+- membresía incorrecta;
+- cambió de opinión;
+- orden duplicada;
+- otro.
+
+La opción **Otro** exige una observación breve. Al confirmar:
+
+- bloquear la orden y volver a validar estado/versión en backend;
+- cambiarla atómicamente a `CANCELLED` y mostrarla como **Anulada**;
+- invalidar definitivamente su token, QR y código de pago;
+- impedir adjuntar comprobantes, registrar cobros o reutilizarla;
+- conservar conductor, plan snapshot, importes y trazabilidad histórica;
+- registrar motivo, observación sanitizada, actor, canal, fecha/hora, idempotency key y estado anterior;
+- mostrarla en **Mis pagos > Órdenes anuladas** y en el histórico administrativo, sin mezclarla con órdenes cobrables;
+- no eliminar físicamente la orden ni sus eventos de auditoría.
+
+La operación será idempotente. Dos pulsaciones no generan dos anulaciones. Una carrera entre anulación, carga de comprobante y confirmación de pago se resuelve mediante lock/compare-and-set: una orden pagada no puede anularse y una orden anulada no puede pagarse.
+
+#### Fecha y textos en español
+
+Todas las fechas visibles del QR y detalle se formatearán con locale español de Ecuador y zona horaria operativa `America/Guayaquil`, por ejemplo:
+
+> lunes, 24 de agosto de 2026 · 22:18
+
+No depender del locale del sistema para producir nombres de días o meses en inglés. Los timestamps siguen almacenándose de forma consistente en backend; la traducción es exclusivamente visual.
+
+Antes de **Adjuntar transferencia**, mostrar:
+
+> Si su pago es mediante transferencia, suba aquí su comprobante.
+
+Ocultar esta indicación y la acción cuando la orden esté pagada, vencida, rechazada o anulada.
+
+#### Desglose dinámico del total
+
+La orden y su QR deben mostrar un desglose proveniente íntegramente del snapshot económico congelado al crear/cerrar la orden. No calcular importes finales únicamente en la aplicación ni colocar costo del plan, viajes incluidos, porcentaje, comisión o topes como constantes.
+
+Conservar como mínimo en el snapshot o referencias inmutables equivalentes:
+
+- precio base y moneda del plan;
+- viajes incluidos;
+- viajes completados del ciclo liquidado;
+- cantidad de viajes que generan excedente;
+- adicional/comisión por uso vigente congelado para ese ciclo;
+- porcentaje configurable aplicable al excedente;
+- valor unitario derivado por viaje excedente;
+- excedente bruto, tope aplicado, ajustes y excedente facturable;
+- total definitivo de la orden.
+
+La fórmula base será:
+
+```text
+viajes_excedentes = MAX(0, viajes_completados - viajes_incluidos)
+valor_unitario_excedente = redondeo_monetario(
+  adicional_servicio_pasajero_snapshot × porcentaje_excedente_snapshot / 100
+)
+excedente_bruto = viajes_excedentes × valor_unitario_excedente
+excedente_facturable = MIN(excedente_bruto, tope_excedente_snapshot)
+total_orden = precio_base_snapshot + excedente_facturable + ajustes_snapshot
+```
+
+El campo base es el adicional/comisión por uso ya existente (`passenger_service_additional` o su nombre real), no un segundo valor duplicado. Con la configuración actual de referencia de USD 0,10 y 40 %, el excedente unitario es USD 0,04. Si administración cambia el adicional o el porcentaje para ciclos futuros, las nuevas órdenes usarán el nuevo snapshot sin modificar órdenes existentes.
+
+Ejemplo matemáticamente consistente para un plan de USD 12,00, 120 viajes incluidos y 170 viajes completados:
+
+```text
+Membresía                                      $12,00
+Viajes incluidos                                  120
+Viajes realizados que generan excedente            50
+Valor por viaje excedente                        $0,04
+Total excedente                                  $2,00
+Total a pagar                                   $14,00
+```
+
+Si no existen viajes excedentes:
+
+```text
+Membresía                                      $12,00
+Excedente                                       $0,00
+Total a pagar                                   $12,00
+```
+
+El detalle debe explicar que el excedente corresponde a viajes completados por encima del cupo incluido y que su valor unitario es el porcentaje configurado del adicional de servicio congelado en el ciclo. No mostrar al conductor fórmulas internas innecesarias, pero sí todos los conceptos necesarios para reconciliar el total.
+
+#### Compatibilidad y pruebas
+
+- Realizar una migración aditiva para motivo/observación/timestamp de anulación y snapshots faltantes.
+- No recalcular ni alterar órdenes históricas; cuando un snapshot antiguo carezca de un dato, mostrar solo los conceptos confiables disponibles y conservar el total registrado.
+- Orden pendiente anulada desde la aplicación y desde un endpoint reintentado.
+- Intento de pagar, escanear QR o adjuntar transferencia después de anular.
+- Intento de anular simultáneamente con confirmación de pago.
+- Histórico de anuladas con motivo, fecha y total original.
+- Fechas completas en español en Android e iOS, independientemente del idioma del teléfono.
+- Orden sin excedentes.
+- Orden con 50 excedentes, adicional USD 0,10 y porcentaje 40 %: excedente USD 2,00 y total USD 14,00.
+- Porcentajes/adicionales diferentes obtenidos del snapshot, incluyendo política de redondeo y tope.
+- Ciclos y órdenes anteriores permanecen inmutables después de cambiar el plan o los parámetros.
+
 ### Flujo del conductor
 
 En **Membresía Costa-Go**, además del estado ya definido, mostrar:
@@ -2303,6 +2409,105 @@ El manejador actual muestra además `e.toString()` directamente en la interfaz, 
 - doble toque en confirmar sin crear dos viajes;
 - verificar que el formulario nunca muestre un error técnico ni quede inutilizable.
 
+### P0 — Cancelación del conductor antes de recoger al pasajero
+
+Permitir que el conductor cancele una carrera que ya aceptó únicamente mientras se encuentra asignado o en tránsito hacia el punto de recogida. Esta acción no debe cancelar la solicitud del pasajero ni crear otro viaje: el mismo `tripId` conserva origen, destinos, paradas, programación, tarifa, método de pago, pasajero, timestamps y demás información original.
+
+#### Experiencia del conductor
+
+- Agregar la acción visible **Cancelar carrera** en los estados actuales equivalentes a `ASSIGNED`/`ACCEPTED` y `DRIVER_EN_ROUTE`/`EN_ROUTE_TO_PICKUP`.
+- Ocultar o deshabilitar la acción después de registrar **Llegué**, iniciar el viaje o completar cualquier tramo.
+- Antes de confirmar, abrir un modal propio de Costa-Go y solicitar obligatoriamente un motivo predefinido.
+- Catálogo inicial sugerido:
+  - problema mecánico o del vehículo;
+  - emergencia personal;
+  - vía cerrada o acceso imposible;
+  - no puedo continuar hacia el punto de recogida;
+  - acepté la solicitud por error;
+  - otro.
+- La opción **Otro** exige una observación breve. No mostrar excepciones ni códigos internos al conductor.
+- Solicitar confirmación final explicando que la carrera se liberará para buscar otro conductor.
+- Bloquear dobles toques y reintentos mediante una clave idempotente, mostrando progreso hasta obtener una respuesta definitiva.
+
+#### Transición atómica en backend
+
+La cancelación debe ejecutarse en una transacción con bloqueo del viaje y validación de versión/estado:
+
+1. comprobar que el conductor autenticado continúa siendo el asignado;
+2. comprobar que el viaje todavía admite cancelación previa a recogida;
+3. registrar la cancelación y su motivo;
+4. liberar `driver_id`/asignación actual y actualizar la disponibilidad del conductor según la lógica vigente;
+5. cambiar el viaje nuevamente al estado existente equivalente a **Buscando conductor**;
+6. crear el evento/outbox de reasignación y notificación;
+7. reactivar la búsqueda progresiva sobre el mismo viaje.
+
+La operación debe ser idempotente. Si el pasajero canceló, el viaje cambió de estado o existe una aceptación concurrente, responder con un resultado de negocio controlado y no sobrescribir el estado más reciente. Nunca debe existir un instante observable en el que dos conductores queden asignados.
+
+#### Reinicio de búsqueda y exclusiones
+
+- Reiniciar desde el radio inicial configurado y continuar por bandas no acumulativas usando `driverSearchInitialRadiusKm`, `driverSearchRadiusStepKm`, `driverSearchMaxRadiusKm` y `driverSearchRoundSeconds`, o los parámetros equivalentes existentes.
+- Calcular cada banda exclusivamente desde el origen original del pasajero.
+- Detener todas las rondas en cuanto otro conductor acepte atómicamente.
+- Finalizar al alcanzar el radio máximo y notificar al pasajero si no se obtiene reemplazo.
+- Excluir obligatoriamente al conductor que canceló.
+- Conservar también la exclusión de conductores que ya rechazaron explícitamente esa solicitud.
+- No reenviar la oferta a conductores que ya la recibieron y respondieron en una ronda anterior, salvo que exista en el futuro una política explícita y auditable distinta.
+- No crear un nuevo registro de viaje ni recalcular silenciosamente la tarifa aceptada por el pasajero.
+
+#### Comunicación al pasajero
+
+Al confirmar la cancelación, enviar por realtime y push una única definición de evento, por ejemplo `driver_cancelled_reassigning`, con un mensaje equivalente a:
+
+> El conductor no podrá continuar. Costa-Go está buscando automáticamente otro conductor para tu viaje.
+
+La aplicación debe volver visualmente a **Buscando conductor**, conservar el itinerario y la tarifa, actualizar el conductor cuando exista reemplazo y abrir el viaje correcto al tocar la notificación en foreground, background o aplicación cerrada. Push y realtime compartirán una clave de deduplicación.
+
+#### Auditoría y modelo de datos
+
+Registrar de forma no destructiva:
+
+- viaje;
+- conductor que canceló;
+- motivo normalizado;
+- observación sanitizada cuando corresponda;
+- fecha y hora;
+- estado y versión del viaje antes de cancelar;
+- estado resultante;
+- ronda/distancia en la que fue asignado;
+- actor, canal, idempotency key y correlation/event id.
+
+Preferir un historial aditivo equivalente a `trip_driver_assignment_events` o reutilizar el ledger/eventos actual si ya representa asignaciones y liberaciones. No sobrescribir el conductor histórico ni confundir esta acción con una cancelación del pasajero. La oferta/asignación anterior debe quedar cerrada con un motivo explícito como `DRIVER_CANCELLED_AFTER_ACCEPTANCE`.
+
+#### Métricas y controles
+
+- cantidad y tasa de cancelaciones después de aceptar;
+- motivos más frecuentes;
+- tiempo entre aceptación y cancelación;
+- porcentaje de viajes reasignados con éxito;
+- tiempo adicional hasta conseguir reemplazo;
+- cancelaciones por conductor, zona y franja horaria;
+- separación clara entre rechazo de oferta, cancelación después de aceptar y cancelación del pasajero.
+
+Estas métricas inicialmente son informativas. Cualquier advertencia, penalización o suspensión futura requerirá reglas configurables y revisión administrativa; no penalizar automáticamente en esta primera implementación.
+
+#### Pruebas obligatorias
+
+- cancelar inmediatamente después de aceptar;
+- cancelar mientras navega al origen;
+- seleccionar cada motivo y exigir observación para **Otro**;
+- doble toque y reintento de red sin duplicar eventos;
+- pasajero cancela al mismo tiempo;
+- conductor marca **Llegué** al mismo tiempo;
+- otro conductor acepta durante la reasignación;
+- conductor que canceló no vuelve a recibir el viaje;
+- conductor que rechazó previamente tampoco vuelve a recibirlo;
+- rondas progresivas reiniciadas desde el radio inicial sin repetición acumulativa;
+- mismo `tripId`, itinerario y tarifa antes y después de la reasignación;
+- push/realtime al pasajero sin duplicados;
+- ningún reemplazo disponible hasta el radio máximo;
+- aplicación del pasajero abierta, en segundo plano y cerrada;
+- auditoría completa y etiquetas visibles en español en el panel.
+
 ### P1 — Motivos explícitos de respuesta a ofertas
 
 La tabla `driver_offers` ya permite conocer si una oferta fue aceptada y cuándo fue respondida, pero `accepted = false` agrupa situaciones distintas. Esto impide separar un rechazo voluntario de una expiración, una cancelación o una carrera tomada por otro conductor.
@@ -2345,7 +2550,7 @@ No se debe penalizar al conductor por una oferta que no recibió, por una cancel
 
 ### Entrega conjunta
 
-- La corrección P0 requiere una nueva compilación móvil y, por tanto, nuevos APK/AAB.
+- La corrección P0 del formulario y la cancelación previa a recogida requieren una nueva compilación móvil y, por tanto, nuevos APK/AAB.
 - La mejora P1 requiere migración aditiva, actualización de API y ajustes del panel de métricas.
 - Primero se validará P0 en dispositivos; después se desplegará la migración compatible y finalmente se generará el AAB destinado a pruebas cerradas.
 - Ninguno de estos puntos se considera implementado por el solo hecho de constar en este documento.

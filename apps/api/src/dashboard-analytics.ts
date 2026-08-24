@@ -40,7 +40,12 @@ export async function dashboardAnalytics(filters: DashboardFilters) {
         where e.to_status='DRIVER_ARRIVED' group by e.trip_id
       ), offer_totals as (
         select count(*)::int total,
-          count(*) filter (where o.accepted=true)::int accepted
+          count(*) filter (where o.accepted=true)::int accepted,
+          count(*) filter (where o.response_reason='DRIVER_REJECTED')::int rejected,
+          count(*) filter (where o.response_reason='OFFER_EXPIRED')::int expired,
+          count(*) filter (where o.response_reason='TAKEN_BY_ANOTHER_DRIVER')::int taken,
+          count(*) filter (where o.response_reason='DRIVER_CANCELLED_AFTER_ACCEPTANCE')::int cancelled_after_acceptance,
+          coalesce(round(avg(extract(epoch from (o.responded_at-o.offered_at))) filter (where o.responded_at is not null))::int,0) average_response_seconds
         from driver_offers o join filtered f on f.id=o.trip_id
       )
       select
@@ -54,6 +59,12 @@ export async function dashboardAnalytics(filters: DashboardFilters) {
         coalesce(round(avg(extract(epoch from (a.arrived_at-filtered.requested_at))) filter (where a.arrived_at is not null))::int,0) as "averageWaitSeconds",
         coalesce(round(avg(extract(epoch from (completed_at-started_at))) filter (where completed_at is not null and started_at is not null))::int,0) as "averageTripSeconds",
         coalesce(round(100.0 * (select accepted from offer_totals) / nullif((select total from offer_totals),0),1),0)::float8 as "acceptanceRate",
+        coalesce((select total from offer_totals),0)::int as "offersSent",
+        coalesce((select rejected from offer_totals),0)::int as "offersRejected",
+        coalesce((select expired from offer_totals),0)::int as "offersExpired",
+        coalesce((select taken from offer_totals),0)::int as "offersTakenByAnother",
+        coalesce((select cancelled_after_acceptance from offer_totals),0)::int as "driverCancellationsAfterAcceptance",
+        coalesce((select average_response_seconds from offer_totals),0)::int as "averageOfferResponseSeconds",
         coalesce(round(100.0 * count(*) filter (where status='CANCELLED') / nullif(count(*),0),1),0)::float8 as "cancellationRate",
         (select count(*)::int from users u join drivers d on d.user_id=u.id
           where u.role='DRIVER' and u.status='ACTIVE'

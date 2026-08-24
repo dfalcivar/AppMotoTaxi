@@ -94,7 +94,7 @@ export function pushRouteForType(type: string | undefined): string {
   if (normalized.startsWith("SCHEDULED_TRIP_") || normalized === "SCHEDULED_DRIVER_REMINDER") return "SCHEDULED_TRIPS";
   if ([
     "TRIP_ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS",
-    "SCHEDULED_TRIP_REMINDER", "SCHEDULED_DRIVER_REMINDER"
+    "SCHEDULED_TRIP_REMINDER", "SCHEDULED_DRIVER_REMINDER", "DRIVER_CANCELLED_REASSIGNING"
   ].includes(normalized)) return "ACTIVE_TRIP";
   if (normalized.startsWith("MEMBERSHIP_")) return "MEMBERSHIP";
   return "NOTIFICATIONS";
@@ -125,6 +125,10 @@ export function pushPresentationForType(
     COMPLETED: {
       title: "Viaje finalizado",
       body: "El recorrido terminó correctamente. Puedes calificar tu experiencia."
+    },
+    DRIVER_CANCELLED_REASSIGNING: {
+      title: "Buscando otro conductor",
+      body: "El conductor canceló el traslado. Costa-Go ya está buscando otro conductor."
     }
   };
   return fixed[String(type ?? "").toUpperCase()] ?? {

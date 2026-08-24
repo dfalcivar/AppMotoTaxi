@@ -1528,7 +1528,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       `;
       if (!current) return null;
       await tx`update trips set status='CANCELLED', cancelled_at=now() where id=${id}`;
-      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false) where trip_id=${id}`;
+      await tx`update driver_offers set responded_at=coalesce(responded_at, now()), accepted=coalesce(accepted, false),
+        response_reason=coalesce(response_reason,'TRIP_NO_LONGER_AVAILABLE') where trip_id=${id}`;
       if (current.driver_id) await tx`update drivers set is_available=true where user_id=${current.driver_id}`;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code, metadata) values (${id}, ${current.status}, 'CANCELLED', ${user.id!}, 'ADMIN_CANCELLED', ${JSON.stringify({ reason: body.reason })}::jsonb)`;
       return current;

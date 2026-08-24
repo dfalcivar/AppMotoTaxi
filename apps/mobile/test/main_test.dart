@@ -29,6 +29,8 @@ void main() {
     test('distingue viaje activo, detalle y ofertas del conductor', () {
       expect(notificationTargetFor('DRIVER_ARRIVED'),
           NotificationTarget.activeTrip);
+      expect(notificationTargetFor('DRIVER_CANCELLED_REASSIGNING'),
+          NotificationTarget.activeTrip);
       expect(notificationTargetFor('COMPLETED'), NotificationTarget.tripDetail);
       expect(notificationTargetFor('TRIP_OFFER'), NotificationTarget.offers);
       expect(notificationTargetFor('MEMBERSHIP_EXPIRING'),
@@ -69,6 +71,15 @@ void main() {
               now: now),
           isFalse);
     });
+  });
+
+  test('un fallo técnico de GPS nunca expone la excepción al pasajero', () {
+    expect(friendlyLocationFailure(Exception('stack interno')),
+        'No pudimos confirmar tu ubicación. Reintenta o selecciona el origen en el mapa.');
+    expect(
+        friendlyLocationFailure(
+            const ApiException('Activa la ubicación GPS del teléfono para continuar.')),
+        contains('Activa la ubicación'));
   });
 
   test('el total de tarifa coincide con todos los conceptos mostrados', () {
@@ -211,6 +222,12 @@ void main() {
     expect(mensajeApi('SESSION_REPLACED'), contains('otro dispositivo'));
     expect(mensajeApi('INVALID_REGISTRATION'), contains('campos obligatorios'));
     expect(mensajeApi('VEHICLE_REQUIRED'), contains('placa'));
+  });
+
+  test('formatea la vigencia de membresía en español y hora de Ecuador', () {
+    final utc = DateTime.parse('2026-08-25T03:18:00Z');
+    expect(formatEcuadorLongDateTime(utc),
+        'lunes, 24 de agosto de 2026 · 22:18');
   });
 
   test('oculta Plus Codes en las direcciones visibles', () {
