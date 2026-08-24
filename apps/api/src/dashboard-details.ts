@@ -96,11 +96,23 @@ export async function dashboardMetricDetails(filters: DashboardFilters, metric: 
         case when d.last_location is null then null else ST_Y(d.last_location::geometry) end latitude,
         case when d.last_location is null then null else ST_X(d.last_location::geometry) end longitude,
         case when d.last_location is null then 'Sin ubicación reciente'
-          else round(ST_Y(d.last_location::geometry)::numeric,5)::text||', '||round(ST_X(d.last_location::geometry)::numeric,5)::text end location,
+          when sector.name is not null and area.name is not null then sector.name||' · '||area.name
+          else coalesce(sector.name,area.name,'Fuera de sectores configurados') end location,
         coalesce(stats.total,0)::int trips, coalesce(stats.completed,0)::int completed,
         coalesce(stats.cancelled,0)::int cancelled
       from users u join drivers d on d.user_id=u.id
       left join cooperatives c on c.id=u.cooperative_id left join stats on stats.driver_id=u.id
+      left join lateral (
+        select fare.name from fare_sectors fare
+        where fare.enabled=true and ST_Covers(fare.boundary,d.last_location)
+        order by fare.priority desc,ST_Area(fare.boundary) asc,fare.updated_at desc limit 1
+      ) sector on true
+      left join lateral (
+        select service.name from service_areas service
+        join service_area_versions version on version.id=service.current_version_id
+        where service.enabled=true and ST_Covers(version.geometry,d.last_location::geometry)
+        order by service.priority desc,ST_Area(version.geometry) asc,service.updated_at desc limit 1
+      ) area on true
       where u.role='DRIVER' and u.deleted_at is null and ${statusCondition}
         and (${filters.cooperativeId ?? null}::uuid is null or u.cooperative_id=${filters.cooperativeId ?? null}::uuid)
         and (${filters.driverId ?? null}::uuid is null or u.id=${filters.driverId ?? null}::uuid)

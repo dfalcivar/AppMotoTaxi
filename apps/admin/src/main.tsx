@@ -252,7 +252,7 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
     cancellationRate: { label: "Cancelación", icon: "%", tone: "negative" },
     offersSent: { label: "Ofertas enviadas", icon: "↗", tone: "neutral" },
     offersRejected: { label: "Ofertas rechazadas", icon: "×", tone: "warning" },
-    offersExpired: { label: "Ofertas vencidas", icon: "◷", tone: "warning" },
+    offersExpired: { label: "Ofertas sin respuesta", icon: "◷", tone: "warning" },
     offersTakenByAnother: { label: "Tomadas por otro conductor", icon: "✓", tone: "neutral" },
     driverCancellationsAfterAcceptance: { label: "Canceladas tras aceptar", icon: "!", tone: "negative" },
     averageOfferResponseSeconds: { label: "Respuesta promedio a oferta", icon: "⌛", tone: "neutral" }
