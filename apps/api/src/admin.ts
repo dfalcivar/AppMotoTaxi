@@ -187,7 +187,7 @@ const adminAccessSchema = z.object({
   })).max(allPermissions.length).default([])
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
   message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
-});
+}).transform(value => ({ ...value, cooperativeId: value.role === "ANALISTA_COOPERATIVA" ? value.cooperativeId : null }));
 const adminUserCreateSchema = z.object({
   fullName: z.string().trim().min(3).max(120),
   email: z.string().email(),
@@ -197,7 +197,7 @@ const adminUserCreateSchema = z.object({
   cooperativeId: z.string().uuid().nullable().optional()
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
   message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
-});
+}).transform(value => ({ ...value, cooperativeId: value.role === "ANALISTA_COOPERATIVA" ? value.cooperativeId : null }));
 const internalCampaignTypeSchema = z.enum(["COSTA_GO", "PAYMENT_POINT", "STRATEGIC_ALLIANCE", "COURTESY"]);
 const bannerSchema = z.object({
   title: z.string().trim().min(3).max(120),
@@ -448,9 +448,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     requirePermission(request, "roles:manage");
     if (!process.env.DATABASE_URL) return [];
     return await database()`
-      select u.id::text, u.full_name as name, u.email, u.role,
+      select u.id::text, u.full_name as name, u.email, u.phone_e164 as phone, u.role,
         u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName",
-        u.status, u.must_change_password as "mustChangePassword", u.updated_at as "updatedAt",
+        u.status, u.must_change_password as "mustChangePassword", u.created_at as "createdAt",
+        u.updated_at as "updatedAt",
         coalesce(jsonb_agg(jsonb_build_object('permission', permission.permission, 'allowed', permission.allowed))
           filter (where permission.permission is not null), '[]'::jsonb) as overrides
       from users u

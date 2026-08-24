@@ -64,6 +64,9 @@ describe("consola administrativa", () => {
     const valid = await app.inject({ method: "GET", url: "/v1/admin/dashboard/details/connectedDrivers", headers: { authorization: `Bearer ${adminToken}` } });
     expect(valid.statusCode).toBe(503);
     expect(valid.json().error).toBe("DATABASE_UNAVAILABLE");
+    const searching = await app.inject({ method: "GET", url: "/v1/admin/dashboard/details/searchingWithoutDriver", headers: { authorization: `Bearer ${adminToken}` } });
+    expect(searching.statusCode).toBe(503);
+    expect(searching.json().error).toBe("DATABASE_UNAVAILABLE");
   });
 
   it("no expone una ficha de cooperativa inexistente sin base", async () => {

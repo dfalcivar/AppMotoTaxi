@@ -3,7 +3,7 @@ import type { DashboardFilters } from "./dashboard-filters.js";
 
 export const dashboardDetailMetrics = [
   "requestedTrips", "completedTrips", "cancelledTrips", "activeTrips",
-  "scheduledTrips", "withoutDriver", "connectedDrivers", "activeDrivers",
+  "scheduledTrips", "searchingWithoutDriver", "withoutDriver", "connectedDrivers", "activeDrivers",
   "pendingDrivers", "averageAssignmentSeconds", "averageWaitSeconds",
   "averageTripSeconds", "openIncidents", "acceptanceRate", "cancellationRate",
   "offersSent", "offersRejected", "offersExpired", "offersTakenByAnother",
@@ -36,7 +36,8 @@ function tripMetricCondition(sql: ReturnType<typeof database>, metric: Dashboard
     case "cancellationRate": return sql`t.status='CANCELLED'`;
     case "activeTrips": return sql`t.status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')`;
     case "scheduledTrips": return sql`t.scheduled_for is not null`;
-    case "withoutDriver": return sql`t.driver_id is null and t.status in ('SEARCHING','NO_DRIVER')`;
+    case "searchingWithoutDriver": return sql`t.driver_id is null and t.status='SEARCHING'`;
+    case "withoutDriver": return sql`t.driver_id is null and t.status='NO_DRIVER'`;
     case "averageAssignmentSeconds": return sql`t.assigned_at is not null`;
     case "averageWaitSeconds": return sql`exists(select 1 from trip_events e where e.trip_id=t.id and e.to_status='DRIVER_ARRIVED')`;
     case "averageTripSeconds": return sql`t.completed_at is not null and t.started_at is not null`;
