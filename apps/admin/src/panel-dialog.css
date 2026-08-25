@@ -10,6 +10,7 @@
 .panel-dialog-fields textarea { resize: vertical; line-height: 1.45; }
 .panel-dialog-fields input:focus,.panel-dialog-fields select:focus,.panel-dialog-fields textarea:focus { outline: 3px solid rgba(8,127,140,.15); border-color: #087f8c; }
 .panel-dialog-fields small { color: #6b7f86; font-weight: 500; line-height: 1.35; }
+.panel-dialog-map-field { grid-column: 1/-1; display: grid; gap: 8px; color: #36545e; }
 .panel-dialog-checkbox { display: flex !important; align-items: flex-start; gap: 10px !important; padding: 11px 12px; border: 1px solid #d8e5e8; border-radius: 12px; background: #f7fafb; }
 .panel-dialog-checkbox input { width: 18px; height: 18px; margin-top: 2px; accent-color: #087f8c; }
 .panel-dialog-checkbox span { display: grid; gap: 3px; }

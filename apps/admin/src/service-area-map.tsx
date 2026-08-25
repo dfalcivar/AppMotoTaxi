@@ -23,6 +23,13 @@ function loadGoogleMaps() {
   return window.__costaGoMapsPromise;
 }
 
+export function CollectionPointMap({latitude,longitude,onChange}:{latitude:number;longitude:number;onChange(value:{latitude:number;longitude:number}):void}) {
+  const host=useRef<HTMLDivElement>(null);const map=useRef<any>(null);const marker=useRef<any>(null);const [error,setError]=useState("");
+  useEffect(()=>{let alive=true;void loadGoogleMaps().then(maps=>{if(!alive||!host.current)return;const position={lat:latitude,lng:longitude};const mapId=import.meta.env.VITE_GOOGLE_MAPS_WEB_MAP_ID as string|undefined;map.current=new maps.Map(host.current,{center:position,zoom:15,mapId:mapId||undefined,streetViewControl:false,mapTypeControl:false,fullscreenControl:true});marker.current=new maps.Marker({map:map.current,position,draggable:true,title:"Punto de recaudación"});marker.current.addListener("dragend",(event:any)=>onChange({latitude:event.latLng.lat(),longitude:event.latLng.lng()}));map.current.addListener("click",(event:any)=>{const next={latitude:event.latLng.lat(),longitude:event.latLng.lng()};marker.current.setPosition({lat:next.latitude,lng:next.longitude});onChange(next);});}).catch(reason=>setError(reason instanceof Error?reason.message:String(reason)));return()=>{alive=false;};},[]);
+  useEffect(()=>{marker.current?.setPosition({lat:latitude,lng:longitude});},[latitude,longitude]);
+  return <div>{error?<div className="map-configuration-error">{error}</div>:<div ref={host} className="service-area-google-map" style={{height:280}}/>}<small>Haz clic en el mapa o arrastra el marcador para fijar la ubicación exacta.</small></div>;
+}
+
 function polygonsOf(geometry?: ServiceAreaGeometry | null): Point[][][] {
   if (!geometry) return [];
   return geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;

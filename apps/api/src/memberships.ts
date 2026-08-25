@@ -144,6 +144,10 @@ const transferProofSchema = z.object({
   fileBase64: z.string().min(100).max(7_500_000),
   observation: z.string().trim().max(500).optional()
 });
+const collectionPointDirectoryQuerySchema = z.object({
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional()
+}).refine(value => (value.latitude == null) === (value.longitude == null), { message: "LOCATION_PAIR_REQUIRED" });
 const usageSchema = z.object({
   provider: z.enum(["NAVIGATION_SDK", "ROUTES", "PLACES_AUTOCOMPLETE", "PLACE_DETAILS", "TEXT_SEARCH_PRO", "GEOCODING", "MOBILE_MAP", "WEB_DYNAMIC_MAP"]),
   requestKey: z.string().trim().min(8).max(200),
@@ -435,6 +439,33 @@ function paymentOrderResult(order: Record<string, unknown>) {
     token: payable ? paymentOrderPublicToken(id) : null,
     qrUrl: payable ? paymentOrderQrUrl(id) : null
   };
+}
+
+function haversineKm(latitude: number, longitude: number, targetLatitude: number, targetLongitude: number) {
+  const radians = (value: number) => value * Math.PI / 180;
+  const earthRadiusKm = 6371;
+  const deltaLatitude = radians(targetLatitude - latitude);
+  const deltaLongitude = radians(targetLongitude - longitude);
+  const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(latitude)) * Math.cos(radians(targetLatitude)) * Math.sin(deltaLongitude / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function localScheduleState(schedules: Array<Record<string, unknown>>, timezone: string) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts().map(part => [part.type, part.value]));
+  const day = ({ Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 } as Record<string,number>)[parts.weekday ?? "Sun"] ?? 0;
+  const time = `${parts.hour}:${parts.minute}`;
+  const today = schedules.find(item => Number(item.dayOfWeek) === day);
+  const previous = schedules.find(item => Number(item.dayOfWeek) === (day + 6) % 7);
+  const previousOpens = String(previous?.opensAt ?? "").slice(0,5);
+  const previousCloses = String(previous?.closesAt ?? "").slice(0,5);
+  const openFromPreviousDay = previous?.closed !== true && previousOpens.length === 5 && previousCloses.length === 5 && previousCloses < previousOpens && time < previousCloses;
+  if (!today) return openFromPreviousDay ? { isOpen: true, todaySchedule: `Abierto hasta ${previousCloses}` } : { isOpen: null, todaySchedule: "Horario no configurado" };
+  if (today.closed === true) return openFromPreviousDay ? { isOpen: true, todaySchedule: `Abierto hasta ${previousCloses}` } : { isOpen: false, todaySchedule: "Cerrado hoy" };
+  const opensAt = String(today.opensAt ?? "").slice(0,5);
+  const closesAt = String(today.closesAt ?? "").slice(0,5);
+  const overnight = closesAt < opensAt;
+  const isOpen = openFromPreviousDay || (overnight ? time >= opensAt : time >= opensAt && time < closesAt);
+  return { isOpen, todaySchedule: `${opensAt} a ${closesAt}` };
 }
 
 async function activePaymentOrder(driverId: string) {
@@ -832,6 +863,7 @@ function businessError(error: unknown, reply: FastifyReply) {
   const conflict = [
     "PAYMENT_ORDER_ALREADY_PAID", "PAYMENT_ORDER_NOT_PAYABLE",
     "PAYMENT_ORDER_NOT_CANCELLABLE",
+    "TRANSFER_PROOF_ALREADY_SUBMITTED",
     "PAYMENT_REFERENCE_ALREADY_USED", "MEMBERSHIP_PLAN_CODE_EXISTS",
     "MEMBERSHIP_PLAN_NOT_CURRENT"
   ];
@@ -905,6 +937,29 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     return { membership: membership ?? { status: "PENDING" }, eligibility, plans, pendingOrder };
   });
 
+  app.get("/v1/driver/membership/collection-points", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    try {
+      const location = collectionPointDirectoryQuerySchema.parse(request.query);
+      const rows = await database()`select cp.id::text,cp.code,cp.name,cp.address,cp.reference,cp.phone,cp.whatsapp,cp.email,cp.latitude::float8,cp.longitude::float8,cp.display_order as "displayOrder",cp.timezone,coalesce((select jsonb_agg(jsonb_build_object('dayOfWeek',s.day_of_week,'opensAt',to_char(s.opens_at,'HH24:MI'),'closesAt',to_char(s.closes_at,'HH24:MI'),'closed',s.closed) order by s.day_of_week) from collection_point_schedules s where s.collection_point_id=cp.id),'[]'::jsonb) as schedules from collection_points cp where cp.status='ACTIVE' and cp.cash_enabled=true order by cp.display_order,cp.name`;
+      return rows.map(row => {
+        const schedules = Array.isArray(row.schedules) ? row.schedules as Array<Record<string,unknown>> : [];
+        const latitude = row.latitude == null ? null : Number(row.latitude);
+        const longitude = row.longitude == null ? null : Number(row.longitude);
+        const distanceKm = location.latitude != null && location.longitude != null && latitude != null && longitude != null
+          ? haversineKm(location.latitude, location.longitude, latitude, longitude) : null;
+        return { ...row, ...localScheduleState(schedules, String(row.timezone ?? "America/Guayaquil")), distanceKm: distanceKm == null ? null : Math.round(distanceKm * 10) / 10 };
+      });
+    } catch (error) { return businessError(error, reply); }
+  });
+
+  app.get("/v1/driver/membership/payment-account", async (request, reply) => {
+    const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
+    const [account] = await database()`select id::text,bank_name as "bankName",account_type_name as "accountType",account_identifier_public as "accountIdentifier",account_last_four as "accountLastFour",holder_name as "holderName",holder_identification_public as "holderIdentification",support_email as "supportEmail" from costa_go_payment_accounts where enabled=true and remote_payments_enabled=true and account_type='BANK_ACCOUNT' order by updated_at desc limit 1`;
+    if (!account) return reply.code(404).send({ error:"PAYMENT_ACCOUNT_NOT_CONFIGURED" });
+    return account;
+  });
+
   app.get("/v1/driver/membership/history", async (request, reply) => {
     const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
     return database()`select id::text,plan_code as "planCode",status,starts_at as "startsAt",expires_at as "expiresAt",completed_trips as "completedTrips",extra_trips as "extraTrips",final_renewal_amount::float8 as "finalAmount",estimated_next_renewal_amount::float8 as "estimatedAmount",currency,cycle_closed_at as "closedAt" from driver_memberships where driver_id=${user.id!} order by created_at desc limit 100`;
@@ -972,10 +1027,15 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         if (order.status !== "PENDING") throw new Error("PAYMENT_ORDER_NOT_PAYABLE");
         if (new Date(String(order.expires_at)).getTime() <= Date.now()) throw new Error("PAYMENT_ORDER_EXPIRED");
         if (money(order.total_amount) !== money(body.declaredAmount)) throw new Error("PAYMENT_AMOUNT_MISMATCH");
+        const [existingProof] = await tx`select id from membership_transfer_proofs where order_id=${id} and status in ('PENDING','APPROVED') limit 1`;
+        if (existingProof) throw new Error("TRANSFER_PROOF_ALREADY_SUBMITTED");
         const [created] = await tx`insert into membership_transfer_proofs(order_id,bank_name,reference_normalized_hash,reference_masked,transfer_date,declared_amount,file_mime,file_data,observation) values (${id},${body.bankName},${sha256(normalized)},${maskReference(body.reference)},${body.transferDate},${body.declaredAmount},${body.fileMime},${data},${body.observation ?? null}) returning id::text,status`;
         await tx`update membership_payment_orders set status='PENDING_VERIFICATION',receiver_scope='COSTA_GO_CENTRAL',verification_channel='REMOTE_PROOF',updated_at=now() where id=${id}`;
         return [created];
       });
+      const [recipient] = await database()`select u.email,u.full_name as name,o.short_code as code,o.total_amount::float8 as amount,o.currency,o.plan_snapshot as plan from membership_payment_orders o join users u on u.id=o.driver_id where o.id=${id}`;
+      if (recipient?.email) void sendTransactionalEmail({to:String(recipient.email),subject:"Comprobante recibido · Costa-Go",text:`Hola ${recipient.name}. Recibimos el comprobante de la orden ${recipient.code} por ${recipient.currency} ${Number(recipient.amount).toFixed(2)}. Será revisado y te notificaremos el resultado.`,html:`<h2>Comprobante recibido</h2><p>Hola <strong>${recipient.name}</strong>.</p><p>Recibimos el comprobante de la orden <strong>${recipient.code}</strong> por <strong>${recipient.currency} ${Number(recipient.amount).toFixed(2)}</strong>.</p><p>Tu pago será revisado y te notificaremos cuando finalice el proceso.</p>`}).catch(()=>false);
+      void sendPush(user.id!,"Comprobante recibido","Tu pago será revisado. Te notificaremos cuando finalice el proceso.",{type:"MEMBERSHIP_PAYMENT_REVIEW",orderId:id}).catch(()=>undefined);
       return reply.code(201).send(proof);
     } catch (error) { return businessError(error, reply); }
   });

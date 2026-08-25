@@ -1516,6 +1516,17 @@ class Api {
   Future<List<dynamic>> membershipPaymentOrders(String t) async =>
       List<dynamic>.from(await call(
           'GET', '/v1/driver/membership/payment-orders', token: t));
+  Future<List<dynamic>> membershipCollectionPoints(String t,
+      [LatLng? location]) async {
+    final suffix = location == null
+        ? ''
+        : '?latitude=${location.latitude}&longitude=${location.longitude}';
+    return List<dynamic>.from(await call('GET',
+        '/v1/driver/membership/collection-points$suffix', token: t));
+  }
+  Future<Map<String, dynamic>> membershipPaymentAccount(String t) async =>
+      Map<String, dynamic>.from(await call(
+          'GET', '/v1/driver/membership/payment-account', token: t));
   Future<dynamic> cancelMembershipPaymentOrder(String t, String orderId,
           String reason, String? observation) =>
       call('POST', '/v1/driver/membership/payment-orders/$orderId/cancel',
@@ -10247,8 +10258,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ? 'image/webp'
                 : 'image/jpeg';
     if (!context.mounted) return false;
-    final bank = TextEditingController();
-    final reference = TextEditingController();
+    final bank = TextEditingController(text: 'Transferencia bancaria');
+    final reference = TextEditingController(text: order['shortCode']?.toString() ?? '');
     final observation = TextEditingController();
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
     var sending = false;
@@ -10340,9 +10351,26 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     reference.dispose();
     observation.dispose();
     if (submitted && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              'Comprobante enviado. Te notificaremos después de revisarlo.')));
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (successContext) => AlertDialog(
+          icon: Image.asset('assets/images/costa-go-emblem.png', width: 58),
+          title: const Text('¡Gracias por tu pago!', textAlign: TextAlign.center),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Hemos recibido tu comprobante correctamente.', textAlign: TextAlign.center),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: const Color(0xffe8f8ed), borderRadius: BorderRadius.circular(14)),
+              child: const Row(children: [Icon(Icons.check_circle, color: Color(0xff159447)), SizedBox(width: 10), Expanded(child: Text('Tu pago será revisado y te notificaremos cuando se confirme.', style: TextStyle(fontWeight: FontWeight.w700)))]),
+            ),
+            const SizedBox(height: 12),
+            Text('${membershipPlanName(order['plan'])} · \$${((order['totalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
+          ]),
+          actions: [FilledButton(onPressed: () => Navigator.pop(successContext), child: const Text('Entendido'))],
+        ),
+      );
     }
     return submitted;
   }
@@ -10465,10 +10493,157 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openCollectionPointDirections(Map<String, dynamic> point) async {
+    final latitude = (point['latitude'] as num?)?.toDouble();
+    final longitude = (point['longitude'] as num?)?.toDouble();
+    if (latitude == null || longitude == null) return;
+    final uri = Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'destination': '$latitude,$longitude',
+      'travelmode': 'driving',
+    });
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _showCollectionPointDetail(
+      BuildContext context, Map<String, dynamic> point) async {
+    final phone = point['phone']?.toString();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text(point['name']?.toString() ?? 'Punto autorizado', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900), textAlign: TextAlign.center),
+          const SizedBox(height: 6),
+          Center(child: Chip(label: Text(point['isOpen'] == true ? 'Abierto ahora' : point['isOpen'] == false ? 'Cerrado ahora' : 'Horario por confirmar'), avatar: Icon(Icons.circle, size: 12, color: point['isOpen'] == true ? Colors.green : Colors.orange))),
+          if ((point['address']?.toString() ?? '').isNotEmpty) ListTile(leading: const Icon(Icons.location_on_outlined), title: const Text('Dirección'), subtitle: Text(point['address'].toString())),
+          if ((point['reference']?.toString() ?? '').isNotEmpty) ListTile(leading: const Icon(Icons.map_outlined), title: const Text('Referencia'), subtitle: Text(point['reference'].toString())),
+          ListTile(leading: const Icon(Icons.schedule_outlined), title: const Text('Horario de atención'), subtitle: Text(point['todaySchedule']?.toString() ?? 'Horario no configurado')),
+          if (phone != null && phone.isNotEmpty) ListTile(leading: const Icon(Icons.phone_outlined), title: const Text('Teléfono'), subtitle: Text(phone)),
+          if (point['distanceKm'] != null) ListTile(leading: const Icon(Icons.near_me_outlined), title: const Text('Distancia aproximada'), subtitle: Text('${(point['distanceKm'] as num).toStringAsFixed(1)} km desde tu ubicación')),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(child: OutlinedButton.icon(onPressed: point['latitude'] == null ? null : () => _openCollectionPointDirections(point), icon: const Icon(Icons.navigation_outlined), label: const Text('Cómo llegar'))),
+            const SizedBox(width: 10),
+            Expanded(child: FilledButton.icon(onPressed: phone == null || phone.isEmpty ? null : () => launchUrl(Uri(scheme: 'tel', path: phone), mode: LaunchMode.externalApplication), icon: const Icon(Icons.phone_outlined), label: const Text('Llamar'))),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _showCollectionPoints(BuildContext context) async {
+    try {
+      final raw = await api.membershipCollectionPoints(widget.s.token, currentDriverPosition);
+      final points = raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+      if (!context.mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (sheetContext) => FractionallySizedBox(
+          heightFactor: .78,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Puntos de pago', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+              const Text('Selecciona un punto autorizado para presentar tu QR.'),
+              const SizedBox(height: 12),
+              Expanded(child: points.isEmpty
+                ? const Center(child: Text('No hay puntos de pago activos en este momento.'))
+                : ListView.separated(itemCount: points.length, separatorBuilder: (_, __) => const SizedBox(height: 8), itemBuilder: (_, index) {
+                    final point = points[index];
+                    return Card(child: ListTile(
+                      leading: CircleAvatar(child: Icon(point['isOpen'] == true ? Icons.storefront : Icons.store_outlined)),
+                      title: Text(point['name']?.toString() ?? 'Punto autorizado', style: const TextStyle(fontWeight: FontWeight.w800)),
+                      subtitle: Text([point['address'], point['reference'], if (point['distanceKm'] != null) '${(point['distanceKm'] as num).toStringAsFixed(1)} km', point['isOpen'] == true ? 'Abierto' : point['isOpen'] == false ? 'Cerrado' : null].whereType<Object>().join('\n')),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _showCollectionPointDetail(sheetContext, point),
+                    ));
+                  })),
+            ]),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _showBankTransfer(
+      BuildContext context, Map<String, dynamic> order) async {
+    Map<String, dynamic>? account;
+    try { account = await api.membershipPaymentAccount(widget.s.token); } catch (_) {}
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('Transferencia bancaria', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900), textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          if (account == null) const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('Los datos bancarios aún no están disponibles. Intenta más tarde o paga en un punto autorizado.')))
+          else Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(children: [
+            _membershipDetailLine('Banco', account['bankName']?.toString() ?? 'Costa-Go'),
+            _membershipDetailLine('Tipo de cuenta', account['accountType']?.toString() ?? 'Cuenta bancaria'),
+            _membershipDetailLine('Cuenta', account['accountIdentifier']?.toString().isNotEmpty == true ? account['accountIdentifier'].toString() : '•••• ${account['accountLastFour'] ?? ''}'),
+            _membershipDetailLine('Titular', account['holderName']?.toString() ?? 'Costa-Go'),
+            if ((account['holderIdentification']?.toString() ?? '').isNotEmpty)
+              _membershipDetailLine('RUC / identificación', account['holderIdentification'].toString()),
+            if ((account['supportEmail']?.toString() ?? '').isNotEmpty)
+              _membershipDetailLine('Correo', account['supportEmail'].toString()),
+            const Divider(),
+            _membershipDetailLine('Motivo / referencia', order['shortCode']?.toString() ?? ''),
+          ]))),
+          const SizedBox(height: 12),
+          FilledButton.icon(onPressed: account == null ? null : () async {
+            Navigator.pop(sheetContext);
+            final submitted = await _submitMembershipTransferProof(context, order);
+            if (submitted && context.mounted) {
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            }
+          }, icon: const Icon(Icons.upload_file_outlined), label: const Text('Subir comprobante')),
+        ]),
+      ),
+    );
+  }
+
+  Widget _membershipDetailLine(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 6),
+    child: Row(children: [Expanded(child: Text(label)), Flexible(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontWeight: FontWeight.w700)))]),
+  );
+
+  Future<void> _showMembershipQr(BuildContext context,
+      Map<String, dynamic> order) async {
+    final qrUrl = order['qrUrl']?.toString();
+    if (qrUrl == null || qrUrl.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      builder: (qrContext) => AlertDialog(
+        icon: Image.asset('assets/images/costa-go-emblem.png', width: 46),
+        title: const Text('QR de membresía', textAlign: TextAlign.center),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)), child: QrImageView(data: qrUrl, size: 220, backgroundColor: Colors.white)),
+          const SizedBox(height: 12),
+          const Text('Presenta este QR en cualquier punto de recaudación autorizado.', textAlign: TextAlign.center),
+          const SizedBox(height: 8),
+          Text('Código ${order['shortCode']}', style: const TextStyle(fontWeight: FontWeight.w900)),
+        ]),
+        actions: [FilledButton(onPressed: () => Navigator.pop(qrContext), child: const Text('Cerrar'))],
+      ),
+    );
+  }
+
   Future<bool> _showMembershipPaymentOrder(
       BuildContext hostContext, Map<String, dynamic> order) async {
     final status = order['status']?.toString() ?? 'PENDING';
-    final qrUrl = order['qrUrl']?.toString();
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
     final expiresAt = DateTime.tryParse(order['expiresAt']?.toString() ?? '');
     final breakdown = Map<String, dynamic>.from(
@@ -10491,29 +10666,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           child: SizedBox(
             width: 300,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              if (status == 'PENDING' && qrUrl != null && qrUrl.isNotEmpty) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                        color:
-                            Theme.of(dialogContext).colorScheme.outlineVariant),
-                  ),
-                  child: QrImageView(
-                    data: qrUrl,
-                    version: QrVersions.auto,
-                    size: 220,
-                    backgroundColor: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                    'Presenta este QR en un punto de recaudación autorizado.',
-                    textAlign: TextAlign.center),
-              ] else
-                Icon(
+              Icon(
                     status == 'CANCELLED'
                         ? Icons.block_rounded
                         : status == 'PAID'
@@ -10604,23 +10757,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ),
               if (status == 'PENDING') ...[
                 const SizedBox(height: 14),
-                const Text(
-                    'Si su pago es mediante transferencia, suba aquí su comprobante.',
-                    textAlign: TextAlign.center),
+                Align(alignment: Alignment.centerLeft, child: Text('¿Cómo deseas pagar?', style: Theme.of(dialogContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900))),
+                const SizedBox(height: 8),
+                Card(child: ListTile(leading: const CircleAvatar(child: Icon(Icons.storefront_outlined)), title: const Text('En punto autorizado', style: TextStyle(fontWeight: FontWeight.w800)), subtitle: const Text('Paga mostrando tu QR'), trailing: const Icon(Icons.chevron_right), onTap: () => _showCollectionPoints(hostContext))),
+                Card(child: ListTile(leading: const CircleAvatar(child: Icon(Icons.account_balance_outlined)), title: const Text('Transferencia bancaria', style: TextStyle(fontWeight: FontWeight.w800)), subtitle: const Text('Realiza tu pago y sube el comprobante'), trailing: const Icon(Icons.chevron_right), onTap: () => _showBankTransfer(hostContext, order))),
+                Card(color: Theme.of(dialogContext).colorScheme.primaryContainer, child: ListTile(leading: const Icon(Icons.qr_code_2_rounded), title: const Text('Ver QR de pago', style: TextStyle(fontWeight: FontWeight.w800)), subtitle: const Text('Escanea o muestra tu código'), trailing: const Icon(Icons.chevron_right), onTap: () => _showMembershipQr(hostContext, order))),
               ],
             ]),
           ),
         ),
         actions: [
-          if (status == 'PENDING')
-            TextButton.icon(
-              onPressed: () async {
-                Navigator.pop(dialogContext);
-                await _submitMembershipTransferProof(hostContext, order);
-              },
-              icon: const Icon(Icons.upload_file_outlined),
-              label: const Text('Adjuntar transferencia'),
-            ),
           if (status == 'PENDING')
             TextButton.icon(
               onPressed: () async {
@@ -10748,155 +10894,67 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     var pendingOrder = data['pendingOrder'] is Map
         ? Map<String, dynamic>.from(data['pendingOrder'] as Map)
         : null;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) => FractionallySizedBox(
-          heightFactor: .78,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
-            children: [
-              Text('Membresía Costa-Go',
-                  style: Theme.of(sheetContext)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900)),
+    await showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(builder: (sheetContext, setSheetState) {
+        final status = membership['status']?.toString() ?? 'PENDING';
+        final extraAmount = (membership['billableExtraAmount'] as num?)?.toDouble() ?? 0;
+        Future<void> selectPlan(Map<String, dynamic> plan) async {
+          if (pendingOrder != null) return;
+          try {
+            final response = await api.createMembershipPaymentOrder(widget.s.token, plan['id'].toString(), 'CASH');
+            if (!sheetContext.mounted) return;
+            final created = Map<String, dynamic>.from(response as Map);
+            setSheetState(() => pendingOrder = created);
+            final cancelled = await _showMembershipPaymentOrder(sheetContext, created);
+            if (cancelled && sheetContext.mounted) setSheetState(() => pendingOrder = null);
+            await refreshMembership(force: true);
+          } catch (error) {
+            if (sheetContext.mounted) ScaffoldMessenger.of(sheetContext).showSnackBar(SnackBar(content: Text(error.toString())));
+          }
+        }
+        return FractionallySizedBox(heightFactor: .82, child: ListView(padding: const EdgeInsets.fromLTRB(18, 0, 18, 28), children: [
+          Text('Membresía Costa-Go', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Align(alignment: Alignment.centerLeft, child: Chip(label: Text(_membershipStatusLabel(status)), avatar: const Icon(Icons.schedule_rounded, size: 18))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(children: [
+            _membershipDetailLine('Plan actual', membership['planName']?.toString() ?? 'Sin plan activo'),
+            _membershipDetailLine('Viajes del ciclo', '${membership['completedTrips'] ?? 0}'),
+            _membershipDetailLine('Renovación estimada', '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
+            if (extraAmount > 0) _membershipDetailLine('Excedente acumulado', '\$${extraAmount.toStringAsFixed(2)}'),
+            if (membership['expiresAt'] != null) _membershipDetailLine('Vigente hasta', formatSpanishLongDate(DateTime.parse(membership['expiresAt'].toString()))),
+          ]))),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(onPressed: () => _showMembershipPaymentHistory(sheetContext), icon: const Icon(Icons.receipt_long_outlined), label: const Text('Mis pagos')),
+          if (pendingOrder != null) ...[
+            const SizedBox(height: 10),
+            Card(color: Theme.of(sheetContext).colorScheme.primaryContainer, child: ListTile(
+              leading: Icon(pendingOrder!['status'] == 'PENDING_VERIFICATION' ? Icons.hourglass_top_rounded : Icons.qr_code_2_rounded),
+              title: Text(pendingOrder!['status'] == 'PENDING_VERIFICATION' ? 'Pago en revisión' : 'Orden de pago vigente', style: const TextStyle(fontWeight: FontWeight.w900)),
+              subtitle: Text('Código ${pendingOrder!['shortCode']}\nToca para continuar con el pago'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async { final cancelled = await _showMembershipPaymentOrder(sheetContext, pendingOrder!); if (cancelled && sheetContext.mounted) setSheetState(() => pendingOrder = null); },
+            )),
+          ],
+          const SizedBox(height: 14),
+          Text('Planes disponibles', style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          SizedBox(height: 178, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: plans.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) {
+            final plan = Map<String, dynamic>.from(plans[index] as Map);
+            final current = membership['planCode']?.toString() == plan['code']?.toString();
+            return SizedBox(width: 150, child: Card(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: current ? Theme.of(sheetContext).colorScheme.primary : Theme.of(sheetContext).colorScheme.outlineVariant)), child: InkWell(borderRadius: BorderRadius.circular(16), onTap: pendingOrder == null ? () => selectPlan(plan) : null, child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(current ? Icons.event_available_outlined : Icons.calendar_month_outlined, color: Theme.of(sheetContext).colorScheme.primary),
               const SizedBox(height: 8),
-              Text(_membershipStatusLabel(
-                  membership['status']?.toString() ?? 'PENDING')),
-              if (membership['planName'] != null)
-                Text('Plan actual: ${membership['planName']}'),
-              if (membership['startsAt'] != null)
-                Text(
-                    'Inicio: ${formatSpanishLongDate(DateTime.parse(membership['startsAt'].toString()))}'),
-              if (membership['expiresAt'] != null)
-                Text(
-                    'Vigente hasta: ${formatSpanishLongDate(DateTime.parse(membership['expiresAt'].toString()))}'),
-              if (membership['graceEndsAt'] != null)
-                Text(
-                    'Gracia hasta: ${formatSpanishLongDate(DateTime.parse(membership['graceEndsAt'].toString()))}'),
-              if (membership['completedTrips'] != null)
-                Text('Viajes del ciclo: ${membership['completedTrips']}'),
-              if (membership['estimatedNextRenewalAmount'] != null)
-                Text(
-                    'Renovación estimada: \$${(membership['estimatedNextRenewalAmount'] as num).toStringAsFixed(2)}'),
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: () => _showMembershipPaymentHistory(sheetContext),
-                icon: const Icon(Icons.receipt_long_outlined),
-                label: const Text('Mis pagos'),
-              ),
-              const SizedBox(height: 18),
-              if (pendingOrder != null) ...[
-                Card(
-                  color: Theme.of(sheetContext).colorScheme.primaryContainer,
-                  child: ListTile(
-                    leading: const Icon(Icons.qr_code_2_rounded),
-                    title: Text(pendingOrder!['status'] == 'PENDING_VERIFICATION'
-                        ? 'Pago en revisión'
-                        : 'Orden de pago vigente'),
-                    subtitle: Text(
-                        'Código ${pendingOrder!['shortCode']} · vence ${DateTime.tryParse(pendingOrder!['expiresAt']?.toString() ?? '') == null ? 'próximamente' : formatEcuadorLongDateTime(DateTime.parse(pendingOrder!['expiresAt'].toString()))}'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () async {
-                      final cancelled = await _showMembershipPaymentOrder(
-                          sheetContext, pendingOrder!);
-                      if (cancelled && sheetContext.mounted) {
-                        setSheetState(() => pendingOrder = null);
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-              Text('Planes disponibles',
-                  style: Theme.of(sheetContext)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w800)),
-              ...plans.map((raw) {
-                final plan = Map<String, dynamic>.from(raw as Map);
-                Future<void> createRenewalOrder() async {
-                  try {
-                    final order = await api.createMembershipPaymentOrder(
-                        widget.s.token, plan['id'].toString(), 'CASH');
-                    if (!sheetContext.mounted) return;
-                    final createdOrder =
-                        Map<String, dynamic>.from(order as Map);
-                    setSheetState(() => pendingOrder = createdOrder);
-                    final cancelled = await _showMembershipPaymentOrder(
-                        sheetContext, createdOrder);
-                    if (cancelled && sheetContext.mounted) {
-                      setSheetState(() => pendingOrder = null);
-                    }
-                    await refreshMembership(force: true);
-                  } catch (error) {
-                    if (sheetContext.mounted) {
-                      ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          SnackBar(content: Text(error.toString())));
-                    }
-                  }
-                }
-
-                final planName = plan['name']?.toString() ?? 'Plan';
-                final planDetails =
-                    '${plan['durationDays']} días · ${plan['includedTrips']} viajes incluidos';
-                final price = '\$${(plan['amount'] as num).toStringAsFixed(2)}';
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: LayoutBuilder(builder: (context, constraints) {
-                      final description = Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(planName,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 3),
-                          Text(planDetails,
-                              style: Theme.of(context).textTheme.bodySmall),
-                        ],
-                      );
-                      final action = FilledButton(
-                        onPressed: pendingOrder == null
-                            ? createRenewalOrder
-                            : () => _showMembershipPaymentOrder(
-                                sheetContext, pendingOrder!),
-                        child: Text(
-                            pendingOrder == null ? price : 'Ver orden vigente'),
-                      );
-                      if (constraints.maxWidth < 340) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            description,
-                            const SizedBox(height: 12),
-                            action,
-                          ],
-                        );
-                      }
-                      return Row(children: [
-                        Expanded(child: description),
-                        const SizedBox(width: 12),
-                        action,
-                      ]);
-                    }),
-                  ),
-                );
-              }),
-              const SizedBox(height: 12),
-              const Text(
-                  'Si la membresía vence, tu cuenta, historial, documentos, perfil y soporte permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'),
-            ]),
-        ),
-      ),
-    );
+              Text(plan['name']?.toString() ?? 'Plan', style: const TextStyle(fontWeight: FontWeight.w900)),
+              Text('${plan['durationDays']} días · ${plan['includedTrips']} viajes', style: Theme.of(sheetContext).textTheme.bodySmall),
+              const Spacer(),
+              Text('\$${(plan['amount'] as num).toStringAsFixed(2)}', style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+              if (pendingOrder == null) const Text('Toca para elegir', style: TextStyle(fontSize: 11)),
+            ])))));
+          })),
+          const SizedBox(height: 12),
+          const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Icon(Icons.info_outline, size: 18), SizedBox(width: 8), Expanded(child: Text('Si la membresía vence, tu cuenta y tu historial permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'))]),
+        ]));
+      }));
     unawaited(refreshMembership(force: true));
   }
 
