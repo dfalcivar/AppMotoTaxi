@@ -9549,6 +9549,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   StreamSubscription<Position>? positionSubscription;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   LatLng? currentDriverPosition;
+  LatLng? driverMapReferenceLocation;
+  bool initialDriverLocationLoading = false;
   final Map<String, LatLng> nearbyDriverPositions = {};
   DateTime? lastNearbyRefreshAt;
   double currentDriverBearing = 0;
@@ -9655,6 +9657,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       });
       Future.microtask(restoreInitialPush);
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(initializeDriverMapLocation());
+    });
     unawaited(initializeDriver());
     timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
   }
@@ -9679,7 +9684,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       final response = Map<String, dynamic>.from(
           await api.serviceAreas(widget.s.token) as Map);
       final catalog = ServiceAreaCatalog.fromJson(response);
-      if (mounted) setState(() => driverReviewArea = catalog.reviewArea);
+      if (mounted) {
+        setState(() {
+          driverReviewArea = catalog.reviewArea;
+          driverMapReferenceLocation ??= catalog.referenceCenter;
+        });
+      }
     } catch (_) {
       // Una cuenta normal no necesita configuración de revisión.
     }
@@ -9964,6 +9974,62 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   LatLng pointFrom(Position position) =>
       LatLng(position.latitude, position.longitude);
+
+  /// Prepara el mapa al abrir la pantalla sin conectar al conductor ni
+  /// publicar su ubicación como disponible. La disponibilidad continúa
+  /// dependiendo exclusivamente del estado restaurado desde la API o de la
+  /// acción explícita sobre el interruptor.
+  Future<void> initializeDriverMapLocation() async {
+    if (initialDriverLocationLoading || currentDriverPosition != null) return;
+    initialDriverLocationLoading = true;
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse) {
+        final lastKnown = await Geolocator.getLastKnownPosition();
+        if (lastKnown != null &&
+            isUsableProvisionalLocation(
+              timestamp: lastKnown.timestamp,
+              accuracyMeters: lastKnown.accuracy,
+            ) &&
+            mounted &&
+            currentDriverPosition == null) {
+          setState(() {
+            currentDriverPosition = pointFrom(lastKnown);
+            currentDriverBearing =
+                lastKnown.heading < 0 ? 0 : lastKnown.heading;
+          });
+        }
+      }
+
+      // restore() inicia el stream completo cuando el conductor ya estaba
+      // disponible o tiene un viaje. En ese caso esta lectura puntual deja de
+      // ser necesaria y evitamos solicitar el GPS dos veces.
+      if (!mounted ||
+          available ||
+          active != null ||
+          positionSubscription != null) {
+        return;
+      }
+      final position = await currentGpsPosition(context);
+      if (!mounted ||
+          available ||
+          active != null ||
+          positionSubscription != null) {
+        return;
+      }
+      setState(() {
+        currentDriverPosition = pointFrom(position);
+        currentDriverBearing = position.heading < 0 ? 0 : position.heading;
+      });
+    } catch (error) {
+      if (mounted && currentDriverPosition == null) {
+        setState(() => driverMessage = friendlyLocationFailure(error));
+      }
+    } finally {
+      initialDriverLocationLoading = false;
+    }
+  }
 
   Future<void> startGpsTracking({required bool markAvailable}) async {
     final reviewPoint = driverReviewLocationActive ? driverReviewPoint : null;
@@ -13011,6 +13077,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           ? const []
                           : mapStops.sublist(0, mapStops.length - 1),
                       currentLocation: null,
+                      referenceLocation: driverMapReferenceLocation,
                       selfDriverPosition:
                           active == null ? currentDriverPosition : null,
                       onCenterCurrentLocation: centerDriverCurrentLocation,
