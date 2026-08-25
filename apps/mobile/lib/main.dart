@@ -8631,6 +8631,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             'No se pudo mostrar la alerta sonora del viaje: ${error.code}');
       }
     }
+    if (!mounted) return;
     // Android muestra una notificación nativa con sonido. El banner queda como
     // respaldo para otras plataformas o cuando el permiso fue rechazado, para
     // no presentar dos avisos distintos por la misma oferta.
