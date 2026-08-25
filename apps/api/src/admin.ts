@@ -2,7 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
-import { normalizeAdvertisingActionValue } from "./advertising-actions.js";
+import { normalizeAdvertisingActionMessage, normalizeAdvertisingActionValue } from "./advertising-actions.js";
 import {
   legacyPhoneAliases,
   normalizeEmail,
@@ -212,6 +212,7 @@ const bannerSchema = z.object({
   weight: z.number().int().min(1).max(5).default(1),
   actionType: z.enum(["WEB", "PHONE", "WHATSAPP", "MAPS", "NONE"]).default("NONE"),
   actionValue: z.string().trim().max(500).optional().or(z.literal("")),
+  actionMessage: z.string().trim().max(300).optional().or(z.literal("")),
   imageBase64: z.string().min(20),
   imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]),
   targetUrl: z.string().url().optional().or(z.literal("")),
@@ -236,6 +237,7 @@ const bannerUpdateSchema = z.object({
   weight: z.number().int().min(1).max(5).optional(),
   actionType: z.enum(["WEB", "PHONE", "WHATSAPP", "MAPS", "NONE"]).optional(),
   actionValue: z.string().trim().max(500).optional().or(z.literal("")),
+  actionMessage: z.string().trim().max(300).optional().or(z.literal("")),
   imageBase64: z.string().min(20).optional(),
   imageMime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
   targetUrl: z.string().url().optional().or(z.literal("")),
@@ -1528,7 +1530,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         banner.target_url as "targetUrl",banner.starts_at as "startsAt",banner.ends_at as "endsAt",
         banner.active,banner.sort_order as "sortOrder",banner.image_mime as "imageMime",
         octet_length(banner.image_data) as "imageBytes",banner.created_at as "createdAt",banner.updated_at as "updatedAt",
-        banner.weight,banner.action_type as "actionType",banner.action_value as "actionValue",
+        banner.weight,banner.action_type as "actionType",banner.action_value as "actionValue",banner.action_message as "actionMessage",
         banner.service_area_id::text as "serviceAreaId",coalesce(plan.code,'BASIC') as "planCode",
         banner.campaign_status as "campaignStatus",banner.internal_campaign_type as "internalCampaignType",
         banner.internal_partner_name as "internalPartnerName",banner.internal_reason as "internalReason",
@@ -1551,6 +1553,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
     const body = bannerSchema.parse(request.body);
     const actionValue = normalizeAdvertisingActionValue(body.actionType, body.actionValue || body.targetUrl);
+    const actionMessage = normalizeAdvertisingActionMessage(body.actionType, body.actionMessage);
     const image = Buffer.from(body.imageBase64.replace(/^data:[^;]+;base64,/, ""), "base64");
     if (!image.length || image.length > 1024 * 1024) return reply.code(400).send({ error: "INVALID_BANNER_IMAGE" });
     const dimensions = imageDimensions(image, body.imageMime);
@@ -1561,11 +1564,11 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       insert into affiliate_banners
         (title,advertiser_name,advertising_plan_id,placement,service_area_id,weight,action_type,action_value,
          image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,created_by,
-         internal_campaign_type,internal_partner_name,internal_reason,internal_reference,internal_authorized_by,internal_authorized_at)
+         internal_campaign_type,internal_partner_name,internal_reason,internal_reference,internal_authorized_by,internal_authorized_at,action_message)
       select ${body.title},${body.advertiserName},plan.id,${body.placement},${body.serviceAreaId ?? null},
         ${body.weight},${body.actionType},${actionValue},${body.imageMime},${image},${body.actionType === "WEB" ? actionValue : null},
         ${body.startsAt},${body.endsAt},${body.active},${body.active ? "ACTIVE" : "PAUSED"},${body.sortOrder},${user.id!},
-        ${body.internalCampaignType},${body.internalPartnerName||null},${body.internalReason},${body.internalReference||null},${user.id!},now()
+        ${body.internalCampaignType},${body.internalPartnerName||null},${body.internalReason},${body.internalReference||null},${user.id!},now(),${actionMessage}
       from advertising_plans plan where plan.code=${body.planCode} and plan.enabled=true
       returning id::text, title, placement, target_url as "targetUrl", starts_at as "startsAt",
         ends_at as "endsAt", active, sort_order as "sortOrder", image_mime as "imageMime",
@@ -1602,6 +1605,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const actionType = body.actionType ?? current.action_type;
     const rawActionValue = body.actionValue === undefined ? (current.action_value ?? current.target_url) : body.actionValue;
     const actionValue = normalizeAdvertisingActionValue(actionType, rawActionValue);
+    const actionMessage = normalizeAdvertisingActionMessage(actionType, body.actionMessage === undefined ? current.action_message : body.actionMessage);
     const internalCampaignType = body.internalCampaignType ?? current.internal_campaign_type ?? "COSTA_GO";
     const internalPartnerName = body.internalPartnerName ?? current.internal_partner_name ?? "";
     const internalReason = body.internalReason ?? current.internal_reason ?? "Contenido institucional existente";
@@ -1618,7 +1622,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         ),
         placement=${placement},service_area_id=${body.serviceAreaId === undefined ? current.service_area_id : body.serviceAreaId},
         weight=${body.weight ?? current.weight},action_type=${actionType},
-        action_value=${actionValue},target_url=${actionType === "WEB" ? actionValue : null},
+        action_value=${actionValue},action_message=${actionMessage},target_url=${actionType === "WEB" ? actionValue : null},
         image_mime=${imageMime}, image_data=${image}, starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
         campaign_status=case when ${body.active ?? current.active} then 'ACTIVE' else 'PAUSED' end,
         sort_order=${body.sortOrder ?? current.sort_order},internal_campaign_type=${internalCampaignType},

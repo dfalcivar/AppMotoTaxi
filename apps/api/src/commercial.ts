@@ -4,7 +4,7 @@ import { z } from "zod";
 import { database as rawDatabase } from "./database.js";
 import { imageDimensions, persistAudit, requirePermission, type SessionUser } from "./admin.js";
 import { sendTransactionalEmail } from "./email.js";
-import { normalizeAdvertisingActionValue } from "./advertising-actions.js";
+import { composeAdvertisingActionValue, normalizeAdvertisingActionMessage, normalizeAdvertisingActionValue } from "./advertising-actions.js";
 
 // El cliente postgres infiere las filas en tiempo de ejecución; este módulo
 // concentra consultas comerciales heterogéneas y valida sus bordes con Zod.
@@ -57,6 +57,7 @@ const submitSchema = z.object({
     serviceAreaId: z.string().uuid().nullable().optional(),
     actionType: z.enum(["WEB", "PHONE", "WHATSAPP", "MAPS", "NONE"]).default("NONE"),
     actionValue: z.string().trim().max(500).optional().default(""),
+    actionMessage: z.string().trim().max(300).optional().default(""),
     startsAt: z.string().datetime({ offset: true }),
     imageBase64: z.string().min(100),
     imageMime: z.enum(["image/jpeg", "image/png", "image/webp"])
@@ -333,8 +334,9 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
       const [payment] = await tx`insert into advertising_payments(order_id,advertiser_id,amount,currency,payment_method_id,status,settlement_status)
         values (${order.id},${advertiser.id},${amount},${plan.currency},${method.id},'PENDING','NOT_RECEIVED') returning id::text`;
       const actionValue=normalizeAdvertisingActionValue(body.campaign.actionType,body.campaign.actionValue);
-      const [campaign] = await tx`insert into affiliate_banners(title,advertiser_id,advertiser_name,advertising_plan_id,placement,weight,action_type,action_value,image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,order_id,submitted_at)
-        values (${body.campaign.title},${advertiser.id},${body.lead.businessName},${plan.id},${placement},${plan.default_weight},${body.campaign.actionType},${actionValue},${body.campaign.imageMime},${image},${body.campaign.actionType === "WEB" ? actionValue : null},${start.toISOString()},${end.toISOString()},false,'PENDING_PAYMENT',${plan.sort_order ?? 0},${order.id},now()) returning id::text`;
+      const actionMessage=normalizeAdvertisingActionMessage(body.campaign.actionType,body.campaign.actionMessage);
+      const [campaign] = await tx`insert into affiliate_banners(title,advertiser_id,advertiser_name,advertising_plan_id,placement,weight,action_type,action_value,action_message,image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,order_id,submitted_at)
+        values (${body.campaign.title},${advertiser.id},${body.lead.businessName},${plan.id},${placement},${plan.default_weight},${body.campaign.actionType},${actionValue},${actionMessage},${body.campaign.imageMime},${image},${body.campaign.actionType === "WEB" ? actionValue : null},${start.toISOString()},${end.toISOString()},false,'PENDING_PAYMENT',${plan.sort_order ?? 0},${order.id},now()) returning id::text`;
       await tx`insert into campaign_status_history(campaign_id,to_status,note) values (${campaign.id},'PENDING_PAYMENT',${isTransfer ? "Esperando comprobante de transferencia" : "Pago gestionado por asesor"})`;
       await tx`update advertising_leads set advertiser_id=${advertiser.id},updated_at=now() where id=${lead.id}`;
       if (isTransfer) await tx`insert into advertising_payment_upload_tokens(order_id,payment_id,token_hash,status,expires_at) values (${order.id},${payment.id},${paymentUploadTokenHash(uploadToken)},'CREATED',now()+interval '7 days')`;
@@ -391,8 +393,11 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
   } catch (error) { return publicError(error, reply); } });
   app.get("/v1/public/advertising/active", async (request, reply) => { try {
     const query=publicCampaignQuerySchema.parse(request.query);
-    const campaigns=await database()`select banner.id::text,banner.title,banner.advertiser_name as "advertiserName",banner.action_type as "actionType",banner.action_value as "actionValue",case when banner.action_type='WEB' then banner.action_value else null end as "targetUrl",banner.placement,banner.starts_at as "startsAt",banner.ends_at as "endsAt",coalesce(banner.weight,plan.default_weight,1)::int as weight,banner.updated_at as "updatedAt",'/v1/banners/'||banner.id||'/image' as "imageUrl" from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id where banner.active=true and banner.campaign_status='ACTIVE' and banner.starts_at<=now() and (banner.ends_at is null or banner.ends_at>now()) and (${query.serviceAreaId??null}::uuid is null or banner.service_area_id is null or banner.service_area_id=${query.serviceAreaId??null}) and (${query.placement}=banner.placement or ${query.placement}=any(coalesce(plan.allowed_placements,array[banner.placement]))) order by banner.sort_order,banner.starts_at desc limit (select advertising_max_active_per_zone from operational_settings where id=1)`;
-    return {campaigns};
+    const campaigns=await database()`select banner.id::text,banner.title,banner.advertiser_name as "advertiserName",banner.action_type as "actionType",banner.action_value as "actionValue",banner.action_message as "actionMessage",case when banner.action_type='WEB' then banner.action_value else null end as "targetUrl",banner.placement,banner.starts_at as "startsAt",banner.ends_at as "endsAt",coalesce(banner.weight,plan.default_weight,1)::int as weight,banner.updated_at as "updatedAt",'/v1/banners/'||banner.id||'/image' as "imageUrl" from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id where banner.active=true and banner.campaign_status='ACTIVE' and banner.starts_at<=now() and (banner.ends_at is null or banner.ends_at>now()) and (${query.serviceAreaId??null}::uuid is null or banner.service_area_id is null or banner.service_area_id=${query.serviceAreaId??null}) and (${query.placement}=banner.placement or ${query.placement}=any(coalesce(plan.allowed_placements,array[banner.placement]))) order by banner.sort_order,banner.starts_at desc limit (select advertising_max_active_per_zone from operational_settings where id=1)`;
+    return { campaigns: campaigns.map((campaign) => ({
+      ...campaign,
+      actionValue: composeAdvertisingActionValue(campaign.actionType, campaign.actionValue, campaign.actionMessage)
+    })) };
   } catch(error){ return publicError(error,reply); } });
   app.post("/v1/public/advertising/events", async (request, reply) => { try {
     const value=publicEventSchema.parse(request.body);
@@ -505,11 +510,12 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
       await tx`insert into advertising_payments(order_id,advertiser_id,amount,currency,payment_method_id,proof_mime,proof_data,reference,status)
         values (${order.id},${advertiser.id},${amount},${plan.currency},${method.id},${body.proof?.fileMime ?? null},${proof},${body.proof?.reference ?? null},${paymentStatus})`;
       const actionValue=normalizeAdvertisingActionValue(body.campaign.actionType,body.campaign.actionValue);
-      const [campaign] = await tx`insert into affiliate_banners(title,advertiser_id,advertiser_name,advertising_plan_id,service_area_id,placement,weight,action_type,action_value,image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,order_id,submitted_at,review_requested_at)
-        values (${body.campaign.title},${advertiser.id},${body.business.businessName},${plan.id},${body.campaign.serviceAreaId ?? null},${campaignPlacement},${plan.default_weight},${body.campaign.actionType},${actionValue},${body.campaign.imageMime},${image},${body.campaign.actionType === "WEB" ? actionValue : null},${start.toISOString()},${end.toISOString()},false,${paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT"},${plan.sort_order ?? 0},${order.id},now(),now()) returning id::text`;
+      const actionMessage=normalizeAdvertisingActionMessage(body.campaign.actionType,body.campaign.actionMessage);
+      const [campaign] = await tx`insert into affiliate_banners(title,advertiser_id,advertiser_name,advertising_plan_id,service_area_id,placement,weight,action_type,action_value,action_message,image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,order_id,submitted_at,review_requested_at)
+        values (${body.campaign.title},${advertiser.id},${body.business.businessName},${plan.id},${body.campaign.serviceAreaId ?? null},${campaignPlacement},${plan.default_weight},${body.campaign.actionType},${actionValue},${actionMessage},${body.campaign.imageMime},${image},${body.campaign.actionType === "WEB" ? actionValue : null},${start.toISOString()},${end.toISOString()},false,${paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT"},${plan.sort_order ?? 0},${order.id},now(),now()) returning id::text`;
       if (!campaign) throw new Error("CAMPAIGN_NOT_CREATED");
       await tx`insert into campaign_status_history(campaign_id,to_status,note) values (${campaign.id},${paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT"},'Solicitud enviada por comercio')`;
-      const submittedSummary={business:body.business,campaign:{title:body.campaign.title,placement:campaignPlacement,serviceAreaId:body.campaign.serviceAreaId,actionType:body.campaign.actionType,actionValue,startsAt:body.campaign.startsAt,imageMime:body.campaign.imageMime},planId:body.planId,paymentMethodId:body.paymentMethodId,orderCode:order.code};
+      const submittedSummary={business:body.business,campaign:{title:body.campaign.title,placement:campaignPlacement,serviceAreaId:body.campaign.serviceAreaId,actionType:body.campaign.actionType,actionValue,actionMessage,startsAt:body.campaign.startsAt,imageMime:body.campaign.imageMime},planId:body.planId,paymentMethodId:body.paymentMethodId,orderCode:order.code};
       await tx`update advertising_invitations set status='SUBMITTED',submitted_at=now(),advertiser_id=${advertiser.id},draft_data=${JSON.stringify(submittedSummary)}::jsonb,updated_at=now() where id=${invitation.id}`;
       await tx`update advertising_leads set status='QUALIFIED',advertiser_id=${advertiser.id},updated_at=now() where id=${invitation.lead_id}`;
       return { orderCode: order.code, campaignId: campaign.id, status: paymentStatus === "UNDER_REVIEW" ? "PAYMENT_REVIEW" : "PENDING_PAYMENT", duplicate: false };

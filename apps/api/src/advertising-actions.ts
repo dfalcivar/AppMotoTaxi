@@ -1,4 +1,5 @@
 export type AdvertisingActionType = "WEB" | "PHONE" | "WHATSAPP" | "MAPS" | "NONE";
+export const DEFAULT_WHATSAPP_ADVERTISING_MESSAGE = "Hola, vi su publicidad en Costa-Go y deseo más información.";
 
 function whatsappDigits(value: string): string {
   const input = value.trim();
@@ -30,3 +31,15 @@ export function normalizeAdvertisingActionValue(type: AdvertisingActionType, val
   return input || null;
 }
 
+export function normalizeAdvertisingActionMessage(type: AdvertisingActionType, message?: string | null): string | null {
+  if (type !== "WHATSAPP") return null;
+  return message?.trim() || DEFAULT_WHATSAPP_ADVERTISING_MESSAGE;
+}
+
+export function composeAdvertisingActionValue(type: AdvertisingActionType, value?: string | null, message?: string | null): string | null {
+  const normalized = normalizeAdvertisingActionValue(type, value);
+  if (type !== "WHATSAPP" || !normalized) return normalized;
+  const url = new URL(normalized);
+  url.searchParams.set("text", normalizeAdvertisingActionMessage(type, message)!);
+  return url.toString();
+}
