@@ -142,11 +142,27 @@ String formatSpanishLongDate(DateTime value) {
 
 String formatEcuadorLongDateTime(DateTime value) {
   const weekdays = [
-    'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'
+    'lunes',
+    'martes',
+    'miércoles',
+    'jueves',
+    'viernes',
+    'sábado',
+    'domingo'
   ];
   const months = [
-    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+    'enero',
+    'febrero',
+    'marzo',
+    'abril',
+    'mayo',
+    'junio',
+    'julio',
+    'agosto',
+    'septiembre',
+    'octubre',
+    'noviembre',
+    'diciembre'
   ];
   // America/Guayaquil permanece en UTC-5 y no aplica horario de verano.
   final operational = value.toUtc().subtract(const Duration(hours: 5));
@@ -154,6 +170,31 @@ String formatEcuadorLongDateTime(DateTime value) {
   final minute = operational.minute.toString().padLeft(2, '0');
   return '${weekdays[operational.weekday - 1]}, ${operational.day} de '
       '${months[operational.month - 1]} de ${operational.year} · $hour:$minute';
+}
+
+String formatEcuadorCompactDate(DateTime value, {bool includeTime = false}) {
+  const months = [
+    'ene.',
+    'feb.',
+    'mar.',
+    'abr.',
+    'may.',
+    'jun.',
+    'jul.',
+    'ago.',
+    'sep.',
+    'oct.',
+    'nov.',
+    'dic.'
+  ];
+  // America/Guayaquil permanece en UTC-5 y no aplica horario de verano.
+  final operational = value.toUtc().subtract(const Duration(hours: 5));
+  final date =
+      '${operational.day} ${months[operational.month - 1]} ${operational.year}';
+  if (!includeTime) return date;
+  final hour = operational.hour.toString().padLeft(2, '0');
+  final minute = operational.minute.toString().padLeft(2, '0');
+  return '$date · $hour:$minute';
 }
 
 Map<String, int> tripFareBreakdown(Map<String, dynamic> preview) {

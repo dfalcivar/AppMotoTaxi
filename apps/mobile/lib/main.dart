@@ -57,6 +57,19 @@ String membershipPlanName(dynamic snapshot) {
   return 'Membresía';
 }
 
+int? membershipPlanDurationDays(dynamic snapshot) {
+  dynamic value = snapshot;
+  if (value is String) {
+    try {
+      value = jsonDecode(value);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (value is Map) return (value['durationDays'] as num?)?.toInt();
+  return null;
+}
+
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
 /// by the passenger.
 class OriginSelectionGuard {
@@ -5985,26 +5998,34 @@ class _PassengerMetric extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return _PassengerSurface(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
       child: Row(children: [
         Container(
-          width: 44,
-          height: 44,
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
             color: scheme.primaryContainer.withValues(alpha: .55),
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, color: scheme.primary),
+          child: Icon(icon, color: scheme.primary, size: 21),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
         Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(label,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: scheme.primary, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 2),
-            Text(value, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 1),
+            Text(value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
           ]),
         ),
       ]),
@@ -7960,27 +7981,27 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     return IntrinsicHeight(
       child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         SizedBox(
-          width: 34,
+          width: 28,
           child: Column(children: [
             Icon(icon,
-                size: icon == Icons.circle ? 15 : 26, color: scheme.primary),
+                size: icon == Icons.circle ? 13 : 22, color: scheme.primary),
             if (!last)
               Expanded(
                   child: Container(width: 2, color: scheme.outlineVariant)),
           ]),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
           child: Padding(
-            padding: EdgeInsets.only(bottom: last ? 0 : 18),
+            padding: EdgeInsets.only(bottom: last ? 0 : 12),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       color: scheme.primary, fontWeight: FontWeight.w900)),
-              const SizedBox(height: 3),
+              const SizedBox(height: 2),
               Text(value,
-                  style: Theme.of(context).textTheme.bodyLarge,
+                  style: Theme.of(context).textTheme.bodyMedium,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis),
             ]),
@@ -8001,6 +8022,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         List<dynamic>.from(preview['fareLegs'] ?? const []).length > 1;
     return _PassengerSurface(
       color: scheme.primaryContainer.withValues(alpha: .22),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Column(children: [
         Row(children: [
           Icon(Icons.local_offer_outlined, color: scheme.primary),
@@ -8076,30 +8098,30 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   : 'Tarifa del trayecto';
               return Dialog(
                 insetPadding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30)),
+                    borderRadius: BorderRadius.circular(26)),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 620),
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                     child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Row(children: [
-                            const _CostaGoEmblem(size: 64),
-                            const SizedBox(width: 14),
+                            const _CostaGoEmblem(size: 44),
+                            const SizedBox(width: 9),
                             Expanded(
                               child: Text('Confirma tu viaje',
                                   style: Theme.of(dialogContext)
                                       .textTheme
-                                      .headlineSmall
+                                      .titleLarge
                                       ?.copyWith(fontWeight: FontWeight.w900)),
                             ),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 8),
+                                  horizontal: 9, vertical: 6),
                               decoration: BoxDecoration(
                                 color: scheme.primaryContainer
                                     .withValues(alpha: .5),
@@ -8112,12 +8134,15 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                         .format(context),
                                 style: TextStyle(
                                     color: scheme.primary,
+                                    fontSize: 12,
                                     fontWeight: FontWeight.w800),
                               ),
                             ),
                           ]),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 12),
                           _PassengerSurface(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12),
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -8136,10 +8161,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                           last: entry.key == stops.length - 1)),
                                 ]),
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
                           LayoutBuilder(builder: (context, constraints) {
-                            final width = (constraints.maxWidth - 10) / 2;
-                            return Wrap(spacing: 10, runSpacing: 10, children: [
+                            final width = (constraints.maxWidth - 8) / 2;
+                            return Wrap(spacing: 8, runSpacing: 8, children: [
                               SizedBox(
                                   width: width,
                                   child: _PassengerMetric(
@@ -8169,14 +8194,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                       value: '$minutes min')),
                             ]);
                           }),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
                           _fareSummaryCard(dialogContext,
                               preview:
                                   Map<String, dynamic>.from(preview as Map),
                               fareBreakdown: fareBreakdown,
                               fareLabel: fareLabel,
                               total: total),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 6),
                           TextButton(
                               onPressed: () =>
                                   Navigator.pop(dialogContext, false),
@@ -11203,9 +11228,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     return IntrinsicHeight(
       child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         SizedBox(
-          width: 28,
+          width: 24,
           child: Column(children: [
-            Icon(icon, color: colors.primary, size: 21),
+            Icon(icon, color: colors.primary, size: 19),
             if (drawLine)
               Expanded(
                 child: Container(
@@ -11216,22 +11241,22 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               ),
           ]),
         ),
-        const SizedBox(width: 7),
+        const SizedBox(width: 6),
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 6),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       color: colors.primary, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 3),
+              const SizedBox(height: 2),
               Text(value,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context)
                       .textTheme
-                      .bodyMedium
+                      .bodySmall
                       ?.copyWith(fontWeight: FontWeight.w600)),
             ]),
           ),
@@ -11376,39 +11401,38 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ]),
       ),
       child: _PassengerSurface(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(12),
         child: SingleChildScrollView(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const _CostaGoEmblem(size: 52),
-              const SizedBox(width: 12),
+              const _CostaGoEmblem(size: 38),
+              const SizedBox(width: 9),
               Expanded(
                 child: Text(
                   'Nuevo viaje · ${offer['passengers']} pasajero(s)',
                   style: Theme.of(context)
                       .textTheme
-                      .titleLarge
+                      .titleMedium
                       ?.copyWith(fontWeight: FontWeight.w900),
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   'Solicitud ${index + 1} de ${offers.length}',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: Theme.of(context).colorScheme.onPrimaryContainer,
                         fontWeight: FontWeight.w900,
                       ),
                 ),
               ),
             ]),
-            const SizedBox(height: 16),
+            const SizedBox(height: 9),
             _driverRoutePoint(
               icon: Icons.radio_button_checked,
               label: 'Origen',
@@ -11431,12 +11455,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             ),
             if (offer['notes']?.toString().trim().isNotEmpty == true)
               Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.only(bottom: 7),
                 child: Text('Referencia: ${offer['notes']}',
                     style: Theme.of(context).textTheme.bodyMedium),
               ),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 13),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
               decoration: BoxDecoration(
                 color: Theme.of(context)
                     .colorScheme
@@ -11446,8 +11470,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               ),
               child: Wrap(
                 alignment: WrapAlignment.spaceAround,
-                spacing: 12,
-                runSpacing: 10,
+                spacing: 9,
+                runSpacing: 7,
                 children: [
                   if (distance != null)
                     _driverOfferDatum(Icons.route_outlined,
@@ -11465,7 +11489,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             Row(children: [
               Expanded(
                 child: OutlinedButton.icon(
@@ -11476,7 +11500,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   icon: const Icon(Icons.close),
                   label: const Text('Rechazar'),
                   style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 56),
+                    minimumSize: const Size(0, 46),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(18)),
                   ),
@@ -11492,7 +11516,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ),
               ),
             ]),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             Text('También puedes deslizar hacia abajo para rechazarla.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -11505,18 +11529,19 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Widget _driverOfferDatum(IconData icon, String value, String suffix) =>
       Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 21, color: Theme.of(context).colorScheme.primary),
-        const SizedBox(width: 6),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+        Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 4),
+        Text(value,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
         if (suffix.isNotEmpty) ...[
           const SizedBox(width: 3),
-          Text(suffix, style: Theme.of(context).textTheme.bodySmall),
+          Text(suffix, style: Theme.of(context).textTheme.labelSmall),
         ],
       ]);
 
   Widget _offerCarousel(BuildContext context) => Column(children: [
         SizedBox(
-          height: 470,
+          height: 392,
           child: PageView.builder(
             controller: offerPageController,
             itemCount: offers.length,
@@ -11682,82 +11707,178 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           context: context,
           barrierDismissible: false,
           builder: (dialogContext) => StatefulBuilder(
-            builder: (dialogContext, setDialogState) => AlertDialog(
-              title: const Text('Adjuntar transferencia'),
-              content: SingleChildScrollView(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text('Monto esperado: \$${amount.toStringAsFixed(2)}'),
-                  const SizedBox(height: 12),
-                  TextField(
-                      controller: bank,
-                      textCapitalization: TextCapitalization.words,
-                      decoration: const InputDecoration(labelText: 'Banco')),
-                  TextField(
-                      controller: reference,
-                      decoration: const InputDecoration(
-                          labelText: 'Número o referencia de transferencia')),
-                  TextField(
-                      controller: observation,
-                      maxLength: 500,
-                      decoration: const InputDecoration(
-                          labelText: 'Observación (opcional)')),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.attach_file_outlined),
-                    title: Text(filename.isEmpty ? 'Comprobante' : filename),
-                    subtitle: Text('${(bytes.length / 1024).ceil()} KB'),
-                  ),
-                ]),
-              ),
-              actions: [
-                TextButton(
+            builder: (dialogContext, setDialogState) => Dialog.fullscreen(
+              child: Scaffold(
+                appBar: AppBar(
+                  leading: IconButton(
+                    tooltip: 'Regresar',
                     onPressed: sending
                         ? null
                         : () => Navigator.pop(dialogContext, false),
-                    child: const Text('Cancelar')),
-                FilledButton(
-                  onPressed: sending
-                      ? null
-                      : () async {
-                          if (bank.text.trim().length < 2 ||
-                              reference.text.trim().length < 3) {
-                            ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                const SnackBar(
-                                    content: Text(
-                                        'Ingresa el banco y la referencia.')));
-                            return;
-                          }
-                          setDialogState(() => sending = true);
-                          try {
-                            await api.submitMembershipTransferProof(
-                                widget.s.token, order['id'].toString(), {
-                              'bankName': bank.text.trim(),
-                              'reference': reference.text.trim(),
-                              'transferDate': DateTime.now()
-                                  .toLocal()
-                                  .toIso8601String()
-                                  .split('T')
-                                  .first,
-                              'declaredAmount': amount,
-                              'fileMime': mime,
-                              'fileBase64': base64Encode(bytes),
-                              if (observation.text.trim().isNotEmpty)
-                                'observation': observation.text.trim(),
-                            });
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext, true);
-                            }
-                          } catch (error) {
-                            setDialogState(() => sending = false);
-                            if (dialogContext.mounted) {
-                              ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                  SnackBar(content: Text(error.toString())));
-                            }
-                          }
-                        },
-                  child: Text(sending ? 'Enviando...' : 'Enviar comprobante'),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                  ),
+                  title: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    _CostaGoEmblem(size: 30),
+                    SizedBox(width: 7),
+                    Text('Costa-Go'),
+                  ]),
+                  centerTitle: true,
                 ),
-              ],
+                body: SafeArea(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
+                    children: [
+                      Text('Subir comprobante',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(dialogContext)
+                              .textTheme
+                              .headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: .09),
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(
+                              color: Colors.green.withValues(alpha: .24)),
+                        ),
+                        child: const Row(children: [
+                          Icon(Icons.check_circle, color: Colors.green),
+                          SizedBox(width: 9),
+                          Expanded(
+                              child: Text(
+                                  'Tu pago será validado y te notificaremos cuando se confirme.')),
+                        ]),
+                      ),
+                      const SizedBox(height: 12),
+                      _PassengerSurface(
+                        padding: const EdgeInsets.all(13),
+                        child: Column(children: [
+                          Text('Monto a pagar',
+                              style:
+                                  Theme.of(dialogContext).textTheme.bodySmall),
+                          Text('\$${amount.toStringAsFixed(2)}',
+                              style: Theme.of(dialogContext)
+                                  .textTheme
+                                  .headlineMedium
+                                  ?.copyWith(
+                                      color: Theme.of(dialogContext)
+                                          .colorScheme
+                                          .primary,
+                                      fontWeight: FontWeight.w900)),
+                        ]),
+                      ),
+                      const SizedBox(height: 10),
+                      _PassengerSurface(
+                        padding: const EdgeInsets.all(13),
+                        child: Column(children: [
+                          _membershipDetailLine(
+                              'Fecha límite',
+                              formatEcuadorCompactDate(
+                                  DateTime.tryParse(
+                                          order['expiresAt']?.toString() ??
+                                              '') ??
+                                      DateTime.now(),
+                                  includeTime: true)),
+                          _membershipDetailLine('Referencia de pago',
+                              order['shortCode']?.toString() ?? ''),
+                        ]),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color:
+                                  Theme.of(dialogContext).colorScheme.primary,
+                              width: 1.3),
+                        ),
+                        child: Column(children: [
+                          Icon(Icons.cloud_upload_outlined,
+                              size: 46,
+                              color:
+                                  Theme.of(dialogContext).colorScheme.primary),
+                          const SizedBox(height: 8),
+                          Text(filename,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 4),
+                          Text(
+                              '${(bytes.length / 1024).ceil()} KB · listo para enviar',
+                              style:
+                                  Theme.of(dialogContext).textTheme.bodySmall),
+                        ]),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: observation,
+                        maxLength: 500,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                            labelText: 'Observación (opcional)'),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton.icon(
+                        onPressed: sending
+                            ? null
+                            : () async {
+                                if (reference.text.trim().length < 3) return;
+                                setDialogState(() => sending = true);
+                                try {
+                                  await api.submitMembershipTransferProof(
+                                      widget.s.token, order['id'].toString(), {
+                                    'bankName': bank.text.trim(),
+                                    'reference': reference.text.trim(),
+                                    'transferDate': DateTime.now()
+                                        .toLocal()
+                                        .toIso8601String()
+                                        .split('T')
+                                        .first,
+                                    'declaredAmount': amount,
+                                    'fileMime': mime,
+                                    'fileBase64': base64Encode(bytes),
+                                    if (observation.text.trim().isNotEmpty)
+                                      'observation': observation.text.trim(),
+                                  });
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext, true);
+                                  }
+                                } catch (error) {
+                                  setDialogState(() => sending = false);
+                                  if (dialogContext.mounted) {
+                                    ScaffoldMessenger.of(dialogContext)
+                                        .showSnackBar(SnackBar(
+                                            content: Text(error.toString())));
+                                  }
+                                }
+                              },
+                        icon: sending
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.upload_file_outlined),
+                        label: Text(sending
+                            ? 'Enviando comprobante…'
+                            : 'Enviar comprobante'),
+                        style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(52)),
+                      ),
+                      TextButton(
+                        onPressed: sending
+                            ? null
+                            : () => Navigator.pop(dialogContext, false),
+                        child: const Text('Volver a métodos de pago'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ) ??
@@ -11947,78 +12068,104 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(point['name']?.toString() ?? 'Punto autorizado',
-                  style: Theme.of(sheetContext)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 6),
-              Center(
-                  child: Chip(
-                      label: Text(point['isOpen'] == true
-                          ? 'Abierto ahora'
-                          : point['isOpen'] == false
-                              ? 'Cerrado ahora'
-                              : 'Horario por confirmar'),
-                      avatar: Icon(Icons.circle,
-                          size: 12,
-                          color: point['isOpen'] == true
-                              ? Colors.green
-                              : Colors.orange))),
+      showDragHandle: false,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: .82,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              IconButton(
+                  tooltip: 'Regresar',
+                  onPressed: () => Navigator.pop(sheetContext),
+                  icon: const Icon(Icons.arrow_back_rounded)),
+              Expanded(
+                child:
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  const _CostaGoEmblem(size: 34),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(point['name']?.toString() ?? 'Punto autorizado',
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(sheetContext)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w900)),
+                  ),
+                ]),
+              ),
+              const SizedBox(width: 48),
+            ]),
+            const SizedBox(height: 6),
+            Center(
+                child: Chip(
+                    label: Text(point['isOpen'] == true
+                        ? 'Abierto ahora'
+                        : point['isOpen'] == false
+                            ? 'Cerrado ahora'
+                            : 'Horario por confirmar'),
+                    avatar: Icon(Icons.circle,
+                        size: 12,
+                        color: point['isOpen'] == true
+                            ? Colors.green
+                            : Colors.orange))),
+            const SizedBox(height: 8),
+            Expanded(
+                child: ListView(children: [
               if ((point['address']?.toString() ?? '').isNotEmpty)
                 ListTile(
-                    leading: const Icon(Icons.location_on_outlined),
+                    leading: const CircleAvatar(
+                        child: Icon(Icons.location_on_outlined)),
                     title: const Text('Dirección'),
                     subtitle: Text(point['address'].toString())),
               if ((point['reference']?.toString() ?? '').isNotEmpty)
                 ListTile(
-                    leading: const Icon(Icons.map_outlined),
+                    leading:
+                        const CircleAvatar(child: Icon(Icons.map_outlined)),
                     title: const Text('Referencia'),
                     subtitle: Text(point['reference'].toString())),
               ListTile(
-                  leading: const Icon(Icons.schedule_outlined),
+                  leading:
+                      const CircleAvatar(child: Icon(Icons.schedule_outlined)),
                   title: const Text('Horario de atención'),
                   subtitle: Text(point['todaySchedule']?.toString() ??
                       'Horario no configurado')),
               if (phone != null && phone.isNotEmpty)
                 ListTile(
-                    leading: const Icon(Icons.phone_outlined),
+                    leading:
+                        const CircleAvatar(child: Icon(Icons.phone_outlined)),
                     title: const Text('Teléfono'),
                     subtitle: Text(phone)),
               if (point['distanceKm'] != null)
                 ListTile(
-                    leading: const Icon(Icons.near_me_outlined),
+                    leading:
+                        const CircleAvatar(child: Icon(Icons.near_me_outlined)),
                     title: const Text('Distancia aproximada'),
                     subtitle: Text(
                         '${(point['distanceKm'] as num).toStringAsFixed(1)} km desde tu ubicación')),
-              const SizedBox(height: 10),
-              Row(children: [
-                Expanded(
-                    child: OutlinedButton.icon(
-                        onPressed: point['latitude'] == null
-                            ? null
-                            : () => _openCollectionPointDirections(point),
-                        icon: const Icon(Icons.navigation_outlined),
-                        label: const Text('Cómo llegar'))),
-                const SizedBox(width: 10),
-                Expanded(
-                    child: FilledButton.icon(
-                        onPressed: phone == null || phone.isEmpty
-                            ? null
-                            : () => launchUrl(Uri(scheme: 'tel', path: phone),
-                                mode: LaunchMode.externalApplication),
-                        icon: const Icon(Icons.phone_outlined),
-                        label: const Text('Llamar'))),
-              ]),
+            ])),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                  child: OutlinedButton.icon(
+                      onPressed: point['latitude'] == null
+                          ? null
+                          : () => _openCollectionPointDirections(point),
+                      icon: const Icon(Icons.navigation_outlined),
+                      label: const Text('Cómo llegar'))),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: FilledButton.icon(
+                      onPressed: phone == null || phone.isEmpty
+                          ? null
+                          : () => launchUrl(Uri(scheme: 'tel', path: phone),
+                              mode: LaunchMode.externalApplication),
+                      icon: const Icon(Icons.phone_outlined),
+                      label: const Text('Llamar'))),
             ]),
+          ]),
+        ),
       ),
     );
   }
@@ -12034,20 +12181,33 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
-        showDragHandle: true,
+        showDragHandle: false,
         builder: (sheetContext) => FractionallySizedBox(
           heightFactor: .78,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Puntos de pago',
-                  style: Theme.of(sheetContext)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900)),
-              const Text(
-                  'Selecciona un punto autorizado para presentar tu QR.'),
+              Row(children: [
+                IconButton(
+                    tooltip: 'Regresar',
+                    onPressed: () => Navigator.pop(sheetContext),
+                    icon: const Icon(Icons.arrow_back_rounded)),
+                const Expanded(
+                    child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                      _CostaGoEmblem(size: 34),
+                      SizedBox(width: 8),
+                      Text('Puntos de pago',
+                          style: TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.w900)),
+                    ])),
+                const SizedBox(width: 48),
+              ]),
+              const Center(
+                  child: Text(
+                      'Selecciona un punto autorizado para presentar tu QR.')),
               const SizedBox(height: 12),
               Expanded(
                   child: points.isEmpty
@@ -12102,85 +12262,193 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Future<void> _showBankTransfer(
       BuildContext context, Map<String, dynamic> order) async {
     Map<String, dynamic>? account;
+    String? accountError;
     try {
       account = await api.membershipPaymentAccount(widget.s.token);
-    } catch (_) {}
+    } catch (_) {
+      accountError =
+          'La cuenta para transferencias de membresías no está activa o está incompleta. Configúrala en Administración > Membresías > Parámetros.';
+    }
     if (!context.mounted) return;
+    final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Transferencia bancaria',
-                  style: Theme.of(sheetContext)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              if (account == null)
-                const Card(
-                    child: Padding(
-                        padding: EdgeInsets.all(14),
+      showDragHandle: false,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: .94,
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+            child: Row(children: [
+              IconButton(
+                  tooltip: 'Regresar',
+                  onPressed: () => Navigator.pop(sheetContext),
+                  icon: const Icon(Icons.arrow_back_rounded)),
+              const Expanded(
+                  child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                    _CostaGoEmblem(size: 30),
+                    SizedBox(width: 7),
+                    Text('Costa-Go',
+                        style: TextStyle(fontWeight: FontWeight.w900)),
+                  ])),
+              const SizedBox(width: 48),
+            ]),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+              children: [
+                Text('Transferencia bancaria',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(sheetContext)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(sheetContext)
+                        .colorScheme
+                        .primaryContainer
+                        .withValues(alpha: .42),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: const Row(children: [
+                    Icon(Icons.info_outline),
+                    SizedBox(width: 9),
+                    Expanded(
                         child: Text(
-                            'Los datos bancarios aún no están disponibles. Intenta más tarde o paga en un punto autorizado.')))
-              else
-                Card(
-                    child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(children: [
-                          _membershipDetailLine('Banco',
-                              account['bankName']?.toString() ?? 'Costa-Go'),
-                          _membershipDetailLine(
-                              'Tipo de cuenta',
-                              account['accountType']?.toString() ??
-                                  'Cuenta bancaria'),
-                          _membershipDetailLine(
-                              'Cuenta',
-                              account['accountIdentifier']
-                                          ?.toString()
-                                          .isNotEmpty ==
-                                      true
-                                  ? account['accountIdentifier'].toString()
-                                  : '•••• ${account['accountLastFour'] ?? ''}'),
-                          _membershipDetailLine('Titular',
-                              account['holderName']?.toString() ?? 'Costa-Go'),
-                          if ((account['holderIdentification']?.toString() ??
-                                  '')
-                              .isNotEmpty)
-                            _membershipDetailLine('RUC / identificación',
-                                account['holderIdentification'].toString()),
-                          if ((account['supportEmail']?.toString() ?? '')
-                              .isNotEmpty)
-                            _membershipDetailLine(
-                                'Correo', account['supportEmail'].toString()),
-                          const Divider(),
-                          _membershipDetailLine('Motivo / referencia',
-                              order['shortCode']?.toString() ?? ''),
-                        ]))),
-              const SizedBox(height: 12),
-              FilledButton.icon(
+                            'Realiza la transferencia a la cuenta configurada y luego sube tu comprobante.')),
+                  ]),
+                ),
+                const SizedBox(height: 14),
+                Text('Datos para transferencia',
+                    style: Theme.of(sheetContext)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 8),
+                if (account == null)
+                  _PassengerSurface(
+                      padding: const EdgeInsets.all(14),
+                      child: Text(accountError ??
+                          'Los datos bancarios aún no están disponibles.'))
+                else
+                  _PassengerSurface(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(children: [
+                      _membershipDetailLine('Banco',
+                          account['bankName']?.toString() ?? 'Costa-Go'),
+                      _membershipDetailLine(
+                          'Tipo de cuenta',
+                          account['accountType']?.toString() ??
+                              'Cuenta bancaria'),
+                      _membershipDetailLine(
+                          'Número de cuenta',
+                          account['accountIdentifier']?.toString().isNotEmpty ==
+                                  true
+                              ? account['accountIdentifier'].toString()
+                              : '•••• ${account['accountLastFour'] ?? ''}'),
+                      _membershipDetailLine('Titular',
+                          account['holderName']?.toString() ?? 'Costa-Go'),
+                      if ((account['holderIdentification']?.toString() ?? '')
+                          .isNotEmpty)
+                        _membershipDetailLine('RUC / identificación',
+                            account['holderIdentification'].toString()),
+                      if ((account['supportEmail']?.toString() ?? '')
+                          .isNotEmpty)
+                        _membershipDetailLine(
+                            'Correo', account['supportEmail'].toString()),
+                      const Divider(height: 18),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 9),
+                        decoration: BoxDecoration(
+                          color: Theme.of(sheetContext)
+                              .colorScheme
+                              .primaryContainer
+                              .withValues(alpha: .42),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(children: [
+                          Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                const Text('Motivo / referencia',
+                                    style: TextStyle(fontSize: 12)),
+                                Text(order['shortCode']?.toString() ?? '',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w900)),
+                              ])),
+                          IconButton(
+                            tooltip: 'Copiar referencia',
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(
+                                  text: order['shortCode']?.toString() ?? ''));
+                              ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Referencia copiada.')));
+                            },
+                            icon: const Icon(Icons.copy_outlined),
+                          ),
+                        ]),
+                      ),
+                    ]),
+                  ),
+                const SizedBox(height: 9),
+                const Text(
+                  'Ingresa esta referencia en el concepto o motivo de tu transferencia para identificar tu pago más rápido.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                _PassengerSurface(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  child: Row(children: [
+                    const Expanded(
+                        child: Text('Total a pagar',
+                            style: TextStyle(fontWeight: FontWeight.w800))),
+                    Text('\$${amount.toStringAsFixed(2)}',
+                        style: Theme.of(sheetContext)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(
+                                color:
+                                    Theme.of(sheetContext).colorScheme.primary,
+                                fontWeight: FontWeight.w900)),
+                  ]),
+                ),
+                const SizedBox(height: 14),
+                FilledButton.icon(
                   onPressed: account == null
                       ? null
                       : () async {
-                          Navigator.pop(sheetContext);
                           final submitted =
                               await _submitMembershipTransferProof(
-                                  context, order);
-                          if (submitted && context.mounted) {
-                            Navigator.of(context)
-                                .popUntil((route) => route.isFirst);
+                                  sheetContext, order);
+                          if (submitted && sheetContext.mounted) {
+                            Navigator.pop(sheetContext);
                           }
                         },
                   icon: const Icon(Icons.upload_file_outlined),
-                  label: const Text('Subir comprobante')),
-            ]),
+                  label: const Text('Subir comprobante'),
+                  style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52)),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text('Cambiar método de pago'),
+                ),
+              ],
+            ),
+          ),
+        ]),
       ),
     );
   }
@@ -12254,15 +12522,35 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     await showDialog<void>(
       context: context,
       builder: (qrContext) => AlertDialog(
-        icon: Image.asset('assets/images/costa-go-emblem.png', width: 46),
-        title: const Text('QR de membresía', textAlign: TextAlign.center),
+        titlePadding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+        title: Row(children: [
+          IconButton(
+              tooltip: 'Regresar',
+              onPressed: () => Navigator.pop(qrContext),
+              icon: const Icon(Icons.arrow_back_rounded)),
+          const Expanded(
+              child:
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            _CostaGoEmblem(size: 36),
+            SizedBox(width: 8),
+            Flexible(
+                child: Text('Membresía Costa-Go',
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+          ])),
+          const SizedBox(width: 48),
+        ]),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('QR de pago',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
           Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                   color: Colors.white, borderRadius: BorderRadius.circular(18)),
               child: QrImageView(
-                  data: qrUrl, size: 220, backgroundColor: Colors.white)),
+                  data: qrUrl, size: 210, backgroundColor: Colors.white)),
           const SizedBox(height: 12),
           const Text(
               'Presenta este QR en cualquier punto de recaudación autorizado.',
@@ -12271,6 +12559,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           Text('Código ${order['shortCode']}',
               style: const TextStyle(fontWeight: FontWeight.w900)),
         ]),
+        actionsAlignment: MainAxisAlignment.center,
         actions: [
           FilledButton(
               onPressed: () => Navigator.pop(qrContext),
@@ -12319,30 +12608,39 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     : status == 'PENDING_VERIFICATION'
                         ? Colors.orange.shade800
                         : scheme.primary;
+            final durationDays = membershipPlanDurationDays(order['plan']);
             return FractionallySizedBox(
-              heightFactor: .88,
+              heightFactor: .95,
               child: ListView(
                 padding: EdgeInsets.fromLTRB(
                     16, 0, 16, MediaQuery.paddingOf(sheetContext).bottom + 18),
                 children: [
                   Row(children: [
-                    const _CostaGoEmblem(size: 38),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(statusTitle,
-                          style: Theme.of(sheetContext)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w900)),
-                    ),
                     IconButton(
-                        tooltip: 'Cerrar',
+                        tooltip: 'Regresar',
                         onPressed: () => Navigator.pop(sheetContext, false),
-                        icon: const Icon(Icons.close)),
+                        icon: const Icon(Icons.arrow_back_rounded)),
+                    const Expanded(
+                        child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                          _CostaGoEmblem(size: 30),
+                          SizedBox(width: 7),
+                          Text('Costa-Go',
+                              style: TextStyle(fontWeight: FontWeight.w900)),
+                        ])),
+                    const SizedBox(width: 48),
                   ]),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
+                  Text(statusTitle,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(sheetContext)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 7),
                   Align(
-                    alignment: Alignment.centerLeft,
+                    alignment: Alignment.center,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 5),
@@ -12375,13 +12673,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   color: scheme.primary,
                                   fontWeight: FontWeight.w900)),
                       Text(
-                          '${membershipPlanName(order['plan'])} · Código ${order['shortCode']}',
+                          '${membershipPlanName(order['plan'])}${durationDays == null ? '' : ' · $durationDays días'}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(fontWeight: FontWeight.w700)),
                       if (expiresAt != null) ...[
                         const SizedBox(height: 4),
                         Text(
-                            'Válido hasta ${formatEcuadorLongDateTime(expiresAt)}',
+                            'Válido hasta ${formatEcuadorCompactDate(expiresAt, includeTime: true)}',
                             textAlign: TextAlign.center,
                             style: Theme.of(sheetContext).textTheme.bodySmall),
                       ],
@@ -12460,8 +12758,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       title: 'En punto autorizado',
                       subtitle: 'Paga mostrando tu QR',
                       onTap: () async {
-                        Navigator.pop(sheetContext, false);
-                        await _showCollectionPoints(hostContext);
+                        await _showCollectionPoints(sheetContext);
                       },
                     ),
                     const SizedBox(height: 8),
@@ -12471,8 +12768,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       title: 'Transferencia bancaria',
                       subtitle: 'Realiza tu pago y sube el comprobante',
                       onTap: () async {
-                        Navigator.pop(sheetContext, false);
-                        await _showBankTransfer(hostContext, order);
+                        await _showBankTransfer(sheetContext, order);
                       },
                     ),
                     const SizedBox(height: 8),
@@ -12483,8 +12779,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       subtitle: 'Escanea o muestra tu código',
                       highlighted: true,
                       onTap: () async {
-                        Navigator.pop(sheetContext, false);
-                        await _showMembershipQr(hostContext, order);
+                        await _showMembershipQr(sheetContext, order);
                       },
                     ),
                     const SizedBox(height: 8),
@@ -12651,186 +12946,213 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               }
 
               return FractionallySizedBox(
-                  heightFactor: .82,
-                  child: ListView(
-                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
-                      children: [
-                        Text('Membresía Costa-Go',
-                            style: Theme.of(sheetContext)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w900)),
-                        const SizedBox(height: 6),
-                        Align(
-                            alignment: Alignment.centerLeft,
-                            child: Chip(
-                                label: Text(_membershipStatusLabel(status)),
-                                avatar: const Icon(Icons.schedule_rounded,
-                                    size: 18))),
-                        Card(
-                            child: Padding(
-                                padding: const EdgeInsets.all(14),
-                                child: Column(children: [
-                                  _membershipDetailLine(
-                                      'Plan actual',
-                                      membership['planName']?.toString() ??
-                                          'Sin plan activo'),
-                                  _membershipDetailLine('Viajes del ciclo',
-                                      '${membership['completedTrips'] ?? 0}'),
-                                  _membershipDetailLine('Renovación estimada',
-                                      '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
-                                  if (extraAmount > 0)
-                                    _membershipDetailLine('Excedente acumulado',
-                                        '\$${extraAmount.toStringAsFixed(2)}'),
-                                  if (membership['expiresAt'] != null)
-                                    _membershipDetailLine(
-                                        'Vigente hasta',
-                                        formatSpanishLongDate(DateTime.parse(
-                                            membership['expiresAt']
-                                                .toString()))),
-                                ]))),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                            onPressed: () =>
-                                _showMembershipPaymentHistory(sheetContext),
-                            icon: const Icon(Icons.receipt_long_outlined),
-                            label: const Text('Mis pagos')),
-                        if (pendingOrder != null) ...[
-                          const SizedBox(height: 10),
-                          Card(
-                              color: Theme.of(sheetContext)
-                                  .colorScheme
-                                  .primaryContainer,
-                              child: ListTile(
-                                leading: Icon(pendingOrder!['status'] ==
-                                        'PENDING_VERIFICATION'
-                                    ? Icons.hourglass_top_rounded
-                                    : Icons.qr_code_2_rounded),
-                                title: Text(
-                                    pendingOrder!['status'] ==
-                                            'PENDING_VERIFICATION'
-                                        ? 'Pago en revisión'
-                                        : 'Orden de pago vigente',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w900)),
-                                subtitle: Text(
-                                    'Código ${pendingOrder!['shortCode']}\nToca para continuar con el pago'),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () async {
-                                  final cancelled =
-                                      await _showMembershipPaymentOrder(
-                                          sheetContext, pendingOrder!);
-                                  if (cancelled && sheetContext.mounted) {
-                                    setSheetState(() => pendingOrder = null);
-                                  }
-                                },
-                              )),
-                        ],
-                        const SizedBox(height: 14),
-                        Text('Planes disponibles',
-                            style: Theme.of(sheetContext)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w900)),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                            height: 178,
-                            child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: plans.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(width: 8),
-                                itemBuilder: (_, index) {
-                                  final plan = Map<String, dynamic>.from(
-                                      plans[index] as Map);
-                                  final current =
-                                      membership['planCode']?.toString() ==
-                                          plan['code']?.toString();
-                                  return SizedBox(
-                                      width: 150,
-                                      child: Card(
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                              side: BorderSide(
-                                                  color: current
-                                                      ? Theme.of(sheetContext)
-                                                          .colorScheme
-                                                          .primary
-                                                      : Theme.of(sheetContext)
-                                                          .colorScheme
-                                                          .outlineVariant)),
-                                          child: InkWell(
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                              onTap: pendingOrder == null
-                                                  ? () => selectPlan(plan)
-                                                  : null,
-                                              child: Padding(
-                                                  padding:
-                                                      const EdgeInsets.all(12),
-                                                  child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      children: [
-                                                        Icon(
-                                                            current
-                                                                ? Icons
-                                                                    .event_available_outlined
-                                                                : Icons
-                                                                    .calendar_month_outlined,
-                                                            color: Theme.of(
-                                                                    sheetContext)
-                                                                .colorScheme
-                                                                .primary),
-                                                        const SizedBox(
-                                                            height: 8),
-                                                        Text(
-                                                            plan['name']
-                                                                    ?.toString() ??
-                                                                'Plan',
-                                                            style: const TextStyle(
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w900)),
-                                                        Text(
-                                                            '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
-                                                            style: Theme.of(
-                                                                    sheetContext)
-                                                                .textTheme
-                                                                .bodySmall),
-                                                        const Spacer(),
-                                                        Text(
-                                                            '\$${(plan['amount'] as num).toStringAsFixed(2)}',
-                                                            style: Theme.of(
-                                                                    sheetContext)
-                                                                .textTheme
-                                                                .titleMedium
-                                                                ?.copyWith(
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w900)),
-                                                        if (pendingOrder ==
-                                                            null)
-                                                          const Text(
-                                                              'Toca para elegir',
-                                                              style: TextStyle(
-                                                                  fontSize:
-                                                                      11)),
-                                                      ])))));
-                                })),
-                        const SizedBox(height: 12),
-                        const Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                  heightFactor: .86,
+                  child: Column(children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 2),
+                      child: Row(children: [
+                        IconButton(
+                            tooltip: 'Cerrar',
+                            onPressed: () => Navigator.pop(sheetContext),
+                            icon: const Icon(Icons.close_rounded)),
+                        Expanded(
+                          child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const _CostaGoEmblem(size: 36),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text('Membresía Costa-Go',
+                                      textAlign: TextAlign.center,
+                                      style: Theme.of(sheetContext)
+                                          .textTheme
+                                          .titleLarge
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w900)),
+                                ),
+                              ]),
+                        ),
+                        const SizedBox(width: 48),
+                      ]),
+                    ),
+                    Expanded(
+                        child: ListView(
+                            padding: const EdgeInsets.fromLTRB(18, 2, 18, 28),
                             children: [
-                              Icon(Icons.info_outline, size: 18),
-                              SizedBox(width: 8),
-                              Expanded(
-                                  child: Text(
-                                      'Si la membresía vence, tu cuenta y tu historial permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'))
-                            ]),
-                      ]));
+                          Align(
+                              alignment: Alignment.centerLeft,
+                              child: Chip(
+                                  label: Text(_membershipStatusLabel(status)),
+                                  avatar: const Icon(Icons.schedule_rounded,
+                                      size: 18))),
+                          Card(
+                              child: Padding(
+                                  padding: const EdgeInsets.all(14),
+                                  child: Column(children: [
+                                    _membershipDetailLine(
+                                        'Plan actual',
+                                        membership['planName']?.toString() ??
+                                            'Sin plan activo'),
+                                    _membershipDetailLine('Viajes del ciclo',
+                                        '${membership['completedTrips'] ?? 0}'),
+                                    _membershipDetailLine('Renovación estimada',
+                                        '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
+                                    if (extraAmount > 0)
+                                      _membershipDetailLine(
+                                          'Excedente acumulado',
+                                          '\$${extraAmount.toStringAsFixed(2)}'),
+                                    if (membership['expiresAt'] != null)
+                                      _membershipDetailLine(
+                                          'Vigente hasta',
+                                          formatEcuadorCompactDate(
+                                              DateTime.parse(
+                                                  membership['expiresAt']
+                                                      .toString()))),
+                                  ]))),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                              onPressed: () =>
+                                  _showMembershipPaymentHistory(sheetContext),
+                              icon: const Icon(Icons.receipt_long_outlined),
+                              label: const Text('Mis pagos')),
+                          if (pendingOrder != null) ...[
+                            const SizedBox(height: 10),
+                            Card(
+                                color: Theme.of(sheetContext)
+                                    .colorScheme
+                                    .primaryContainer,
+                                child: ListTile(
+                                  leading: Icon(pendingOrder!['status'] ==
+                                          'PENDING_VERIFICATION'
+                                      ? Icons.hourglass_top_rounded
+                                      : Icons.qr_code_2_rounded),
+                                  title: Text(
+                                      pendingOrder!['status'] ==
+                                              'PENDING_VERIFICATION'
+                                          ? 'Pago en revisión'
+                                          : 'Orden de pago vigente',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w900)),
+                                  subtitle: Text(
+                                      'Código ${pendingOrder!['shortCode']}\nToca para continuar con el pago'),
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: () async {
+                                    final cancelled =
+                                        await _showMembershipPaymentOrder(
+                                            sheetContext, pendingOrder!);
+                                    if (cancelled && sheetContext.mounted) {
+                                      setSheetState(() => pendingOrder = null);
+                                    }
+                                  },
+                                )),
+                          ],
+                          const SizedBox(height: 14),
+                          Text('Planes disponibles',
+                              style: Theme.of(sheetContext)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                              height: 178,
+                              child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: plans.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(width: 8),
+                                  itemBuilder: (_, index) {
+                                    final plan = Map<String, dynamic>.from(
+                                        plans[index] as Map);
+                                    final current =
+                                        membership['planCode']?.toString() ==
+                                            plan['code']?.toString();
+                                    return SizedBox(
+                                        width: 150,
+                                        child: Card(
+                                            shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                                side: BorderSide(
+                                                    color: current
+                                                        ? Theme.of(sheetContext)
+                                                            .colorScheme
+                                                            .primary
+                                                        : Theme.of(sheetContext)
+                                                            .colorScheme
+                                                            .outlineVariant)),
+                                            child: InkWell(
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                                onTap: pendingOrder == null
+                                                    ? () => selectPlan(plan)
+                                                    : null,
+                                                child: Padding(
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                            12),
+                                                    child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          Icon(
+                                                              current
+                                                                  ? Icons
+                                                                      .event_available_outlined
+                                                                  : Icons
+                                                                      .calendar_month_outlined,
+                                                              color: Theme.of(
+                                                                      sheetContext)
+                                                                  .colorScheme
+                                                                  .primary),
+                                                          const SizedBox(
+                                                              height: 8),
+                                                          Text(
+                                                              plan['name']
+                                                                      ?.toString() ??
+                                                                  'Plan',
+                                                              style: const TextStyle(
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w900)),
+                                                          Text(
+                                                              '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
+                                                              style: Theme.of(
+                                                                      sheetContext)
+                                                                  .textTheme
+                                                                  .bodySmall),
+                                                          const Spacer(),
+                                                          Text(
+                                                              '\$${(plan['amount'] as num).toStringAsFixed(2)}',
+                                                              style: Theme.of(
+                                                                      sheetContext)
+                                                                  .textTheme
+                                                                  .titleMedium
+                                                                  ?.copyWith(
+                                                                      fontWeight:
+                                                                          FontWeight
+                                                                              .w900)),
+                                                          if (pendingOrder ==
+                                                              null)
+                                                            const Text(
+                                                                'Toca para elegir',
+                                                                style: TextStyle(
+                                                                    fontSize:
+                                                                        11)),
+                                                        ])))));
+                                  })),
+                          const SizedBox(height: 12),
+                          const Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.info_outline, size: 18),
+                                SizedBox(width: 8),
+                                Expanded(
+                                    child: Text(
+                                        'Si la membresía vence, tu cuenta y tu historial permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'))
+                              ]),
+                        ])),
+                  ]));
             }));
     unawaited(refreshMembership(force: true));
   }
@@ -12997,44 +13319,45 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       ],
       if (active != null) ...[
         _PassengerSurface(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(10),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
               InkWell(
                 onTap: showPassengerPhoto,
                 borderRadius: BorderRadius.circular(45),
-                child: _passengerPhoto(size: 56),
+                child: _passengerPhoto(size: 44),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 9),
               Expanded(
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Pasajero',
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelMedium
-                              ?.copyWith(
-                                  color: colors.primary,
-                                  fontWeight: FontWeight.w800)),
                       Text(active['passengerName']?.toString() ?? 'Pasajero',
-                          maxLines: 2,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context)
                               .textTheme
                               .titleMedium
                               ?.copyWith(fontWeight: FontWeight.w900)),
                       Row(children: [
-                        const Icon(Icons.star, color: Colors.amber, size: 18),
+                        Text('Pasajero',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(color: colors.onSurfaceVariant)),
+                        const SizedBox(width: 7),
+                        const Icon(Icons.star, color: Colors.amber, size: 15),
                         const SizedBox(width: 4),
-                        Text(((active?['passengerRating'] as num?) ?? 0)
-                            .toStringAsFixed(1)),
+                        Text(
+                            ((active?['passengerRating'] as num?) ?? 0)
+                                .toStringAsFixed(1),
+                            style: Theme.of(context).textTheme.labelSmall),
                       ]),
                     ]),
               ),
             ]),
-            const Divider(height: 18),
+            const Divider(height: 12),
             _driverRoutePoint(
               icon: Icons.radio_button_checked,
               label: 'Origen',

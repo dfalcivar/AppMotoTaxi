@@ -23,11 +23,40 @@ function loadGoogleMaps() {
   return window.__costaGoMapsPromise;
 }
 
-export function CollectionPointMap({latitude,longitude,onChange}:{latitude:number;longitude:number;onChange(value:{latitude:number;longitude:number}):void}) {
-  const host=useRef<HTMLDivElement>(null);const map=useRef<any>(null);const marker=useRef<any>(null);const [error,setError]=useState("");
+export function parseGoogleMapsCoordinates(value:string) {
+  let text=value.trim();
+  try{text=decodeURIComponent(text);}catch{/* Conserva el texto original si no es una URL codificada válida. */}
+  const patterns=[
+    /@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/,
+    /(?:[?&](?:query|q|ll|destination|origin)=)(-?\d{1,2}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/i,
+    /(-?\d{1,2}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)/
+  ];
+  for(const pattern of patterns){
+    const match=pattern.exec(text);if(!match)continue;
+    const latitude=Number(match[1]);const longitude=Number(match[2]);
+    if(Number.isFinite(latitude)&&Number.isFinite(longitude)&&latitude>=-90&&latitude<=90&&longitude>=-180&&longitude<=180)return {latitude,longitude};
+  }
+  return null;
+}
+
+export function CollectionPointMap({latitude,longitude,address="",onChange,onAddressChange}:{latitude:number;longitude:number;address?:string;onChange(value:{latitude:number;longitude:number}):void;onAddressChange?(value:string):void}) {
+  const host=useRef<HTMLDivElement>(null);const map=useRef<any>(null);const marker=useRef<any>(null);
+  const [error,setError]=useState("");const [search,setSearch]=useState(address);const [coordinateText,setCoordinateText]=useState("");const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");
+  const moveTo=(next:{latitude:number;longitude:number},zoom=17)=>{marker.current?.setPosition({lat:next.latitude,lng:next.longitude});map.current?.panTo({lat:next.latitude,lng:next.longitude});if(map.current&&zoom)map.current.setZoom(zoom);onChange(next);};
+  const reverseAddress=async(next:{latitude:number;longitude:number})=>{if(!window.google?.maps)return;const result=await new window.google.maps.Geocoder().geocode({location:{lat:next.latitude,lng:next.longitude}});const formatted=String(result.results?.[0]?.formatted_address??"");if(formatted){setSearch(formatted);onAddressChange?.(formatted);}};
+  async function searchPlace(){if(!search.trim()||!window.google?.maps)return;setBusy(true);setMessage("");try{const result=await new window.google.maps.Geocoder().geocode({address:search.trim(),componentRestrictions:{country:"EC"}});const first=result.results?.[0];if(!first)throw new Error("No encontramos ese lugar en Ecuador.");const next={latitude:first.geometry.location.lat(),longitude:first.geometry.location.lng()};moveTo(next);const formatted=String(first.formatted_address??search.trim());setSearch(formatted);onAddressChange?.(formatted);setMessage("Ubicación encontrada. Puedes ajustar el pin si hace falta.");}catch(reason){setMessage(reason instanceof Error?reason.message:"No fue posible buscar el lugar.");}finally{setBusy(false);}}
+  async function useCoordinates(){const next=parseGoogleMapsCoordinates(coordinateText);if(!next){setMessage("Pega coordenadas como -0.86820, -79.84710 o un enlace largo de Google Maps que las contenga.");return;}setBusy(true);setMessage("");try{moveTo(next);await reverseAddress(next);setMessage("Coordenadas aplicadas. Verifica el pin antes de guardar.");}catch{setMessage("Coordenadas aplicadas. No fue posible obtener el nombre de la dirección.");}finally{setBusy(false);}}
+  async function usePinAddress(){setBusy(true);setMessage("");try{await reverseAddress({latitude,longitude});setMessage("Dirección actualizada desde el pin.");}catch{setMessage("No fue posible obtener la dirección del pin. Puedes escribirla manualmente.");}finally{setBusy(false);}}
   useEffect(()=>{let alive=true;void loadGoogleMaps().then(maps=>{if(!alive||!host.current)return;const position={lat:latitude,lng:longitude};const mapId=import.meta.env.VITE_GOOGLE_MAPS_WEB_MAP_ID as string|undefined;map.current=new maps.Map(host.current,{center:position,zoom:15,mapId:mapId||undefined,streetViewControl:false,mapTypeControl:false,fullscreenControl:true});marker.current=new maps.Marker({map:map.current,position,draggable:true,title:"Punto de recaudación"});marker.current.addListener("dragend",(event:any)=>onChange({latitude:event.latLng.lat(),longitude:event.latLng.lng()}));map.current.addListener("click",(event:any)=>{const next={latitude:event.latLng.lat(),longitude:event.latLng.lng()};marker.current.setPosition({lat:next.latitude,lng:next.longitude});onChange(next);});}).catch(reason=>setError(reason instanceof Error?reason.message:String(reason)));return()=>{alive=false;};},[]);
   useEffect(()=>{marker.current?.setPosition({lat:latitude,lng:longitude});},[latitude,longitude]);
-  return <div>{error?<div className="map-configuration-error">{error}</div>:<div ref={host} className="service-area-google-map" style={{height:280}}/>}<small>Haz clic en el mapa o arrastra el marcador para fijar la ubicación exacta.</small></div>;
+  useEffect(()=>{setSearch(address);},[address]);
+  return <div className="collection-point-location-editor">
+    <div className="collection-point-location-tools"><label><span>Buscar dirección o negocio</span><div><input value={search} onChange={event=>setSearch(event.target.value)} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();void searchPlace();}}} placeholder="Ej. Cooperativa Zambrano, Atacames"/><button type="button" className="secondary" disabled={busy||!search.trim()} onClick={()=>void searchPlace()}>Buscar</button></div></label><label><span>Coordenadas o enlace de Google Maps</span><div><input value={coordinateText} onChange={event=>setCoordinateText(event.target.value)} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();void useCoordinates();}}} placeholder="-0.86820, -79.84710"/><button type="button" className="secondary" disabled={busy||!coordinateText.trim()} onClick={()=>void useCoordinates()}>Ubicar</button></div></label></div>
+    {message&&<small className="collection-point-location-message">{message}</small>}
+    {error?<div className="map-configuration-error">{error}</div>:<div ref={host} className="service-area-google-map" style={{height:280}}/>}
+    <div className="collection-point-coordinate-summary"><small><strong>Pin actual:</strong> {latitude.toFixed(6)}, {longitude.toFixed(6)}</small><button type="button" className="link" disabled={busy||Boolean(error)} onClick={()=>void usePinAddress()}>Usar dirección del pin</button></div>
+    <small>Busca el lugar o pega coordenadas; después ajusta con un clic o arrastrando el marcador.</small>
+  </div>;
 }
 
 function polygonsOf(geometry?: ServiceAreaGeometry | null): Point[][][] {

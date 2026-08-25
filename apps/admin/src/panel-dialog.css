@@ -1,5 +1,6 @@
 .panel-dialog-backdrop { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 22px; background: rgba(2,25,38,.67); backdrop-filter: blur(5px); }
 .panel-dialog-card { width: min(560px,100%); max-height: calc(100dvh - 44px); overflow: auto; display: grid; gap: 17px; padding: 25px; border: 1px solid rgba(255,255,255,.55); border-radius: 24px; background: #fff; box-shadow: 0 28px 80px rgba(0,28,46,.34); }
+.panel-dialog-card.wide { width: min(780px,100%); }
 .panel-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .panel-dialog-heading h2 { margin: 5px 0 0; color: #073b4c; }
 .panel-dialog-description { margin: 0; color: #536d75; line-height: 1.55; }
@@ -11,8 +12,22 @@
 .panel-dialog-fields input:focus,.panel-dialog-fields select:focus,.panel-dialog-fields textarea:focus { outline: 3px solid rgba(8,127,140,.15); border-color: #087f8c; }
 .panel-dialog-fields small { color: #6b7f86; font-weight: 500; line-height: 1.35; }
 .panel-dialog-map-field { grid-column: 1/-1; display: grid; gap: 8px; color: #36545e; }
+.collection-point-location-editor { display:grid; gap:9px; }
+.collection-point-location-tools { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.collection-point-location-tools label { display:grid; gap:6px; font-size:.78rem; }
+.collection-point-location-tools label>div { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px; }
+.collection-point-location-tools button { min-width:72px; padding:9px 11px; }
+.collection-point-location-message { padding:9px 11px; border-radius:10px; color:#315b68 !important; background:#edf6f8; }
+.collection-point-coordinate-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.collection-point-coordinate-summary button { padding:0; }
+.panel-dialog-schedule { grid-column:1/-1; display:grid; grid-template-columns:minmax(140px,1fr) minmax(110px,.7fr) minmax(110px,.7fr); align-items:end; gap:10px; padding:12px; border:1px solid #d8e5e8; border-radius:14px; background:#f8fbfc; }
+.panel-dialog-schedule>div { align-self:center; display:grid; gap:6px; }
+.panel-dialog-schedule-toggle { display:flex !important; grid-column:auto !important; align-items:center; gap:7px !important; color:#557079 !important; font-size:.76rem !important; }
+.panel-dialog-schedule-toggle input { width:17px; height:17px; accent-color:#087f8c; }
+.panel-dialog-schedule label { grid-column:auto !important; }
+.panel-dialog-schedule input:disabled { color:#87989e; background:#eef3f4; }
 .panel-dialog-checkbox { display: flex !important; align-items: flex-start; gap: 10px !important; padding: 11px 12px; border: 1px solid #d8e5e8; border-radius: 12px; background: #f7fafb; }
 .panel-dialog-checkbox input { width: 18px; height: 18px; margin-top: 2px; accent-color: #087f8c; }
 .panel-dialog-checkbox span { display: grid; gap: 3px; }
 .panel-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 2px; }
-@media(max-width:620px){.panel-dialog-backdrop{place-items:end center;padding:max(10px,env(safe-area-inset-top)) 0 0}.panel-dialog-card{width:100%;max-height:calc(100dvh - max(10px,env(safe-area-inset-top)));border-radius:24px 24px 0 0;padding:20px 18px max(18px,env(safe-area-inset-bottom))}.panel-dialog-fields{grid-template-columns:1fr}.panel-dialog-actions{position:sticky;bottom:calc(-1 * max(18px,env(safe-area-inset-bottom)));display:grid;grid-template-columns:1fr 1fr;margin:2px -18px calc(-1 * max(18px,env(safe-area-inset-bottom)));padding:12px 18px max(14px,env(safe-area-inset-bottom));border-top:1px solid #e1eaec;background:rgba(255,255,255,.97)}.panel-dialog-actions button{min-height:46px}}
+@media(max-width:620px){.panel-dialog-backdrop{place-items:end center;padding:max(10px,env(safe-area-inset-top)) 0 0}.panel-dialog-card{width:100%;max-height:calc(100dvh - max(10px,env(safe-area-inset-top)));border-radius:24px 24px 0 0;padding:20px 18px max(18px,env(safe-area-inset-bottom))}.panel-dialog-fields{grid-template-columns:1fr}.collection-point-location-tools{grid-template-columns:1fr}.panel-dialog-schedule{grid-template-columns:1fr 1fr}.panel-dialog-schedule>div{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between}.panel-dialog-actions{position:sticky;bottom:calc(-1 * max(18px,env(safe-area-inset-bottom)));display:grid;grid-template-columns:1fr 1fr;margin:2px -18px calc(-1 * max(18px,env(safe-area-inset-bottom)));padding:12px 18px max(14px,env(safe-area-inset-bottom));border-top:1px solid #e1eaec;background:rgba(255,255,255,.97)}.panel-dialog-actions button{min-height:46px}}
