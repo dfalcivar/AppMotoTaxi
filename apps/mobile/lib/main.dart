@@ -2490,6 +2490,194 @@ class _LoginState extends State<Login> {
   }
 }
 
+class _AuthHeader extends StatelessWidget {
+  const _AuthHeader({required this.title, this.showWordmark = false});
+
+  final String title;
+  final bool showWordmark;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 8, 4, 18),
+      child: Row(children: [
+        IconButton.filledTonal(
+          tooltip: 'Volver',
+          onPressed: () => Navigator.maybePop(context),
+          icon: const Icon(Icons.arrow_back),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w900)),
+        ),
+        const SizedBox(width: 10),
+        if (showWordmark)
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Image.asset('assets/images/costa-go-emblem.png',
+                width: 62, height: 62, fit: BoxFit.contain),
+            if (MediaQuery.sizeOf(context).width >= 430) ...[
+              const SizedBox(width: 6),
+              Text('Costa-Go',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: scheme.primary, fontWeight: FontWeight.w900)),
+            ],
+          ])
+        else
+          Image.asset('assets/images/costa-go-emblem.png',
+              width: 64, height: 64, fit: BoxFit.contain),
+      ]),
+    );
+  }
+}
+
+class _AuthSurface extends StatelessWidget {
+  const _AuthSurface({required this.child, this.padding});
+
+  final Widget child;
+  final EdgeInsetsGeometry? padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      elevation: 2,
+      shadowColor: scheme.shadow.withValues(alpha: .16),
+      surfaceTintColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .8)),
+      ),
+      child: Padding(
+        padding: padding ?? const EdgeInsets.all(18),
+        child: child,
+      ),
+    );
+  }
+}
+
+InputDecoration _authInputDecoration(BuildContext context,
+    {required String label,
+    required IconData icon,
+    String? hint,
+    String? helper,
+    Widget? suffix}) {
+  final scheme = Theme.of(context).colorScheme;
+  return InputDecoration(
+    labelText: label,
+    hintText: hint,
+    helperText: helper,
+    prefixIcon: Icon(icon, color: scheme.primary),
+    suffixIcon: suffix,
+    filled: true,
+    fillColor: scheme.surfaceContainerHighest.withValues(alpha: .32),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: BorderSide(color: scheme.outlineVariant),
+    ),
+    disabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide:
+          BorderSide(color: scheme.outlineVariant.withValues(alpha: .55)),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: BorderSide(color: scheme.primary, width: 1.8),
+    ),
+    errorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: BorderSide(color: scheme.error),
+    ),
+    focusedErrorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: BorderSide(color: scheme.error, width: 1.8),
+    ),
+  );
+}
+
+class _AuthStatusMessage extends StatelessWidget {
+  const _AuthStatusMessage(this.message, {this.error = false});
+
+  final String message;
+  final bool error;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = error ? scheme.error : scheme.primary;
+    return Container(
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .09),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: .25)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(error ? Icons.error_outline : Icons.info_outline,
+            color: color, size: 20),
+        const SizedBox(width: 9),
+        Expanded(child: Text(message)),
+      ]),
+    );
+  }
+}
+
+class _RecoveryIllustration extends StatelessWidget {
+  const _RecoveryIllustration();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 190,
+      child: Center(
+        child: Stack(alignment: Alignment.center, children: [
+          Container(
+            width: 184,
+            height: 184,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: scheme.primaryContainer.withValues(alpha: .32),
+              border: Border.all(
+                  color: scheme.primary.withValues(alpha: .13), width: 14),
+            ),
+          ),
+          Icon(Icons.mark_email_unread_outlined,
+              size: 105, color: scheme.primary),
+          Positioned(
+            right: 20,
+            bottom: 18,
+            child: Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: scheme.surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: scheme.primary, width: 2),
+              ),
+              child: Icon(Icons.verified_user_outlined,
+                  color: scheme.primary, size: 34),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+bool _looksLikeEmail(String value) =>
+    RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value.trim());
+
 class Recovery extends StatefulWidget {
   const Recovery({super.key});
   @override
@@ -2502,7 +2690,8 @@ class _RecoveryState extends State<Recovery> {
   final password = TextEditingController();
   final confirmation = TextEditingController();
   bool codeRequested = false, busy = false, hidePassword = true;
-  String? message;
+  String? message, emailError, codeError, passwordError, confirmationError;
+  bool messageIsError = false;
 
   @override
   void dispose() {
@@ -2514,13 +2703,15 @@ class _RecoveryState extends State<Recovery> {
   }
 
   Future<void> requestCode() async {
-    if (!email.text.contains('@')) {
-      setState(() => message = 'Ingresa el correo registrado.');
+    if (!_looksLikeEmail(email.text)) {
+      setState(() => emailError = 'Ingresa un correo electrónico válido.');
       return;
     }
     setState(() {
       busy = true;
       message = null;
+      emailError = null;
+      messageIsError = false;
     });
     try {
       await Api().requestPasswordReset(email.text.trim());
@@ -2529,32 +2720,44 @@ class _RecoveryState extends State<Recovery> {
           codeRequested = true;
           message =
               'Si el correo está registrado, recibirás un código válido por 15 minutos.';
+          messageIsError = false;
         });
       }
     } catch (error) {
-      if (mounted) setState(() => message = error.toString());
+      if (mounted) {
+        setState(() {
+          message = error.toString();
+          messageIsError = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
   Future<void> confirm() async {
-    if (code.text.trim().length != 6) {
-      setState(() => message = 'Ingresa el código de seis dígitos.');
-      return;
-    }
+    final enteredCode = code.text.trim();
     final validationError = strongPasswordError(password.text);
-    if (validationError != null) {
-      setState(() => message = validationError);
-      return;
-    }
-    if (password.text != confirmation.text) {
-      setState(() => message = 'Las contraseñas no coinciden.');
+    final confirmationValidation = confirmation.text.isEmpty
+        ? 'Confirma tu nueva contraseña.'
+        : password.text != confirmation.text
+            ? 'Las contraseñas no coinciden.'
+            : null;
+    setState(() {
+      codeError =
+          enteredCode.length == 6 ? null : 'Ingresa el código de seis dígitos.';
+      passwordError = validationError;
+      confirmationError = confirmationValidation;
+    });
+    if (codeError != null ||
+        passwordError != null ||
+        confirmationError != null) {
       return;
     }
     setState(() {
       busy = true;
       message = null;
+      messageIsError = false;
     });
     try {
       await Api().confirmPasswordReset(
@@ -2576,87 +2779,184 @@ class _RecoveryState extends State<Recovery> {
               ));
       if (mounted) Navigator.pop(context);
     } catch (error) {
-      if (mounted) setState(() => message = error.toString());
+      if (mounted) {
+        setState(() {
+          message = error.toString();
+          messageIsError = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Recuperar contraseña')),
-        body: ListView(padding: const EdgeInsets.all(24), children: [
-          const Icon(Icons.lock_reset_outlined, size: 68),
-          const SizedBox(height: 12),
-          Text('Recupera tu cuenta',
-              textAlign: TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          const Text('Te enviaremos un código al correo registrado.',
-              textAlign: TextAlign.center),
-          const SizedBox(height: 24),
-          TextField(
-              controller: email,
-              enabled: !codeRequested && !busy,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                  labelText: 'Correo electrónico',
-                  prefixIcon: Icon(Icons.alternate_email))),
-          if (codeRequested) ...[
-            const SizedBox(height: 14),
-            TextField(
-                controller: code,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: const InputDecoration(
-                    labelText: 'Código de seis dígitos',
-                    prefixIcon: Icon(Icons.pin_outlined))),
-            const SizedBox(height: 6),
-            TextField(
-                controller: password,
-                obscureText: hidePassword,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                    labelText: 'Nueva contraseña',
-                    prefixIcon: Icon(Icons.password_outlined))),
-            PasswordStrengthIndicator(password: password.text),
-            const SizedBox(height: 14),
-            TextField(
-                controller: confirmation,
-                obscureText: hidePassword,
-                decoration: InputDecoration(
-                    labelText: 'Confirmar nueva contraseña',
-                    prefixIcon: const Icon(Icons.password_outlined),
-                    suffixIcon: IconButton(
-                        onPressed: () =>
-                            setState(() => hidePassword = !hidePassword),
-                        icon: Icon(hidePassword
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined)))),
-          ],
-          if (message != null)
-            Padding(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                child: Text(message!, textAlign: TextAlign.center)),
-          FilledButton.icon(
-              onPressed: busy ? null : (codeRequested ? confirm : requestCode),
-              icon: Icon(codeRequested
-                  ? Icons.check_circle_outline
-                  : Icons.mail_outline),
-              label: Text(busy
-                  ? 'Procesando…'
-                  : codeRequested
-                      ? 'Cambiar contraseña'
-                      : 'Enviar código')),
-          if (codeRequested)
-            TextButton(
-                onPressed: busy ? null : requestCode,
-                child: const Text('Enviar un código nuevo')),
-        ]),
-      );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: SafeArea(
+        child: LayoutBuilder(builder: (context, constraints) {
+          return SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.fromLTRB(constraints.maxWidth < 380 ? 16 : 22,
+                4, constraints.maxWidth < 380 ? 16 : 22, 28),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 620),
+                child: Column(children: [
+                  const _AuthHeader(title: 'Recuperar contraseña'),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 240),
+                    child: codeRequested
+                        ? Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Image.asset(
+                                'assets/images/costa-go-emblem.png',
+                                width: 78,
+                                height: 78),
+                          )
+                        : const _RecoveryIllustration(),
+                  ),
+                  Text(
+                      codeRequested
+                          ? 'Protege tu cuenta'
+                          : 'Recupera tu cuenta',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 8),
+                  Text(
+                    codeRequested
+                        ? 'Ingresa el código recibido y define una nueva contraseña.'
+                        : 'Te enviaremos un código al correo registrado.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyLarge
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 26),
+                  _AuthSurface(
+                    child: Column(children: [
+                      TextField(
+                        controller: email,
+                        enabled: !codeRequested && !busy,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.done,
+                        onChanged: (_) {
+                          if (emailError != null) {
+                            setState(() => emailError = null);
+                          }
+                        },
+                        onSubmitted: (_) {
+                          if (!codeRequested && !busy) requestCode();
+                        },
+                        decoration: _authInputDecoration(context,
+                                label: 'Correo electrónico',
+                                icon: Icons.alternate_email)
+                            .copyWith(errorText: emailError),
+                      ),
+                      if (codeRequested) ...[
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: code,
+                          enabled: !busy,
+                          keyboardType: TextInputType.number,
+                          textInputAction: TextInputAction.next,
+                          maxLength: 6,
+                          onChanged: (_) {
+                            if (codeError != null) {
+                              setState(() => codeError = null);
+                            }
+                          },
+                          decoration: _authInputDecoration(context,
+                                  label: 'Código de seis dígitos',
+                                  icon: Icons.pin_outlined)
+                              .copyWith(errorText: codeError, counterText: ''),
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: password,
+                          enabled: !busy,
+                          obscureText: hidePassword,
+                          textInputAction: TextInputAction.next,
+                          onChanged: (_) =>
+                              setState(() => passwordError = null),
+                          decoration: _authInputDecoration(
+                            context,
+                            label: 'Nueva contraseña',
+                            icon: Icons.lock_outline,
+                            suffix: IconButton(
+                              tooltip: hidePassword
+                                  ? 'Mostrar contraseña'
+                                  : 'Ocultar contraseña',
+                              onPressed: () =>
+                                  setState(() => hidePassword = !hidePassword),
+                              icon: Icon(hidePassword
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined),
+                            ),
+                          ).copyWith(errorText: passwordError),
+                        ),
+                        PasswordStrengthIndicator(password: password.text),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: confirmation,
+                          enabled: !busy,
+                          obscureText: hidePassword,
+                          textInputAction: TextInputAction.done,
+                          onChanged: (_) =>
+                              setState(() => confirmationError = null),
+                          onSubmitted: (_) {
+                            if (!busy) confirm();
+                          },
+                          decoration: _authInputDecoration(context,
+                                  label: 'Confirmar nueva contraseña',
+                                  icon: Icons.password_outlined)
+                              .copyWith(errorText: confirmationError),
+                        ),
+                      ],
+                      if (message != null)
+                        _AuthStatusMessage(message!, error: messageIsError),
+                    ]),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed:
+                          busy ? null : (codeRequested ? confirm : requestCode),
+                      icon: busy
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : Icon(codeRequested
+                              ? Icons.check_circle_outline
+                              : Icons.mail_outline),
+                      label: Text(busy
+                          ? 'Procesando…'
+                          : codeRequested
+                              ? 'Cambiar contraseña'
+                              : 'Enviar código'),
+                    ),
+                  ),
+                  if (codeRequested)
+                    TextButton.icon(
+                      onPressed: busy ? null : requestCode,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Enviar un código nuevo'),
+                    ),
+                ]),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
 }
 
 class EmailVerificationScreen extends StatefulWidget {
@@ -2908,7 +3208,10 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
 }
 
 class Register extends StatefulWidget {
-  const Register({super.key});
+  const Register({super.key, this.loadCooperativesOnStart = true});
+
+  final bool loadCooperativesOnStart;
+
   @override
   State<Register> createState() => _RegisterState();
 }
@@ -2929,7 +3232,11 @@ class _RegisterState extends State<Register> {
   String cooperativeSelection = 'INDIVIDUAL';
   List<dynamic> cooperatives = [];
   bool loadingCooperatives = false;
-  bool busy = false, submitted = false, acceptedPolicies = false;
+  bool busy = false,
+      submitted = false,
+      acceptedPolicies = false,
+      hidePassword = true;
+  String? photoError, privacyError;
   XFile? profilePhoto;
   Uint8List? profilePhotoBytes;
   String? profilePhotoMime;
@@ -2937,7 +3244,7 @@ class _RegisterState extends State<Register> {
   @override
   void initState() {
     super.initState();
-    loadCooperatives();
+    if (widget.loadCooperativesOnStart) loadCooperatives();
   }
 
   Future<void> loadCooperatives() async {
@@ -2980,6 +3287,7 @@ class _RegisterState extends State<Register> {
       profilePhoto = file;
       profilePhotoBytes = bytes;
       profilePhotoMime = mime;
+      photoError = null;
       message = '';
     });
   }
@@ -3003,17 +3311,17 @@ class _RegisterState extends State<Register> {
 
   bool validateAndFocus() {
     final valid = formKey.currentState?.validate() ?? false;
-    if (!acceptedPolicies) {
-      setState(() =>
-          message = 'Lee y acepta los Términos y la Política de privacidad.');
-      return false;
-    }
-    if (valid && (role != 'DRIVER' || profilePhotoBytes != null)) return true;
-    if (role == 'DRIVER' && profilePhotoBytes == null) {
-      setState(() => message =
-          'Carga una fotografía frontal y clara para completar el registro.');
-      return false;
-    }
+    final missingPhoto = role == 'DRIVER' && profilePhotoBytes == null;
+    setState(() {
+      photoError = missingPhoto
+          ? 'Selecciona una fotografía frontal para completar el registro.'
+          : null;
+      privacyError = acceptedPolicies
+          ? null
+          : 'Debes aceptar la Política de privacidad para crear tu cuenta.';
+      message = '';
+    });
+    if (valid && !missingPhoto && acceptedPolicies) return true;
     final fields = <(TextEditingController, FocusNode)>[
       (name, nameFocus),
       (email, emailFocus),
@@ -3023,7 +3331,6 @@ class _RegisterState extends State<Register> {
     ];
     final missing = fields.where((item) => item.$1.text.trim().isEmpty);
     if (missing.isNotEmpty) missing.first.$2.requestFocus();
-    setState(() => message = 'Completa todos los campos obligatorios.');
     return false;
   }
 
@@ -3087,174 +3394,443 @@ class _RegisterState extends State<Register> {
   }
 
   @override
-  Widget build(BuildContext c) => Scaffold(
-      appBar: AppBar(title: const Text('Crear cuenta')),
-      body: Form(
-          key: formKey,
-          child: ListView(padding: const EdgeInsets.all(20), children: [
-            Text('Todos los campos marcados con * son obligatorios.',
-                style: Theme.of(c).textTheme.bodySmall),
-            const SizedBox(height: 16),
-            TextFormField(
-                controller: name,
-                focusNode: nameFocus,
-                enabled: !submitted,
-                textInputAction: TextInputAction.next,
-                validator: (value) => value == null || value.trim().length < 3
-                    ? 'Ingresa tu nombre completo.'
-                    : null,
-                decoration:
-                    const InputDecoration(labelText: 'Nombre completo *')),
-            const SizedBox(height: 14),
-            TextFormField(
-                controller: email,
-                focusNode: emailFocus,
-                enabled: !submitted,
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-                validator: (value) {
-                  final emailValue = value?.trim() ?? '';
-                  return !emailValue.contains('@') || !emailValue.contains('.')
-                      ? 'Ingresa un correo válido.'
-                      : null;
-                },
-                decoration: const InputDecoration(labelText: 'Correo *')),
-            const SizedBox(height: 14),
-            TextFormField(
-                controller: phone,
-                focusNode: phoneFocus,
-                enabled: !submitted,
-                keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.next,
-                validator: (value) {
-                  final digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
-                  return digits.length < 9
-                      ? 'Ingresa un número de teléfono válido.'
-                      : null;
-                },
-                decoration: const InputDecoration(
-                    labelText: 'Teléfono, ej. +593... *')),
-            const SizedBox(height: 14),
-            TextFormField(
-                controller: password,
-                focusNode: passwordFocus,
-                enabled: !submitted,
-                obscureText: true,
-                textInputAction: TextInputAction.next,
-                onChanged: (_) => setState(() {}),
-                validator: strongPasswordError,
-                decoration:
-                    const InputDecoration(labelText: 'Contraseña segura *')),
-            PasswordStrengthIndicator(password: password.text),
-            const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-                initialValue: role,
-                items: const [
-                  DropdownMenuItem(value: 'PASSENGER', child: Text('Pasajero')),
-                  DropdownMenuItem(value: 'DRIVER', child: Text('Conductor'))
-                ],
-                onChanged: submitted ? null : (v) => setState(() => role = v!),
-                decoration:
-                    const InputDecoration(labelText: 'Tipo de cuenta *')),
-            if (role == 'DRIVER') ...[
-              const SizedBox(height: 14),
-              DropdownButtonFormField<String>(
-                  initialValue: cooperativeSelection,
-                  items: [
-                    const DropdownMenuItem<String>(
-                        value: 'INDIVIDUAL',
-                        child: Text('Conductor independiente')),
-                    ...cooperatives.map((item) => DropdownMenuItem<String>(
-                        value: item['id']?.toString(),
-                        child:
-                            Text(item['name']?.toString() ?? 'Cooperativa'))),
-                  ],
-                  onChanged: submitted || loadingCooperatives
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            setState(() => cooperativeSelection = value);
-                          }
-                        },
-                  decoration: InputDecoration(
-                      labelText: 'Cooperativa',
-                      helperText: loadingCooperatives
-                          ? 'Cargando cooperativas…'
-                          : 'Selecciona una cooperativa o continúa como independiente')),
-              const SizedBox(height: 14),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(children: [
-                    if (profilePhotoBytes != null)
-                      ClipOval(
-                        child: Image.memory(profilePhotoBytes!,
-                            width: 104, height: 104, fit: BoxFit.cover),
-                      )
-                    else
-                      const CircleAvatar(
-                          radius: 52,
-                          child: Icon(Icons.person_outline, size: 48)),
-                    const SizedBox(height: 10),
-                    const Text(
-                        'Fotografía frontal, clara y con el rostro visible *',
-                        textAlign: TextAlign.center),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: submitted ? null : chooseProfilePhoto,
-                      icon: const Icon(Icons.add_a_photo_outlined),
-                      label: Text(profilePhotoBytes == null
-                          ? 'Seleccionar fotografía'
-                          : 'Cambiar fotografía'),
-                    ),
-                  ]),
+  Widget build(BuildContext c) {
+    final scheme = Theme.of(c).colorScheme;
+    return Scaffold(
+      body: SafeArea(
+        child: LayoutBuilder(builder: (context, constraints) {
+          final horizontal = constraints.maxWidth < 380 ? 14.0 : 22.0;
+          return Form(
+            key: formKey,
+            autovalidateMode: AutovalidateMode.disabled,
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(horizontal, 4, horizontal, 30),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 700),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const _AuthHeader(
+                            title: 'Crear cuenta', showWordmark: true),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Row(children: [
+                            Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: scheme.primaryContainer
+                                    .withValues(alpha: .5),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.info_outline,
+                                  color: scheme.primary, size: 21),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Todos los campos marcados con * son obligatorios.',
+                                style: Theme.of(c)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(color: scheme.onSurfaceVariant),
+                              ),
+                            ),
+                          ]),
+                        ),
+                        _AuthSurface(
+                          child: Column(children: [
+                            TextFormField(
+                              controller: name,
+                              focusNode: nameFocus,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
+                              enabled: !submitted,
+                              textInputAction: TextInputAction.next,
+                              textCapitalization: TextCapitalization.words,
+                              validator: (value) =>
+                                  value == null || value.trim().length < 3
+                                      ? 'Ingresa tu nombre completo.'
+                                      : null,
+                              decoration: _authInputDecoration(c,
+                                  label: 'Nombre completo *',
+                                  icon: Icons.person_outline),
+                            ),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: email,
+                              focusNode: emailFocus,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
+                              enabled: !submitted,
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                              validator: (value) => _looksLikeEmail(value ?? '')
+                                  ? null
+                                  : 'Ingresa un correo electrónico válido.',
+                              decoration: _authInputDecoration(c,
+                                  label: 'Correo *', icon: Icons.mail_outline),
+                            ),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: phone,
+                              focusNode: phoneFocus,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
+                              enabled: !submitted,
+                              keyboardType: TextInputType.phone,
+                              textInputAction: TextInputAction.next,
+                              validator: (value) {
+                                final digits =
+                                    (value ?? '').replaceAll(RegExp(r'\D'), '');
+                                return digits.length < 9
+                                    ? 'Ingresa un número de teléfono válido.'
+                                    : null;
+                              },
+                              decoration: _authInputDecoration(c,
+                                  label: 'Teléfono *',
+                                  hint: 'Ej. +593...',
+                                  icon: Icons.phone_outlined),
+                            ),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: password,
+                              focusNode: passwordFocus,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
+                              enabled: !submitted,
+                              obscureText: hidePassword,
+                              textInputAction: TextInputAction.next,
+                              onChanged: (_) => setState(() {}),
+                              validator: strongPasswordError,
+                              decoration: _authInputDecoration(
+                                c,
+                                label: 'Contraseña segura *',
+                                icon: Icons.lock_outline,
+                                suffix: IconButton(
+                                  tooltip: hidePassword
+                                      ? 'Mostrar contraseña'
+                                      : 'Ocultar contraseña',
+                                  onPressed: submitted
+                                      ? null
+                                      : () => setState(
+                                          () => hidePassword = !hidePassword),
+                                  icon: Icon(hidePassword
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined),
+                                ),
+                              ),
+                            ),
+                            PasswordStrengthIndicator(password: password.text),
+                            const SizedBox(height: 14),
+                            DropdownButtonFormField<String>(
+                              initialValue: role,
+                              isExpanded: true,
+                              items: const [
+                                DropdownMenuItem(
+                                    value: 'PASSENGER',
+                                    child: Text('Pasajero')),
+                                DropdownMenuItem(
+                                    value: 'DRIVER', child: Text('Conductor'))
+                              ],
+                              onChanged: submitted
+                                  ? null
+                                  : (value) {
+                                      if (value == null) return;
+                                      setState(() {
+                                        role = value;
+                                        photoError = null;
+                                      });
+                                    },
+                              decoration: _authInputDecoration(c,
+                                  label: 'Tipo de cuenta *',
+                                  icon: Icons.account_circle_outlined),
+                            ),
+                          ]),
+                        ),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 260),
+                          curve: Curves.easeOutCubic,
+                          child: role != 'DRIVER'
+                              ? const SizedBox.shrink()
+                              : Padding(
+                                  padding: const EdgeInsets.only(top: 16),
+                                  child: Column(children: [
+                                    _AuthSurface(
+                                      child: Column(children: [
+                                        DropdownButtonFormField<String>(
+                                          initialValue: cooperativeSelection,
+                                          isExpanded: true,
+                                          items: [
+                                            const DropdownMenuItem<String>(
+                                              value: 'INDIVIDUAL',
+                                              child: Text(
+                                                  'Conductor independiente'),
+                                            ),
+                                            ...cooperatives.map((item) =>
+                                                DropdownMenuItem<String>(
+                                                  value: item['id']?.toString(),
+                                                  child: Text(
+                                                    item['name']?.toString() ??
+                                                        'Cooperativa',
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                )),
+                                          ],
+                                          onChanged:
+                                              submitted || loadingCooperatives
+                                                  ? null
+                                                  : (value) {
+                                                      if (value != null) {
+                                                        setState(() =>
+                                                            cooperativeSelection =
+                                                                value);
+                                                      }
+                                                    },
+                                          decoration: _authInputDecoration(
+                                            c,
+                                            label: 'Cooperativa',
+                                            icon: Icons.groups_outlined,
+                                            helper: loadingCooperatives
+                                                ? 'Cargando cooperativas…'
+                                                : 'Selecciona una cooperativa o continúa como independiente.',
+                                          ),
+                                        ),
+                                      ]),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(18),
+                                      decoration: BoxDecoration(
+                                        color: scheme.surfaceContainerLow,
+                                        borderRadius: BorderRadius.circular(24),
+                                        border: Border.all(
+                                          color: photoError == null
+                                              ? scheme.primary
+                                                  .withValues(alpha: .55)
+                                              : scheme.error,
+                                          width: 1.4,
+                                          strokeAlign:
+                                              BorderSide.strokeAlignInside,
+                                        ),
+                                      ),
+                                      child: LayoutBuilder(
+                                          builder: (context, photoConstraints) {
+                                        final compact =
+                                            photoConstraints.maxWidth < 470;
+                                        final preview = Stack(
+                                          alignment: Alignment.bottomRight,
+                                          children: [
+                                            ClipOval(
+                                              child: profilePhotoBytes != null
+                                                  ? Image.memory(
+                                                      profilePhotoBytes!,
+                                                      width: 126,
+                                                      height: 126,
+                                                      fit: BoxFit.cover)
+                                                  : Container(
+                                                      width: 126,
+                                                      height: 126,
+                                                      color: scheme
+                                                          .primaryContainer
+                                                          .withValues(
+                                                              alpha: .45),
+                                                      child: Icon(
+                                                          Icons.person_outline,
+                                                          color: scheme.primary,
+                                                          size: 66),
+                                                    ),
+                                            ),
+                                            Container(
+                                              width: 42,
+                                              height: 42,
+                                              decoration: BoxDecoration(
+                                                color: scheme.primary,
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                    color: scheme.surface,
+                                                    width: 3),
+                                              ),
+                                              child: const Icon(
+                                                  Icons.camera_alt_outlined,
+                                                  color: Colors.white,
+                                                  size: 22),
+                                            ),
+                                          ],
+                                        );
+                                        final details = Column(
+                                          crossAxisAlignment: compact
+                                              ? CrossAxisAlignment.center
+                                              : CrossAxisAlignment.start,
+                                          children: [
+                                            Text('Fotografía frontal *',
+                                                textAlign: compact
+                                                    ? TextAlign.center
+                                                    : TextAlign.start,
+                                                style: Theme.of(c)
+                                                    .textTheme
+                                                    .titleMedium
+                                                    ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w900)),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              'Clara, reciente y con el rostro visible. Evita filtros y accesorios que lo cubran.',
+                                              textAlign: compact
+                                                  ? TextAlign.center
+                                                  : TextAlign.start,
+                                              style: Theme.of(c)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                      color: scheme
+                                                          .onSurfaceVariant),
+                                            ),
+                                            const SizedBox(height: 12),
+                                            OutlinedButton.icon(
+                                              onPressed: submitted
+                                                  ? null
+                                                  : chooseProfilePhoto,
+                                              icon: const Icon(
+                                                  Icons.add_a_photo_outlined),
+                                              label: Text(
+                                                  profilePhotoBytes == null
+                                                      ? 'Seleccionar fotografía'
+                                                      : 'Cambiar fotografía'),
+                                            ),
+                                            if (photoError != null) ...[
+                                              const SizedBox(height: 8),
+                                              Text(photoError!,
+                                                  style: TextStyle(
+                                                      color: scheme.error)),
+                                            ],
+                                          ],
+                                        );
+                                        return compact
+                                            ? Column(children: [
+                                                preview,
+                                                const SizedBox(height: 14),
+                                                details,
+                                              ])
+                                            : Row(children: [
+                                                preview,
+                                                const SizedBox(width: 20),
+                                                Expanded(child: details),
+                                              ]);
+                                      }),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    _AuthSurface(
+                                      child: TextFormField(
+                                        controller: vehicle,
+                                        focusNode: vehicleFocus,
+                                        autovalidateMode:
+                                            AutovalidateMode.onUserInteraction,
+                                        enabled: !submitted,
+                                        textCapitalization:
+                                            TextCapitalization.characters,
+                                        textInputAction: TextInputAction.done,
+                                        validator: (value) => value == null ||
+                                                value.trim().isEmpty
+                                            ? 'Ingresa la placa o identificador de la mototaxi.'
+                                            : null,
+                                        decoration: _authInputDecoration(
+                                          c,
+                                          label:
+                                              'Placa o identificador de mototaxi *',
+                                          hint: 'Ej. AB1234 o 1234ABC',
+                                          icon: Icons.badge_outlined,
+                                        ),
+                                      ),
+                                    ),
+                                  ]),
+                                ),
+                        ),
+                        const SizedBox(height: 16),
+                        _AuthSurface(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                CheckboxListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  value: acceptedPolicies,
+                                  onChanged: submitted
+                                      ? null
+                                      : (value) => setState(() {
+                                            acceptedPolicies = value == true;
+                                            if (acceptedPolicies) {
+                                              privacyError = null;
+                                            }
+                                          }),
+                                  title: const Text(
+                                      'He leído la Política de privacidad y acepto crear mi cuenta'),
+                                  subtitle: Padding(
+                                    padding: const EdgeInsets.only(top: 5),
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                              'Consulta cómo Costa-Go usa y protege tus datos.'),
+                                          const SizedBox(height: 3),
+                                          InkWell(
+                                            onTap: () => openExternalPage(
+                                                c, privacyPolicyUrl),
+                                            child: Text('Leer política',
+                                                style: TextStyle(
+                                                    color: scheme.primary,
+                                                    fontWeight: FontWeight.w700,
+                                                    decoration: TextDecoration
+                                                        .underline)),
+                                          ),
+                                        ]),
+                                  ),
+                                  secondary: Icon(
+                                      Icons.admin_panel_settings_outlined,
+                                      color: scheme.primary,
+                                      size: 34),
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                ),
+                                if (privacyError != null)
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                                    child: Text(privacyError!,
+                                        style: TextStyle(color: scheme.error)),
+                                  ),
+                              ]),
+                        ),
+                        if (message.isNotEmpty)
+                          _AuthStatusMessage(message, error: !submitted),
+                        const SizedBox(height: 18),
+                        if (submitted)
+                          OutlinedButton.icon(
+                            onPressed: () => Navigator.of(c)
+                                .popUntil((route) => route.isFirst),
+                            icon: const Icon(Icons.home_outlined),
+                            label: const Text('Volver al inicio'),
+                          )
+                        else
+                          _CostaGoPrimaryButton(
+                            label: busy ? 'Registrando…' : 'Crear cuenta',
+                            loading: busy,
+                            onPressed: busy ? null : submit,
+                          ),
+                      ]),
                 ),
               ),
-              const SizedBox(height: 14),
-              TextFormField(
-                  controller: vehicle,
-                  focusNode: vehicleFocus,
-                  enabled: !submitted,
-                  textCapitalization: TextCapitalization.characters,
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'Ingresa la placa o identificador de la mototaxi.'
-                      : null,
-                  decoration: const InputDecoration(
-                      labelText: 'Placa o identificador de mototaxi *')),
-            ],
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: acceptedPolicies,
-              onChanged: submitted
-                  ? null
-                  : (value) => setState(() => acceptedPolicies = value == true),
-              title: const Text(
-                  'He leído la Política de privacidad y acepto crear mi cuenta'),
-              subtitle: Wrap(children: [
-                const Text('Consulta cómo Costa-Go usa y protege tus datos. '),
-                InkWell(
-                  onTap: () => openExternalPage(c, privacyPolicyUrl),
-                  child: Text('Leer política',
-                      style: TextStyle(
-                          color: Theme.of(c).colorScheme.primary,
-                          decoration: TextDecoration.underline)),
-                ),
-              ]),
-              controlAffinity: ListTileControlAffinity.leading,
             ),
-            if (message.isNotEmpty)
-              Padding(padding: const EdgeInsets.all(12), child: Text(message)),
-            if (submitted)
-              OutlinedButton.icon(
-                  onPressed: () =>
-                      Navigator.of(c).popUntil((route) => route.isFirst),
-                  icon: const Icon(Icons.home_outlined),
-                  label: const Text('Volver al inicio'))
-            else
-              FilledButton(
-                  onPressed: busy ? null : submit,
-                  child: Text(busy ? 'Registrando…' : 'Crear cuenta'))
-          ])));
+          );
+        }),
+      ),
+    );
+  }
 }
 
 class Profile extends StatefulWidget {
