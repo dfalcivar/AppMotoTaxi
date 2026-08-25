@@ -909,34 +909,79 @@ class TripStatusPanel extends StatelessWidget {
       'IN_PROGRESS' => 'Ya estás avanzando hacia tu destino.',
       _ => '${driverName ?? 'Tu conductor'} se dirige hacia ti.',
     };
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(estadoViaje(status),
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text(detail),
-          const SizedBox(height: 14),
-          ...List.generate(stages.length, (index) {
-            final completed = index <= current;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(children: [
-                Icon(completed ? Icons.check_circle : Icons.circle_outlined,
-                    size: 20,
-                    color: completed
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.outline),
-                const SizedBox(width: 9),
-                Text(stages[index].$2,
-                    style: TextStyle(
-                        fontWeight: index == current ? FontWeight.w700 : null)),
-              ]),
-            );
-          }),
-        ]),
-      ),
+    final scheme = Theme.of(context).colorScheme;
+    return _PassengerSurface(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        ...List.generate(stages.length, (index) {
+          final reached = index <= current;
+          final selected = index == current;
+          return IntrinsicHeight(
+            child:
+                Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              SizedBox(
+                width: 40,
+                child: Column(children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: reached ? scheme.primary : scheme.surface,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color:
+                              reached ? scheme.primary : scheme.outlineVariant,
+                          width: 2),
+                    ),
+                    child: reached
+                        ? const Icon(Icons.check, color: Colors.white, size: 18)
+                        : null,
+                  ),
+                  if (index < stages.length - 1)
+                    Expanded(
+                      child: Container(
+                        width: 2,
+                        color: index < current
+                            ? scheme.primary
+                            : scheme.outlineVariant,
+                      ),
+                    ),
+                ]),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 18),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(stages[index].$2,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                    color: selected
+                                        ? scheme.primary
+                                        : reached
+                                            ? scheme.onSurface
+                                            : scheme.onSurfaceVariant,
+                                    fontWeight: selected
+                                        ? FontWeight.w900
+                                        : FontWeight.w600)),
+                        if (selected) ...[
+                          const SizedBox(height: 3),
+                          Text(detail,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(color: scheme.onSurfaceVariant)),
+                        ],
+                      ]),
+                ),
+              ),
+            ]),
+          );
+        }),
+      ]),
     );
   }
 }
@@ -1514,21 +1559,23 @@ class Api {
           '/v1/driver/membership/payment-orders/$orderId/transfer-proof',
           token: t, body: proof);
   Future<List<dynamic>> membershipPaymentOrders(String t) async =>
-      List<dynamic>.from(await call(
-          'GET', '/v1/driver/membership/payment-orders', token: t));
+      List<dynamic>.from(
+          await call('GET', '/v1/driver/membership/payment-orders', token: t));
   Future<List<dynamic>> membershipCollectionPoints(String t,
       [LatLng? location]) async {
     final suffix = location == null
         ? ''
         : '?latitude=${location.latitude}&longitude=${location.longitude}';
-    return List<dynamic>.from(await call('GET',
-        '/v1/driver/membership/collection-points$suffix', token: t));
+    return List<dynamic>.from(await call(
+        'GET', '/v1/driver/membership/collection-points$suffix',
+        token: t));
   }
+
   Future<Map<String, dynamic>> membershipPaymentAccount(String t) async =>
-      Map<String, dynamic>.from(await call(
-          'GET', '/v1/driver/membership/payment-account', token: t));
-  Future<dynamic> cancelMembershipPaymentOrder(String t, String orderId,
-          String reason, String? observation) =>
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/driver/membership/payment-account', token: t));
+  Future<dynamic> cancelMembershipPaymentOrder(
+          String t, String orderId, String reason, String? observation) =>
       call('POST', '/v1/driver/membership/payment-orders/$orderId/cancel',
           token: t,
           body: {
@@ -5251,12 +5298,208 @@ class _ActivityPanelState extends State<ActivityPanel> {
   Widget build(BuildContext c) => PassengerActivityView(widget.s);
 }
 
+class _CostaGoEmblem extends StatelessWidget {
+  const _CostaGoEmblem({this.size = 54});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: size,
+        height: size,
+        padding: EdgeInsets.all(size * .12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .09),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Image.asset('assets/images/costa-go-emblem.png',
+            fit: BoxFit.contain),
+      );
+}
+
+class _PassengerSectionTitle extends StatelessWidget {
+  const _PassengerSectionTitle(this.title,
+      {this.icon, this.trailing, this.subtitle});
+
+  final String title;
+  final IconData? icon;
+  final Widget? trailing;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        if (icon != null) ...[
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer.withValues(alpha: .55),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: scheme.primary, size: 21),
+          ),
+          const SizedBox(width: 10),
+        ],
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: scheme.primary, fontWeight: FontWeight.w800),
+              children: [
+                TextSpan(text: title),
+                if (subtitle != null)
+                  TextSpan(
+                    text: ' $subtitle',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w400),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (trailing != null) trailing!,
+      ]),
+    );
+  }
+}
+
+class _PassengerSurface extends StatelessWidget {
+  const _PassengerSurface({required this.child, this.padding, this.color});
+
+  final Widget child;
+  final EdgeInsetsGeometry? padding;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: padding ?? const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color ?? scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .75)),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _PassengerMetric extends StatelessWidget {
+  const _PassengerMetric(
+      {required this.icon, required this.label, required this.value});
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return _PassengerSurface(
+      padding: const EdgeInsets.all(14),
+      child: Row(children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer.withValues(alpha: .55),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: scheme.primary),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: scheme.primary, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(value, style: Theme.of(context).textTheme.titleMedium),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _CostaGoPrimaryButton extends StatelessWidget {
+  const _CostaGoPrimaryButton(
+      {required this.label, required this.onPressed, this.loading = false});
+
+  final String label;
+  final VoidCallback? onPressed;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null && !loading;
+    final scheme = Theme.of(context).colorScheme;
+    return Opacity(
+      opacity: enabled ? 1 : .5,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onPressed : null,
+          borderRadius: BorderRadius.circular(20),
+          child: Ink(
+            height: 58,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(colors: [
+                scheme.primary,
+                Color.lerp(scheme.primary, const Color(0xff073f91), .55)!,
+              ]),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: enabled
+                  ? [
+                      BoxShadow(
+                          color: scheme.primary.withValues(alpha: .22),
+                          blurRadius: 14,
+                          offset: const Offset(0, 7))
+                    ]
+                  : null,
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              if (loading)
+                const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                )
+              else
+                const _CostaGoEmblem(size: 38),
+              const SizedBox(width: 12),
+              Text(label,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Colors.white, fontWeight: FontWeight.w900)),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Future<TripRepeatDraft?> profile(BuildContext c, Session s) =>
     Navigator.push<TripRepeatDraft>(
         c, MaterialPageRoute(builder: (_) => AccountHub(s)));
 Future<void> rating(
     BuildContext c, Session s, String tripId, VoidCallback done) async {
-  int score = 5;
+  int score = 0;
+  bool submitting = false;
   final note = TextEditingController();
   final tags = <String>{};
   final driverRatesPassenger = s.role == 'DRIVER';
@@ -5305,61 +5548,127 @@ Future<void> rating(
     isScrollControlled: true,
     isDismissible: false,
     enableDrag: false,
+    backgroundColor: Theme.of(c).colorScheme.surface,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
     builder: (sheet) => StatefulBuilder(builder: (c, set) {
       final options = optionsForScore();
-      return Padding(
-        padding: EdgeInsets.fromLTRB(
-            20, 20, 20, 20 + MediaQuery.of(c).viewInsets.bottom),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(driverRatesPassenger
-                  ? 'Califica al pasajero'
-                  : 'Califica al conductor'),
-              const Text('Para continuar, registra tu calificación.'),
-              Row(
-                  children: List.generate(
-                      5,
-                      (i) => IconButton(
-                          onPressed: () => set(() {
-                                score = i + 1;
-                                tags.clear();
-                              }),
-                          icon:
-                              Icon(i < score ? Icons.star : Icons.star_border),
-                          color: Colors.amber))),
-              Text(score >= 4
-                  ? '¿Qué salió bien?'
-                  : score == 3
-                      ? '¿Qué podría mejorar?'
-                      : '¿Qué inconveniente ocurrió?'),
-              Wrap(
-                  spacing: 6,
-                  children: options
-                      .map((x) => FilterChip(
-                          label: Text(x),
-                          selected: tags.contains(x),
-                          onSelected: (v) =>
-                              set(() => v ? tags.add(x) : tags.remove(x))))
-                      .toList()),
-              TextField(
-                  controller: note,
-                  maxLines: 3,
-                  decoration:
-                      const InputDecoration(labelText: 'Comentario opcional')),
-              FilledButton(
-                  onPressed: () async {
-                    await Api()
-                        .rate(s.token, tripId, score, tags.toList(), note.text);
-                    done();
-                    if (c.mounted) Navigator.pop(c);
-                  },
-                  child: const Text('Guardar calificación')),
-            ]),
+      final scheme = Theme.of(c).colorScheme;
+      return SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+              22, 12, 22, 22 + MediaQuery.of(c).viewInsets.bottom),
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: scheme.onSurfaceVariant.withValues(alpha: .3),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Center(child: _CostaGoEmblem(size: 72)),
+                const SizedBox(height: 18),
+                Text(
+                    driverRatesPassenger
+                        ? 'Califica al pasajero'
+                        : 'Califica al conductor',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(c)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 4),
+                Text('Para continuar, registra tu calificación.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(c)
+                        .textTheme
+                        .bodyLarge
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+                const SizedBox(height: 18),
+                Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(
+                        5,
+                        (i) => IconButton(
+                            tooltip: '${i + 1} estrellas',
+                            iconSize: 43,
+                            onPressed: submitting
+                                ? null
+                                : () => set(() {
+                                      score = i + 1;
+                                      tags.clear();
+                                    }),
+                            icon: Icon(
+                                i < score ? Icons.star : Icons.star_border),
+                            color: const Color(0xffffa000)))),
+                const SizedBox(height: 12),
+                Text(
+                    score == 0
+                        ? 'Selecciona de 1 a 5 estrellas'
+                        : score >= 4
+                            ? '¿Qué salió bien?'
+                            : score == 3
+                                ? '¿Qué podría mejorar?'
+                                : '¿Qué inconveniente ocurrió?',
+                    style: Theme.of(c).textTheme.titleLarge?.copyWith(
+                        color: scheme.primary, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 10),
+                if (score > 0)
+                  Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: options
+                          .map((x) => FilterChip(
+                              label: Text(x),
+                              avatar: tags.contains(x)
+                                  ? const Icon(Icons.check_circle, size: 18)
+                                  : null,
+                              selected: tags.contains(x),
+                              onSelected: submitting
+                                  ? null
+                                  : (v) => set(
+                                      () => v ? tags.add(x) : tags.remove(x))))
+                          .toList()),
+                const SizedBox(height: 16),
+                TextField(
+                    controller: note,
+                    enabled: !submitting,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                        hintText: 'Comentario opcional',
+                        alignLabelWithHint: true)),
+                const SizedBox(height: 16),
+                _CostaGoPrimaryButton(
+                  label: 'Guardar calificación',
+                  loading: submitting,
+                  onPressed: score == 0 || submitting
+                      ? null
+                      : () async {
+                          set(() => submitting = true);
+                          try {
+                            await Api().rate(s.token, tripId, score,
+                                tags.toList(), note.text);
+                            done();
+                            if (c.mounted) Navigator.pop(c);
+                          } catch (_) {
+                            if (c.mounted) set(() => submitting = false);
+                          }
+                        },
+                ),
+              ]),
+        ),
       );
     }),
   );
+  note.dispose();
 }
 
 class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
@@ -6327,8 +6636,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       return point;
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyLocationFailure(error))));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(friendlyLocationFailure(error))));
       }
       return null;
     }
@@ -6960,11 +7269,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Map<String, dynamic>? _currentRequestPayload() {
     final destinations = _serializedDestinations();
     final selectedOrigin = pickup;
-    if (selectedOrigin == null || destinations == null || destinations.isEmpty) {
+    if (selectedOrigin == null ||
+        destinations == null ||
+        destinations.isEmpty) {
       return null;
     }
-    final lastLocation = Map<String, dynamic>.from(
-        destinations.last['location'] as Map);
+    final lastLocation =
+        Map<String, dynamic>.from(destinations.last['location'] as Map);
     final selectedDestination = LatLng(
         (lastLocation['latitude'] as num).toDouble(),
         (lastLocation['longitude'] as num).toDouble());
@@ -7057,6 +7368,97 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
   }
 
+  Widget _tripPointSummary(BuildContext context,
+      {required IconData icon,
+      required String label,
+      required String value,
+      required bool last}) {
+    final scheme = Theme.of(context).colorScheme;
+    return IntrinsicHeight(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        SizedBox(
+          width: 34,
+          child: Column(children: [
+            Icon(icon,
+                size: icon == Icons.circle ? 15 : 26, color: scheme.primary),
+            if (!last)
+              Expanded(
+                  child: Container(width: 2, color: scheme.outlineVariant)),
+          ]),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(bottom: last ? 0 : 18),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: scheme.primary, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 3),
+              Text(value,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _fareSummaryCard(BuildContext context,
+      {required Map<String, dynamic> preview,
+      required Map<String, int> fareBreakdown,
+      required String fareLabel,
+      required String total}) {
+    final scheme = Theme.of(context).colorScheme;
+    final showDetails = fareBreakdown['stops']! > 0 ||
+        fareBreakdown['adjustments']! != 0 ||
+        List<dynamic>.from(preview['fareLegs'] ?? const []).length > 1;
+    return _PassengerSurface(
+      color: scheme.primaryContainer.withValues(alpha: .22),
+      child: Column(children: [
+        Row(children: [
+          Icon(Icons.local_offer_outlined, color: scheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Text(fareLabel,
+                  style: TextStyle(
+                      color: scheme.primary, fontWeight: FontWeight.w800))),
+          Text('\$${(fareBreakdown['journeys']! / 100).toStringAsFixed(2)}',
+              style: Theme.of(context).textTheme.titleMedium),
+        ]),
+        if (showDetails) ...[
+          const SizedBox(height: 10),
+          if (fareBreakdown['stops']! > 0)
+            _fareLine(
+                context, 'Adicional por paradas', fareBreakdown['stops']!),
+          if (fareBreakdown['adjustments']! != 0)
+            _fareLine(context, 'Otros ajustes', fareBreakdown['adjustments']!),
+        ],
+        const Divider(height: 24),
+        Row(children: [
+          Expanded(
+              child: Text('Total a pagar',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: scheme.primary, fontWeight: FontWeight.w900))),
+          Text('\$$total',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: scheme.primary, fontWeight: FontWeight.w900)),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _fareLine(BuildContext context, String label, int cents) => Padding(
+        padding: const EdgeInsets.only(top: 5),
+        child: Row(children: [
+          Expanded(child: Text(label)),
+          Text('\$${(cents / 100).toStringAsFixed(2)}'),
+        ]),
+      );
+
   Future<bool> confirmTripSummary(Map<String, dynamic> payload) async {
     setState(() => message = 'Calculando el resumen del viaje…');
     try {
@@ -7077,66 +7479,134 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           tripFareBreakdown(Map<String, dynamic>.from(preview as Map));
       return await showDialog<bool>(
             context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('Confirma tu viaje'),
-              content: SingleChildScrollView(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(scheduledFor == null
-                          ? 'Salida: ahora'
-                          : 'Salida: ${MaterialLocalizations.of(context).formatMediumDate(scheduledFor!)} · ${TimeOfDay.fromDateTime(scheduledFor!).format(context)}'),
-                      const Divider(),
-                      Text('Origen: ${origin.text.trim()}'),
-                      const SizedBox(height: 8),
-                      ...List<dynamic>.from(preview['stops'] ?? const [])
-                          .asMap()
-                          .entries
-                          .map((entry) => Padding(
-                                padding: const EdgeInsets.only(bottom: 5),
-                                child: Text(
-                                    'Destino ${entry.key + 1}: ${entry.value['reference']}'),
-                              )),
-                      const Divider(),
-                      Text('Pasajeros: $people'),
-                      Text(
-                          'Pago: ${paymentMethod == 'DEUNA' ? 'De Una' : 'Efectivo'}'),
-                      Text(
-                          'Distancia: ${(((preview['distanceMeters'] as num?) ?? 0) / 1000).toStringAsFixed(1)} km'),
-                      Text(
-                          'Tiempo estimado: ${(((preview['durationSeconds'] as num?) ?? 0) / 60).ceil()} min'),
-                      ...List<dynamic>.from(preview['fareLegs'] ?? const [])
-                          .map((leg) => Text(
-                              'Destino ${leg['order']}: \$${(((leg['totalCents'] as num?) ?? 0) / 100).toStringAsFixed(2)}${leg['suggested'] == true ? ' · sugerido' : ''}')),
-                      const SizedBox(height: 6),
-                      Text(
-                          '${preview['fareIsSuggested'] == true ? 'Valor sugerido de trayectos' : 'Subtotal de trayectos'}: \$${(fareBreakdown['journeys']! / 100).toStringAsFixed(2)}'),
-                      if (fareBreakdown['stops']! > 0)
-                        Text(
-                            'Adicional por paradas: \$${(fareBreakdown['stops']! / 100).toStringAsFixed(2)}'),
-                      if (fareBreakdown['adjustments'] != 0)
-                        Text(
-                            'Otros ajustes: \$${(fareBreakdown['adjustments']! / 100).toStringAsFixed(2)}'),
-                      const Divider(),
-                      Text(
-                        'Total a pagar: \$${(fareBreakdown['total']! / 100).toStringAsFixed(2)}',
-                        style: Theme.of(dialogContext)
-                            .textTheme
-                            .titleLarge
-                            ?.copyWith(fontWeight: FontWeight.w900),
-                      ),
-                    ]),
-              ),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: const Text('Modificar')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    child: const Text('Confirmar solicitud')),
-              ],
-            ),
+            builder: (dialogContext) {
+              final scheme = Theme.of(dialogContext).colorScheme;
+              final stops = List<dynamic>.from(preview['stops'] ?? const []);
+              final distance =
+                  (((preview['distanceMeters'] as num?) ?? 0) / 1000)
+                      .toStringAsFixed(1);
+              final minutes =
+                  (((preview['durationSeconds'] as num?) ?? 0) / 60).ceil();
+              final total = (fareBreakdown['total']! / 100).toStringAsFixed(2);
+              final fareLabel = preview['fareIsSuggested'] == true
+                  ? 'Tarifa sugerida'
+                  : 'Tarifa del trayecto';
+              return Dialog(
+                insetPadding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30)),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 620),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+                    child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(children: [
+                            const _CostaGoEmblem(size: 64),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Text('Confirma tu viaje',
+                                  style: Theme.of(dialogContext)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(fontWeight: FontWeight.w900)),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: scheme.primaryContainer
+                                    .withValues(alpha: .5),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Text(
+                                scheduledFor == null
+                                    ? 'Salida: ahora'
+                                    : TimeOfDay.fromDateTime(scheduledFor!)
+                                        .format(context),
+                                style: TextStyle(
+                                    color: scheme.primary,
+                                    fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                          ]),
+                          const SizedBox(height: 18),
+                          _PassengerSurface(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _tripPointSummary(dialogContext,
+                                      icon: Icons.location_on,
+                                      label: 'Origen',
+                                      value: origin.text.trim(),
+                                      last: stops.isEmpty),
+                                  ...stops.asMap().entries.map((entry) =>
+                                      _tripPointSummary(dialogContext,
+                                          icon: Icons.circle,
+                                          label: 'Destino ${entry.key + 1}',
+                                          value: cleanAddressLabel(
+                                              entry.value['reference'],
+                                              fallback: 'Destino'),
+                                          last: entry.key == stops.length - 1)),
+                                ]),
+                          ),
+                          const SizedBox(height: 12),
+                          LayoutBuilder(builder: (context, constraints) {
+                            final width = (constraints.maxWidth - 10) / 2;
+                            return Wrap(spacing: 10, runSpacing: 10, children: [
+                              SizedBox(
+                                  width: width,
+                                  child: _PassengerMetric(
+                                      icon: Icons.person_outline,
+                                      label: 'Pasajeros',
+                                      value: '$people')),
+                              SizedBox(
+                                  width: width,
+                                  child: _PassengerMetric(
+                                      icon:
+                                          Icons.account_balance_wallet_outlined,
+                                      label: 'Pago',
+                                      value: paymentMethod == 'DEUNA'
+                                          ? 'De Una'
+                                          : 'Efectivo')),
+                              SizedBox(
+                                  width: width,
+                                  child: _PassengerMetric(
+                                      icon: Icons.route_outlined,
+                                      label: 'Distancia',
+                                      value: '$distance km')),
+                              SizedBox(
+                                  width: width,
+                                  child: _PassengerMetric(
+                                      icon: Icons.schedule_outlined,
+                                      label: 'Tiempo estimado',
+                                      value: '$minutes min')),
+                            ]);
+                          }),
+                          const SizedBox(height: 12),
+                          _fareSummaryCard(dialogContext,
+                              preview:
+                                  Map<String, dynamic>.from(preview as Map),
+                              fareBreakdown: fareBreakdown,
+                              fareLabel: fareLabel,
+                              total: total),
+                          const SizedBox(height: 10),
+                          TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, false),
+                              child: const Text('Modificar')),
+                          _CostaGoPrimaryButton(
+                            label: 'Confirmar solicitud',
+                            onPressed: () => Navigator.pop(dialogContext, true),
+                          ),
+                        ]),
+                  ),
+                ),
+              );
+            },
           ) ??
           false;
     } catch (error) {
@@ -7512,7 +7982,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final requestKey =
         'trip-${DateTime.now().microsecondsSinceEpoch}-${math.Random.secure().nextInt(1 << 32)}';
     final payload = Map<String, dynamic>.from(
-        jsonDecode(jsonEncode({...draft, 'idempotencyKey': requestKey})) as Map);
+        jsonDecode(jsonEncode({...draft, 'idempotencyKey': requestKey}))
+            as Map);
     final editingId = editingScheduledTripId;
     if (!await confirmTripSummary(payload)) return;
     if (!mounted) return;
@@ -7542,7 +8013,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (!mounted) return;
       final text = e.toString();
       setState(() => message = text);
-      debugPrint('TRIP_REQUEST_FAILED code=${e is ApiException ? e.code : 'TRIP_REQUEST_STATE_INVALIDATED'}');
+      debugPrint(
+          'TRIP_REQUEST_FAILED code=${e is ApiException ? e.code : 'TRIP_REQUEST_STATE_INVALIDATED'}');
       if (e is ApiException && coverageErrorCodes.contains(e.code)) {
         await showPassengerCoverageError(
             e.code ?? 'OUTSIDE_SERVICE_AREA', text);
@@ -7639,35 +8111,90 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  Widget _routeSummary(BuildContext context) {
+  Widget _routeSummary(BuildContext context, {bool card = false}) {
     if (routeDistanceMeters == null || routeDurationSeconds == null) {
       return const SizedBox.shrink();
     }
+    final label = '${(routeDistanceMeters! / 1000).toStringAsFixed(1)} km · '
+        '${(routeDurationSeconds! / 60).ceil()} min';
+    if (card) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: _PassengerSurface(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(children: [
+            Icon(Icons.route_outlined,
+                color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text('Ruta estimada',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w800))),
+            Text(label,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w800)),
+          ]),
+        ),
+      );
+    }
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Text(
-        'Ruta estimada: ${(routeDistanceMeters! / 1000).toStringAsFixed(1)} km · '
-        '${(routeDurationSeconds! / 60).ceil()} min',
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.titleSmall,
-      ),
-    );
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Text('Ruta estimada: $label',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleSmall));
   }
 
   List<Widget> _searchingContent(BuildContext context) => [
-        const Center(child: CircularProgressIndicator()),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
+        Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: .92, end: 1),
+            duration: const Duration(milliseconds: 950),
+            curve: Curves.easeOutBack,
+            builder: (context, value, child) => Transform.scale(
+              scale: value,
+              child: Container(
+                width: 156,
+                height: 156,
+                padding: const EdgeInsets.all(25),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: .3),
+                      width: 2),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primaryContainer
+                      .withValues(alpha: .22),
+                ),
+                child: Image.asset('assets/images/costa-go-emblem.png'),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
         Text('Buscando un conductor cercano',
             textAlign: TextAlign.center,
-            style: Theme.of(context)
-                .textTheme
-                .titleLarge
-                ?.copyWith(fontWeight: FontWeight.w700)),
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w900)),
         const SizedBox(height: 6),
-        Text(message ?? 'Enviaremos tu solicitud a mototaxis disponibles.',
-            textAlign: TextAlign.center),
+        Text('Estamos buscando el mototaxi más cercano para ti.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        if (message != null) ...[
+          const SizedBox(height: 5),
+          Text(message!, textAlign: TextAlign.center),
+        ],
         const SizedBox(height: 14),
-        _routeSummary(context),
+        _routeSummary(context, card: true),
         AffiliateBanners(
           key: const ValueKey('searching-ad'),
           variant: AffiliateBannerVariant.expanded,
@@ -7683,6 +8210,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           onPressed: cancel,
           icon: const Icon(Icons.cancel_outlined),
           label: const Text('Cancelar búsqueda'),
+          style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(54),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18))),
         ),
       ];
 
@@ -7742,91 +8273,125 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ),
       );
 
-  List<Widget> _activeTripContent(BuildContext context) => [
-        Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(children: [
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(active?['driverName']?.toString() ?? 'Tu conductor',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w700)),
-                      if (active?['vehicle'] != null)
-                        Text('Placa: ${active['vehicle']}'),
-                    ]),
-              ),
-              const SizedBox(width: 12),
-              InkWell(
-                borderRadius: BorderRadius.circular(40),
-                onTap: showDriverPhoto,
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  _driverPhoto(),
-                  const SizedBox(height: 3),
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.star, color: Colors.amber, size: 16),
-                    Text(((active?['driverRating'] as num?) ?? 0)
-                        .toStringAsFixed(1)),
-                  ]),
-                ]),
-              ),
+  List<Widget> _activeTripContent(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final etaValue = (active?['driverEtaMinutes'] as num?)?.ceil();
+    return [
+      _PassengerSurface(
+        padding: const EdgeInsets.all(16),
+        child: Row(children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(48),
+            onTap: showDriverPhoto,
+            child: _driverPhoto(size: 78),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(active?['driverName']?.toString() ?? 'Tu conductor',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: scheme.primary, fontWeight: FontWeight.w900)),
+              if (active?['vehicle'] != null) ...[
+                const SizedBox(height: 3),
+                Text('Placa: ${active['vehicle']}',
+                    style: Theme.of(context).textTheme.titleMedium),
+              ],
+              const SizedBox(height: 5),
+              Row(children: [
+                const Icon(Icons.star, color: Color(0xffffa000), size: 22),
+                const SizedBox(width: 4),
+                Text(
+                    ((active?['driverRating'] as num?) ?? 0).toStringAsFixed(1),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w800)),
+              ]),
             ]),
           ),
-        ),
-        const SizedBox(height: 10),
-        TripStatusPanel(
-            status: active['status'].toString(),
-            driverName: active['driverName']?.toString()),
-        AffiliateBanners(
-          key: ValueKey('active-trip-ad-${active?['status']}'),
-          variant: AffiliateBannerVariant.expanded,
-          load: () => api.banners(
-              widget.s.token,
-              active?['status'] == 'IN_PROGRESS'
-                  ? 'PASSENGER_TRIP_IN_PROGRESS'
-                  : 'PASSENGER_WAITING_DRIVER',
-              serviceAreaId: selectedOriginArea?.id),
-          imageUrl: _bannerImageUrl,
-          onTap: _openBanner,
-          onImpression: (banner) =>
-              unawaited(_reportBannerEvent(banner, 'IMPRESSION')),
-        ),
-        const SizedBox(height: 12),
-        _routeSummary(context),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () => dialPhone(context, active?['driverPhone']),
-              icon: const Icon(Icons.call_outlined),
-              label: const Text('Llamar'),
-            ),
-          ),
           const SizedBox(width: 10),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () => openPassengerChat(null),
-              icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('Mensaje'),
+          Container(
+            constraints: const BoxConstraints(minWidth: 82),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer.withValues(alpha: .45),
+              borderRadius: BorderRadius.circular(20),
             ),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.schedule_outlined, color: scheme.primary, size: 21),
+              const SizedBox(height: 3),
+              Text(
+                  active?['status'] == 'DRIVER_EN_ROUTE'
+                      ? (etaValue == null ? 'En camino' : '$etaValue min')
+                      : estadoViaje(active?['status']?.toString() ?? ''),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: scheme.primary, fontWeight: FontWeight.w900)),
+            ]),
           ),
         ]),
-        const SizedBox(height: 4),
-        OutlinedButton.icon(
-          onPressed: () => showTripSafety(
-            context: context,
-            trip: active,
-            counterpart: active?['driverName']?.toString() ?? 'mi conductor',
-            location: currentLocation,
+      ),
+      const SizedBox(height: 12),
+      TripStatusPanel(
+          status: active['status'].toString(),
+          driverName: active['driverName']?.toString()),
+      AffiliateBanners(
+        key: ValueKey('active-trip-ad-${active?['status']}'),
+        variant: AffiliateBannerVariant.expanded,
+        load: () => api.banners(
+            widget.s.token,
+            active?['status'] == 'IN_PROGRESS'
+                ? 'PASSENGER_TRIP_IN_PROGRESS'
+                : 'PASSENGER_WAITING_DRIVER',
+            serviceAreaId: selectedOriginArea?.id),
+        imageUrl: _bannerImageUrl,
+        onTap: _openBanner,
+        onImpression: (banner) =>
+            unawaited(_reportBannerEvent(banner, 'IMPRESSION')),
+      ),
+      const SizedBox(height: 12),
+      _routeSummary(context, card: true),
+      Row(children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => dialPhone(context, active?['driverPhone']),
+            icon: const Icon(Icons.call_outlined),
+            label: const Text('Llamar'),
+            style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(54),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18))),
           ),
-          icon: const Icon(Icons.shield_outlined),
-          label: const Text('Seguridad y compartir viaje'),
         ),
-      ];
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => openPassengerChat(null),
+            icon: const Icon(Icons.chat_bubble_outline),
+            label: const Text('Mensaje'),
+            style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(54),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18))),
+          ),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      FilledButton.icon(
+        onPressed: () => showTripSafety(
+          context: context,
+          trip: active,
+          counterpart: active?['driverName']?.toString() ?? 'mi conductor',
+          location: currentLocation,
+        ),
+        icon: const Icon(Icons.shield_outlined),
+        label: const Text('Seguridad y compartir viaje'),
+      ),
+    ];
+  }
 
   List<Widget> _mapSelectionContent(BuildContext context) {
     final isOrigin = mapSelection == MapPointSelection.origin;
@@ -7943,37 +8508,43 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ReorderableDragStartListener(
           index: index,
           child: CircleAvatar(
-            radius: 15,
+            radius: 17,
+            backgroundColor: Theme.of(context).colorScheme.primary,
             child: Text('${index + 1}',
-                style: const TextStyle(fontWeight: FontWeight.w700)),
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w800)),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: TextField(
-            controller: controller,
-            onTap: () => _movePassengerSheet(.78),
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: 'Destino ${index + 1}',
-              hintText: 'Dirección o punto en el mapa',
-              suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
-                if (controller.text.isNotEmpty)
+          child: _PassengerSurface(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: TextField(
+              controller: controller,
+              onTap: () => _movePassengerSheet(.78),
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Destino ${index + 1}',
+                hintText: 'Dirección o punto en el mapa',
+                fillColor: Colors.transparent,
+                suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (controller.text.isNotEmpty)
+                    IconButton(
+                        tooltip: 'Borrar destino',
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: () => clearDestination(index)),
                   IconButton(
-                      tooltip: 'Borrar destino',
-                      icon: const Icon(Icons.close),
-                      onPressed: () => clearDestination(index)),
-                IconButton(
-                    tooltip: 'Ajustar en el mapa',
-                    icon: const Icon(Icons.edit_location_alt_outlined),
-                    onPressed: () => beginMapSelection(
-                        MapPointSelection.destination,
-                        destinationIndex: index)),
-                IconButton(
-                    tooltip: 'Buscar dirección',
-                    icon: const Icon(Icons.search),
-                    onPressed: () => locate(false, destinationIndex: index)),
-              ]),
+                      tooltip: 'Ajustar en el mapa',
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: () => beginMapSelection(
+                          MapPointSelection.destination,
+                          destinationIndex: index)),
+                  IconButton(
+                      tooltip: 'Buscar dirección',
+                      icon: const Icon(Icons.search),
+                      onPressed: () => locate(false, destinationIndex: index)),
+                ]),
+              ),
             ),
           ),
         ),
@@ -8002,62 +8573,87 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   : null,
             ),
           ),
-        Row(children: [
-          Icon(Icons.electric_rickshaw,
-              size: 18, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(width: 6),
+        _PassengerSurface(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(children: [
+            const _CostaGoEmblem(size: 48),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                        nearbyDrivers.isEmpty
+                            ? 'No hay mototaxis disponibles cerca ahora'
+                            : '${nearbyDrivers.length} mototaxi(s) disponible(s) cerca',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 2),
+                    Text(
+                        nearbyDrivers.isEmpty
+                            ? 'Te avisaremos cuando haya uno disponible.'
+                            : 'Puedes solicitar tu viaje cuando estés listo.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
+                  ]),
+            ),
+            IconButton(
+              tooltip: 'Viajes programados',
+              onPressed: showScheduledTrips,
+              icon: const Icon(Icons.event_note_outlined),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        const _PassengerSectionTitle('Origen',
+            icon: Icons.location_on_outlined),
+        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Expanded(
-            child: Text(nearbyDrivers.isEmpty
-                ? 'No hay mototaxis disponibles cerca ahora'
-                : '${nearbyDrivers.length} mototaxi(s) disponible(s) cerca'),
+            child: TextField(
+              controller: origin,
+              onTap: () => _movePassengerSheet(.72),
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                hintText: 'Escribe una dirección o mueve el mapa',
+                suffixIcon: origin.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Borrar origen',
+                        icon: const Icon(Icons.close),
+                        onPressed: () => clearPoint(true)),
+              ),
+            ),
           ),
-          IconButton(
+          const SizedBox(width: 7),
+          IconButton.filledTonal(
               tooltip: 'Lugares favoritos',
               onPressed: showFavoritePlaces,
               icon: const Icon(Icons.star_outline)),
-          IconButton(
-              tooltip: 'Viajes programados',
-              onPressed: showScheduledTrips,
-              icon: const Icon(Icons.event_note_outlined)),
-        ]),
-        TextField(
-          controller: origin,
-          onTap: () => _movePassengerSheet(.72),
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            labelText: 'Origen',
-            hintText: 'Escribe una dirección o mueve el mapa',
-            suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (origin.text.isNotEmpty)
-                IconButton(
-                    tooltip: 'Borrar origen',
-                    icon: const Icon(Icons.close),
-                    onPressed: () => clearPoint(true)),
-              IconButton(
-                  tooltip: 'Ajustar origen en el mapa',
-                  icon: const Icon(Icons.edit_location_alt_outlined),
-                  onPressed: () => beginMapSelection(MapPointSelection.origin)),
-              IconButton(
-                  tooltip: 'Buscar dirección',
-                  icon: const Icon(Icons.search),
-                  onPressed: () => locate(true)),
-            ]),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(children: [
-          Expanded(
-            child: Text('Destinos y paradas',
-                style: Theme.of(context).textTheme.titleSmall),
-          ),
           IconButton.filledTonal(
+              tooltip: 'Usar ubicación actual',
+              onPressed: () => unawaited(useCurrentLocation(explicit: true)),
+              icon: const Icon(Icons.my_location_outlined)),
+          IconButton.filledTonal(
+              tooltip: 'Buscar dirección',
+              onPressed: () => locate(true),
+              icon: const Icon(Icons.search)),
+        ]),
+        const SizedBox(height: 12),
+        _PassengerSectionTitle(
+          'Destinos y paradas',
+          icon: Icons.flag_outlined,
+          trailing: IconButton.filled(
             tooltip: additionalStops.length >= 2
                 ? 'Máximo tres destinos'
                 : 'Agregar parada',
             onPressed: additionalStops.length >= 2 ? null : addDestination,
             icon: const Icon(Icons.add),
           ),
-        ]),
+        ),
         ReorderableListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -8066,13 +8662,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           onReorderItem: reorderDestinations,
           itemBuilder: (context, index) => destinationField(index),
         ),
+        const _PassengerSectionTitle('Programación',
+            icon: Icons.schedule_outlined),
         Row(children: [
           Expanded(
             child: SegmentedButton<bool>(
               segments: const [
-                ButtonSegment(value: false, label: Text('Ahora')),
                 ButtonSegment(
-                    value: true, label: Text('Programar para más tarde')),
+                    value: false,
+                    icon: Icon(Icons.bolt_outlined),
+                    label: Text('Ahora')),
+                ButtonSegment(
+                    value: true,
+                    icon: Icon(Icons.calendar_month_outlined),
+                    label: Text('Programar para más tarde')),
               ],
               selected: {scheduledFor != null},
               onSelectionChanged: (value) async {
@@ -8106,6 +8709,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 onPressed: chooseSchedule, child: const Text('Modificar')),
           ),
         const SizedBox(height: 12),
+        const _PassengerSectionTitle('Referencia para encontrarte',
+            icon: Icons.chat_bubble_outline, subtitle: '(opcional)'),
         TextField(
           controller: notes,
           onTap: () => _movePassengerSheet(.72),
@@ -8115,9 +8720,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => FocusScope.of(context).unfocus(),
           decoration: InputDecoration(
-            labelText: 'Referencia para encontrarte (opcional)',
-            hintText: 'Ej.: casa azul, junto a la farmacia, puerta lateral',
-            prefixIcon: const Icon(Icons.info_outline),
+            hintText: 'Ej: Frente a la iglesia, puerta azul, etc.',
             suffixIcon: notes.text.isEmpty
                 ? null
                 : IconButton(
@@ -8130,28 +8733,51 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   ),
           ),
         ),
-        Text('Número de pasajeros (máximo 3)',
-            style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 8),
-        SegmentedButton<int>(
-          segments: const [
-            ButtonSegment(value: 1, label: Text('1')),
-            ButtonSegment(value: 2, label: Text('2')),
-            ButtonSegment(value: 3, label: Text('3')),
-          ],
-          selected: {people},
-          onSelectionChanged: (value) => setState(() => people = value.first),
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: paymentMethod,
-          decoration: const InputDecoration(labelText: 'Método de pago'),
-          items: const [
-            DropdownMenuItem(value: 'CASH', child: Text('Pago en efectivo')),
-            DropdownMenuItem(value: 'DEUNA', child: Text('Pago con De Una')),
-          ],
-          onChanged: (value) => setState(() => paymentMethod = value!),
-        ),
+        LayoutBuilder(builder: (context, constraints) {
+          final narrow = constraints.maxWidth < 460;
+          final passengerSelector =
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const _PassengerSectionTitle('Número de pasajeros',
+                icon: Icons.group_outlined, subtitle: '(máximo 3)'),
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 1, label: Text('1')),
+                ButtonSegment(value: 2, label: Text('2')),
+                ButtonSegment(value: 3, label: Text('3')),
+              ],
+              selected: {people},
+              onSelectionChanged: (value) =>
+                  setState(() => people = value.first),
+            ),
+          ]);
+          final paymentSelector =
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const _PassengerSectionTitle('Método de pago',
+                icon: Icons.account_balance_wallet_outlined),
+            DropdownButtonFormField<String>(
+              initialValue: paymentMethod,
+              items: const [
+                DropdownMenuItem(
+                    value: 'CASH', child: Text('Pago en efectivo')),
+                DropdownMenuItem(
+                    value: 'DEUNA', child: Text('Pago con De Una')),
+              ],
+              onChanged: (value) => setState(() => paymentMethod = value!),
+            ),
+          ]);
+          if (narrow) {
+            return Column(children: [
+              passengerSelector,
+              const SizedBox(height: 8),
+              paymentSelector,
+            ]);
+          }
+          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: passengerSelector),
+            const SizedBox(width: 12),
+            Expanded(child: paymentSelector),
+          ]);
+        }),
         if (message != null)
           Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
@@ -8173,14 +8799,15 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   : 'Volver a intentar GPS'),
             ),
           ),
-        _routeSummary(context),
-        FilledButton(
-            onPressed: requestSubmitting || _currentRequestPayload() == null
-                ? null
-                : create,
-            child: Text(requestSubmitting
-                ? 'Creando solicitud…'
-                : 'Solicitar mototaxi')),
+        const SizedBox(height: 10),
+        _CostaGoPrimaryButton(
+          label:
+              requestSubmitting ? 'Creando solicitud…' : 'Solicitar mototaxi',
+          loading: requestSubmitting,
+          onPressed: requestSubmitting || _currentRequestPayload() == null
+              ? null
+              : create,
+        ),
       ];
 
   @override
@@ -8800,6 +9427,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 foregroundNotificationConfig: ForegroundNotificationConfig(
                     notificationTitle: foregroundTitle,
                     notificationText: foregroundText,
+                    notificationChannelName: 'Ubicación y viajes Costa-Go',
+                    notificationIcon: const AndroidResource(
+                        name: 'ic_notification', defType: 'drawable'),
+                    color: const Color(0xff00aeef),
+                    setOngoing: true,
                     enableWakeLock: true)))
         .listen(sendPosition);
   }
@@ -9692,7 +10324,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Future<void> cancelAcceptedTrip() async {
     final tripId = active?['tripId']?.toString();
     final status = active?['status']?.toString();
-    if (tripId == null || !const {'ASSIGNED', 'DRIVER_EN_ROUTE'}.contains(status)) {
+    if (tripId == null ||
+        !const {'ASSIGNED', 'DRIVER_EN_ROUTE'}.contains(status)) {
       return;
     }
     var reason = 'VEHICLE_PROBLEM';
@@ -9712,10 +10345,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     initialValue: reason,
                     decoration: const InputDecoration(labelText: 'Motivo'),
                     items: const [
-                      DropdownMenuItem(value: 'VEHICLE_PROBLEM', child: Text('Problema con la mototaxi')),
-                      DropdownMenuItem(value: 'PERSONAL_EMERGENCY', child: Text('Emergencia personal')),
-                      DropdownMenuItem(value: 'CANNOT_REACH_PICKUP', child: Text('No puedo llegar al punto de recogida')),
-                      DropdownMenuItem(value: 'PASSENGER_CONTACT_ISSUE', child: Text('No logro contactar al pasajero')),
+                      DropdownMenuItem(
+                          value: 'VEHICLE_PROBLEM',
+                          child: Text('Problema con la mototaxi')),
+                      DropdownMenuItem(
+                          value: 'PERSONAL_EMERGENCY',
+                          child: Text('Emergencia personal')),
+                      DropdownMenuItem(
+                          value: 'CANNOT_REACH_PICKUP',
+                          child: Text('No puedo llegar al punto de recogida')),
+                      DropdownMenuItem(
+                          value: 'PASSENGER_CONTACT_ISSUE',
+                          child: Text('No logro contactar al pasajero')),
                       DropdownMenuItem(value: 'OTHER', child: Text('Otro')),
                     ],
                     onChanged: (value) => setDialogState(() => reason = value!),
@@ -9738,9 +10379,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     onPressed: () => Navigator.pop(dialogContext, false),
                     child: const Text('Volver')),
                 FilledButton(
-                  onPressed: reason == 'OTHER' && observation.text.trim().length < 3
-                      ? null
-                      : () => Navigator.pop(dialogContext, true),
+                  onPressed:
+                      reason == 'OTHER' && observation.text.trim().length < 3
+                          ? null
+                          : () => Navigator.pop(dialogContext, true),
                   child: const Text('Confirmar cancelación'),
                 ),
               ],
@@ -9879,6 +10521,70 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     );
   }
 
+  Widget _driverRoutePoint({
+    required IconData icon,
+    required String label,
+    required String value,
+    bool drawLine = false,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return IntrinsicHeight(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        SizedBox(
+          width: 34,
+          child: Column(children: [
+            Icon(icon, color: colors.primary, size: 25),
+            if (drawLine)
+              Expanded(
+                child: Container(
+                  width: 2,
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  color: colors.primary.withValues(alpha: .28),
+                ),
+              ),
+          ]),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: colors.primary, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 3),
+              Text(value,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _driverCompactAction({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+  }) =>
+      Expanded(
+        child: OutlinedButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          label: Text(label, textAlign: TextAlign.center),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 54),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+          ),
+        ),
+      );
+
   Future<void> showPassengerPhoto() => showDialog<void>(
         context: context,
         barrierDismissible: true,
@@ -9992,36 +10698,29 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           Text('Soltar para rechazar'),
         ]),
       ),
-      child: Card(
-        margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+      child: _PassengerSurface(
+        padding: const EdgeInsets.all(18),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Row(children: [
-              const Icon(Icons.notifications_active_outlined),
-              const SizedBox(width: 10),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const _CostaGoEmblem(size: 52),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'Nuevo viaje · ${offer['passengers']} pasajero(s)',
                   style: Theme.of(context)
                       .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w800),
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900),
                 ),
               ),
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .primary
-                        .withValues(alpha: .22),
-                  ),
                 ),
                 child: Text(
                   'Solicitud ${index + 1} de ${offers.length}',
@@ -10032,40 +10731,64 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ),
               ),
             ]),
-            const SizedBox(height: 12),
-            Text('Origen', style: Theme.of(context).textTheme.labelLarge),
-            Text(
-                cleanAddressLabel(offer['originReference'],
-                    fallback: 'Origen seleccionado'),
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 10),
-            Text('Destino', style: Theme.of(context).textTheme.labelLarge),
-            if (List<dynamic>.from(offer['stops'] ?? const []).isEmpty)
-              Text(
-                  cleanAddressLabel(offer['destinationReference'],
-                      fallback: 'Destino seleccionado'),
-                  style: Theme.of(context).textTheme.titleMedium)
-            else
-              ...List<dynamic>.from(offer['stops'] ?? const [])
-                  .asMap()
-                  .entries
-                  .map((entry) => Text(
-                      '${entry.key + 1}. ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}',
-                      style: Theme.of(context).textTheme.titleMedium)),
-            if (offer['notes']?.toString().trim().isNotEmpty == true) ...[
-              const SizedBox(height: 8),
-              Text('Referencia: ${offer['notes']}'),
-            ],
-            const SizedBox(height: 10),
-            Wrap(spacing: 12, runSpacing: 6, children: [
-              if (distance != null)
-                Text('${(distance / 1000).toStringAsFixed(1)} km aprox.'),
-              if (duration != null)
-                Text('${(duration / 60).ceil()} min aprox.'),
-              if (fare != null) Text('\$${(fare / 100).toStringAsFixed(2)}'),
-              Text(offer['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'),
-            ]),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            _driverRoutePoint(
+              icon: Icons.radio_button_checked,
+              label: 'Origen',
+              value: cleanAddressLabel(offer['originReference'],
+                  fallback: 'Origen seleccionado'),
+              drawLine: true,
+            ),
+            _driverRoutePoint(
+              icon: Icons.location_on,
+              label: 'Destino',
+              value: List<dynamic>.from(offer['stops'] ?? const []).isEmpty
+                  ? cleanAddressLabel(offer['destinationReference'],
+                      fallback: 'Destino seleccionado')
+                  : List<dynamic>.from(offer['stops'] ?? const [])
+                      .asMap()
+                      .entries
+                      .map((entry) =>
+                          '${entry.key + 1}. ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}')
+                      .join('\n'),
+            ),
+            if (offer['notes']?.toString().trim().isNotEmpty == true)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text('Referencia: ${offer['notes']}',
+                    style: Theme.of(context).textTheme.bodyMedium),
+              ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 13),
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: .48),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Wrap(
+                alignment: WrapAlignment.spaceAround,
+                spacing: 12,
+                runSpacing: 10,
+                children: [
+                  if (distance != null)
+                    _driverOfferDatum(Icons.route_outlined,
+                        '${(distance / 1000).toStringAsFixed(1)} km', 'aprox.'),
+                  if (duration != null)
+                    _driverOfferDatum(Icons.schedule_outlined,
+                        '${(duration / 60).ceil()} min', 'aprox.'),
+                  if (fare != null)
+                    _driverOfferDatum(Icons.sell_outlined,
+                        '\$${(fare / 100).toStringAsFixed(2)}', ''),
+                  _driverOfferDatum(
+                      Icons.payments_outlined,
+                      offer['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo',
+                      ''),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             Row(children: [
               Expanded(
                 child: OutlinedButton.icon(
@@ -10075,34 +10798,48 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           accept: false, confirmReject: true),
                   icon: const Icon(Icons.close),
                   label: const Text('Rechazar'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 56),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18)),
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: FilledButton.icon(
+                child: _CostaGoPrimaryButton(
+                  label: 'Aceptar',
+                  loading: busy,
                   onPressed:
                       busy ? null : () => _respondToOffer(offer, accept: true),
-                  icon: busy
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.check),
-                  label: const Text('Aceptar'),
                 ),
               ),
             ]),
-            const SizedBox(height: 4),
-            const Text('También puedes deslizar hacia abajo para rechazarla.',
-                textAlign: TextAlign.center, style: TextStyle(fontSize: 11)),
+            const SizedBox(height: 10),
+            Text('También puedes deslizar hacia abajo para rechazarla.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ]),
         ),
       ),
     );
   }
 
+  Widget _driverOfferDatum(IconData icon, String value, String suffix) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 21, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 6),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+        if (suffix.isNotEmpty) ...[
+          const SizedBox(width: 3),
+          Text(suffix, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ]);
+
   Widget _offerCarousel(BuildContext context) => Column(children: [
         SizedBox(
-          height: 400,
+          height: 470,
           child: PageView.builder(
             controller: offerPageController,
             itemCount: offers.length,
@@ -10259,7 +10996,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 : 'image/jpeg';
     if (!context.mounted) return false;
     final bank = TextEditingController(text: 'Transferencia bancaria');
-    final reference = TextEditingController(text: order['shortCode']?.toString() ?? '');
+    final reference =
+        TextEditingController(text: order['shortCode']?.toString() ?? '');
     final observation = TextEditingController();
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
     var sending = false;
@@ -10356,32 +11094,50 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         barrierDismissible: false,
         builder: (successContext) => AlertDialog(
           icon: Image.asset('assets/images/costa-go-emblem.png', width: 58),
-          title: const Text('¡Gracias por tu pago!', textAlign: TextAlign.center),
+          title:
+              const Text('¡Gracias por tu pago!', textAlign: TextAlign.center),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('Hemos recibido tu comprobante correctamente.', textAlign: TextAlign.center),
+            const Text('Hemos recibido tu comprobante correctamente.',
+                textAlign: TextAlign.center),
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: const Color(0xffe8f8ed), borderRadius: BorderRadius.circular(14)),
-              child: const Row(children: [Icon(Icons.check_circle, color: Color(0xff159447)), SizedBox(width: 10), Expanded(child: Text('Tu pago será revisado y te notificaremos cuando se confirme.', style: TextStyle(fontWeight: FontWeight.w700)))]),
+              decoration: BoxDecoration(
+                  color: const Color(0xffe8f8ed),
+                  borderRadius: BorderRadius.circular(14)),
+              child: const Row(children: [
+                Icon(Icons.check_circle, color: Color(0xff159447)),
+                SizedBox(width: 10),
+                Expanded(
+                    child: Text(
+                        'Tu pago será revisado y te notificaremos cuando se confirme.',
+                        style: TextStyle(fontWeight: FontWeight.w700)))
+              ]),
             ),
             const SizedBox(height: 12),
-            Text('${membershipPlanName(order['plan'])} · \$${((order['totalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
+            Text(
+                '${membershipPlanName(order['plan'])} · \$${((order['totalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
           ]),
-          actions: [FilledButton(onPressed: () => Navigator.pop(successContext), child: const Text('Entendido'))],
+          actions: [
+            FilledButton(
+                onPressed: () => Navigator.pop(successContext),
+                child: const Text('Entendido'))
+          ],
         ),
       );
     }
     return submitted;
   }
 
-  String _membershipCancellationLabel(String? code) => const {
+  String _membershipCancellationLabel(String? code) =>
+      const {
         'ORDER_GENERATION_ERROR': 'Error al generar la orden',
         'WRONG_MEMBERSHIP': 'Seleccionó una membresía incorrecta',
         'CHANGED_MIND': 'Cambió de opinión',
         'DUPLICATE_ORDER': 'Orden duplicada',
         'OTHER': 'Otro motivo',
-      }[code] ?? 'Sin detalle';
+      }[code] ??
+      'Sin detalle';
 
   Future<bool> _cancelMembershipOrder(
       BuildContext hostContext, Map<String, dynamic> order) async {
@@ -10436,7 +11192,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               ),
               actions: [
                 TextButton(
-                    onPressed: sending ? null : () => Navigator.pop(context, false),
+                    onPressed:
+                        sending ? null : () => Navigator.pop(context, false),
                     child: const Text('Volver')),
                 FilledButton(
                   onPressed: sending
@@ -10493,7 +11250,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _openCollectionPointDirections(Map<String, dynamic> point) async {
+  Future<void> _openCollectionPointDirections(
+      Map<String, dynamic> point) async {
     final latitude = (point['latitude'] as num?)?.toDouble();
     final longitude = (point['longitude'] as num?)?.toDouble();
     if (latitude == null || longitude == null) return;
@@ -10515,30 +11273,85 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       showDragHandle: true,
       builder: (sheetContext) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text(point['name']?.toString() ?? 'Punto autorizado', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900), textAlign: TextAlign.center),
-          const SizedBox(height: 6),
-          Center(child: Chip(label: Text(point['isOpen'] == true ? 'Abierto ahora' : point['isOpen'] == false ? 'Cerrado ahora' : 'Horario por confirmar'), avatar: Icon(Icons.circle, size: 12, color: point['isOpen'] == true ? Colors.green : Colors.orange))),
-          if ((point['address']?.toString() ?? '').isNotEmpty) ListTile(leading: const Icon(Icons.location_on_outlined), title: const Text('Dirección'), subtitle: Text(point['address'].toString())),
-          if ((point['reference']?.toString() ?? '').isNotEmpty) ListTile(leading: const Icon(Icons.map_outlined), title: const Text('Referencia'), subtitle: Text(point['reference'].toString())),
-          ListTile(leading: const Icon(Icons.schedule_outlined), title: const Text('Horario de atención'), subtitle: Text(point['todaySchedule']?.toString() ?? 'Horario no configurado')),
-          if (phone != null && phone.isNotEmpty) ListTile(leading: const Icon(Icons.phone_outlined), title: const Text('Teléfono'), subtitle: Text(phone)),
-          if (point['distanceKm'] != null) ListTile(leading: const Icon(Icons.near_me_outlined), title: const Text('Distancia aproximada'), subtitle: Text('${(point['distanceKm'] as num).toStringAsFixed(1)} km desde tu ubicación')),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: OutlinedButton.icon(onPressed: point['latitude'] == null ? null : () => _openCollectionPointDirections(point), icon: const Icon(Icons.navigation_outlined), label: const Text('Cómo llegar'))),
-            const SizedBox(width: 10),
-            Expanded(child: FilledButton.icon(onPressed: phone == null || phone.isEmpty ? null : () => launchUrl(Uri(scheme: 'tel', path: phone), mode: LaunchMode.externalApplication), icon: const Icon(Icons.phone_outlined), label: const Text('Llamar'))),
-          ]),
-        ]),
+        child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(point['name']?.toString() ?? 'Punto autorizado',
+                  style: Theme.of(sheetContext)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 6),
+              Center(
+                  child: Chip(
+                      label: Text(point['isOpen'] == true
+                          ? 'Abierto ahora'
+                          : point['isOpen'] == false
+                              ? 'Cerrado ahora'
+                              : 'Horario por confirmar'),
+                      avatar: Icon(Icons.circle,
+                          size: 12,
+                          color: point['isOpen'] == true
+                              ? Colors.green
+                              : Colors.orange))),
+              if ((point['address']?.toString() ?? '').isNotEmpty)
+                ListTile(
+                    leading: const Icon(Icons.location_on_outlined),
+                    title: const Text('Dirección'),
+                    subtitle: Text(point['address'].toString())),
+              if ((point['reference']?.toString() ?? '').isNotEmpty)
+                ListTile(
+                    leading: const Icon(Icons.map_outlined),
+                    title: const Text('Referencia'),
+                    subtitle: Text(point['reference'].toString())),
+              ListTile(
+                  leading: const Icon(Icons.schedule_outlined),
+                  title: const Text('Horario de atención'),
+                  subtitle: Text(point['todaySchedule']?.toString() ??
+                      'Horario no configurado')),
+              if (phone != null && phone.isNotEmpty)
+                ListTile(
+                    leading: const Icon(Icons.phone_outlined),
+                    title: const Text('Teléfono'),
+                    subtitle: Text(phone)),
+              if (point['distanceKm'] != null)
+                ListTile(
+                    leading: const Icon(Icons.near_me_outlined),
+                    title: const Text('Distancia aproximada'),
+                    subtitle: Text(
+                        '${(point['distanceKm'] as num).toStringAsFixed(1)} km desde tu ubicación')),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                    child: OutlinedButton.icon(
+                        onPressed: point['latitude'] == null
+                            ? null
+                            : () => _openCollectionPointDirections(point),
+                        icon: const Icon(Icons.navigation_outlined),
+                        label: const Text('Cómo llegar'))),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: FilledButton.icon(
+                        onPressed: phone == null || phone.isEmpty
+                            ? null
+                            : () => launchUrl(Uri(scheme: 'tel', path: phone),
+                                mode: LaunchMode.externalApplication),
+                        icon: const Icon(Icons.phone_outlined),
+                        label: const Text('Llamar'))),
+              ]),
+            ]),
       ),
     );
   }
 
   Future<void> _showCollectionPoints(BuildContext context) async {
     try {
-      final raw = await api.membershipCollectionPoints(widget.s.token, currentDriverPosition);
-      final points = raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+      final raw = await api.membershipCollectionPoints(
+          widget.s.token, currentDriverPosition);
+      final points =
+          raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
       if (!context.mounted) return;
       await showModalBottomSheet<void>(
         context: context,
@@ -10549,35 +11362,72 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           heightFactor: .78,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Puntos de pago', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
-              const Text('Selecciona un punto autorizado para presentar tu QR.'),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Puntos de pago',
+                  style: Theme.of(sheetContext)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const Text(
+                  'Selecciona un punto autorizado para presentar tu QR.'),
               const SizedBox(height: 12),
-              Expanded(child: points.isEmpty
-                ? const Center(child: Text('No hay puntos de pago activos en este momento.'))
-                : ListView.separated(itemCount: points.length, separatorBuilder: (_, __) => const SizedBox(height: 8), itemBuilder: (_, index) {
-                    final point = points[index];
-                    return Card(child: ListTile(
-                      leading: CircleAvatar(child: Icon(point['isOpen'] == true ? Icons.storefront : Icons.store_outlined)),
-                      title: Text(point['name']?.toString() ?? 'Punto autorizado', style: const TextStyle(fontWeight: FontWeight.w800)),
-                      subtitle: Text([point['address'], point['reference'], if (point['distanceKm'] != null) '${(point['distanceKm'] as num).toStringAsFixed(1)} km', point['isOpen'] == true ? 'Abierto' : point['isOpen'] == false ? 'Cerrado' : null].whereType<Object>().join('\n')),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _showCollectionPointDetail(sheetContext, point),
-                    ));
-                  })),
+              Expanded(
+                  child: points.isEmpty
+                      ? const Center(
+                          child: Text(
+                              'No hay puntos de pago activos en este momento.'))
+                      : ListView.separated(
+                          itemCount: points.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (_, index) {
+                            final point = points[index];
+                            return Card(
+                                child: ListTile(
+                              leading: CircleAvatar(
+                                  child: Icon(point['isOpen'] == true
+                                      ? Icons.storefront
+                                      : Icons.store_outlined)),
+                              title: Text(
+                                  point['name']?.toString() ??
+                                      'Punto autorizado',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800)),
+                              subtitle: Text([
+                                point['address'],
+                                point['reference'],
+                                if (point['distanceKm'] != null)
+                                  '${(point['distanceKm'] as num).toStringAsFixed(1)} km',
+                                point['isOpen'] == true
+                                    ? 'Abierto'
+                                    : point['isOpen'] == false
+                                        ? 'Cerrado'
+                                        : null
+                              ].whereType<Object>().join('\n')),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () => _showCollectionPointDetail(
+                                  sheetContext, point),
+                            ));
+                          })),
             ]),
           ),
         ),
       );
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
   Future<void> _showBankTransfer(
       BuildContext context, Map<String, dynamic> order) async {
     Map<String, dynamic>? account;
-    try { account = await api.membershipPaymentAccount(widget.s.token); } catch (_) {}
+    try {
+      account = await api.membershipPaymentAccount(widget.s.token);
+    } catch (_) {}
     if (!context.mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -10586,42 +11436,91 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       showDragHandle: true,
       builder: (sheetContext) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('Transferencia bancaria', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900), textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          if (account == null) const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('Los datos bancarios aún no están disponibles. Intenta más tarde o paga en un punto autorizado.')))
-          else Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(children: [
-            _membershipDetailLine('Banco', account['bankName']?.toString() ?? 'Costa-Go'),
-            _membershipDetailLine('Tipo de cuenta', account['accountType']?.toString() ?? 'Cuenta bancaria'),
-            _membershipDetailLine('Cuenta', account['accountIdentifier']?.toString().isNotEmpty == true ? account['accountIdentifier'].toString() : '•••• ${account['accountLastFour'] ?? ''}'),
-            _membershipDetailLine('Titular', account['holderName']?.toString() ?? 'Costa-Go'),
-            if ((account['holderIdentification']?.toString() ?? '').isNotEmpty)
-              _membershipDetailLine('RUC / identificación', account['holderIdentification'].toString()),
-            if ((account['supportEmail']?.toString() ?? '').isNotEmpty)
-              _membershipDetailLine('Correo', account['supportEmail'].toString()),
-            const Divider(),
-            _membershipDetailLine('Motivo / referencia', order['shortCode']?.toString() ?? ''),
-          ]))),
-          const SizedBox(height: 12),
-          FilledButton.icon(onPressed: account == null ? null : () async {
-            Navigator.pop(sheetContext);
-            final submitted = await _submitMembershipTransferProof(context, order);
-            if (submitted && context.mounted) {
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            }
-          }, icon: const Icon(Icons.upload_file_outlined), label: const Text('Subir comprobante')),
-        ]),
+        child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Transferencia bancaria',
+                  style: Theme.of(sheetContext)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              if (account == null)
+                const Card(
+                    child: Padding(
+                        padding: EdgeInsets.all(14),
+                        child: Text(
+                            'Los datos bancarios aún no están disponibles. Intenta más tarde o paga en un punto autorizado.')))
+              else
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(children: [
+                          _membershipDetailLine('Banco',
+                              account['bankName']?.toString() ?? 'Costa-Go'),
+                          _membershipDetailLine(
+                              'Tipo de cuenta',
+                              account['accountType']?.toString() ??
+                                  'Cuenta bancaria'),
+                          _membershipDetailLine(
+                              'Cuenta',
+                              account['accountIdentifier']
+                                          ?.toString()
+                                          .isNotEmpty ==
+                                      true
+                                  ? account['accountIdentifier'].toString()
+                                  : '•••• ${account['accountLastFour'] ?? ''}'),
+                          _membershipDetailLine('Titular',
+                              account['holderName']?.toString() ?? 'Costa-Go'),
+                          if ((account['holderIdentification']?.toString() ??
+                                  '')
+                              .isNotEmpty)
+                            _membershipDetailLine('RUC / identificación',
+                                account['holderIdentification'].toString()),
+                          if ((account['supportEmail']?.toString() ?? '')
+                              .isNotEmpty)
+                            _membershipDetailLine(
+                                'Correo', account['supportEmail'].toString()),
+                          const Divider(),
+                          _membershipDetailLine('Motivo / referencia',
+                              order['shortCode']?.toString() ?? ''),
+                        ]))),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                  onPressed: account == null
+                      ? null
+                      : () async {
+                          Navigator.pop(sheetContext);
+                          final submitted =
+                              await _submitMembershipTransferProof(
+                                  context, order);
+                          if (submitted && context.mounted) {
+                            Navigator.of(context)
+                                .popUntil((route) => route.isFirst);
+                          }
+                        },
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: const Text('Subir comprobante')),
+            ]),
       ),
     );
   }
 
   Widget _membershipDetailLine(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 6),
-    child: Row(children: [Expanded(child: Text(label)), Flexible(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontWeight: FontWeight.w700)))]),
-  );
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(children: [
+          Expanded(child: Text(label)),
+          Flexible(
+              child: Text(value,
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontWeight: FontWeight.w700)))
+        ]),
+      );
 
-  Future<void> _showMembershipQr(BuildContext context,
-      Map<String, dynamic> order) async {
+  Future<void> _showMembershipQr(
+      BuildContext context, Map<String, dynamic> order) async {
     final qrUrl = order['qrUrl']?.toString();
     if (qrUrl == null || qrUrl.isEmpty) return;
     await showDialog<void>(
@@ -10630,13 +11529,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         icon: Image.asset('assets/images/costa-go-emblem.png', width: 46),
         title: const Text('QR de membresía', textAlign: TextAlign.center),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)), child: QrImageView(data: qrUrl, size: 220, backgroundColor: Colors.white)),
+          Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: Colors.white, borderRadius: BorderRadius.circular(18)),
+              child: QrImageView(
+                  data: qrUrl, size: 220, backgroundColor: Colors.white)),
           const SizedBox(height: 12),
-          const Text('Presenta este QR en cualquier punto de recaudación autorizado.', textAlign: TextAlign.center),
+          const Text(
+              'Presenta este QR en cualquier punto de recaudación autorizado.',
+              textAlign: TextAlign.center),
           const SizedBox(height: 8),
-          Text('Código ${order['shortCode']}', style: const TextStyle(fontWeight: FontWeight.w900)),
+          Text('Código ${order['shortCode']}',
+              style: const TextStyle(fontWeight: FontWeight.w900)),
         ]),
-        actions: [FilledButton(onPressed: () => Navigator.pop(qrContext), child: const Text('Cerrar'))],
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(qrContext),
+              child: const Text('Cerrar'))
+        ],
       ),
     );
   }
@@ -10649,143 +11560,183 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final breakdown = Map<String, dynamic>.from(
         order['breakdown'] as Map? ?? const <String, dynamic>{});
     final cancelled = await showDialog<bool>(
-      context: hostContext,
-      builder: (dialogContext) => AlertDialog(
-        icon: Image.asset('assets/images/costa-go-emblem.png',
-            width: 42, height: 42),
-        title: Text(const {
-              'PENDING': 'QR de membresía',
-              'PENDING_VERIFICATION': 'Pago pendiente de verificación',
-              'PAID': 'Orden pagada',
-              'REJECTED': 'Orden rechazada',
-              'EXPIRED': 'Orden vencida',
-              'CANCELLED': 'Orden anulada',
-            }[status] ??
-            'Orden de membresía'),
-        content: SingleChildScrollView(
-          child: SizedBox(
-            width: 300,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Icon(
-                    status == 'CANCELLED'
-                        ? Icons.block_rounded
-                        : status == 'PAID'
-                            ? Icons.check_circle_outline_rounded
-                            : Icons.hourglass_top_rounded,
-                    size: 58),
-              const SizedBox(height: 12),
-              Text('Código ${order['shortCode']}',
-                  style: Theme.of(dialogContext)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 12),
-              _membershipAmountRow(dialogContext, 'Membresía',
-                  (breakdown['baseAmount'] as num?) ?? order['baseAmount'] ?? 0),
-              if (breakdown['includedTrips'] != null)
-                Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                        'Viajes incluidos: ${breakdown['includedTrips']}')),
-              if (breakdown['extraTrips'] != null &&
-                  (breakdown['extraTrips'] as num) > 0) ...[
-                Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                        'Viajes realizados que generan excedente: ${breakdown['extraTrips']}')),
-                if (breakdown['extraTripUnitAmount'] != null)
-                  _membershipAmountRow(dialogContext,
-                      'Valor por viaje excedente',
-                      breakdown['extraTripUnitAmount'] as num),
-                if (breakdown['extraTripSharePercent'] != null &&
-                    breakdown['passengerServiceAdditional'] != null)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Cada excedente corresponde al ${breakdown['extraTripSharePercent']}% del adicional de servicio al pasajero (\$${(breakdown['passengerServiceAdditional'] as num).toDouble().toStringAsFixed(2)}).',
-                      style: Theme.of(dialogContext).textTheme.bodySmall,
+          context: hostContext,
+          builder: (dialogContext) => AlertDialog(
+            icon: Image.asset('assets/images/costa-go-emblem.png',
+                width: 42, height: 42),
+            title: Text(const {
+                  'PENDING': 'QR de membresía',
+                  'PENDING_VERIFICATION': 'Pago pendiente de verificación',
+                  'PAID': 'Orden pagada',
+                  'REJECTED': 'Orden rechazada',
+                  'EXPIRED': 'Orden vencida',
+                  'CANCELLED': 'Orden anulada',
+                }[status] ??
+                'Orden de membresía'),
+            content: SingleChildScrollView(
+              child: SizedBox(
+                width: 300,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(
+                      status == 'CANCELLED'
+                          ? Icons.block_rounded
+                          : status == 'PAID'
+                              ? Icons.check_circle_outline_rounded
+                              : Icons.hourglass_top_rounded,
+                      size: 58),
+                  const SizedBox(height: 12),
+                  Text('Código ${order['shortCode']}',
+                      style: Theme.of(dialogContext)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 12),
+                  _membershipAmountRow(
+                      dialogContext,
+                      'Membresía',
+                      (breakdown['baseAmount'] as num?) ??
+                          order['baseAmount'] ??
+                          0),
+                  if (breakdown['includedTrips'] != null)
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                            'Viajes incluidos: ${breakdown['includedTrips']}')),
+                  if (breakdown['extraTrips'] != null &&
+                      (breakdown['extraTrips'] as num) > 0) ...[
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                            'Viajes realizados que generan excedente: ${breakdown['extraTrips']}')),
+                    if (breakdown['extraTripUnitAmount'] != null)
+                      _membershipAmountRow(
+                          dialogContext,
+                          'Valor por viaje excedente',
+                          breakdown['extraTripUnitAmount'] as num),
+                    if (breakdown['extraTripSharePercent'] != null &&
+                        breakdown['passengerServiceAdditional'] != null)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Cada excedente corresponde al ${breakdown['extraTripSharePercent']}% del adicional de servicio al pasajero (\$${(breakdown['passengerServiceAdditional'] as num).toDouble().toStringAsFixed(2)}).',
+                          style: Theme.of(dialogContext).textTheme.bodySmall,
+                        ),
+                      ),
+                    if (breakdown['rawExtraAmount'] != null &&
+                        breakdown['maximumExtraAmount'] != null &&
+                        (breakdown['rawExtraAmount'] as num) >
+                            (breakdown['maximumExtraAmount'] as num))
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Se aplicó el tope del plan de \$${(breakdown['maximumExtraAmount'] as num).toDouble().toStringAsFixed(2)} para excedentes.',
+                          style: Theme.of(dialogContext).textTheme.bodySmall,
+                        ),
+                      ),
+                  ],
+                  _membershipAmountRow(
+                      dialogContext,
+                      'Excedente',
+                      (breakdown['billableExtraAmount'] as num?) ??
+                          order['priorUsageAmount'] ??
+                          0),
+                  if (((breakdown['adjustmentAmount'] as num?) ??
+                          order['adjustmentAmount'] ??
+                          0) !=
+                      0)
+                    _membershipAmountRow(
+                        dialogContext,
+                        'Ajustes',
+                        (breakdown['adjustmentAmount'] as num?) ??
+                            order['adjustmentAmount'] as num),
+                  const Divider(height: 18),
+                  _membershipAmountRow(dialogContext, 'Total a pagar', amount,
+                      emphasized: true),
+                  if (expiresAt != null)
+                    Text('Válido hasta ${formatEcuadorLongDateTime(expiresAt)}',
+                        textAlign: TextAlign.center),
+                  if (status == 'PENDING_VERIFICATION')
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: Text(
+                          'Tu comprobante ya fue enviado. No generes otra orden mientras se realiza la revisión.',
+                          textAlign: TextAlign.center),
                     ),
-                  ),
-                if (breakdown['rawExtraAmount'] != null &&
-                    breakdown['maximumExtraAmount'] != null &&
-                    (breakdown['rawExtraAmount'] as num) >
-                        (breakdown['maximumExtraAmount'] as num))
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Se aplicó el tope del plan de \$${(breakdown['maximumExtraAmount'] as num).toDouble().toStringAsFixed(2)} para excedentes.',
-                      style: Theme.of(dialogContext).textTheme.bodySmall,
+                  if (status == 'CANCELLED')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        '${_membershipCancellationLabel(order['cancellationReason']?.toString())}${order['cancellationObservation'] == null ? '' : '\n${order['cancellationObservation']}'}',
+                        textAlign: TextAlign.center,
+                      ),
                     ),
-                  ),
-              ],
-              _membershipAmountRow(
-                  dialogContext,
-                  'Excedente',
-                  (breakdown['billableExtraAmount'] as num?) ??
-                      order['priorUsageAmount'] ??
-                      0),
-              if (((breakdown['adjustmentAmount'] as num?) ??
-                      order['adjustmentAmount'] ??
-                      0) !=
-                  0)
-                _membershipAmountRow(
-                    dialogContext,
-                    'Ajustes',
-                    (breakdown['adjustmentAmount'] as num?) ??
-                        order['adjustmentAmount'] as num),
-              const Divider(height: 18),
-              _membershipAmountRow(dialogContext, 'Total a pagar', amount,
-                  emphasized: true),
-              if (expiresAt != null)
-                Text(
-                    'Válido hasta ${formatEcuadorLongDateTime(expiresAt)}',
-                    textAlign: TextAlign.center),
-              if (status == 'PENDING_VERIFICATION')
-                const Padding(
-                  padding: EdgeInsets.only(top: 10),
-                  child: Text(
-                      'Tu comprobante ya fue enviado. No generes otra orden mientras se realiza la revisión.',
-                      textAlign: TextAlign.center),
-                ),
-              if (status == 'CANCELLED')
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    '${_membershipCancellationLabel(order['cancellationReason']?.toString())}${order['cancellationObservation'] == null ? '' : '\n${order['cancellationObservation']}'}',
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              if (status == 'PENDING') ...[
-                const SizedBox(height: 14),
-                Align(alignment: Alignment.centerLeft, child: Text('¿Cómo deseas pagar?', style: Theme.of(dialogContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900))),
-                const SizedBox(height: 8),
-                Card(child: ListTile(leading: const CircleAvatar(child: Icon(Icons.storefront_outlined)), title: const Text('En punto autorizado', style: TextStyle(fontWeight: FontWeight.w800)), subtitle: const Text('Paga mostrando tu QR'), trailing: const Icon(Icons.chevron_right), onTap: () => _showCollectionPoints(hostContext))),
-                Card(child: ListTile(leading: const CircleAvatar(child: Icon(Icons.account_balance_outlined)), title: const Text('Transferencia bancaria', style: TextStyle(fontWeight: FontWeight.w800)), subtitle: const Text('Realiza tu pago y sube el comprobante'), trailing: const Icon(Icons.chevron_right), onTap: () => _showBankTransfer(hostContext, order))),
-                Card(color: Theme.of(dialogContext).colorScheme.primaryContainer, child: ListTile(leading: const Icon(Icons.qr_code_2_rounded), title: const Text('Ver QR de pago', style: TextStyle(fontWeight: FontWeight.w800)), subtitle: const Text('Escanea o muestra tu código'), trailing: const Icon(Icons.chevron_right), onTap: () => _showMembershipQr(hostContext, order))),
-              ],
-            ]),
-          ),
-        ),
-        actions: [
-          if (status == 'PENDING')
-            TextButton.icon(
-              onPressed: () async {
-                final cancelled =
-                    await _cancelMembershipOrder(dialogContext, order);
-                if (cancelled && dialogContext.mounted) {
-                  Navigator.pop(dialogContext, true);
-                }
-              },
-              icon: const Icon(Icons.cancel_outlined),
-              label: const Text('Anular orden'),
+                  if (status == 'PENDING') ...[
+                    const SizedBox(height: 14),
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text('¿Cómo deseas pagar?',
+                            style: Theme.of(dialogContext)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w900))),
+                    const SizedBox(height: 8),
+                    Card(
+                        child: ListTile(
+                            leading: const CircleAvatar(
+                                child: Icon(Icons.storefront_outlined)),
+                            title: const Text('En punto autorizado',
+                                style: TextStyle(fontWeight: FontWeight.w800)),
+                            subtitle: const Text('Paga mostrando tu QR'),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () => _showCollectionPoints(hostContext))),
+                    Card(
+                        child: ListTile(
+                            leading: const CircleAvatar(
+                                child: Icon(Icons.account_balance_outlined)),
+                            title: const Text('Transferencia bancaria',
+                                style: TextStyle(fontWeight: FontWeight.w800)),
+                            subtitle: const Text(
+                                'Realiza tu pago y sube el comprobante'),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () =>
+                                _showBankTransfer(hostContext, order))),
+                    Card(
+                        color: Theme.of(dialogContext)
+                            .colorScheme
+                            .primaryContainer,
+                        child: ListTile(
+                            leading: const Icon(Icons.qr_code_2_rounded),
+                            title: const Text('Ver QR de pago',
+                                style: TextStyle(fontWeight: FontWeight.w800)),
+                            subtitle: const Text('Escanea o muestra tu código'),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () =>
+                                _showMembershipQr(hostContext, order))),
+                  ],
+                ]),
+              ),
             ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cerrar'),
+            actions: [
+              if (status == 'PENDING')
+                TextButton.icon(
+                  onPressed: () async {
+                    final cancelled =
+                        await _cancelMembershipOrder(dialogContext, order);
+                    if (cancelled && dialogContext.mounted) {
+                      Navigator.pop(dialogContext, true);
+                    }
+                  },
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('Anular orden'),
+                ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cerrar'),
+              ),
+            ],
           ),
-        ],
-      ),
-    ) ?? false;
+        ) ??
+        false;
     if (cancelled) {
       await refreshMembership(force: true);
       if (hostContext.mounted) {
@@ -10796,13 +11747,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     return cancelled;
   }
 
-  Future<void> _showMembershipPaymentHistory(
-      BuildContext hostContext) async {
+  Future<void> _showMembershipPaymentHistory(BuildContext hostContext) async {
     try {
       final raw = await api.membershipPaymentOrders(widget.s.token);
-      final orders = raw
-          .map((item) => Map<String, dynamic>.from(item as Map))
-          .toList();
+      final orders =
+          raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
       if (!hostContext.mounted) return;
       await showModalBottomSheet<void>(
         context: hostContext,
@@ -10813,7 +11762,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           heightFactor: .72,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('Mis pagos',
                   style: Theme.of(context)
                       .textTheme
@@ -10824,13 +11774,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               const SizedBox(height: 12),
               Expanded(
                 child: orders.isEmpty
-                    ? const Center(child: Text('Aún no tienes órdenes de pago.'))
+                    ? const Center(
+                        child: Text('Aún no tienes órdenes de pago.'))
                     : ListView.separated(
                         itemCount: orders.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final order = orders[index];
-                          final status = order['status']?.toString() ?? 'PENDING';
+                          final status =
+                              order['status']?.toString() ?? 'PENDING';
                           final created = DateTime.tryParse(
                               order['createdAt']?.toString() ?? '');
                           final statusLabel = const {
@@ -10844,7 +11796,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               status;
                           final color = status == 'CANCELLED'
                               ? Theme.of(context).colorScheme.errorContainer
-                              : Theme.of(context).colorScheme.surfaceContainerHigh;
+                              : Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHigh;
                           return Card(
                             color: color,
                             child: ListTile(
@@ -10866,8 +11820,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               ].join('\n')),
                               trailing: Text(
                                   '\$${((order['totalAmount'] as num?) ?? 0).toDouble().toStringAsFixed(2)}'),
-                              onTap: () => _showMembershipPaymentOrder(
-                                  context, order),
+                              onTap: () =>
+                                  _showMembershipPaymentOrder(context, order),
                             ),
                           );
                         },
@@ -10894,286 +11848,540 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     var pendingOrder = data['pendingOrder'] is Map
         ? Map<String, dynamic>.from(data['pendingOrder'] as Map)
         : null;
-    await showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(builder: (sheetContext, setSheetState) {
-        final status = membership['status']?.toString() ?? 'PENDING';
-        final extraAmount = (membership['billableExtraAmount'] as num?)?.toDouble() ?? 0;
-        Future<void> selectPlan(Map<String, dynamic> plan) async {
-          if (pendingOrder != null) return;
-          try {
-            final response = await api.createMembershipPaymentOrder(widget.s.token, plan['id'].toString(), 'CASH');
-            if (!sheetContext.mounted) return;
-            final created = Map<String, dynamic>.from(response as Map);
-            setSheetState(() => pendingOrder = created);
-            final cancelled = await _showMembershipPaymentOrder(sheetContext, created);
-            if (cancelled && sheetContext.mounted) setSheetState(() => pendingOrder = null);
-            await refreshMembership(force: true);
-          } catch (error) {
-            if (sheetContext.mounted) ScaffoldMessenger.of(sheetContext).showSnackBar(SnackBar(content: Text(error.toString())));
-          }
-        }
-        return FractionallySizedBox(heightFactor: .82, child: ListView(padding: const EdgeInsets.fromLTRB(18, 0, 18, 28), children: [
-          Text('Membresía Costa-Go', style: Theme.of(sheetContext).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
-          const SizedBox(height: 6),
-          Align(alignment: Alignment.centerLeft, child: Chip(label: Text(_membershipStatusLabel(status)), avatar: const Icon(Icons.schedule_rounded, size: 18))),
-          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(children: [
-            _membershipDetailLine('Plan actual', membership['planName']?.toString() ?? 'Sin plan activo'),
-            _membershipDetailLine('Viajes del ciclo', '${membership['completedTrips'] ?? 0}'),
-            _membershipDetailLine('Renovación estimada', '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
-            if (extraAmount > 0) _membershipDetailLine('Excedente acumulado', '\$${extraAmount.toStringAsFixed(2)}'),
-            if (membership['expiresAt'] != null) _membershipDetailLine('Vigente hasta', formatSpanishLongDate(DateTime.parse(membership['expiresAt'].toString()))),
-          ]))),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(onPressed: () => _showMembershipPaymentHistory(sheetContext), icon: const Icon(Icons.receipt_long_outlined), label: const Text('Mis pagos')),
-          if (pendingOrder != null) ...[
-            const SizedBox(height: 10),
-            Card(color: Theme.of(sheetContext).colorScheme.primaryContainer, child: ListTile(
-              leading: Icon(pendingOrder!['status'] == 'PENDING_VERIFICATION' ? Icons.hourglass_top_rounded : Icons.qr_code_2_rounded),
-              title: Text(pendingOrder!['status'] == 'PENDING_VERIFICATION' ? 'Pago en revisión' : 'Orden de pago vigente', style: const TextStyle(fontWeight: FontWeight.w900)),
-              subtitle: Text('Código ${pendingOrder!['shortCode']}\nToca para continuar con el pago'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () async { final cancelled = await _showMembershipPaymentOrder(sheetContext, pendingOrder!); if (cancelled && sheetContext.mounted) setSheetState(() => pendingOrder = null); },
-            )),
-          ],
-          const SizedBox(height: 14),
-          Text('Planes disponibles', style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
-          const SizedBox(height: 8),
-          SizedBox(height: 178, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: plans.length, separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, index) {
-            final plan = Map<String, dynamic>.from(plans[index] as Map);
-            final current = membership['planCode']?.toString() == plan['code']?.toString();
-            return SizedBox(width: 150, child: Card(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: current ? Theme.of(sheetContext).colorScheme.primary : Theme.of(sheetContext).colorScheme.outlineVariant)), child: InkWell(borderRadius: BorderRadius.circular(16), onTap: pendingOrder == null ? () => selectPlan(plan) : null, child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Icon(current ? Icons.event_available_outlined : Icons.calendar_month_outlined, color: Theme.of(sheetContext).colorScheme.primary),
-              const SizedBox(height: 8),
-              Text(plan['name']?.toString() ?? 'Plan', style: const TextStyle(fontWeight: FontWeight.w900)),
-              Text('${plan['durationDays']} días · ${plan['includedTrips']} viajes', style: Theme.of(sheetContext).textTheme.bodySmall),
-              const Spacer(),
-              Text('\$${(plan['amount'] as num).toStringAsFixed(2)}', style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
-              if (pendingOrder == null) const Text('Toca para elegir', style: TextStyle(fontSize: 11)),
-            ])))));
-          })),
-          const SizedBox(height: 12),
-          const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Icon(Icons.info_outline, size: 18), SizedBox(width: 8), Expanded(child: Text('Si la membresía vence, tu cuenta y tu historial permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'))]),
-        ]));
-      }));
+    await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (sheetContext) =>
+            StatefulBuilder(builder: (sheetContext, setSheetState) {
+              final status = membership['status']?.toString() ?? 'PENDING';
+              final extraAmount =
+                  (membership['billableExtraAmount'] as num?)?.toDouble() ?? 0;
+              Future<void> selectPlan(Map<String, dynamic> plan) async {
+                if (pendingOrder != null) return;
+                try {
+                  final response = await api.createMembershipPaymentOrder(
+                      widget.s.token, plan['id'].toString(), 'CASH');
+                  if (!sheetContext.mounted) return;
+                  final created = Map<String, dynamic>.from(response as Map);
+                  setSheetState(() => pendingOrder = created);
+                  final cancelled =
+                      await _showMembershipPaymentOrder(sheetContext, created);
+                  if (cancelled && sheetContext.mounted) {
+                    setSheetState(() => pendingOrder = null);
+                  }
+                  await refreshMembership(force: true);
+                } catch (error) {
+                  if (sheetContext.mounted) {
+                    ScaffoldMessenger.of(sheetContext).showSnackBar(
+                        SnackBar(content: Text(error.toString())));
+                  }
+                }
+              }
+
+              return FractionallySizedBox(
+                  heightFactor: .82,
+                  child: ListView(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                      children: [
+                        Text('Membresía Costa-Go',
+                            style: Theme.of(sheetContext)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 6),
+                        Align(
+                            alignment: Alignment.centerLeft,
+                            child: Chip(
+                                label: Text(_membershipStatusLabel(status)),
+                                avatar: const Icon(Icons.schedule_rounded,
+                                    size: 18))),
+                        Card(
+                            child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Column(children: [
+                                  _membershipDetailLine(
+                                      'Plan actual',
+                                      membership['planName']?.toString() ??
+                                          'Sin plan activo'),
+                                  _membershipDetailLine('Viajes del ciclo',
+                                      '${membership['completedTrips'] ?? 0}'),
+                                  _membershipDetailLine('Renovación estimada',
+                                      '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
+                                  if (extraAmount > 0)
+                                    _membershipDetailLine('Excedente acumulado',
+                                        '\$${extraAmount.toStringAsFixed(2)}'),
+                                  if (membership['expiresAt'] != null)
+                                    _membershipDetailLine(
+                                        'Vigente hasta',
+                                        formatSpanishLongDate(DateTime.parse(
+                                            membership['expiresAt']
+                                                .toString()))),
+                                ]))),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                            onPressed: () =>
+                                _showMembershipPaymentHistory(sheetContext),
+                            icon: const Icon(Icons.receipt_long_outlined),
+                            label: const Text('Mis pagos')),
+                        if (pendingOrder != null) ...[
+                          const SizedBox(height: 10),
+                          Card(
+                              color: Theme.of(sheetContext)
+                                  .colorScheme
+                                  .primaryContainer,
+                              child: ListTile(
+                                leading: Icon(pendingOrder!['status'] ==
+                                        'PENDING_VERIFICATION'
+                                    ? Icons.hourglass_top_rounded
+                                    : Icons.qr_code_2_rounded),
+                                title: Text(
+                                    pendingOrder!['status'] ==
+                                            'PENDING_VERIFICATION'
+                                        ? 'Pago en revisión'
+                                        : 'Orden de pago vigente',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w900)),
+                                subtitle: Text(
+                                    'Código ${pendingOrder!['shortCode']}\nToca para continuar con el pago'),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () async {
+                                  final cancelled =
+                                      await _showMembershipPaymentOrder(
+                                          sheetContext, pendingOrder!);
+                                  if (cancelled && sheetContext.mounted) {
+                                    setSheetState(() => pendingOrder = null);
+                                  }
+                                },
+                              )),
+                        ],
+                        const SizedBox(height: 14),
+                        Text('Planes disponibles',
+                            style: Theme.of(sheetContext)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                            height: 178,
+                            child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: plans.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(width: 8),
+                                itemBuilder: (_, index) {
+                                  final plan = Map<String, dynamic>.from(
+                                      plans[index] as Map);
+                                  final current =
+                                      membership['planCode']?.toString() ==
+                                          plan['code']?.toString();
+                                  return SizedBox(
+                                      width: 150,
+                                      child: Card(
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                              side: BorderSide(
+                                                  color: current
+                                                      ? Theme.of(sheetContext)
+                                                          .colorScheme
+                                                          .primary
+                                                      : Theme.of(sheetContext)
+                                                          .colorScheme
+                                                          .outlineVariant)),
+                                          child: InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                              onTap: pendingOrder == null
+                                                  ? () => selectPlan(plan)
+                                                  : null,
+                                              child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.all(12),
+                                                  child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Icon(
+                                                            current
+                                                                ? Icons
+                                                                    .event_available_outlined
+                                                                : Icons
+                                                                    .calendar_month_outlined,
+                                                            color: Theme.of(
+                                                                    sheetContext)
+                                                                .colorScheme
+                                                                .primary),
+                                                        const SizedBox(
+                                                            height: 8),
+                                                        Text(
+                                                            plan['name']
+                                                                    ?.toString() ??
+                                                                'Plan',
+                                                            style: const TextStyle(
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w900)),
+                                                        Text(
+                                                            '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
+                                                            style: Theme.of(
+                                                                    sheetContext)
+                                                                .textTheme
+                                                                .bodySmall),
+                                                        const Spacer(),
+                                                        Text(
+                                                            '\$${(plan['amount'] as num).toStringAsFixed(2)}',
+                                                            style: Theme.of(
+                                                                    sheetContext)
+                                                                .textTheme
+                                                                .titleMedium
+                                                                ?.copyWith(
+                                                                    fontWeight:
+                                                                        FontWeight
+                                                                            .w900)),
+                                                        if (pendingOrder ==
+                                                            null)
+                                                          const Text(
+                                                              'Toca para elegir',
+                                                              style: TextStyle(
+                                                                  fontSize:
+                                                                      11)),
+                                                      ])))));
+                                })),
+                        const SizedBox(height: 12),
+                        const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.info_outline, size: 18),
+                              SizedBox(width: 8),
+                              Expanded(
+                                  child: Text(
+                                      'Si la membresía vence, tu cuenta y tu historial permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'))
+                            ]),
+                      ]));
+            }));
     unawaited(refreshMembership(force: true));
   }
 
-  List<Widget> _driverSheetContent(BuildContext context, String? action) => [
-        if (driverReviewArea?.reviewLocation != null)
-          Card(
-            color: Theme.of(context).colorScheme.secondaryContainer,
-            child: SwitchListTile(
-              secondary: const Icon(Icons.verified_user_outlined),
-              title: const Text('Modo de revisión de Google Play'),
-              subtitle: Text(driverReviewLocationActive
-                  ? 'Ubicación de pruebas activa en ${driverReviewArea!.name}.'
-                  : 'Usa la ubicación autorizada para revisar viajes.'),
-              value: driverReviewLocationActive,
-              onChanged: active == null
-                  ? (value) => unawaited(toggleDriverReviewLocation(value))
-                  : null,
-            ),
+  List<Widget> _driverSheetContent(BuildContext context, String? action) {
+    final colors = Theme.of(context).colorScheme;
+    final scheduledCount = scheduledOffers.length + scheduledTrips.length;
+    final status = active?['status']?.toString();
+    return [
+      if (driverReviewArea?.reviewLocation != null) ...[
+        _PassengerSurface(
+          color: colors.secondaryContainer,
+          child: SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.verified_user_outlined),
+            title: const Text('Modo de revisión de Google Play'),
+            subtitle: Text(driverReviewLocationActive
+                ? 'Ubicación de pruebas activa en ${driverReviewArea!.name}.'
+                : 'Usa la ubicación autorizada para revisar viajes.'),
+            value: driverReviewLocationActive,
+            onChanged: active == null
+                ? (value) => unawaited(toggleDriverReviewLocation(value))
+                : null,
           ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Disponible para viajes'),
+        ),
+        const SizedBox(height: 12),
+      ],
+      Row(children: [
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Disponible para viajes',
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w900)),
+            if (active != null)
+              Text('Estás en un viaje',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colors.primary, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+        Switch(
           value: available,
           onChanged: active == null && _membershipEligible ? toggle : null,
         ),
-        if (active == null)
-          OutlinedButton.icon(
-            onPressed: showDriverScheduledTrips,
-            icon: const Icon(Icons.event_note_outlined),
-            label: Text(
-                'Viajes programados (${scheduledOffers.length + scheduledTrips.length})'),
-          ),
-        if (driverMessage != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(driverMessage!),
-          ),
-        if (active == null && available)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Wrap(spacing: 16, runSpacing: 6, children: [
-              const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.location_on, color: Colors.blue, size: 18),
-                SizedBox(width: 4),
-                Text('Mi ubicación'),
-              ]),
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.electric_rickshaw_outlined, size: 18),
-                const SizedBox(width: 4),
-                Text('${nearbyDriverPositions.length} mototaxis cercanas'),
-              ]),
-            ]),
-          ),
-        if (active == null && available && offers.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 18),
-            child: Center(child: Text('Esperando viajes...')),
-          ),
-        if (active != null) ...[
-          Card(
-            margin: EdgeInsets.zero,
+      ]),
+      const SizedBox(height: 12),
+      if (active == null) ...[
+        _PassengerSurface(
+          padding: EdgeInsets.zero,
+          child: InkWell(
+            onTap: showDriverScheduledTrips,
+            borderRadius: BorderRadius.circular(20),
             child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Pasajero'),
-                          Text(
-                            active['passengerName']?.toString() ?? 'Pasajero',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    InkWell(
-                      onTap: showPassengerPhoto,
-                      borderRadius: BorderRadius.circular(36),
-                      child: Column(children: [
-                        _passengerPhoto(),
-                        const SizedBox(height: 4),
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.star, color: Colors.amber, size: 16),
-                          const SizedBox(width: 3),
-                          Text(((active?['passengerRating'] as num?) ?? 0)
-                              .toStringAsFixed(1)),
-                        ]),
-                      ]),
-                    ),
-                  ]),
-                  const SizedBox(height: 14),
-                  Text('Origen', style: Theme.of(context).textTheme.labelLarge),
-                  Text(
-                    cleanAddressLabel(
-                      resolvedDriverOrigin ?? active['originReference'],
-                      fallback: 'Origen seleccionado',
-                    ),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 10),
-                  Text('Destino',
-                      style: Theme.of(context).textTheme.labelLarge),
-                  Text(
-                    cleanAddressLabel(active['destinationReference'],
-                        fallback: 'Destino seleccionado'),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  if (List<dynamic>.from(active['stops'] ?? const []).length >
-                      1) ...[
-                    const SizedBox(height: 12),
-                    Text('Itinerario',
-                        style: Theme.of(context).textTheme.labelLarge),
-                    ...List<dynamic>.from(active['stops'] ?? const [])
-                        .asMap()
-                        .entries
-                        .map((entry) => ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              leading: CircleAvatar(
-                                  radius: 13,
-                                  child: entry.value['completedAt'] == null
-                                      ? Text('${entry.key + 1}')
-                                      : const Icon(Icons.check, size: 16)),
-                              title: Text(cleanAddressLabel(
-                                  entry.value['reference'],
-                                  fallback: 'Parada ${entry.key + 1}')),
-                            )),
-                  ],
-                  if (active['notes']?.toString().trim().isNotEmpty ==
-                      true) ...[
-                    const SizedBox(height: 10),
-                    Text('Referencia: ${active['notes']}'),
-                  ],
-                  const SizedBox(height: 10),
-                  Text(
-                    'Pago: ${active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'}',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ],
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+              child: Row(children: [
+                CircleAvatar(
+                  backgroundColor: colors.primaryContainer,
+                  foregroundColor: colors.primary,
+                  child: const Icon(Icons.calendar_month_outlined),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text('Viajes programados ($scheduledCount)',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                ),
+                const Icon(Icons.chevron_right),
+              ]),
             ),
           ),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => dialPhone(context, active['passengerPhone']),
-                icon: const Icon(Icons.call_outlined),
-                label: const Text('Llamar'),
-              ),
+        ),
+        const SizedBox(height: 12),
+        if (driverMessage != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: colors.primaryContainer.withValues(alpha: .45),
+              borderRadius: BorderRadius.circular(14),
             ),
-            const SizedBox(width: 10),
+            child: Text(driverMessage!, textAlign: TextAlign.center),
+          ),
+        if (available) ...[
+          Row(children: [
+            Container(
+              width: 11,
+              height: 11,
+              decoration: const BoxDecoration(
+                  color: Color(0xff47b52b), shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 9),
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => openDriverChat(null),
-                icon: const Icon(Icons.chat_bubble_outline),
-                label: const Text('Mensaje'),
-              ),
+              child: Text(
+                  'Ubicación GPS activa. Esperando solicitudes cercanas.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: colors.onSurfaceVariant)),
             ),
           ]),
-          const SizedBox(height: 4),
-          OutlinedButton.icon(
-            onPressed: () => showTripSafety(
-              context: context,
-              trip: active,
-              counterpart:
-                  active?['passengerName']?.toString() ?? 'mi pasajero',
-              location: currentDriverPosition,
-            ),
-            icon: const Icon(Icons.shield_outlined),
-            label: const Text('Seguridad y compartir viaje'),
+          const SizedBox(height: 14),
+          _PassengerSurface(
+            child: Row(children: [
+              Expanded(
+                child: InkWell(
+                  onTap: centerDriverCurrentLocation,
+                  child: Row(children: [
+                    CircleAvatar(
+                      backgroundColor: colors.primaryContainer,
+                      foregroundColor: colors.primary,
+                      child: const Icon(Icons.my_location_outlined),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                        child: Text('Mi ubicación',
+                            style: TextStyle(fontWeight: FontWeight.w800))),
+                  ]),
+                ),
+              ),
+              Container(width: 1, height: 42, color: colors.outlineVariant),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Row(children: [
+                  Icon(Icons.electric_rickshaw_outlined,
+                      color: colors.primary, size: 27),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                        '${nearbyDriverPositions.length} mototaxis cercanas',
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                ]),
+              ),
+            ]),
           ),
-          if (const {'DRIVER_EN_ROUTE', 'IN_PROGRESS'}
-                  .contains(active['status']?.toString()) &&
-              _navigationProvider(active['status'].toString()) != 'MAP_ONLY')
-            FilledButton.tonalIcon(
-              onPressed: openDriverNavigation,
-              icon: const Icon(Icons.navigation_outlined),
-              label: Text(_navigationProvider(active['status'].toString()) ==
-                      'EXTERNAL_MAPS'
-                  ? (active['status'] == 'IN_PROGRESS'
-                      ? 'Abrir ruta al destino'
-                      : 'Abrir ruta al pasajero')
-                  : (active['status'] == 'IN_PROGRESS'
-                      ? 'Navegar al destino'
-                      : 'Iniciar navegación')),
-            ),
-          if (action != null)
-            FilledButton(
-              onPressed:
-                  routePreparing ? null : () => progress(context, action),
-              child: routePreparing
-                  ? const Row(mainAxisSize: MainAxisSize.min, children: [
-                      SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2)),
-                      SizedBox(width: 10),
-                      Text('Preparando ruta...'),
-                    ])
-                  : Text(label(action)),
-            ),
-          if (const {'ASSIGNED', 'DRIVER_EN_ROUTE'}
-              .contains(active['status']?.toString()))
-            OutlinedButton.icon(
-              onPressed: cancelAcceptedTrip,
-              icon: const Icon(Icons.cancel_outlined),
-              label: const Text('Cancelar carrera'),
-            ),
+          const SizedBox(height: 14),
         ],
+        if (available && offers.isEmpty)
+          _PassengerSurface(
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 26),
+            child: Column(children: [
+              const _CostaGoEmblem(size: 112),
+              const SizedBox(height: 12),
+              Text('Esperando viajes',
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 6),
+              Text('Mantente en línea para recibir solicitudes cercanas.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyLarge
+                      ?.copyWith(color: colors.onSurfaceVariant)),
+            ]),
+          ),
         if (offers.isNotEmpty) _offerCarousel(context),
-      ];
+      ],
+      if (active != null) ...[
+        _PassengerSurface(
+          padding: const EdgeInsets.all(18),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              InkWell(
+                onTap: showPassengerPhoto,
+                borderRadius: BorderRadius.circular(45),
+                child: _passengerPhoto(size: 76),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Pasajero',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelLarge
+                              ?.copyWith(
+                                  color: colors.primary,
+                                  fontWeight: FontWeight.w800)),
+                      Text(active['passengerName']?.toString() ?? 'Pasajero',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900)),
+                      Row(children: [
+                        const Icon(Icons.star, color: Colors.amber, size: 24),
+                        const SizedBox(width: 5),
+                        Text(((active?['passengerRating'] as num?) ?? 0)
+                            .toStringAsFixed(1)),
+                      ]),
+                    ]),
+              ),
+            ]),
+            const Divider(height: 28),
+            _driverRoutePoint(
+              icon: Icons.radio_button_checked,
+              label: 'Origen',
+              value: cleanAddressLabel(
+                  resolvedDriverOrigin ?? active['originReference'],
+                  fallback: 'Origen seleccionado'),
+              drawLine: true,
+            ),
+            _driverRoutePoint(
+              icon: Icons.location_on,
+              label: 'Destino',
+              value: cleanAddressLabel(active['destinationReference'],
+                  fallback: 'Destino seleccionado'),
+            ),
+            if (List<dynamic>.from(active['stops'] ?? const []).length > 1) ...[
+              Text('Itinerario',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: colors.primary, fontWeight: FontWeight.w800)),
+              ...List<dynamic>.from(active['stops'] ?? const [])
+                  .asMap()
+                  .entries
+                  .map((entry) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: CircleAvatar(
+                            radius: 13,
+                            child: entry.value['completedAt'] == null
+                                ? Text('${entry.key + 1}')
+                                : const Icon(Icons.check, size: 16)),
+                        title: Text(cleanAddressLabel(entry.value['reference'],
+                            fallback: 'Parada ${entry.key + 1}')),
+                      )),
+            ],
+            if (active['notes']?.toString().trim().isNotEmpty == true)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.chat_bubble_outline, color: colors.primary),
+                title: const Text('Referencia'),
+                subtitle: Text(active['notes'].toString()),
+              ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.account_balance_wallet_outlined,
+                  color: colors.primary),
+              title: const Text('Pago'),
+              subtitle: Text(
+                  active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        Row(children: [
+          _driverCompactAction(
+              icon: Icons.call_outlined,
+              label: 'Llamar',
+              onPressed: () => dialPhone(context, active['passengerPhone'])),
+          const SizedBox(width: 8),
+          _driverCompactAction(
+              icon: Icons.chat_bubble_outline,
+              label: 'Mensaje',
+              onPressed: () => openDriverChat(null)),
+          const SizedBox(width: 8),
+          _driverCompactAction(
+              icon: Icons.shield_outlined,
+              label: 'Seguridad',
+              onPressed: () => showTripSafety(
+                    context: context,
+                    trip: active,
+                    counterpart:
+                        active?['passengerName']?.toString() ?? 'mi pasajero',
+                    location: currentDriverPosition,
+                  )),
+        ]),
+        const SizedBox(height: 10),
+        if (const {'DRIVER_EN_ROUTE', 'IN_PROGRESS'}.contains(status) &&
+            _navigationProvider(status!) != 'MAP_ONLY')
+          OutlinedButton.icon(
+            onPressed: openDriverNavigation,
+            icon: const Icon(Icons.map_outlined),
+            label: Text(_navigationProvider(status) == 'EXTERNAL_MAPS'
+                ? (status == 'IN_PROGRESS'
+                    ? 'Abrir ruta al destino'
+                    : 'Abrir ruta al pasajero')
+                : (status == 'IN_PROGRESS'
+                    ? 'Navegar al destino'
+                    : 'Iniciar navegación')),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(56),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18)),
+            ),
+          ),
+        if (action != null) ...[
+          const SizedBox(height: 10),
+          _CostaGoPrimaryButton(
+            label: routePreparing ? 'Preparando ruta…' : label(action),
+            loading: routePreparing,
+            onPressed: routePreparing ? null : () => progress(context, action),
+          ),
+        ],
+        if (const {'ASSIGNED', 'DRIVER_EN_ROUTE'}.contains(status)) ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: cancelAcceptedTrip,
+            icon: const Icon(Icons.close),
+            label: const Text('Cancelar carrera'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colors.error,
+              side: BorderSide(color: colors.error),
+              minimumSize: const Size.fromHeight(56),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18)),
+            ),
+          ),
+        ],
+      ],
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
