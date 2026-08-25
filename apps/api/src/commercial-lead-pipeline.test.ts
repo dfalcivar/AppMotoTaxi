@@ -22,4 +22,18 @@ describe("bandeja comercial y conversión de prospectos", () => {
     expect(source).toContain("markAdvertisingOrdersPaid");
     expect(source).toContain("update advertising_leads set status='CONVERTED'");
   });
+
+  it("propaga el responsable al comercio y a las órdenes al tomar un prospecto", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/commercial.ts"), "utf8");
+    expect(source).toContain("update advertisers set assigned_commercial_id=${actor.id}");
+    expect(source).toContain("update advertising_orders set assigned_commercial_id=${actor.id}");
+    expect(source).toContain("order_assigned_elsewhere");
+    expect(source).toContain("advertiser_assigned_elsewhere");
+  });
+
+  it("distingue transferencia automática de cobro gestionado por asesor", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/commercial.ts"), "utf8");
+    expect(source).toContain('latest_order.payment_method_code as "paymentMethodCode"');
+    expect(source).toContain("advertising_payment_methods method");
+  });
 });
