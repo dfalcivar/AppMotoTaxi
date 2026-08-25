@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
+import { normalizeAdvertisingActionValue } from "./advertising-actions.js";
 import {
   legacyPhoneAliases,
   normalizeEmail,
@@ -332,7 +333,7 @@ export function requirePermission(request: FastifyRequest, permission: Permissio
   if (!hasPermission(user.role, permission, user.permissions)) throw new Error("FORBIDDEN");
   return user;
 }
-function guardError(error: unknown, reply: any) { const message = error instanceof Error ? error.message : "ERROR"; if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message }); if (message === "FORBIDDEN" || message === "COOPERATIVE_SCOPE_REQUIRED") return reply.code(403).send({ error: message }); throw error; }
+function guardError(error: unknown, reply: any) { const message = error instanceof Error ? error.message : "ERROR"; if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message }); if (message === "FORBIDDEN" || message === "COOPERATIVE_SCOPE_REQUIRED") return reply.code(403).send({ error: message }); if (["INVALID_WHATSAPP_NUMBER","WHATSAPP_NUMBER_REQUIRED"].includes(message)) return reply.code(400).send({ error: message, message:"Ingresa un número de WhatsApp válido, por ejemplo 0991234567." }); throw error; }
 
 export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   publishTripStatus(tripId: string, status: string): void;
@@ -1549,6 +1550,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const user = requirePermission(request, "advertising:manage");
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
     const body = bannerSchema.parse(request.body);
+    const actionValue = normalizeAdvertisingActionValue(body.actionType, body.actionValue || body.targetUrl);
     const image = Buffer.from(body.imageBase64.replace(/^data:[^;]+;base64,/, ""), "base64");
     if (!image.length || image.length > 1024 * 1024) return reply.code(400).send({ error: "INVALID_BANNER_IMAGE" });
     const dimensions = imageDimensions(image, body.imageMime);
@@ -1561,7 +1563,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
          image_mime,image_data,target_url,starts_at,ends_at,active,campaign_status,sort_order,created_by,
          internal_campaign_type,internal_partner_name,internal_reason,internal_reference,internal_authorized_by,internal_authorized_at)
       select ${body.title},${body.advertiserName},plan.id,${body.placement},${body.serviceAreaId ?? null},
-        ${body.weight},${body.actionType},${body.actionValue || null},${body.imageMime},${image},${body.targetUrl || null},
+        ${body.weight},${body.actionType},${actionValue},${body.imageMime},${image},${body.actionType === "WEB" ? actionValue : null},
         ${body.startsAt},${body.endsAt},${body.active},${body.active ? "ACTIVE" : "PAUSED"},${body.sortOrder},${user.id!},
         ${body.internalCampaignType},${body.internalPartnerName||null},${body.internalReason},${body.internalReference||null},${user.id!},now()
       from advertising_plans plan where plan.code=${body.planCode} and plan.enabled=true
@@ -1597,6 +1599,9 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const startsAt = body.startsAt ?? current.starts_at;
     const endsAt = body.endsAt === "" ? null : (body.endsAt ?? current.ends_at);
     const placement = normalizedBannerPlacement(body.placement ?? current.placement);
+    const actionType = body.actionType ?? current.action_type;
+    const rawActionValue = body.actionValue === undefined ? (current.action_value ?? current.target_url) : body.actionValue;
+    const actionValue = normalizeAdvertisingActionValue(actionType, rawActionValue);
     const internalCampaignType = body.internalCampaignType ?? current.internal_campaign_type ?? "COSTA_GO";
     const internalPartnerName = body.internalPartnerName ?? current.internal_partner_name ?? "";
     const internalReason = body.internalReason ?? current.internal_reason ?? "Contenido institucional existente";
@@ -1605,15 +1610,15 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (endsAt && new Date(endsAt) <= new Date(startsAt)) return reply.code(400).send({ error: "INVALID_BANNER_DATES" });
     const [item] = await database()`
       update affiliate_banners set
-        title=${body.title ?? current.title}, target_url=${body.targetUrl === "" ? null : (body.targetUrl ?? current.target_url)},
+        title=${body.title ?? current.title},
         advertiser_name=${body.advertiserName ?? current.advertiser_name},
         advertising_plan_id=coalesce(
           (select id from advertising_plans where code=${body.planCode ?? null} and enabled=true),
           ${current.advertising_plan_id}
         ),
         placement=${placement},service_area_id=${body.serviceAreaId === undefined ? current.service_area_id : body.serviceAreaId},
-        weight=${body.weight ?? current.weight},action_type=${body.actionType ?? current.action_type},
-        action_value=${body.actionValue === "" ? null : (body.actionValue ?? current.action_value)},
+        weight=${body.weight ?? current.weight},action_type=${actionType},
+        action_value=${actionValue},target_url=${actionType === "WEB" ? actionValue : null},
         image_mime=${imageMime}, image_data=${image}, starts_at=${startsAt}, ends_at=${endsAt}, active=${body.active ?? current.active},
         campaign_status=case when ${body.active ?? current.active} then 'ACTIVE' else 'PAUSED' end,
         sort_order=${body.sortOrder ?? current.sort_order},internal_campaign_type=${internalCampaignType},
