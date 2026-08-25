@@ -36,4 +36,13 @@ describe("bandeja comercial y conversión de prospectos", () => {
     expect(source).toContain('latest_order.payment_method_code as "paymentMethodCode"');
     expect(source).toContain("advertising_payment_methods method");
   });
+
+  it("envía las transferencias automáticas exclusivamente a Finanzas", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/commercial.ts"), "utf8");
+    const migration = await readFile(resolve(process.cwd(), "migrations/059_route_automatic_transfers_to_finance.sql"), "utf8");
+    expect(source).toContain("coalesce(latest_order.payment_method_code,'')<>'BANK_TRANSFER'");
+    expect(source).toContain('throw new Error("AUTOMATIC_TRANSFER_FLOW")');
+    expect(source).toContain('/v1/admin/commercial/payments/:id/remind');
+    expect(migration).toContain("set assigned_commercial_id = null");
+  });
 });
