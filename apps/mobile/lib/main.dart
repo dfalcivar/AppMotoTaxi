@@ -5913,31 +5913,31 @@ class _PassengerSectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      padding: const EdgeInsets.only(top: 2, bottom: 5),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         if (icon != null) ...[
           Container(
-            width: 38,
-            height: 38,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: scheme.primaryContainer.withValues(alpha: .55),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: scheme.primary, size: 21),
+            child: Icon(icon, color: scheme.primary, size: 18),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
         ],
         Expanded(
           child: RichText(
             text: TextSpan(
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
                   color: scheme.primary, fontWeight: FontWeight.w800),
               children: [
                 TextSpan(text: title),
                 if (subtitle != null)
                   TextSpan(
                     text: ' $subtitle',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                         fontWeight: FontWeight.w400),
                   ),
@@ -6014,11 +6014,15 @@ class _PassengerMetric extends StatelessWidget {
 
 class _CostaGoPrimaryButton extends StatelessWidget {
   const _CostaGoPrimaryButton(
-      {required this.label, required this.onPressed, this.loading = false});
+      {required this.label,
+      required this.onPressed,
+      this.loading = false,
+      this.compact = false});
 
   final String label;
   final VoidCallback? onPressed;
   final bool loading;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -6032,7 +6036,7 @@ class _CostaGoPrimaryButton extends StatelessWidget {
           onTap: enabled ? onPressed : null,
           borderRadius: BorderRadius.circular(20),
           child: Ink(
-            height: 58,
+            height: compact ? 50 : 58,
             decoration: BoxDecoration(
               gradient: LinearGradient(colors: [
                 scheme.primary,
@@ -6056,11 +6060,14 @@ class _CostaGoPrimaryButton extends StatelessWidget {
                       strokeWidth: 2, color: Colors.white),
                 )
               else
-                const _CostaGoEmblem(size: 38),
-              const SizedBox(width: 12),
+                _CostaGoEmblem(size: compact ? 30 : 38),
+              SizedBox(width: compact ? 9 : 12),
               Text(label,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Colors.white, fontWeight: FontWeight.w900)),
+                  style: (compact
+                          ? Theme.of(context).textTheme.titleSmall
+                          : Theme.of(context).textTheme.titleMedium)
+                      ?.copyWith(
+                          color: Colors.white, fontWeight: FontWeight.w900)),
             ]),
           ),
         ),
@@ -9079,22 +9086,22 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final controller = _destinationController(index);
     return Padding(
       key: ValueKey('destination-$index-${controller.hashCode}'),
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         ReorderableDragStartListener(
           index: index,
           child: CircleAvatar(
-            radius: 17,
+            radius: 15,
             backgroundColor: Theme.of(context).colorScheme.primary,
             child: Text('${index + 1}',
                 style: const TextStyle(
                     color: Colors.white, fontWeight: FontWeight.w800)),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 6),
         Expanded(
           child: _PassengerSurface(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 3),
             child: TextField(
               controller: controller,
               onTap: () => _movePassengerSheet(.78),
@@ -9111,13 +9118,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                         onPressed: () => clearDestination(index)),
                   IconButton(
                       tooltip: 'Ajustar en el mapa',
-                      icon: const Icon(Icons.edit_outlined),
+                      icon: const Icon(Icons.edit_outlined, size: 20),
                       onPressed: () => beginMapSelection(
                           MapPointSelection.destination,
                           destinationIndex: index)),
                   IconButton(
                       tooltip: 'Buscar dirección',
-                      icon: const Icon(Icons.search),
+                      icon: const Icon(Icons.search, size: 20),
                       onPressed: () => locate(false, destinationIndex: index)),
                 ]),
               ),
@@ -9150,10 +9157,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             ),
           ),
         _PassengerSurface(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
           child: Row(children: [
-            const _CostaGoEmblem(size: 48),
-            const SizedBox(width: 12),
+            const _CostaGoEmblem(size: 34),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -9184,7 +9191,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             ),
           ]),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 8),
         const _PassengerSectionTitle('Origen',
             icon: Icons.location_on_outlined),
         Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
@@ -9194,6 +9201,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               onTap: () => _movePassengerSheet(.72),
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
+                isDense: true,
                 hintText: 'Escribe una dirección o mueve el mapa',
                 suffixIcon: origin.text.isEmpty
                     ? null
@@ -9204,21 +9212,27 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               ),
             ),
           ),
-          const SizedBox(width: 7),
+          const SizedBox(width: 5),
           IconButton.filledTonal(
               tooltip: 'Lugares favoritos',
               onPressed: showFavoritePlaces,
-              icon: const Icon(Icons.star_outline)),
+              style: IconButton.styleFrom(
+                  minimumSize: const Size.square(40), padding: EdgeInsets.zero),
+              icon: const Icon(Icons.star_outline, size: 20)),
           IconButton.filledTonal(
               tooltip: 'Usar ubicación actual',
               onPressed: () => unawaited(useCurrentLocation(explicit: true)),
-              icon: const Icon(Icons.my_location_outlined)),
+              style: IconButton.styleFrom(
+                  minimumSize: const Size.square(40), padding: EdgeInsets.zero),
+              icon: const Icon(Icons.my_location_outlined, size: 20)),
           IconButton.filledTonal(
               tooltip: 'Buscar dirección',
               onPressed: () => locate(true),
-              icon: const Icon(Icons.search)),
+              style: IconButton.styleFrom(
+                  minimumSize: const Size.square(40), padding: EdgeInsets.zero),
+              icon: const Icon(Icons.search, size: 20)),
         ]),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _PassengerSectionTitle(
           'Destinos y paradas',
           icon: Icons.flag_outlined,
@@ -9227,7 +9241,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 ? 'Máximo tres destinos'
                 : 'Agregar parada',
             onPressed: additionalStops.length >= 2 ? null : addDestination,
-            icon: const Icon(Icons.add),
+            style: IconButton.styleFrom(
+                minimumSize: const Size.square(40), padding: EdgeInsets.zero),
+            icon: const Icon(Icons.add, size: 21),
           ),
         ),
         ReorderableListView.builder(
@@ -9254,6 +9270,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                     label: Text('Programar para más tarde')),
               ],
               selected: {scheduledFor != null},
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                padding: WidgetStatePropertyAll(
+                    EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+              ),
               onSelectionChanged: (value) async {
                 if (value.first) {
                   await chooseSchedule();
@@ -9284,7 +9305,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             trailing: TextButton(
                 onPressed: chooseSchedule, child: const Text('Modificar')),
           ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         const _PassengerSectionTitle('Referencia para encontrarte',
             icon: Icons.chat_bubble_outline, subtitle: '(opcional)'),
         TextField(
@@ -9292,10 +9313,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           onTap: () => _movePassengerSheet(.72),
           onChanged: (_) => setState(() {}),
           maxLength: 300,
-          maxLines: 2,
+          maxLines: 1,
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => FocusScope.of(context).unfocus(),
           decoration: InputDecoration(
+            isDense: true,
+            counterText: '',
             hintText: 'Ej: Frente a la iglesia, puerta azul, etc.',
             suffixIcon: notes.text.isEmpty
                 ? null
@@ -9310,7 +9333,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           ),
         ),
         LayoutBuilder(builder: (context, constraints) {
-          final narrow = constraints.maxWidth < 460;
+          final narrow = constraints.maxWidth < 340;
           final passengerSelector =
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const _PassengerSectionTitle('Número de pasajeros',
@@ -9322,6 +9345,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 ButtonSegment(value: 3, label: Text('3')),
               ],
               selected: {people},
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                padding: WidgetStatePropertyAll(
+                    EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+              ),
               onSelectionChanged: (value) =>
                   setState(() => people = value.first),
             ),
@@ -9332,6 +9360,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 icon: Icons.account_balance_wallet_outlined),
             DropdownButtonFormField<String>(
               initialValue: paymentMethod,
+              decoration: const InputDecoration(isDense: true),
               items: const [
                 DropdownMenuItem(
                     value: 'CASH', child: Text('Pago en efectivo')),
@@ -9383,6 +9412,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           onPressed: requestSubmitting || _currentRequestPayload() == null
               ? null
               : create,
+          compact: true,
         ),
       ];
 
@@ -9489,7 +9519,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   child: ListView(
                     controller: scrollController,
                     padding: EdgeInsets.fromLTRB(
-                        20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
+                        14, 8, 14, MediaQuery.paddingOf(context).bottom + 16),
                     children: [
                       Center(
                         child: Container(
@@ -9504,7 +9534,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 8),
                       if (editing)
                         ..._mapSelectionContent(context)
                       else if (searching)
@@ -11173,9 +11203,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     return IntrinsicHeight(
       child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         SizedBox(
-          width: 34,
+          width: 28,
           child: Column(children: [
-            Icon(icon, color: colors.primary, size: 25),
+            Icon(icon, color: colors.primary, size: 21),
             if (drawLine)
               Expanded(
                 child: Container(
@@ -11186,20 +11216,22 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               ),
           ]),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 7),
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.only(bottom: 8),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       color: colors.primary, fontWeight: FontWeight.w800)),
               const SizedBox(height: 3),
               Text(value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context)
                       .textTheme
-                      .titleMedium
+                      .bodyMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
             ]),
           ),
@@ -11216,13 +11248,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       Expanded(
         child: OutlinedButton.icon(
           onPressed: onPressed,
-          icon: Icon(icon),
-          label: Text(label, textAlign: TextAlign.center),
+          icon: Icon(icon, size: 19),
+          label: Text(label,
+              textAlign: TextAlign.center,
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           style: OutlinedButton.styleFrom(
-            minimumSize: const Size(0, 54),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 46),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
           ),
         ),
       );
@@ -12161,6 +12196,57 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ]),
       );
 
+  Widget _membershipPaymentAction(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool highlighted = false,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return _PassengerSurface(
+      padding: EdgeInsets.zero,
+      color: highlighted
+          ? scheme.primaryContainer.withValues(alpha: .35)
+          : scheme.surfaceContainerLow,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: .1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: scheme.primary, size: 21),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w800)),
+                    Text(subtitle,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: scheme.onSurfaceVariant)),
+                  ]),
+            ),
+            const Icon(Icons.chevron_right, size: 21),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Future<void> _showMembershipQr(
       BuildContext context, Map<String, dynamic> order) async {
     final qrUrl = order['qrUrl']?.toString();
@@ -12201,112 +12287,160 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final expiresAt = DateTime.tryParse(order['expiresAt']?.toString() ?? '');
     final breakdown = Map<String, dynamic>.from(
         order['breakdown'] as Map? ?? const <String, dynamic>{});
-    final cancelled = await showDialog<bool>(
+    final cancelled = await showModalBottomSheet<bool>(
           context: hostContext,
-          builder: (dialogContext) => AlertDialog(
-            icon: Image.asset('assets/images/costa-go-emblem.png',
-                width: 42, height: 42),
-            title: Text(const {
-                  'PENDING': 'QR de membresía',
-                  'PENDING_VERIFICATION': 'Pago pendiente de verificación',
+          isScrollControlled: true,
+          useSafeArea: true,
+          showDragHandle: true,
+          builder: (sheetContext) {
+            final scheme = Theme.of(sheetContext).colorScheme;
+            final statusTitle = const {
+                  'PENDING': 'Renovar membresía',
+                  'PENDING_VERIFICATION': 'Pago en revisión',
                   'PAID': 'Orden pagada',
                   'REJECTED': 'Orden rechazada',
                   'EXPIRED': 'Orden vencida',
                   'CANCELLED': 'Orden anulada',
                 }[status] ??
-                'Orden de membresía'),
-            content: SingleChildScrollView(
-              child: SizedBox(
-                width: 300,
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                      status == 'CANCELLED'
-                          ? Icons.block_rounded
-                          : status == 'PAID'
-                              ? Icons.check_circle_outline_rounded
-                              : Icons.hourglass_top_rounded,
-                      size: 58),
+                'Orden de membresía';
+            final orderStatusLabel = const {
+                  'PENDING': 'Pendiente de pago',
+                  'PENDING_VERIFICATION': 'Pago en revisión',
+                  'PAID': 'Pagada',
+                  'REJECTED': 'Rechazada',
+                  'EXPIRED': 'Vencida',
+                  'CANCELLED': 'Anulada',
+                }[status] ??
+                'Pendiente';
+            final statusColor = status == 'PAID'
+                ? Colors.green
+                : status == 'REJECTED' || status == 'CANCELLED'
+                    ? scheme.error
+                    : status == 'PENDING_VERIFICATION'
+                        ? Colors.orange.shade800
+                        : scheme.primary;
+            return FractionallySizedBox(
+              heightFactor: .88,
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(
+                    16, 0, 16, MediaQuery.paddingOf(sheetContext).bottom + 18),
+                children: [
+                  Row(children: [
+                    const _CostaGoEmblem(size: 38),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(statusTitle,
+                          style: Theme.of(sheetContext)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900)),
+                    ),
+                    IconButton(
+                        tooltip: 'Cerrar',
+                        onPressed: () => Navigator.pop(sheetContext, false),
+                        icon: const Icon(Icons.close)),
+                  ]),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: statusColor.withValues(alpha: .12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(orderStatusLabel,
+                          style: TextStyle(
+                              color: statusColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800)),
+                    ),
+                  ),
                   const SizedBox(height: 12),
-                  Text('Código ${order['shortCode']}',
-                      style: Theme.of(dialogContext)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 12),
-                  _membershipAmountRow(
-                      dialogContext,
-                      'Membresía',
-                      (breakdown['baseAmount'] as num?) ??
-                          order['baseAmount'] ??
-                          0),
-                  if (breakdown['includedTrips'] != null)
-                    Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                            'Viajes incluidos: ${breakdown['includedTrips']}')),
-                  if (breakdown['extraTrips'] != null &&
-                      (breakdown['extraTrips'] as num) > 0) ...[
-                    Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                            'Viajes realizados que generan excedente: ${breakdown['extraTrips']}')),
-                    if (breakdown['extraTripUnitAmount'] != null)
+                  _PassengerSurface(
+                    padding: const EdgeInsets.all(14),
+                    color: scheme.primaryContainer.withValues(alpha: .22),
+                    child: Column(children: [
+                      Text('Total a pagar',
+                          style: Theme.of(sheetContext)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant)),
+                      Text('\$${amount.toStringAsFixed(2)}',
+                          style: Theme.of(sheetContext)
+                              .textTheme
+                              .headlineMedium
+                              ?.copyWith(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w900)),
+                      Text(
+                          '${membershipPlanName(order['plan'])} · Código ${order['shortCode']}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      if (expiresAt != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                            'Válido hasta ${formatEcuadorLongDateTime(expiresAt)}',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(sheetContext).textTheme.bodySmall),
+                      ],
+                    ]),
+                  ),
+                  const SizedBox(height: 10),
+                  _PassengerSurface(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    child: Column(children: [
                       _membershipAmountRow(
-                          dialogContext,
-                          'Valor por viaje excedente',
-                          breakdown['extraTripUnitAmount'] as num),
-                    if (breakdown['extraTripSharePercent'] != null &&
-                        breakdown['passengerServiceAdditional'] != null)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Cada excedente corresponde al ${breakdown['extraTripSharePercent']}% del adicional de servicio al pasajero (\$${(breakdown['passengerServiceAdditional'] as num).toDouble().toStringAsFixed(2)}).',
-                          style: Theme.of(dialogContext).textTheme.bodySmall,
-                        ),
-                      ),
-                    if (breakdown['rawExtraAmount'] != null &&
-                        breakdown['maximumExtraAmount'] != null &&
-                        (breakdown['rawExtraAmount'] as num) >
-                            (breakdown['maximumExtraAmount'] as num))
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Se aplicó el tope del plan de \$${(breakdown['maximumExtraAmount'] as num).toDouble().toStringAsFixed(2)} para excedentes.',
-                          style: Theme.of(dialogContext).textTheme.bodySmall,
-                        ),
-                      ),
-                  ],
-                  _membershipAmountRow(
-                      dialogContext,
-                      'Excedente',
-                      (breakdown['billableExtraAmount'] as num?) ??
-                          order['priorUsageAmount'] ??
-                          0),
-                  if (((breakdown['adjustmentAmount'] as num?) ??
-                          order['adjustmentAmount'] ??
-                          0) !=
-                      0)
-                    _membershipAmountRow(
-                        dialogContext,
-                        'Ajustes',
-                        (breakdown['adjustmentAmount'] as num?) ??
-                            order['adjustmentAmount'] as num),
-                  const Divider(height: 18),
-                  _membershipAmountRow(dialogContext, 'Total a pagar', amount,
-                      emphasized: true),
-                  if (expiresAt != null)
-                    Text('Válido hasta ${formatEcuadorLongDateTime(expiresAt)}',
-                        textAlign: TextAlign.center),
+                          sheetContext,
+                          'Membresía',
+                          (breakdown['baseAmount'] as num?) ??
+                              order['baseAmount'] ??
+                              0),
+                      if (breakdown['includedTrips'] != null)
+                        _membershipDetailLine('Viajes incluidos',
+                            '${breakdown['includedTrips']}'),
+                      if (breakdown['extraTrips'] != null &&
+                          (breakdown['extraTrips'] as num) > 0) ...[
+                        _membershipDetailLine('Viajes con excedente',
+                            '${breakdown['extraTrips']}'),
+                        if (breakdown['extraTripUnitAmount'] != null)
+                          _membershipAmountRow(
+                              sheetContext,
+                              'Valor por viaje excedente',
+                              breakdown['extraTripUnitAmount'] as num),
+                      ],
+                      _membershipAmountRow(
+                          sheetContext,
+                          'Excedente',
+                          (breakdown['billableExtraAmount'] as num?) ??
+                              order['priorUsageAmount'] ??
+                              0),
+                      if (((breakdown['adjustmentAmount'] as num?) ??
+                              order['adjustmentAmount'] ??
+                              0) !=
+                          0)
+                        _membershipAmountRow(
+                            sheetContext,
+                            'Ajustes',
+                            (breakdown['adjustmentAmount'] as num?) ??
+                                order['adjustmentAmount'] as num),
+                    ]),
+                  ),
                   if (status == 'PENDING_VERIFICATION')
                     const Padding(
-                      padding: EdgeInsets.only(top: 10),
-                      child: Text(
-                          'Tu comprobante ya fue enviado. No generes otra orden mientras se realiza la revisión.',
-                          textAlign: TextAlign.center),
+                      padding: EdgeInsets.only(top: 12),
+                      child: _PassengerSurface(
+                        padding: EdgeInsets.all(12),
+                        child: Text(
+                            'Recibimos tu comprobante. El pago será revisado y te notificaremos cuando finalice el proceso.',
+                            textAlign: TextAlign.center),
+                      ),
                     ),
                   if (status == 'CANCELLED')
                     Padding(
-                      padding: const EdgeInsets.only(top: 10),
+                      padding: const EdgeInsets.only(top: 12),
                       child: Text(
                         '${_membershipCancellationLabel(order['cancellationReason']?.toString())}${order['cancellationObservation'] == null ? '' : '\n${order['cancellationObservation']}'}',
                         textAlign: TextAlign.center,
@@ -12314,69 +12448,63 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     ),
                   if (status == 'PENDING') ...[
                     const SizedBox(height: 14),
-                    Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('¿Cómo deseas pagar?',
-                            style: Theme.of(dialogContext)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w900))),
+                    Text('¿Cómo deseas pagar?',
+                        style: Theme.of(sheetContext)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w900)),
                     const SizedBox(height: 8),
-                    Card(
-                        child: ListTile(
-                            leading: const CircleAvatar(
-                                child: Icon(Icons.storefront_outlined)),
-                            title: const Text('En punto autorizado',
-                                style: TextStyle(fontWeight: FontWeight.w800)),
-                            subtitle: const Text('Paga mostrando tu QR'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () => _showCollectionPoints(hostContext))),
-                    Card(
-                        child: ListTile(
-                            leading: const CircleAvatar(
-                                child: Icon(Icons.account_balance_outlined)),
-                            title: const Text('Transferencia bancaria',
-                                style: TextStyle(fontWeight: FontWeight.w800)),
-                            subtitle: const Text(
-                                'Realiza tu pago y sube el comprobante'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () =>
-                                _showBankTransfer(hostContext, order))),
-                    Card(
-                        color: Theme.of(dialogContext)
-                            .colorScheme
-                            .primaryContainer,
-                        child: ListTile(
-                            leading: const Icon(Icons.qr_code_2_rounded),
-                            title: const Text('Ver QR de pago',
-                                style: TextStyle(fontWeight: FontWeight.w800)),
-                            subtitle: const Text('Escanea o muestra tu código'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () =>
-                                _showMembershipQr(hostContext, order))),
+                    _membershipPaymentAction(
+                      sheetContext,
+                      icon: Icons.storefront_outlined,
+                      title: 'En punto autorizado',
+                      subtitle: 'Paga mostrando tu QR',
+                      onTap: () async {
+                        Navigator.pop(sheetContext, false);
+                        await _showCollectionPoints(hostContext);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    _membershipPaymentAction(
+                      sheetContext,
+                      icon: Icons.account_balance_outlined,
+                      title: 'Transferencia bancaria',
+                      subtitle: 'Realiza tu pago y sube el comprobante',
+                      onTap: () async {
+                        Navigator.pop(sheetContext, false);
+                        await _showBankTransfer(hostContext, order);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    _membershipPaymentAction(
+                      sheetContext,
+                      icon: Icons.qr_code_2_rounded,
+                      title: 'Ver QR de pago',
+                      subtitle: 'Escanea o muestra tu código',
+                      highlighted: true,
+                      onTap: () async {
+                        Navigator.pop(sheetContext, false);
+                        await _showMembershipQr(hostContext, order);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () async {
+                        final didCancel =
+                            await _cancelMembershipOrder(sheetContext, order);
+                        if (didCancel && sheetContext.mounted) {
+                          Navigator.pop(sheetContext, true);
+                        }
+                      },
+                      icon: Icon(Icons.cancel_outlined, color: scheme.error),
+                      label: Text('Anular orden',
+                          style: TextStyle(color: scheme.error)),
+                    ),
                   ],
-                ]),
+                ],
               ),
-            ),
-            actions: [
-              if (status == 'PENDING')
-                TextButton.icon(
-                  onPressed: () async {
-                    final cancelled =
-                        await _cancelMembershipOrder(dialogContext, order);
-                    if (cancelled && dialogContext.mounted) {
-                      Navigator.pop(dialogContext, true);
-                    }
-                  },
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: const Text('Anular orden'),
-                ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cerrar'),
-              ),
-            ],
-          ),
+            );
+          },
         ) ??
         false;
     if (cancelled) {
@@ -12737,7 +12865,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             Text('Disponible para viajes',
                 style: Theme.of(context)
                     .textTheme
-                    .headlineSmall
+                    .titleLarge
                     ?.copyWith(fontWeight: FontWeight.w900)),
             if (active != null)
               Text('Estás en un viaje',
@@ -12750,7 +12878,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           onChanged: active == null && _membershipEligible ? toggle : null,
         ),
       ]),
-      const SizedBox(height: 12),
+      const SizedBox(height: 7),
       if (active == null) ...[
         _PassengerSurface(
           padding: EdgeInsets.zero,
@@ -12758,19 +12886,19 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             onTap: showDriverScheduledTrips,
             borderRadius: BorderRadius.circular(20),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
               child: Row(children: [
                 CircleAvatar(
                   backgroundColor: colors.primaryContainer,
                   foregroundColor: colors.primary,
                   child: const Icon(Icons.calendar_month_outlined),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text('Viajes programados ($scheduledCount)',
                       style: Theme.of(context)
                           .textTheme
-                          .titleMedium
+                          .titleSmall
                           ?.copyWith(fontWeight: FontWeight.w800)),
                 ),
                 const Icon(Icons.chevron_right),
@@ -12778,7 +12906,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             ),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         if (driverMessage != null)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -12807,8 +12935,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       ?.copyWith(color: colors.onSurfaceVariant)),
             ),
           ]),
-          const SizedBox(height: 14),
+          const SizedBox(height: 9),
           _PassengerSurface(
+            padding: const EdgeInsets.all(11),
             child: Row(children: [
               Expanded(
                 child: InkWell(
@@ -12819,7 +12948,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       foregroundColor: colors.primary,
                       child: const Icon(Icons.my_location_outlined),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 7),
                     const Expanded(
                         child: Text('Mi ubicación',
                             style: TextStyle(fontWeight: FontWeight.w800))),
@@ -12827,12 +12956,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ),
               ),
               Container(width: 1, height: 42, color: colors.outlineVariant),
-              const SizedBox(width: 14),
+              const SizedBox(width: 10),
               Expanded(
                 child: Row(children: [
                   Icon(Icons.electric_rickshaw_outlined,
-                      color: colors.primary, size: 27),
-                  const SizedBox(width: 9),
+                      color: colors.primary, size: 22),
+                  const SizedBox(width: 7),
                   Expanded(
                     child: Text(
                         '${nearbyDriverPositions.length} mototaxis cercanas',
@@ -12842,25 +12971,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               ),
             ]),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 9),
         ],
         if (available && offers.isEmpty)
           _PassengerSurface(
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 26),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             child: Column(children: [
-              const _CostaGoEmblem(size: 112),
-              const SizedBox(height: 12),
+              const _CostaGoEmblem(size: 72),
+              const SizedBox(height: 8),
               Text('Esperando viajes',
                   style: Theme.of(context)
                       .textTheme
-                      .headlineSmall
+                      .titleLarge
                       ?.copyWith(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text('Mantente en línea para recibir solicitudes cercanas.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context)
                       .textTheme
-                      .bodyLarge
+                      .bodyMedium
                       ?.copyWith(color: colors.onSurfaceVariant)),
             ]),
           ),
@@ -12868,16 +12997,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       ],
       if (active != null) ...[
         _PassengerSurface(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(12),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
               InkWell(
                 onTap: showPassengerPhoto,
                 borderRadius: BorderRadius.circular(45),
-                child: _passengerPhoto(size: 76),
+                child: _passengerPhoto(size: 56),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -12885,7 +13014,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       Text('Pasajero',
                           style: Theme.of(context)
                               .textTheme
-                              .labelLarge
+                              .labelMedium
                               ?.copyWith(
                                   color: colors.primary,
                                   fontWeight: FontWeight.w800)),
@@ -12894,18 +13023,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context)
                               .textTheme
-                              .titleLarge
+                              .titleMedium
                               ?.copyWith(fontWeight: FontWeight.w900)),
                       Row(children: [
-                        const Icon(Icons.star, color: Colors.amber, size: 24),
-                        const SizedBox(width: 5),
+                        const Icon(Icons.star, color: Colors.amber, size: 18),
+                        const SizedBox(width: 4),
                         Text(((active?['passengerRating'] as num?) ?? 0)
                             .toStringAsFixed(1)),
                       ]),
                     ]),
               ),
             ]),
-            const Divider(height: 28),
+            const Divider(height: 18),
             _driverRoutePoint(
               icon: Icons.radio_button_checked,
               label: 'Origen',
@@ -12941,22 +13070,27 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             ],
             if (active['notes']?.toString().trim().isNotEmpty == true)
               ListTile(
+                dense: true,
+                visualDensity: VisualDensity.compact,
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.chat_bubble_outline, color: colors.primary),
+                leading: Icon(Icons.chat_bubble_outline,
+                    color: colors.primary, size: 21),
                 title: const Text('Referencia'),
                 subtitle: Text(active['notes'].toString()),
               ),
             ListTile(
+              dense: true,
+              visualDensity: VisualDensity.compact,
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.account_balance_wallet_outlined,
-                  color: colors.primary),
+                  color: colors.primary, size: 21),
               title: const Text('Pago'),
               subtitle: Text(
                   active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'),
             ),
           ]),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Row(children: [
           _driverCompactAction(
               icon: Icons.call_outlined,
@@ -12979,7 +13113,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     location: currentDriverPosition,
                   )),
         ]),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         if (const {'DRIVER_EN_ROUTE', 'IN_PROGRESS'}.contains(status) &&
             _navigationProvider(status!) != 'MAP_ONLY')
           OutlinedButton.icon(
@@ -12993,7 +13127,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     ? 'Navegar al destino'
                     : 'Iniciar navegación')),
             style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(56),
+              minimumSize: const Size.fromHeight(48),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18)),
             ),
@@ -13003,6 +13137,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           _CostaGoPrimaryButton(
             label: routePreparing ? 'Preparando ruta…' : label(action),
             loading: routePreparing,
+            compact: true,
             onPressed: routePreparing ? null : () => progress(context, action),
           ),
         ],
@@ -13015,7 +13150,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             style: OutlinedButton.styleFrom(
               foregroundColor: colors.error,
               side: BorderSide(color: colors.error),
-              minimumSize: const Size.fromHeight(56),
+              minimumSize: const Size.fromHeight(48),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18)),
             ),
@@ -13139,7 +13274,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               ),
               DraggableScrollableSheet(
                 controller: driverSheetController,
-                initialChildSize: active == null ? .30 : .50,
+                initialChildSize: active == null ? .30 : .46,
                 minChildSize: .18,
                 maxChildSize: .92,
                 snap: true,
@@ -13154,7 +13289,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   child: ListView(
                     controller: scrollController,
                     padding: EdgeInsets.fromLTRB(
-                        20, 10, 20, MediaQuery.paddingOf(context).bottom + 20),
+                        14, 8, 14, MediaQuery.paddingOf(context).bottom + 16),
                     children: [
                       Center(
                         child: Container(
@@ -13169,7 +13304,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 7),
                       ..._driverSheetContent(context, action),
                     ],
                   ),

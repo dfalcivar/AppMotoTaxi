@@ -34,6 +34,11 @@ $versionCode = $matches[2]
 $artifactBase = "Costa-Go-$versionName-build$versionCode"
 
 if ($Production) {
+  $googleMapsAndroidApiKey = [Environment]::GetEnvironmentVariable("GOOGLE_MAPS_ANDROID_API_KEY")
+  if ([string]::IsNullOrWhiteSpace($googleMapsAndroidApiKey)) {
+    throw "GOOGLE_MAPS_ANDROID_API_KEY no está configurada. Se cancela la compilación para evitar publicar una aplicación con el mapa en blanco."
+  }
+
   $keyPropertiesPath = Join-Path $mobile "android\key.properties"
   $environmentSigningNames = @("COSTA_GO_KEYSTORE_PATH", "COSTA_GO_KEYSTORE_PASSWORD", "COSTA_GO_KEY_ALIAS", "COSTA_GO_KEY_PASSWORD")
   $environmentSigningReady = ($environmentSigningNames | Where-Object {
