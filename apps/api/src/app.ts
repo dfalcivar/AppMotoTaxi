@@ -508,18 +508,15 @@ export async function buildApp() {
         and (banner.ends_at is null or banner.ends_at>now())
         and (${parsed.data.serviceAreaId??null}::uuid is null or banner.service_area_id is null or banner.service_area_id=${parsed.data.serviceAreaId??null})
         and octet_length(banner.image_data)>0
-        and ((banner.order_id is null and ${effectivePlacement}=case
-              when banner.placement in ('PASSENGER_HOME','DRIVER_HOME') then 'PASSENGER_SEARCHING_DRIVER'
-              else banner.placement end)
-          or (banner.order_id is not null and (
-            ${effectivePlacement}=any(case
-              when banner.category='PREMIUM'
-                or upper(coalesce(plan.code,''))='PREMIUM'
-                or 'PASSENGER_WAITING_DRIVER'=any(coalesce(plan.allowed_placements,array[]::text[]))
-                or 'PASSENGER_TRIP_IN_PROGRESS'=any(coalesce(plan.allowed_placements,array[]::text[]))
-              then array['PASSENGER_SEARCHING_DRIVER','PASSENGER_WAITING_DRIVER','PASSENGER_TRIP_IN_PROGRESS']::text[]
-              else array['PASSENGER_SEARCHING_DRIVER']::text[] end)
-          )))
+        and ${effectivePlacement}=any(case
+          when banner.category='PREMIUM'
+            or upper(coalesce(plan.code,''))='PREMIUM'
+            or 'PASSENGER_WAITING_DRIVER'=any(coalesce(plan.allowed_placements,array[]::text[]))
+            or 'PASSENGER_TRIP_IN_PROGRESS'=any(coalesce(plan.allowed_placements,array[]::text[]))
+          then array['PASSENGER_SEARCHING_DRIVER','PASSENGER_WAITING_DRIVER','PASSENGER_TRIP_IN_PROGRESS']::text[]
+          when banner.placement in ('PASSENGER_HOME','DRIVER_HOME')
+          then array['PASSENGER_SEARCHING_DRIVER']::text[]
+          else array[banner.placement]::text[] end)
       order by banner.sort_order,banner.starts_at desc
       limit greatest(coalesce((select advertising_max_active_per_zone from operational_settings where id=1),10),1)
     `;

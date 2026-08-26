@@ -6310,6 +6310,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   dynamic active;
   int people = 1;
   String paymentMethod = 'CASH';
+  bool nearbyDriversRefreshing = false;
+  int nearbyDriversRefreshGeneration = 0;
   String? message;
   Timer? timer;
   bool ratingPrompted = false;
@@ -6809,6 +6811,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (event['paymentMethod']?.toString() != paymentMethod) return;
       final items = List<dynamic>.from(event['drivers'] ?? const []);
       setState(() {
+        nearbyDriversRefreshing = false;
         nearbyDrivers
           ..clear()
           ..addEntries(items.map((item) => MapEntry(
@@ -6896,16 +6899,19 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final point = focus ?? pickup;
     if (point == null || active != null) return;
     final requestedPaymentMethod = paymentMethod;
+    final requestGeneration = ++nearbyDriversRefreshGeneration;
     try {
       final items = await api.nearbyDrivers(widget.s.token, point,
           paymentMethod: requestedPaymentMethod);
       if (!mounted ||
           active != null ||
           pickup != point ||
-          paymentMethod != requestedPaymentMethod) {
+          paymentMethod != requestedPaymentMethod ||
+          requestGeneration != nearbyDriversRefreshGeneration) {
         return;
       }
       setState(() {
+        nearbyDriversRefreshing = false;
         nearbyDrivers
           ..clear()
           ..addEntries(items.map((item) => MapEntry(
@@ -6915,6 +6921,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               )));
       });
     } catch (_) {
+      if (mounted &&
+          active == null &&
+          pickup == point &&
+          paymentMethod == requestedPaymentMethod &&
+          requestGeneration == nearbyDriversRefreshGeneration) {
+        setState(() => nearbyDriversRefreshing = false);
+      }
       // El WebSocket sigue siendo la fuente principal si falla este respaldo.
     }
   }
@@ -6923,6 +6936,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (paymentMethod == value) return;
     setState(() {
       paymentMethod = value;
+      nearbyDriversRefreshing = pickup != null && active == null;
       nearbyDrivers.clear();
     });
     final point = pickup;
@@ -9225,18 +9239,26 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                        nearbyDrivers.isEmpty
-                            ? 'No hay mototaxis disponibles cerca ahora'
-                            : '${nearbyDrivers.length} mototaxi(s) disponible(s) cerca',
+                        nearbyDriversRefreshing
+                            ? 'Consultando conductores disponibles...'
+                            : nearbyDrivers.isEmpty
+                                ? 'No hay mototaxis disponibles cerca ahora'
+                                : '${nearbyDrivers.length} mototaxi(s) disponible(s) cerca',
                         style: Theme.of(context)
                             .textTheme
                             .titleSmall
                             ?.copyWith(fontWeight: FontWeight.w900)),
                     const SizedBox(height: 2),
                     Text(
-                        nearbyDrivers.isEmpty
-                            ? 'Te avisaremos cuando haya uno disponible.'
-                            : 'Puedes solicitar tu viaje cuando estés listo.',
+                        nearbyDriversRefreshing
+                            ? paymentMethod == 'DEUNA'
+                                ? 'Verificando quiénes aceptan pago con DeUna.'
+                                : 'Verificando quiénes aceptan pago en efectivo.'
+                            : nearbyDrivers.isEmpty
+                                ? 'Te avisaremos cuando haya uno disponible.'
+                                : paymentMethod == 'DEUNA'
+                                    ? 'Conductores cercanos que aceptan DeUna.'
+                                    : 'Conductores cercanos que aceptan efectivo.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: Theme.of(context)
                                 .colorScheme
@@ -9418,6 +9440,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             const _PassengerSectionTitle('Método de pago',
                 icon: Icons.account_balance_wallet_outlined),
             DropdownButtonFormField<String>(
+              key: const ValueKey('passenger-payment-method'),
               initialValue: paymentMethod,
               decoration: const InputDecoration(isDense: true),
               items: const [
