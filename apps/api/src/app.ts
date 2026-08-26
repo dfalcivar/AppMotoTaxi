@@ -120,6 +120,7 @@ const driverEnrollmentSchema = z.object({
 });
 const pointSchema = z.object({ longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) });
 const availabilitySchema = z.object({ available: z.boolean(), location: pointSchema.optional() });
+const driverPaymentSettingsSchema = z.object({ deunaEnabled: z.boolean() });
 const tripDestinationSchema = z.object({
   location: pointSchema,
   reference: z.string().trim().min(1).max(200)
@@ -1473,6 +1474,7 @@ export async function buildApp() {
         v.identifier as vehicle,
         (coalesce(u.profile_photo_data, photo.file_data) is not null) as "hasPhoto",
         u.profile_photo_updated_at as "photoUpdatedAt", d.approval_status as "approvalStatus",
+        coalesce(d.deuna_enabled, false) as "deunaEnabled",
         d.approval_observation as "approvalObservation"
       from users u
       left join drivers d on d.user_id=u.id
@@ -1664,6 +1666,20 @@ export async function buildApp() {
     }
     else realtime.publishDriverUnavailable(user.id!);
     return { available: parsed.data.available };
+  });
+
+  app.put("/v1/driver/payment-settings", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
+    if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = driverPaymentSettingsSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_PAYMENT_SETTINGS" });
+    const [settings] = await database()`
+      update drivers set deuna_enabled=${parsed.data.deunaEnabled}
+      where user_id=${user.id!}
+      returning coalesce(deuna_enabled, false) as "deunaEnabled"
+    `;
+    if (!settings) return reply.code(404).send({ error: "DRIVER_NOT_FOUND" });
+    return settings;
   });
 
   app.get("/v1/trips/scheduling-settings", async (request, reply) => {

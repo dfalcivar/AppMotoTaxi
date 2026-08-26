@@ -1698,6 +1698,10 @@ class Api {
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
+  Future<Map<String, dynamic>> updateDriverPaymentSettings(
+          String t, bool deunaEnabled) async =>
+      Map<String, dynamic>.from(await call('PUT', '/v1/driver/payment-settings',
+          token: t, body: {'deunaEnabled': deunaEnabled}));
   Future<dynamic> updateProfilePhoto(
           String t, String fileBase64, String fileMime) =>
       call('PUT', '/v1/profile/photo', token: t, body: {
@@ -3861,6 +3865,7 @@ class _ProfileState extends State<Profile> {
   bool biometricEnabled = false;
   bool photoBusy = false;
   bool pushTestBusy = false;
+  bool paymentSettingsBusy = false;
   @override
   void initState() {
     super.initState();
@@ -3897,6 +3902,31 @@ class _ProfileState extends State<Profile> {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(BiometricSessionStore.errorMessage(error))));
       }
+    }
+  }
+
+  Future<void> updateDeunaPreference(bool enabled) async {
+    if (paymentSettingsBusy) return;
+    setState(() => paymentSettingsBusy = true);
+    try {
+      final settings =
+          await Api().updateDriverPaymentSettings(widget.s.token, enabled);
+      if (!mounted) return;
+      setState(() {
+        p = Map<String, dynamic>.from(p as Map)
+          ..['deunaEnabled'] = settings['deunaEnabled'] == true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(enabled
+              ? 'Ya puedes recibir viajes con pago DeUna.'
+              : 'Los viajes con pago DeUna quedaron desactivados.')));
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => paymentSettingsBusy = false);
     }
   }
 
@@ -4078,6 +4108,17 @@ class _ProfileState extends State<Profile> {
                     leading: const Icon(Icons.electric_rickshaw_outlined),
                     title: const Text('Mototaxi'),
                     subtitle: Text(p['vehicle'])),
+              ],
+              if (widget.s.role == 'DRIVER') ...[
+                const Divider(height: 1),
+                SwitchListTile(
+                  secondary: const Icon(Icons.account_balance_wallet_outlined),
+                  title: const Text('Cobros con DeUna'),
+                  subtitle: const Text(
+                      'Actívalo para recibir solicitudes pagadas con DeUna.'),
+                  value: p['deunaEnabled'] == true,
+                  onChanged: paymentSettingsBusy ? null : updateDeunaPreference,
+                ),
               ],
             ]),
           ),
@@ -5915,6 +5956,45 @@ class _CostaGoEmblem extends StatelessWidget {
       );
 }
 
+class _CancellationInfoRow extends StatelessWidget {
+  const _CancellationInfoRow({
+    required this.icon,
+    required this.title,
+    required this.detail,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 19, color: colors.primary),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(detail,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: colors.onSurfaceVariant)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _PassengerSectionTitle extends StatelessWidget {
   const _PassengerSectionTitle(this.title,
       {this.icon, this.trailing, this.subtitle});
@@ -6782,6 +6862,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         context: context,
         tripId: tripId,
         userId: widget.s.id,
+        isDriver: false,
         realtime: realtime,
         loadHistory: () => api.messages(widget.s.token, tripId),
         sendFallback: (clientId, body) =>
@@ -8689,18 +8770,79 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (tripId == null) return;
     final confirmed = await showDialog<bool>(
             context: context,
-            builder: (dialogContext) => AlertDialog(
-                    title: const Text('Cancelar solicitud'),
-                    content: const Text(
-                        '¿Deseas cancelar antes de que un conductor acepte?'),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(dialogContext, false),
-                          child: const Text('Volver')),
-                      FilledButton(
-                          onPressed: () => Navigator.pop(dialogContext, true),
-                          child: const Text('Cancelar solicitud'))
-                    ])) ??
+            builder: (dialogContext) {
+              final theme = Theme.of(dialogContext);
+              final colors = theme.colorScheme;
+              return AlertDialog(
+                icon: CircleAvatar(
+                  radius: 27,
+                  backgroundColor: colors.errorContainer,
+                  foregroundColor: colors.onErrorContainer,
+                  child: const Icon(Icons.delete_outline_rounded),
+                ),
+                title: const Text('Cancelar búsqueda',
+                    textAlign: TextAlign.center),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '¿Deseas cancelar la búsqueda de mototaxi?',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Aún podemos buscar un conductor para ti.',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: colors.outlineVariant),
+                      ),
+                      child: Column(
+                        children: [
+                          _CancellationInfoRow(
+                            icon: Icons.schedule_rounded,
+                            title: 'Podrías esperar menos tiempo',
+                            detail:
+                                'Si continúas esperando, te avisaremos cuando un conductor acepte tu solicitud.',
+                          ),
+                          Divider(height: 18, color: colors.outlineVariant),
+                          const _CancellationInfoRow(
+                            icon: Icons.shield_outlined,
+                            title: 'No se te cobrará nada',
+                            detail: 'Cancelar en este momento no tiene costo.',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                actionsAlignment: MainAxisAlignment.center,
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Volver'),
+                  ),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.error,
+                      foregroundColor: colors.onError,
+                    ),
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    icon: const Icon(Icons.close_rounded),
+                    label: const Text('Sí, cancelar búsqueda'),
+                  ),
+                ],
+              );
+            }) ??
         false;
     if (!confirmed) return;
     try {
@@ -9439,19 +9581,69 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const _PassengerSectionTitle('Método de pago',
                 icon: Icons.account_balance_wallet_outlined),
-            DropdownButtonFormField<String>(
+            Row(
               key: const ValueKey('passenger-payment-method'),
-              initialValue: paymentMethod,
-              decoration: const InputDecoration(isDense: true),
-              items: const [
-                DropdownMenuItem(
-                    value: 'CASH', child: Text('Pago en efectivo')),
-                DropdownMenuItem(
-                    value: 'DEUNA', child: Text('Pago con De Una')),
+              children: [
+                for (final option in const [
+                  ('CASH', 'Efectivo', Icons.payments_outlined),
+                  ('DEUNA', 'DeUna', Icons.account_balance_wallet_outlined),
+                ]) ...[
+                  if (option.$1 != 'CASH') const SizedBox(width: 8),
+                  Expanded(
+                    child: Semantics(
+                      button: true,
+                      selected: paymentMethod == option.$1,
+                      label: 'Pago con ${option.$2}',
+                      child: Material(
+                        color: paymentMethod == option.$1
+                            ? Theme.of(context)
+                                .colorScheme
+                                .primaryContainer
+                                .withValues(alpha: .55)
+                            : Theme.of(context).colorScheme.surface,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(
+                            color: paymentMethod == option.$1
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.outlineVariant,
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: () => updatePaymentMethod(option.$1),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 11),
+                            child: Row(children: [
+                              Icon(option.$3, size: 19),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(option.$2,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w700)),
+                              ),
+                              Icon(
+                                paymentMethod == option.$1
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_unchecked,
+                                size: 19,
+                                color: paymentMethod == option.$1
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                              ),
+                            ]),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
-              onChanged: (value) {
-                if (value != null) updatePaymentMethod(value);
-              },
             ),
           ]);
           if (narrow) {
@@ -10026,6 +10218,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         context: context,
         tripId: tripId,
         userId: widget.s.id,
+        isDriver: true,
         realtime: realtime,
         loadHistory: () => api.messages(widget.s.token, tripId),
         sendFallback: (clientId, body) =>
@@ -11089,60 +11282,104 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => StatefulBuilder(
-            builder: (context, setDialogState) => AlertDialog(
-              icon: const Icon(Icons.cancel_outlined),
-              title: const Text('Cancelar carrera'),
-              content: SingleChildScrollView(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text(
-                      'El pasajero será informado y Costa-Go buscará automáticamente otro conductor.'),
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<String>(
-                    initialValue: reason,
-                    decoration: const InputDecoration(labelText: 'Motivo'),
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'VEHICLE_PROBLEM',
-                          child: Text('Problema con la mototaxi')),
-                      DropdownMenuItem(
-                          value: 'PERSONAL_EMERGENCY',
-                          child: Text('Emergencia personal')),
-                      DropdownMenuItem(
-                          value: 'CANNOT_REACH_PICKUP',
-                          child: Text('No puedo llegar al punto de recogida')),
-                      DropdownMenuItem(
-                          value: 'PASSENGER_CONTACT_ISSUE',
-                          child: Text('No logro contactar al pasajero')),
-                      DropdownMenuItem(value: 'OTHER', child: Text('Otro')),
-                    ],
-                    onChanged: (value) => setDialogState(() => reason = value!),
-                  ),
-                  if (reason == 'OTHER') ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: observation,
-                      onChanged: (_) => setDialogState(() {}),
-                      maxLength: 500,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                          labelText: 'Explica brevemente el motivo'),
-                    ),
-                  ],
-                ]),
-              ),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: const Text('Volver')),
-                FilledButton(
-                  onPressed:
-                      reason == 'OTHER' && observation.text.trim().length < 3
-                          ? null
-                          : () => Navigator.pop(dialogContext, true),
-                  child: const Text('Confirmar cancelación'),
+            builder: (context, setDialogState) {
+              final theme = Theme.of(context);
+              final colors = theme.colorScheme;
+              return AlertDialog(
+                icon: CircleAvatar(
+                  radius: 28,
+                  backgroundColor: colors.errorContainer,
+                  foregroundColor: colors.onErrorContainer,
+                  child: const Icon(Icons.warning_amber_rounded, size: 30),
                 ),
-              ],
-            ),
+                title: const Text('Cancelar carrera'),
+                content: SingleChildScrollView(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(
+                      'El pasajero será informado y Costa-Go intentará reasignar otro conductor.',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<String>(
+                      initialValue: reason,
+                      decoration: const InputDecoration(labelText: 'Motivo'),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'VEHICLE_PROBLEM',
+                            child: Text('Problema con la mototaxi')),
+                        DropdownMenuItem(
+                            value: 'PERSONAL_EMERGENCY',
+                            child: Text('Emergencia personal')),
+                        DropdownMenuItem(
+                            value: 'CANNOT_REACH_PICKUP',
+                            child:
+                                Text('No puedo llegar al punto de recogida')),
+                        DropdownMenuItem(
+                            value: 'PASSENGER_CONTACT_ISSUE',
+                            child: Text('No logro contactar al pasajero')),
+                        DropdownMenuItem(value: 'OTHER', child: Text('Otro')),
+                      ],
+                      onChanged: (value) =>
+                          setDialogState(() => reason = value!),
+                    ),
+                    if (reason == 'OTHER') ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: observation,
+                        onChanged: (_) => setDialogState(() {}),
+                        maxLength: 500,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                            labelText: 'Explica brevemente el motivo'),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: colors.errorContainer,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: colors.error.withValues(alpha: .35)),
+                      ),
+                      child: Row(children: [
+                        Icon(Icons.warning_amber_rounded,
+                            color: colors.onErrorContainer),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            'Esta acción cancelará la carrera actual.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.onErrorContainer,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ]),
+                ),
+                actionsAlignment: MainAxisAlignment.center,
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, false),
+                      child: const Text('Volver')),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.error,
+                      foregroundColor: colors.onError,
+                    ),
+                    onPressed:
+                        reason == 'OTHER' && observation.text.trim().length < 3
+                            ? null
+                            : () => Navigator.pop(dialogContext, true),
+                    child: const Text('Confirmar cancelación'),
+                  ),
+                ],
+              );
+            },
           ),
         ) ??
         false;

@@ -266,6 +266,7 @@ Future<void> openNotificationChat(
       context: context,
       tripId: tripId,
       userId: session.id,
+      isDriver: session.role == 'DRIVER',
       realtime: realtime,
       loadHistory: () => Api().messages(session.token, tripId),
       sendFallback: (clientId, body) =>

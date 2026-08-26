@@ -9,6 +9,7 @@ Future<void> showTripChat({
   required BuildContext context,
   required String tripId,
   required String userId,
+  required bool isDriver,
   required RealtimeService realtime,
   required Future<List<dynamic>> Function() loadHistory,
   required Future<dynamic> Function(String clientMessageId, String body)
@@ -23,6 +24,7 @@ Future<void> showTripChat({
         child: _TripChat(
           tripId: tripId,
           userId: userId,
+          isDriver: isDriver,
           realtime: realtime,
           loadHistory: loadHistory,
           sendFallback: sendFallback,
@@ -34,6 +36,7 @@ class _TripChat extends StatefulWidget {
   const _TripChat({
     required this.tripId,
     required this.userId,
+    required this.isDriver,
     required this.realtime,
     required this.loadHistory,
     required this.sendFallback,
@@ -41,6 +44,7 @@ class _TripChat extends StatefulWidget {
 
   final String tripId;
   final String userId;
+  final bool isDriver;
   final RealtimeService realtime;
   final Future<List<dynamic>> Function() loadHistory;
   final Future<dynamic> Function(String clientMessageId, String body)
@@ -58,13 +62,17 @@ class _TripChatState extends State<_TripChat> {
   bool loading = true;
   bool sending = false;
 
-  static const quickReplies = [
-    'Ya llegué',
-    'Estoy en la entrada',
-    'Voy en camino',
-    'No encuentro el punto',
-    'Espérame un momento',
-  ];
+  List<_QuickReply> get quickReplies => widget.isDriver
+      ? const [
+          _QuickReply('Ya llegué', Icons.location_on_outlined),
+          _QuickReply('Estoy en la entrada', Icons.door_front_door_outlined),
+          _QuickReply('Voy en camino', Icons.electric_rickshaw_outlined),
+        ]
+      : const [
+          _QuickReply('Salgo ahora', Icons.directions_walk_outlined),
+          _QuickReply('No logro verte', Icons.visibility_off_outlined),
+          _QuickReply('Voy en camino', Icons.route_outlined),
+        ];
 
   @override
   void initState() {
@@ -167,113 +175,225 @@ class _TripChatState extends State<_TripChat> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(children: [
-        ListTile(
-          leading: const CircleAvatar(child: Icon(Icons.chat_bubble_outline)),
-          title: const Text('Chat del viaje'),
-          subtitle: const Text('Conversa sin compartir tu número personal'),
-          trailing: IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () => Navigator.pop(context),
-          ),
-        ),
-        SizedBox(
-          height: 46,
-          child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            scrollDirection: Axis.horizontal,
-            itemCount: quickReplies.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (_, index) => ActionChip(
-              label: Text(quickReplies[index]),
-              onPressed: () => _send(quickReplies[index]),
-            ),
-          ),
-        ),
-        const Divider(),
-        Expanded(
-          child: loading
-              ? const Center(child: CircularProgressIndicator())
-              : messages.isEmpty
-                  ? const Center(child: Text('Todavía no hay mensajes.'))
-                  : ListView.builder(
-                      controller: scroll,
-                      padding: const EdgeInsets.all(12),
-                      itemCount: messages.length,
-                      itemBuilder: (_, index) {
-                        final message = messages[index];
-                        final mine = message['mine'] == true;
-                        return Align(
-                          alignment: mine
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: Container(
-                            constraints: const BoxConstraints(maxWidth: 290),
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: mine
-                                  ? Theme.of(context)
-                                      .colorScheme
-                                      .primaryContainer
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (!mine)
-                                  Text(message['senderName']?.toString() ?? '',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelSmall),
-                                Text(message['body']?.toString() ?? ''),
-                                if (mine)
-                                  Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Icon(
-                                      message['readAt'] == null
-                                          ? Icons.done
-                                          : Icons.done_all,
-                                      size: 15,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-        ),
-        Padding(
-          padding: EdgeInsets.only(
-            left: 12,
-            right: 12,
-            top: 8,
-            bottom: MediaQuery.viewInsetsOf(context).bottom + 8,
-          ),
-          child: Row(children: [
-            Expanded(
-              child: TextField(
-                controller: input,
-                maxLength: 500,
-                minLines: 1,
-                maxLines: 4,
-                decoration: const InputDecoration(
-                  hintText: 'Escribe un mensaje',
-                  counterText: '',
-                ),
-                onSubmitted: (_) => _send(),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Material(
+        color: colors.surface,
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+            child: Row(children: [
+              CircleAvatar(
+                backgroundColor: colors.primaryContainer,
+                foregroundColor: colors.onPrimaryContainer,
+                child: const Icon(Icons.chat_bubble_outline),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Chat del viaje',
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                    Text('Conversa sin compartir tu número personal',
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: colors.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Cerrar chat',
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ]),
+          ),
+          SizedBox(
+            height: 42,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              scrollDirection: Axis.horizontal,
+              itemCount: quickReplies.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (_, index) {
+                final reply = quickReplies[index];
+                return ActionChip(
+                  avatar: Icon(reply.icon, size: 16),
+                  visualDensity: VisualDensity.compact,
+                  label: Text(reply.label),
+                  onPressed: sending ? null : () => _send(reply.label),
+                );
+              },
             ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: sending ? null : _send,
-              icon: const Icon(Icons.send),
+          ),
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: colors.primaryContainer.withValues(alpha: .45),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: colors.outlineVariant),
             ),
+            child: Row(children: [
+              Icon(Icons.lock_outline, size: 19, color: colors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Este chat es solo para este viaje. No compartas datos personales.',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: colors.onSurfaceVariant),
+                ),
+              ),
+            ]),
+          ),
+          Row(children: [
+            Expanded(child: Divider(indent: 16, color: colors.outlineVariant)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text('Hoy',
+                  style: theme.textTheme.labelSmall
+                      ?.copyWith(color: colors.onSurfaceVariant)),
+            ),
+            Expanded(
+                child: Divider(endIndent: 16, color: colors.outlineVariant)),
           ]),
-        ),
-      ]);
+          Expanded(
+            child: loading
+                ? const Center(child: CircularProgressIndicator())
+                : messages.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 88,
+                                height: 88,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: colors.surfaceContainerHighest,
+                                ),
+                                child: Icon(Icons.forum_outlined,
+                                    size: 43, color: colors.primary),
+                              ),
+                              const SizedBox(height: 18),
+                              Text('Aún no hay mensajes',
+                                  style: theme.textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w800)),
+                              const SizedBox(height: 4),
+                              Text('Escribe para iniciar la conversación.',
+                                  textAlign: TextAlign.center,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: colors.onSurfaceVariant)),
+                            ],
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: scroll,
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                        itemCount: messages.length,
+                        itemBuilder: (_, index) {
+                          final message = messages[index];
+                          final mine = message['mine'] == true;
+                          return Align(
+                            alignment: mine
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: Container(
+                              constraints: const BoxConstraints(maxWidth: 290),
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: mine
+                                    ? colors.primary
+                                    : colors.surfaceContainerHighest,
+                                borderRadius: BorderRadius.only(
+                                  topLeft: const Radius.circular(16),
+                                  topRight: const Radius.circular(16),
+                                  bottomLeft: Radius.circular(mine ? 16 : 4),
+                                  bottomRight: Radius.circular(mine ? 4 : 16),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (!mine &&
+                                      (message['senderName']?.toString() ?? '')
+                                          .isNotEmpty)
+                                    Text(message['senderName'].toString(),
+                                        style: theme.textTheme.labelSmall),
+                                  Text(message['body']?.toString() ?? '',
+                                      style: TextStyle(
+                                          color: mine
+                                              ? colors.onPrimary
+                                              : colors.onSurface)),
+                                  if (mine)
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Icon(
+                                        message['readAt'] == null
+                                            ? Icons.done
+                                            : Icons.done_all,
+                                        size: 15,
+                                        color: colors.onPrimary,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              child: Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: input,
+                    maxLength: 500,
+                    minLines: 1,
+                    maxLines: 3,
+                    textInputAction: TextInputAction.send,
+                    decoration: const InputDecoration(
+                      hintText: 'Escribe un mensaje…',
+                      counterText: '',
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _send(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  tooltip: 'Enviar mensaje',
+                  onPressed: sending ? null : _send,
+                  icon: sending
+                      ? const SizedBox.square(
+                          dimension: 17,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.send_rounded),
+                ),
+              ]),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _QuickReply {
+  const _QuickReply(this.label, this.icon);
+  final String label;
+  final IconData icon;
 }
