@@ -500,19 +500,28 @@ export async function buildApp() {
       select banner.id::text,banner.title,${effectivePlacement}::text as placement,banner.target_url as "targetUrl",
         banner.starts_at as "startsAt",banner.ends_at as "endsAt",banner.sort_order as "sortOrder",
         banner.updated_at as "updatedAt",banner.advertiser_name as "advertiserName",banner.action_type as "actionType",
-        banner.action_value as "actionValue",coalesce(banner.weight,plan.default_weight,1)::int as weight,
+        banner.action_value as "actionValue",banner.action_message as "actionMessage",
+        coalesce(banner.weight,plan.default_weight,1)::int as weight,
         coalesce(plan.code,'BASIC') as plan,banner.service_area_id::text as "serviceAreaId"
       from affiliate_banners banner left join advertising_plans plan on plan.id=banner.advertising_plan_id
       where banner.active=true and banner.campaign_status='ACTIVE' and banner.starts_at<=now()
         and (banner.ends_at is null or banner.ends_at>now())
         and (${parsed.data.serviceAreaId??null}::uuid is null or banner.service_area_id is null or banner.service_area_id=${parsed.data.serviceAreaId??null})
-        and ((banner.order_id is null and ${effectivePlacement}=banner.placement)
-          or (banner.order_id is not null and (banner.category='PREMIUM'
-            or (banner.category='BASIC' and ${effectivePlacement}='PASSENGER_SEARCHING_DRIVER')
-            or (coalesce(banner.category,'') not in ('BASIC','PREMIUM')
-              and (${effectivePlacement}=banner.placement or ${effectivePlacement}=any(coalesce(plan.allowed_placements,array[banner.placement]))))))
+        and octet_length(banner.image_data)>0
+        and ((banner.order_id is null and ${effectivePlacement}=case
+              when banner.placement in ('PASSENGER_HOME','DRIVER_HOME') then 'PASSENGER_SEARCHING_DRIVER'
+              else banner.placement end)
+          or (banner.order_id is not null and (
+            ${effectivePlacement}=any(case
+              when banner.category='PREMIUM'
+                or upper(coalesce(plan.code,''))='PREMIUM'
+                or 'PASSENGER_WAITING_DRIVER'=any(coalesce(plan.allowed_placements,array[]::text[]))
+                or 'PASSENGER_TRIP_IN_PROGRESS'=any(coalesce(plan.allowed_placements,array[]::text[]))
+              then array['PASSENGER_SEARCHING_DRIVER','PASSENGER_WAITING_DRIVER','PASSENGER_TRIP_IN_PROGRESS']::text[]
+              else array['PASSENGER_SEARCHING_DRIVER']::text[] end)
+          )))
       order by banner.sort_order,banner.starts_at desc
-      limit (select advertising_max_active_per_zone from operational_settings where id=1)
+      limit greatest(coalesce((select advertising_max_active_per_zone from operational_settings where id=1),10),1)
     `;
   });
 

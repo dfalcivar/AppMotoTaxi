@@ -49,4 +49,10 @@ describe("ubicaciones de publicidad comercial", () => {
     expect(migration).toContain("PASSENGER_TRIP_IN_PROGRESS");
     expect(migration).toContain("SET category = 'PREMIUM'");
   });
+
+  it("repara elegibilidad histórica y evita que un límite inválido oculte todas las campañas", async () => {
+    const migration = await readFile(resolve(process.cwd(), "migrations/065_repair_advertising_delivery_eligibility.sql"), "utf8");
+    expect(migration).toContain("banner.category IS DISTINCT FROM");
+    expect(migration).toContain("advertising_max_active_per_zone = 10");
+  });
 });
