@@ -10,6 +10,12 @@ type Section="sectors"|"rules";
 const emptySector={id:"",serviceAreaId:"",code:"",name:"",description:"",priority:0,enabled:false,geometry:null as ServiceAreaGeometry|null};
 const emptyRule={id:"",serviceAreaId:"",originSectorId:"",destinationSectorId:"",minimumPassengers:1,maximumPassengers:1,dayTotalCents:50,nightTotalCents:100,bidirectional:true,enabled:false,priority:0};
 const money=(cents:number)=>new Intl.NumberFormat("es-EC",{style:"currency",currency:"USD"}).format(cents/100);
+const fareErrorMessage=(reason:unknown)=>{
+  const code=reason instanceof Error?reason.message:String(reason);
+  if(code==="INVALID_FARE_RULE")return "Revisa los sectores, pasajeros y valores ingresados. Las tarifas deben expresarse en centavos enteros.";
+  if(code==="FARE_SECTORS_MUST_SHARE_SERVICE_AREA")return "El origen y el destino deben pertenecer a la misma zona de cobertura.";
+  return code;
+};
 
 export function FareTerritories({token,canManage}:{token:string;canManage:boolean}){
   const [areas,setAreas]=useState<Area[]>([]);const [sectors,setSectors]=useState<Sector[]>([]);const [rules,setRules]=useState<Rule[]>([]);
@@ -26,8 +32,8 @@ export function FareTerritories({token,canManage}:{token:string;canManage:boolea
   function editSector(value:Sector){setSector({id:value.id,serviceAreaId:value.serviceAreaId,code:value.code,name:value.name,description:value.description??"",priority:value.priority,enabled:value.enabled,geometry:value.geometry});setDrawing(false);setSectorEditor(true);setError("");setSuccess("");}
   function newRule(){setRule({...emptyRule,serviceAreaId:areaFilter==="ALL"?"":areaFilter});setRuleEditor(true);setError("");setSuccess("");}
   function editRule(value:Rule){setRule({...value});setRuleEditor(true);setError("");setSuccess("");}
-  async function saveSector(event:React.FormEvent){event.preventDefault();if(!sector.geometry)return;setBusy(true);setError("");try{await apiFetch("/v1/admin/fare-sectors",token,{method:"POST",body:JSON.stringify(sector)});setSuccess(sector.id?"Sector tarifario actualizado.":"Sector creado inactivo; revísalo antes de habilitarlo.");setSectorEditor(false);setSector(emptySector);await load();}catch(reason){setError(reason instanceof Error?reason.message:String(reason));}finally{setBusy(false)}}
-  async function saveRule(event:React.FormEvent){event.preventDefault();setBusy(true);setError("");try{await apiFetch("/v1/admin/fare-rules",token,{method:"POST",body:JSON.stringify(rule)});setSuccess(rule.id?"Regla tarifaria actualizada.":"Regla creada inactiva; actívala después de revisarla.");setRuleEditor(false);setRule(emptyRule);await load();}catch(reason){setError(reason instanceof Error?reason.message:String(reason));}finally{setBusy(false)}}
+  async function saveSector(event:React.FormEvent){event.preventDefault();if(!sector.geometry)return;setBusy(true);setError("");try{const {id,...newSectorPayload}=sector;await apiFetch("/v1/admin/fare-sectors",token,{method:"POST",body:JSON.stringify(id?sector:newSectorPayload)});setSuccess(sector.id?"Sector tarifario actualizado.":sector.enabled?"Sector tarifario creado y activado.":"Sector creado inactivo; revísalo antes de habilitarlo.");setSectorEditor(false);setSector(emptySector);await load();}catch(reason){setError(reason instanceof Error?reason.message:String(reason));}finally{setBusy(false)}}
+  async function saveRule(event:React.FormEvent){event.preventDefault();setBusy(true);setError("");try{const {id,...newRulePayload}=rule;await apiFetch("/v1/admin/fare-rules",token,{method:"POST",body:JSON.stringify(id?rule:newRulePayload)});setSuccess(rule.id?"Regla tarifaria actualizada.":rule.enabled?"Regla tarifaria creada y activada.":"Regla creada inactiva; actívala después de revisarla.");setRuleEditor(false);setRule(emptyRule);await load();}catch(reason){setError(fareErrorMessage(reason));}finally{setBusy(false)}}
   const areaSectors=sectors.filter(value=>value.serviceAreaId===rule.serviceAreaId);
   return <section className="fare-module">
     <header className="fare-hero card"><div><span className="eyebrow">TARIFA TERRITORIAL</span><h2>Sectores y trayectos</h2><p>Administra la cobertura tarifaria visualmente. Selecciona una zona y abre únicamente el sector o trayecto que necesites editar.</p></div><div className="fare-kpis"><span><strong>{sectors.length}</strong>Sectores</span><span><strong>{rules.length}</strong>Trayectos</span><span><strong>{rules.filter(value=>value.enabled).length}</strong>Reglas activas</span></div></header>

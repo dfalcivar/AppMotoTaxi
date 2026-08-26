@@ -114,15 +114,16 @@ function decodeAdminDocument(value: z.infer<typeof adminDocumentSchema>): Buffer
   return data;
 }
 const pricingSchema = z.object({ urbanDayCents: z.number().int().nonnegative(), nightCents: z.number().int().nonnegative(), extendedCents: z.number().int().nonnegative(), stopSurchargeCents: z.number().int().nonnegative(), platformCommissionCentsPerLeg: z.number().int().nonnegative().max(10000).default(5), promotionPassengers: z.number().int().min(1).max(3), promotionTotalCents: z.number().int().nonnegative(), activeFrom: z.string().min(10) });
+const optionalUuid = z.preprocess(value => value === "" ? undefined : value, z.string().uuid().optional());
 const fareSectorSchema = z.object({
-  id: z.string().uuid().optional(), serviceAreaId: z.string().uuid(),
+  id: optionalUuid, serviceAreaId: z.string().uuid(),
   code: z.string().trim().min(3).max(60).regex(/^[A-Z0-9_]+$/),
   name: z.string().trim().min(3).max(120), description: z.string().trim().max(500).optional().default(""),
   geometry: serviceAreaPublishSchema.shape.geometry, priority: z.number().int().min(-1000).max(1000).default(0),
   enabled: z.boolean().default(false)
 });
 const fareRuleSchema = z.object({
-  id: z.string().uuid().optional(), serviceAreaId: z.string().uuid(),
+  id: optionalUuid, serviceAreaId: z.string().uuid(),
   originSectorId: z.string().uuid(), destinationSectorId: z.string().uuid(),
   minimumPassengers: z.number().int().min(1).max(3), maximumPassengers: z.number().int().min(1).max(3),
   dayTotalCents: z.number().int().nonnegative(), nightTotalCents: z.number().int().nonnegative(),
@@ -1379,7 +1380,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
           where id=${body.id}::uuid returning id::text,code,name,enabled`
       : await database()`insert into fare_sectors(service_area_id,code,name,description,boundary,priority,enabled,created_by,updated_by)
           values(${body.serviceAreaId}::uuid,${body.code},${body.name},${body.description||null},
-          ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326))::geography,${body.priority},false,${user.id!},${user.id!})
+          ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geometry}),4326))::geography,${body.priority},${body.enabled},${user.id!},${user.id!})
           returning id::text,code,name,enabled`;
     if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,body.id?"FARE_SECTOR_UPDATED":"FARE_SECTOR_CREATED","FARE_SECTOR",item.id,item.code);
@@ -1408,7 +1409,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       : await database()`insert into fare_route_rules(service_area_id,origin_sector_id,destination_sector_id,minimum_passengers,maximum_passengers,
           day_total_cents,night_total_cents,bidirectional,enabled,priority,created_by,updated_by)
           values(${body.serviceAreaId}::uuid,${body.originSectorId}::uuid,${body.destinationSectorId}::uuid,${body.minimumPassengers},${body.maximumPassengers},
-          ${body.dayTotalCents},${body.nightTotalCents},${body.bidirectional},false,${body.priority},${user.id!},${user.id!}) returning id::text`;
+          ${body.dayTotalCents},${body.nightTotalCents},${body.bidirectional},${body.enabled},${body.priority},${user.id!},${user.id!}) returning id::text`;
     if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,body.id?"FARE_RULE_UPDATED":"FARE_RULE_CREATED","FARE_RULE",item.id,`${body.dayTotalCents}/${body.nightTotalCents}`);
     return reply.code(body.id?200:201).send(item);

@@ -106,6 +106,31 @@ describe("consola administrativa", () => {
     expect(denied.statusCode).toBe(403);
   });
 
+  it("acepta una regla tarifaria nueva aunque el formulario envíe el id vacío", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/admin/fare-rules",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: {
+        id: "",
+        serviceAreaId: "11111111-1111-4111-8111-111111111111",
+        originSectorId: "22222222-2222-4222-8222-222222222222",
+        destinationSectorId: "33333333-3333-4333-8333-333333333333",
+        minimumPassengers: 1,
+        maximumPassengers: 1,
+        dayTotalCents: 100,
+        nightTotalCents: 200,
+        bidirectional: true,
+        enabled: true,
+        priority: 0
+      }
+    });
+    // Sin DATABASE_URL la ruta no puede persistir, pero debe superar la
+    // validación del formulario en lugar de responder INVALID_FARE_RULE.
+    expect(response.statusCode).toBe(500);
+    expect(response.json().error).not.toBe("INVALID_FARE_RULE");
+  });
+
   it("protege la bandeja de aprobaciones con permisos de backend", async () => {
     const denied = await app.inject({ method: "GET", url: "/v1/admin/driver-approvals", headers: { authorization: `Bearer ${supportToken}` } });
     expect(denied.statusCode).toBe(403);
