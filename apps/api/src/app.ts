@@ -506,7 +506,11 @@ export async function buildApp() {
       where banner.active=true and banner.campaign_status='ACTIVE' and banner.starts_at<=now()
         and (banner.ends_at is null or banner.ends_at>now())
         and (${parsed.data.serviceAreaId??null}::uuid is null or banner.service_area_id is null or banner.service_area_id=${parsed.data.serviceAreaId??null})
-        and (${effectivePlacement}=banner.placement or ${effectivePlacement}=any(coalesce(plan.allowed_placements,array[banner.placement])))
+        and ((banner.order_id is null and ${effectivePlacement}=banner.placement)
+          or (banner.order_id is not null and (banner.category='PREMIUM'
+            or (banner.category='BASIC' and ${effectivePlacement}='PASSENGER_SEARCHING_DRIVER')
+            or (coalesce(banner.category,'') not in ('BASIC','PREMIUM')
+              and (${effectivePlacement}=banner.placement or ${effectivePlacement}=any(coalesce(plan.allowed_placements,array[banner.placement]))))))
       order by banner.sort_order,banner.starts_at desc
       limit (select advertising_max_active_per_zone from operational_settings where id=1)
     `;
