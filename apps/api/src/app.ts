@@ -4,7 +4,7 @@ import Fastify from "fastify";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { calculateTerritorialFare } from "./fare-engine.js";
-import { firstSearchBounds, nextSearchBounds, type DriverSearchSettings } from "./driver-search.js";
+import { firstSearchBounds, nextSearchBounds, noDriverReason, type DriverSearchSettings } from "./driver-search.js";
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
@@ -555,6 +555,7 @@ export async function buildApp() {
     originReference?: string | null;
     destinationReference?: string | null;
     driverIds?: string[];
+    noDriverReason?: string;
     round?: number;
     lowerMeters?: number;
     upperMeters?: number;
@@ -591,13 +592,47 @@ export async function buildApp() {
         where trip_id=${trip.tripId} and responded_at is null and expires_at<=now()`;
 
       if (!bounds) {
+        const [coverage] = await tx`
+          with eligible as (
+            select d.user_id, d.deuna_enabled
+            from drivers d join users u on u.id=d.user_id
+            where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO'
+              and d.last_location is not null
+              and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
+              and ((select not membership_enforcement_enabled from operational_settings where id=1)
+                or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
+                  and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
+                  and (dm.suspension_at is null or dm.suspension_at>now())))
+              and d.last_location_at > now() - interval '5 minutes'
+              and not exists (select 1 from trips active_trip where active_trip.driver_id=d.user_id
+                and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'))
+              and ST_DWithin(d.last_location,
+                ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography,
+                ${settings.maximumRadiusMeters})
+          )
+          select count(*)::int as "eligibleDrivers",
+            count(*) filter (where ${trip.paymentMethod}='CASH' or deuna_enabled=true)::int as "compatibleDrivers",
+            (select count(*)::int from driver_offers where trip_id=${trip.tripId}) as "offersSent"
+          from eligible
+        `;
+        const eligibleDrivers = Number(coverage?.eligibleDrivers ?? 0);
+        const compatibleDrivers = Number(coverage?.compatibleDrivers ?? 0);
+        const offersSent = Number(coverage?.offersSent ?? 0);
+        const reasonCode = noDriverReason({
+          paymentMethod: trip.paymentMethod,
+          eligibleDrivers,
+          compatibleDrivers,
+          offersSent
+        });
         const [finished] = await tx`update trips set status='NO_DRIVER', driver_search_finished_at=now(),
           driver_search_next_round_at=null where id=${trip.tripId} and status='SEARCHING' returning id`;
         if (!finished) return null;
         await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata)
-          values (${trip.tripId}, 'SEARCHING', 'NO_DRIVER', 'MAXIMUM_SEARCH_RADIUS_REACHED',
-            ${JSON.stringify({ maximumRadiusMeters: settings.maximumRadiusMeters, rounds: currentRound })}::jsonb)`;
-        return { kind: "NO_DRIVER" as const, tripId: String(trip.tripId), passengerId: String(trip.passengerId) };
+          values (${trip.tripId}, 'SEARCHING', 'NO_DRIVER', ${reasonCode},
+            ${JSON.stringify({ paymentMethod: trip.paymentMethod, eligibleDrivers, compatibleDrivers,
+              offersSent, maximumRadiusMeters: settings.maximumRadiusMeters, rounds: currentRound })}::jsonb)`;
+        return { kind: "NO_DRIVER" as const, tripId: String(trip.tripId), passengerId: String(trip.passengerId),
+          noDriverReason: reasonCode };
       }
 
       const [advanced] = await tx`update trips set driver_search_round=${bounds.round},
@@ -615,6 +650,7 @@ export async function buildApp() {
             round(ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography))::int as distance_meters
           from drivers d join users u on u.id=d.user_id
           where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
+          and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
             or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
               and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
@@ -641,7 +677,11 @@ export async function buildApp() {
     });
     if (dispatched?.kind === "NO_DRIVER") {
       realtime.publishToUser(dispatched.passengerId, { type: "trip:status", tripId: dispatched.tripId, status: "NO_DRIVER" });
-      await sendPush(dispatched.passengerId, "No encontramos conductores disponibles", "La búsqueda alcanzó el radio máximo configurado. Puedes intentarlo nuevamente.", { tripId: dispatched.tripId, type: "NO_DRIVER" });
+      const noDriverMessage = dispatched.noDriverReason === 'NO_DEUNA_COMPATIBLE_DRIVER'
+        ? "No encontramos un conductor cercano habilitado para cobros con De Una. Puedes intentar con efectivo."
+        : "La búsqueda alcanzó el radio máximo configurado. Puedes intentarlo nuevamente.";
+      await sendPush(dispatched.passengerId, "No encontramos conductores disponibles", noDriverMessage,
+        { tripId: dispatched.tripId, type: "NO_DRIVER", reasonCode: dispatched.noDriverReason ?? "NO_DRIVER" });
       realtime.publishTripStatus(dispatched.tripId, "NO_DRIVER");
     } else if (dispatched?.kind === "DISPATCHED") {
       const eventAt = new Date().toISOString();
@@ -662,6 +702,76 @@ export async function buildApp() {
         recipients: dispatched.driverIds?.length ?? 0 }, "driver_search_round_dispatched");
     }
     return dispatched;
+  }
+
+  async function dispatchReachedTripsToDriver(driverId: string): Promise<number> {
+    const settings = await configuredDriverSearch();
+    const inserted = await database()`
+      with new_offers as (
+        insert into driver_offers (trip_id, driver_id, expires_at, search_round, distance_meters)
+        select t.id, d.user_id,
+          now() + (${settings.roundWaitSeconds} * interval '1 second'),
+          t.driver_search_round,
+          round(ST_Distance(d.last_location, t.origin))::int
+        from drivers d
+        join users u on u.id=d.user_id
+        join trips t on t.status='SEARCHING'
+          and (t.scheduled_for is null or t.schedule_status='SCHEDULED_READY')
+          and t.driver_search_round>0
+          and t.driver_search_upper_meters>0
+        where d.user_id=${driverId}
+          and d.is_available=true
+          and u.status='ACTIVE'
+          and d.approval_status='APROBADO'
+          and d.last_location is not null
+          and d.last_location_at > now() - interval '5 minutes'
+          and not exists (
+            select 1 from driver_documents dd
+            where dd.driver_id=d.user_id and dd.status='SUSPENDED'
+          )
+          and ((select not membership_enforcement_enabled from operational_settings where id=1)
+            or exists (
+              select 1 from driver_memberships dm
+              where dm.driver_id=d.user_id and dm.cycle_closed_at is null
+                and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE')
+                  or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
+                and (dm.suspension_at is null or dm.suspension_at>now())
+            ))
+          and (t.payment_method='CASH' or d.deuna_enabled=true)
+          and not exists (
+            select 1 from trips active_trip
+            where active_trip.driver_id=d.user_id
+              and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+          )
+          and ST_DWithin(d.last_location, t.origin, t.driver_search_upper_meters)
+        on conflict (trip_id, driver_id) do nothing
+        returning trip_id, driver_id
+      )
+      select n.trip_id::text as "tripId", n.driver_id::text as "driverId",
+        t.passengers, t.origin_reference as "originReference",
+        t.destination_reference as "destinationReference"
+      from new_offers n
+      join trips t on t.id=n.trip_id
+    `;
+    const eventAt = new Date().toISOString();
+    for (const offer of inserted) {
+      const tripId = String(offer.tripId);
+      realtime.publishToUser(driverId, { type: "trip:offer", tripId, eventAt });
+      void sendPush(driverId, "Nuevo viaje cercano",
+        `${Number(offer.passengers)} pasajero(s): ${offer.originReference ?? "Origen"} → ${offer.destinationReference ?? "Destino"}`,
+        { tripId, type: "TRIP_OFFER", eventAt })
+        .then(async push => {
+          if (push.sent > 0) {
+            await database()`update driver_offers set notification_sent_at=now()
+              where trip_id=${tripId} and driver_id=${driverId}`;
+          }
+        })
+        .catch(() => undefined);
+    }
+    if (inserted.length) {
+      app.log.info({ driverId, offers: inserted.length }, "returning_driver_joined_reached_search_rounds");
+    }
+    return inserted.length;
   }
 
   async function processDueDriverSearchRounds(): Promise<void> {
@@ -1551,7 +1661,10 @@ export async function buildApp() {
       if (!area) return reply.code(422).send({ error: "OUTSIDE_SERVICE_AREA" });
     }
     await database()`update drivers set is_available=${parsed.data.available}, last_location=case when ${parsed.data.location ? true : false} then ST_SetSRID(ST_MakePoint(${parsed.data.location?.longitude ?? 0}, ${parsed.data.location?.latitude ?? 0}),4326)::geography else last_location end, last_location_at=case when ${parsed.data.location ? true : false} then now() else last_location_at end where user_id=${user.id!}`;
-    if (parsed.data.available) void redispatchOldestTrip().catch(() => undefined);
+    if (parsed.data.available) {
+      void dispatchReachedTripsToDriver(user.id!).catch(() => undefined);
+      void redispatchOldestTrip().catch(() => undefined);
+    }
     else realtime.publishDriverUnavailable(user.id!);
     return { available: parsed.data.available };
   });
@@ -2395,6 +2508,7 @@ export async function buildApp() {
       `;
       return [];
     }
+    await dispatchReachedTripsToDriver(user.id!);
     await redispatchOldestTrip();
     return database()`
       select o.id::text as "offerId", t.id::text as "tripId", t.passengers,

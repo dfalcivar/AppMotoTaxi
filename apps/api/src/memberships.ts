@@ -639,6 +639,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
   reference?: string;
   referenceHash?: string;
   referenceMasked?: string;
+  referenceDisplay?: string;
   idempotencyKey: string;
 }) {
   return database().begin(async tx => {
@@ -661,12 +662,13 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
     const [payment] = await tx`
       insert into membership_payments (
         order_id,driver_id,collection_point_id,collector_id,method,receiver_scope,
-        verification_channel,amount,currency,reference_normalized_hash,reference_masked,
+        verification_channel,amount,currency,reference_normalized_hash,reference_masked,reference_display,
         settlement_status,confirmed_by,idempotency_key
       ) values (${order.id},${order.driver_id},${input.collectionPointId ?? null},${actor.id!},${input.method},
         ${input.receiverScope},${input.verificationChannel},${order.total_amount},${order.currency},
         ${referenceHash ?? null},
         ${referenceMasked ?? null},
+        ${input.referenceDisplay ?? input.reference?.trim() ?? referenceMasked ?? null},
         ${input.receiverScope === "COLLECTION_POINT" ? "PENDING_SETTLEMENT" : "NOT_APPLICABLE"},
         ${actor.id!},${input.idempotencyKey})
       returning id::text
@@ -692,7 +694,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
         os.membership_timezone,os.membership_suspension_local_time,${current?.id ?? null},${order.plan_snapshot},
         ${plan.duration_days},${plan.base_amount},${plan.included_trips},${extraFee},${plan.extra_trip_share_percent},
         ${plan.max_renewal_amount},${passengerAdditional},${plan.base_amount},'INDIVIDUAL',null,
-        ${order.total_amount},${order.currency},'CONFIRMED',${input.method},${referenceMasked ?? null},
+        ${order.total_amount},${order.currency},'CONFIRMED',${input.method},${input.referenceDisplay ?? input.reference?.trim() ?? referenceMasked ?? null},
         now(),now(),${payment.id},'NORMAL',${actor.id!},${actor.id!}
       from operational_settings os where os.id=1 returning id::text,expires_at as "expiresAt",status
     `;
@@ -1029,7 +1031,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         if (money(order.total_amount) !== money(body.declaredAmount)) throw new Error("PAYMENT_AMOUNT_MISMATCH");
         const [existingProof] = await tx`select id from membership_transfer_proofs where order_id=${id} and status in ('PENDING','APPROVED') limit 1`;
         if (existingProof) throw new Error("TRANSFER_PROOF_ALREADY_SUBMITTED");
-        const [created] = await tx`insert into membership_transfer_proofs(order_id,bank_name,reference_normalized_hash,reference_masked,transfer_date,declared_amount,file_mime,file_data,observation) values (${id},${body.bankName},${sha256(normalized)},${maskReference(body.reference)},${body.transferDate},${body.declaredAmount},${body.fileMime},${data},${body.observation ?? null}) returning id::text,status`;
+        const [created] = await tx`insert into membership_transfer_proofs(order_id,bank_name,reference_normalized_hash,reference_masked,reference_display,transfer_date,declared_amount,file_mime,file_data,observation) values (${id},${body.bankName},${sha256(normalized)},${maskReference(body.reference)},${body.reference.trim()},${body.transferDate},${body.declaredAmount},${body.fileMime},${data},${body.observation ?? null}) returning id::text,status`;
         await tx`update membership_payment_orders set status='PENDING_VERIFICATION',receiver_scope='COSTA_GO_CENTRAL',verification_channel='REMOTE_PROOF',updated_at=now() where id=${id}`;
         return [created];
       });
@@ -1138,7 +1140,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
   app.get("/v1/admin/memberships/:driverId/history", async (request, reply) => { try {
     requirePermission(request,"memberships:view"); const driverId=(request.params as {driverId:string}).driverId;
     const memberships=await database()`select id::text,plan_code as plan,status,starts_at as "startsAt",expires_at as "expiresAt",completed_trips as "completedTrips",extra_trips as "extraTrips",raw_extra_amount::float8 as "rawExtra",billable_extra_amount::float8 as "billableExtra",adjustment_amount::float8 as adjustments,estimated_next_renewal_amount::float8 as "estimatedRenewal",final_renewal_amount::float8 as "finalRenewal",currency,cycle_closed_at as "closedAt",source from driver_memberships where driver_id=${driverId} order by created_at desc`;
-    const payments=await database()`select id::text,amount::float8,currency,method,status,settlement_status as "settlementStatus",reference_masked as reference,confirmed_at as "confirmedAt" from membership_payments where driver_id=${driverId} order by confirmed_at desc`;
+    const payments=await database()`select id::text,amount::float8,currency,method,status,settlement_status as "settlementStatus",coalesce(reference_display,reference_masked) as reference,confirmed_at as "confirmedAt" from membership_payments where driver_id=${driverId} order by confirmed_at desc`;
     const orders=await database()`select id::text,short_code as "shortCode",status,plan_snapshot as plan,base_amount::float8 as "baseAmount",prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",total_amount::float8 as "totalAmount",currency,created_at as "createdAt",expires_at as "expiresAt",paid_at as "paidAt",cancelled_at as "cancelledAt",cancellation_reason_code as "cancellationReason",cancellation_observation as "cancellationObservation" from membership_payment_orders where driver_id=${driverId} order by created_at desc`;
     return { memberships,payments,orders };
   }catch(error){return businessError(error,reply);} });
@@ -1370,9 +1372,9 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/collection-closures",async(request,reply)=>{try{requirePermission(request,"cash_closures:review");return database()`select c.id::text,c.status,c.period_start as "periodStart",c.period_end as "periodEnd",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point,u.full_name as collector,c.created_at as "createdAt" from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join users u on u.id=c.collector_id where c.gross_amount>0 order by c.created_at desc limit 200`; }catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/admin/membership-payments/pending",async(request,reply)=>{try{requirePermission(request,"payments:transfer_review");return database()`select proof.id::text,proof.order_id::text as "orderId",u.full_name as driver,o.total_amount::float8 as "expectedAmount",proof.declared_amount::float8 as "declaredAmount",o.currency,proof.bank_name as bank,proof.reference_masked as reference,proof.transfer_date as "transferDate",proof.status,proof.created_at as "createdAt" from membership_transfer_proofs proof join membership_payment_orders o on o.id=proof.order_id join users u on u.id=o.driver_id where proof.status='PENDING' order by proof.created_at`; }catch(error){return businessError(error,reply);} });
+  app.get("/v1/admin/membership-payments/pending",async(request,reply)=>{try{requirePermission(request,"payments:transfer_review");return database()`select proof.id::text,proof.order_id::text as "orderId",u.full_name as driver,o.total_amount::float8 as "expectedAmount",proof.declared_amount::float8 as "declaredAmount",o.currency,proof.bank_name as bank,coalesce(proof.reference_display,proof.reference_masked) as reference,proof.transfer_date as "transferDate",proof.status,proof.created_at as "createdAt" from membership_transfer_proofs proof join membership_payment_orders o on o.id=proof.order_id join users u on u.id=o.driver_id where proof.status='PENDING' order by proof.created_at`; }catch(error){return businessError(error,reply);} });
 
-  app.post("/v1/admin/membership-payments/:proofId/approve",async(request,reply)=>{try{const actor=requirePermission(request,"payments:transfer_review");const proofId=(request.params as {proofId:string}).proofId;const body=z.object({idempotencyKey:z.string().min(8).max(120)}).parse(request.body);const [proof]=await database()`select p.*,o.id::text as "orderId" from membership_transfer_proofs p join membership_payment_orders o on o.id=p.order_id where p.id=${proofId} and p.status='PENDING'`;if(!proof)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});const result=await processMembershipPayment(proof.orderId,actor,{method:'BANK_TRANSFER',receiverScope:'COSTA_GO_CENTRAL',verificationChannel:'REMOTE_PROOF',referenceHash:String(proof.reference_normalized_hash),referenceMasked:String(proof.reference_masked),idempotencyKey:body.idempotencyKey});await database()`update membership_transfer_proofs set status='APPROVED',reviewed_by=${actor.id!},reviewed_at=now() where id=${proofId} and status='PENDING'`;return result;}catch(error){return businessError(error,reply);} });
+  app.post("/v1/admin/membership-payments/:proofId/approve",async(request,reply)=>{try{const actor=requirePermission(request,"payments:transfer_review");const proofId=(request.params as {proofId:string}).proofId;const body=z.object({idempotencyKey:z.string().min(8).max(120)}).parse(request.body);const [proof]=await database()`select p.*,o.id::text as "orderId" from membership_transfer_proofs p join membership_payment_orders o on o.id=p.order_id where p.id=${proofId} and p.status='PENDING'`;if(!proof)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});const result=await processMembershipPayment(proof.orderId,actor,{method:'BANK_TRANSFER',receiverScope:'COSTA_GO_CENTRAL',verificationChannel:'REMOTE_PROOF',referenceHash:String(proof.reference_normalized_hash),referenceMasked:String(proof.reference_masked),referenceDisplay:String(proof.reference_display ?? proof.reference_masked),idempotencyKey:body.idempotencyKey});await database()`update membership_transfer_proofs set status='APPROVED',reviewed_by=${actor.id!},reviewed_at=now() where id=${proofId} and status='PENDING'`;return result;}catch(error){return businessError(error,reply);} });
 
   app.post("/v1/admin/membership-payments/:proofId/reject",async(request,reply)=>{try{const actor=requirePermission(request,"payments:transfer_review");const proofId=(request.params as {proofId:string}).proofId;const body=z.object({reason:z.enum(['TRANSFER_NOT_FOUND','WRONG_AMOUNT','DUPLICATE_RECEIPT','INVALID_RECEIPT','OTHER']),comment:z.string().trim().min(3).max(500)}).parse(request.body);const [proof]=await database().begin(async tx=>{const [item]=await tx`update membership_transfer_proofs set status='REJECTED',reviewed_by=${actor.id!},reviewed_at=now(),rejection_reason=${`${body.reason}: ${body.comment}`} where id=${proofId} and status='PENDING' returning id::text,order_id::text as "orderId"`;if(item)await tx`update membership_payment_orders set status='REJECTED',rejected_at=now(),updated_at=now() where id=${item.orderId}`;return [item];});if(!proof)return reply.code(409).send({error:'PAYMENT_ORDER_NOT_PAYABLE'});await persistAudit(actor,'PAYMENT_REJECTED','MEMBERSHIP_TRANSFER_PROOF',proofId,body.comment);return proof;}catch(error){return businessError(error,reply);} });
 }

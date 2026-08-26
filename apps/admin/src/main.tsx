@@ -75,7 +75,11 @@ const stateLabels: Record<string, string> = {
   ACTIVATED: "Activado", URBAN: "Urbana", EXTENDED: "Extendida",
   NUEVO: "Nuevo", ASIGNADO: "Asignado", EN_REVISION: "En revisión",
   ESPERANDO_USUARIO: "Esperando usuario", RESUELTO: "Resuelto", CERRADO: "Cerrado",
-  SUGGESTED: "Valor sugerido", CONFIGURED: "Regla territorial"
+  SUGGESTED: "Valor sugerido", CONFIGURED: "Regla territorial",
+  CASH: "Efectivo", DEUNA: "De Una",
+  NO_DEUNA_COMPATIBLE_DRIVER: "Sin conductor habilitado para De Una",
+  NO_DRIVER_ACCEPTED: "Ningún conductor aceptó",
+  NO_ELIGIBLE_DRIVER_IN_RADIUS: "Sin conductores elegibles en el radio"
 };
 
 function errorText(error: unknown) {
@@ -242,6 +246,7 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
     scheduledTrips: { label: "Programados", icon: "◷", tone: "neutral" },
     searchingWithoutDriver: { label: "Buscando conductor", icon: "⌕", tone: "live-tone" },
     withoutDriver: { label: "Sin conductor encontrado", icon: "!", tone: "warning" },
+    deunaWithoutCompatibleDriver: { label: "Sin conductor habilitado para De Una", icon: "$", tone: "warning" },
     connectedDrivers: { label: "Conductores conectados", icon: "⌁", tone: "positive" },
     activeDrivers: { label: "Conductores habilitados", icon: "◉", tone: "neutral" },
     pendingDrivers: { label: "Pendientes de aprobación", icon: "…", tone: "warning" },

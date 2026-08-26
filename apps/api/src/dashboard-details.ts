@@ -3,7 +3,7 @@ import type { DashboardFilters } from "./dashboard-filters.js";
 
 export const dashboardDetailMetrics = [
   "requestedTrips", "completedTrips", "cancelledTrips", "activeTrips",
-  "scheduledTrips", "searchingWithoutDriver", "withoutDriver", "connectedDrivers", "activeDrivers",
+  "scheduledTrips", "searchingWithoutDriver", "withoutDriver", "deunaWithoutCompatibleDriver", "connectedDrivers", "activeDrivers",
   "pendingDrivers", "averageAssignmentSeconds", "averageWaitSeconds",
   "averageTripSeconds", "openIncidents", "acceptanceRate", "cancellationRate",
   "offersSent", "offersRejected", "offersExpired", "offersTakenByAnother",
@@ -38,6 +38,9 @@ function tripMetricCondition(sql: ReturnType<typeof database>, metric: Dashboard
     case "scheduledTrips": return sql`t.scheduled_for is not null`;
     case "searchingWithoutDriver": return sql`t.driver_id is null and t.status='SEARCHING'`;
     case "withoutDriver": return sql`t.driver_id is null and t.status='NO_DRIVER'`;
+    case "deunaWithoutCompatibleDriver": return sql`t.driver_id is null and t.status='NO_DRIVER' and t.payment_method='DEUNA'
+      and exists(select 1 from trip_events e where e.trip_id=t.id and e.to_status='NO_DRIVER'
+        and e.reason_code='NO_DEUNA_COMPATIBLE_DRIVER')`;
     case "averageAssignmentSeconds": return sql`t.assigned_at is not null`;
     case "averageWaitSeconds": return sql`exists(select 1 from trip_events e where e.trip_id=t.id and e.to_status='DRIVER_ARRIVED')`;
     case "averageTripSeconds": return sql`t.completed_at is not null and t.started_at is not null`;
@@ -194,19 +197,31 @@ export async function dashboardMetricDetails(filters: DashboardFilters, metric: 
       coalesce(t.origin_reference,'Sin referencia') origin,
       coalesce(t.destination_reference,'Sin referencia') destination,
       t.quoted_total_cents as "totalCents", t.requested_at as "requestedAt",
-      t.scheduled_for as "scheduledFor"
+      t.scheduled_for as "scheduledFor", t.payment_method as "paymentMethod",
+      failure.reason_code as "failureReason"
     from trips t join users passenger on passenger.id=t.passenger_id
     left join users driver on driver.id=t.driver_id
+    left join lateral (
+      select e.reason_code from trip_events e where e.trip_id=t.id and e.to_status='NO_DRIVER'
+      order by e.occurred_at desc limit 1
+    ) failure on true
     where ${tripScope(sql, filters)} and ${condition}
       and (${options.search.trim()}='' or passenger.full_name ilike ${search}
         or coalesce(driver.full_name,'') ilike ${search} or t.id::text ilike ${search}
         or coalesce(t.origin_reference,'') ilike ${search} or coalesce(t.destination_reference,'') ilike ${search})
     order by t.requested_at desc limit ${options.pageSize} offset ${offset}
   `;
-  return result(metric, options, rows, [
+  const columns = [
     { key:"status",label:"Estado",type:"status" }, { key:"passenger",label:"Pasajero" },
     { key:"driver",label:"Conductor" }, { key:"origin",label:"Origen" },
     { key:"destination",label:"Destino" }, { key:"totalCents",label:"Total",type:"money" },
     { key:"requestedAt",label:"Solicitado",type:"date" }
-  ]);
+  ];
+  if (["withoutDriver","deunaWithoutCompatibleDriver","neverAccepted"].includes(metric)) {
+    columns.splice(1, 0,
+      { key:"paymentMethod",label:"Pago",type:"status" },
+      { key:"failureReason",label:"Motivo",type:"status" }
+    );
+  }
+  return result(metric, options, rows, columns);
 }

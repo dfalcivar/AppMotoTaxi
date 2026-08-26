@@ -56,6 +56,10 @@ export async function dashboardAnalytics(filters: DashboardFilters) {
         count(*) filter (where scheduled_for is not null)::int as "scheduledTrips",
         count(*) filter (where driver_id is null and status='SEARCHING')::int as "searchingWithoutDriver",
         count(*) filter (where driver_id is null and status='NO_DRIVER')::int as "withoutDriver",
+        count(*) filter (where driver_id is null and status='NO_DRIVER' and payment_method='DEUNA'
+          and exists(select 1 from trip_events failure where failure.trip_id=filtered.id
+            and failure.to_status='NO_DRIVER' and failure.reason_code='NO_DEUNA_COMPATIBLE_DRIVER'))::int
+          as "deunaWithoutCompatibleDriver",
         coalesce(round(avg(extract(epoch from (assigned_at-requested_at))) filter (where assigned_at is not null))::int,0) as "averageAssignmentSeconds",
         coalesce(round(avg(extract(epoch from (a.arrived_at-filtered.requested_at))) filter (where a.arrived_at is not null))::int,0) as "averageWaitSeconds",
         coalesce(round(avg(extract(epoch from (completed_at-started_at))) filter (where completed_at is not null and started_at is not null))::int,0) as "averageTripSeconds",

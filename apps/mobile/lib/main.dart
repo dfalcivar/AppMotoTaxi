@@ -1766,12 +1766,14 @@ class Api {
       }).toString(),
       token: t);
 
-  Future<List<dynamic>> nearbyDrivers(String t, LatLng point) async {
+  Future<List<dynamic>> nearbyDrivers(String t, LatLng point,
+      {String paymentMethod = 'CASH'}) async {
     final result = await call(
       'GET',
       Uri(path: '/v1/drivers/nearby', queryParameters: {
         'latitude': point.latitude.toString(),
         'longitude': point.longitude.toString(),
+        'paymentMethod': paymentMethod,
       }).toString(),
       token: t,
     );
@@ -6477,7 +6479,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       message = 'Modo de revisión de Google Play activo.';
       routePoints = [];
     });
-    realtime.subscribeNearby(point.latitude, point.longitude);
+    realtime.subscribeNearby(point.latitude, point.longitude,
+        paymentMethod: paymentMethod);
     unawaited(refreshNearbyDrivers(point));
     try {
       final result = await api.reverse(widget.s.token, point);
@@ -6796,12 +6799,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (tripId != null) {
         realtime.subscribeTrip(tripId);
       } else if (pickup != null) {
-        realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+        realtime.subscribeNearby(pickup!.latitude, pickup!.longitude,
+            paymentMethod: paymentMethod);
         unawaited(refreshNearbyDrivers());
       }
       return;
     }
     if (type == 'nearby:snapshot') {
+      if (event['paymentMethod']?.toString() != paymentMethod) return;
       final items = List<dynamic>.from(event['drivers'] ?? const []);
       setState(() {
         nearbyDrivers
@@ -6815,6 +6820,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       return;
     }
     if (type == 'nearby:update') {
+      if (event['paymentMethod']?.toString() != paymentMethod) return;
       final item = Map<String, dynamic>.from(event['driver'] as Map);
       setState(() => nearbyDrivers[item['driverId'].toString()] = LatLng(
           (item['latitude'] as num).toDouble(),
@@ -6889,9 +6895,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Future<void> refreshNearbyDrivers([LatLng? focus]) async {
     final point = focus ?? pickup;
     if (point == null || active != null) return;
+    final requestedPaymentMethod = paymentMethod;
     try {
-      final items = await api.nearbyDrivers(widget.s.token, point);
-      if (!mounted || active != null || pickup != point) return;
+      final items = await api.nearbyDrivers(widget.s.token, point,
+          paymentMethod: requestedPaymentMethod);
+      if (!mounted ||
+          active != null ||
+          pickup != point ||
+          paymentMethod != requestedPaymentMethod) {
+        return;
+      }
       setState(() {
         nearbyDrivers
           ..clear()
@@ -6904,6 +6917,19 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     } catch (_) {
       // El WebSocket sigue siendo la fuente principal si falla este respaldo.
     }
+  }
+
+  void updatePaymentMethod(String value) {
+    if (paymentMethod == value) return;
+    setState(() {
+      paymentMethod = value;
+      nearbyDrivers.clear();
+    });
+    final point = pickup;
+    if (point == null || active != null) return;
+    realtime.subscribeNearby(point.latitude, point.longitude,
+        paymentMethod: paymentMethod);
+    unawaited(refreshNearbyDrivers(point));
   }
 
   Future<void> resetAfterCompletedTrip() async {
@@ -6932,7 +6958,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       routeDurationSeconds = null;
       mapSelection = null;
     });
-    realtime.subscribeNearby(point.latitude, point.longitude);
+    realtime.subscribeNearby(point.latitude, point.longitude,
+        paymentMethod: paymentMethod);
     unawaited(refreshNearbyDrivers(point));
     try {
       final result = await api.reverse(widget.s.token, point);
@@ -6977,7 +7004,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           });
           _movePassengerSheet(.35);
           if (pickup != null) {
-            realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+            realtime.subscribeNearby(pickup!.latitude, pickup!.longitude,
+                paymentMethod: paymentMethod);
             unawaited(refreshNearbyDrivers());
           }
         }
@@ -7014,7 +7042,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         });
         _movePassengerSheet(.35);
         if (pickup != null) {
-          realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+          realtime.subscribeNearby(pickup!.latitude, pickup!.longitude,
+              paymentMethod: paymentMethod);
           unawaited(refreshNearbyDrivers());
         }
         return;
@@ -7108,7 +7137,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         unawaited(showPassengerCoverageError(code, coverageMessage));
         return;
       }
-      realtime.subscribeNearby(position.latitude, position.longitude);
+      realtime.subscribeNearby(position.latitude, position.longitude,
+          paymentMethod: paymentMethod);
       unawaited(refreshNearbyDrivers(point));
       refreshRoute(force: true);
       try {
@@ -7195,7 +7225,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         unawaited(showPassengerCoverageError(code, coverageMessage));
         return;
       }
-      realtime.subscribeNearby(point.latitude, point.longitude);
+      realtime.subscribeNearby(point.latitude, point.longitude,
+          paymentMethod: paymentMethod);
       unawaited(refreshNearbyDrivers(point));
       try {
         final result = await api.reverse(widget.s.token, point);
@@ -7506,7 +7537,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
     _movePassengerSheet(.35);
     if (isOrigin) {
-      realtime.subscribeNearby(point.latitude, point.longitude);
+      realtime.subscribeNearby(point.latitude, point.longitude,
+          paymentMethod: paymentMethod);
       unawaited(refreshNearbyDrivers(point));
     }
     await refreshRoute(force: true);
@@ -7665,7 +7697,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         message = 'Ubicación actualizada en el mapa.';
       });
       if (isOrigin && pickup != null) {
-        realtime.subscribeNearby(pickup!.latitude, pickup!.longitude);
+        realtime.subscribeNearby(pickup!.latitude, pickup!.longitude,
+            paymentMethod: paymentMethod);
         unawaited(refreshNearbyDrivers(pickup));
       }
       refreshRoute(force: true);
@@ -7740,7 +7773,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
     _movePassengerSheet(.35);
     if (selection == MapPointSelection.origin) {
-      realtime.subscribeNearby(point.latitude, point.longitude);
+      realtime.subscribeNearby(point.latitude, point.longitude,
+          paymentMethod: paymentMethod);
       unawaited(refreshNearbyDrivers(point));
     }
     refreshRoute(force: true);
@@ -9392,7 +9426,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 DropdownMenuItem(
                     value: 'DEUNA', child: Text('Pago con De Una')),
               ],
-              onChanged: (value) => setState(() => paymentMethod = value!),
+              onChanged: (value) {
+                if (value != null) updatePaymentMethod(value);
+              },
             ),
           ]);
           if (narrow) {

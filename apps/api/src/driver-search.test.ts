@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstSearchBounds, nextSearchBounds, type DriverSearchSettings } from "./driver-search.js";
+import { firstSearchBounds, nextSearchBounds, noDriverReason, type DriverSearchSettings } from "./driver-search.js";
 
 const settings: DriverSearchSettings = {
   initialRadiusMeters: 1000,
@@ -31,5 +31,28 @@ describe("progressive driver search bounds", () => {
   it("supports a first round equal to the maximum radius", () => {
     expect(firstSearchBounds({ ...settings, initialRadiusMeters: 3000, maximumRadiusMeters: 3000 }))
       .toEqual({ round: 1, lowerMeters: 0, upperMeters: 3000, finalRound: true });
+  });
+});
+
+describe("driver search terminal audit reason", () => {
+  it("identifies De Una requests with nearby drivers but no compatible collector", () => {
+    expect(noDriverReason({
+      paymentMethod: "DEUNA", eligibleDrivers: 4, compatibleDrivers: 0, offersSent: 0
+    })).toBe("NO_DEUNA_COMPATIBLE_DRIVER");
+  });
+
+  it("distinguishes offers that expired or were rejected", () => {
+    expect(noDriverReason({
+      paymentMethod: "DEUNA", eligibleDrivers: 4, compatibleDrivers: 2, offersSent: 2
+    })).toBe("NO_DRIVER_ACCEPTED");
+    expect(noDriverReason({
+      paymentMethod: "CASH", eligibleDrivers: 3, compatibleDrivers: 3, offersSent: 3
+    })).toBe("NO_DRIVER_ACCEPTED");
+  });
+
+  it("keeps lack of eligible drivers separate from payment incompatibility", () => {
+    expect(noDriverReason({
+      paymentMethod: "DEUNA", eligibleDrivers: 0, compatibleDrivers: 0, offersSent: 0
+    })).toBe("NO_ELIGIBLE_DRIVER_IN_RADIUS");
   });
 });

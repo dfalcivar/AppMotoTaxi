@@ -11,10 +11,16 @@ const pointSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180)
 });
+const paymentMethodSchema = z.enum(["CASH", "DEUNA"]);
 
 const incomingSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("trip:subscribe"), tripId: z.string().uuid() }),
-  z.object({ type: z.literal("nearby:subscribe"), latitude: pointSchema.shape.latitude, longitude: pointSchema.shape.longitude }),
+  z.object({
+    type: z.literal("nearby:subscribe"),
+    latitude: pointSchema.shape.latitude,
+    longitude: pointSchema.shape.longitude,
+    paymentMethod: paymentMethodSchema.default("CASH")
+  }),
   z.object({
     type: z.literal("driver:location"),
     tripId: z.string().uuid().optional(),
@@ -36,14 +42,14 @@ const incomingSchema = z.discriminatedUnion("type", [
 ]);
 
 const historyQuerySchema = z.object({ before: z.string().datetime().optional() });
-const nearbyQuerySchema = pointSchema;
+const nearbyQuerySchema = pointSchema.extend({ paymentMethod: paymentMethodSchema.default("CASH") });
 const restMessageSchema = z.object({ clientMessageId: z.string().uuid(), body: z.string().trim().min(1).max(500) });
 
 interface ClientState {
   socket: WebSocket;
   user: SessionUser;
   tripIds: Set<string>;
-  nearby?: { latitude: number; longitude: number };
+  nearby?: { latitude: number; longitude: number; paymentMethod: "CASH" | "DEUNA" };
 }
 
 interface ChatInput {
@@ -113,7 +119,12 @@ async function tripForParticipant(user: SessionUser, tripId: string) {
   return trip as { tripId: string; passengerId: string; driverId: string | null; status: string; completedAt: Date | null } | undefined;
 }
 
-async function nearbyDrivers(latitude: number, longitude: number, excludeDriverId?: string) {
+async function nearbyDrivers(
+  latitude: number,
+  longitude: number,
+  paymentMethod: "CASH" | "DEUNA" = "CASH",
+  excludeDriverId?: string
+) {
   const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
   const radius = Number(settings?.search_radius_meters ?? 3000);
   const rows = await database()`
@@ -123,7 +134,21 @@ async function nearbyDrivers(latitude: number, longitude: number, excludeDriverI
       d.last_location_at as "recordedAt"
     from drivers d
     join users u on u.id=d.user_id
-    where d.is_available=true and u.status='ACTIVE' and d.last_location is not null
+    where d.is_available=true and u.status='ACTIVE'
+      and d.approval_status='APROBADO' and d.last_location is not null
+      and (${paymentMethod}='CASH' or d.deuna_enabled=true)
+      and not exists (
+        select 1 from driver_documents dd
+        where dd.driver_id=d.user_id and dd.status='SUSPENDED'
+      )
+      and ((select not membership_enforcement_enabled from operational_settings where id=1)
+        or exists (
+          select 1 from driver_memberships dm
+          where dm.driver_id=d.user_id and dm.cycle_closed_at is null
+            and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE')
+              or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
+            and (dm.suspension_at is null or dm.suspension_at>now())
+        ))
       and (${excludeDriverId ?? null}::uuid is null or d.user_id <> ${excludeDriverId ?? null}::uuid)
       and d.last_location_at > now() - interval '5 minutes'
       and not exists (
@@ -186,10 +211,16 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
 
   const broadcastNearbyLocation = async (driverId: string, location: { latitude: number; longitude: number; recordedAt: string }) => {
     const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
+    const [driver] = await database()`select deuna_enabled as "deunaEnabled" from drivers where user_id=${driverId}`;
     const radius = Number(settings?.search_radius_meters ?? 3000);
     for (const client of clients) {
       if (!client.nearby || distanceMeters(client.nearby, location) > radius) continue;
-      send(client.socket, { type: "nearby:update", driver: { driverId: publicDriverId(driverId), ...location } });
+      if (client.nearby.paymentMethod === "DEUNA" && driver?.deunaEnabled !== true) continue;
+      send(client.socket, {
+        type: "nearby:update",
+        paymentMethod: client.nearby.paymentMethod,
+        driver: { driverId: publicDriverId(driverId), ...location }
+      });
     }
   };
 
@@ -234,8 +265,16 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
 
           if (event.type === "nearby:subscribe") {
             if (user.role !== "PASSENGER") { send(socket, { type: "error", code: "FORBIDDEN" }); return; }
-            state.nearby = { latitude: event.latitude, longitude: event.longitude };
-            send(socket, { type: "nearby:snapshot", drivers: await nearbyDrivers(event.latitude, event.longitude) });
+            state.nearby = {
+              latitude: event.latitude,
+              longitude: event.longitude,
+              paymentMethod: event.paymentMethod
+            };
+            send(socket, {
+              type: "nearby:snapshot",
+              paymentMethod: event.paymentMethod,
+              drivers: await nearbyDrivers(event.latitude, event.longitude, event.paymentMethod)
+            });
             return;
           }
 
@@ -346,7 +385,14 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION" });
     const area = await resolveServiceArea(user.id!, parsed.data);
     if (!area) return reply.code(422).send({ error: "OUTSIDE_SERVICE_AREA" });
-    return { drivers: await nearbyDrivers(parsed.data.latitude, parsed.data.longitude, user.role === "DRIVER" ? user.id : undefined) };
+    return {
+      drivers: await nearbyDrivers(
+        parsed.data.latitude,
+        parsed.data.longitude,
+        parsed.data.paymentMethod,
+        user.role === "DRIVER" ? user.id : undefined
+      )
+    };
   });
 
   app.get("/v1/trips/:tripId/messages", async (request, reply) => {

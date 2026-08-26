@@ -90,10 +90,13 @@ class RealtimeService {
   bool subscribeTrip(String tripId) =>
       send({'type': 'trip:subscribe', 'tripId': tripId});
 
-  bool subscribeNearby(double latitude, double longitude) => send({
+  bool subscribeNearby(double latitude, double longitude,
+          {String paymentMethod = 'CASH'}) =>
+      send({
         'type': 'nearby:subscribe',
         'latitude': latitude,
         'longitude': longitude,
+        'paymentMethod': paymentMethod,
       });
 
   bool sendDriverLocation({
