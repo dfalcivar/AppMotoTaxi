@@ -341,21 +341,70 @@ function fareRangeSummary(trip: any) {
   }).join(" · ");
 }
 
+function validFarePoint(point: any) {
+  return Number.isFinite(Number(point?.latitude)) && Number.isFinite(Number(point?.longitude));
+}
+
+function farePointCoordinates(point: any) {
+  return `${Number(point.latitude).toFixed(6)}, ${Number(point.longitude).toFixed(6)}`;
+}
+
+function farePointMapUrl(point: any) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${Number(point.latitude)},${Number(point.longitude)}`)}`;
+}
+
+function FarePointCard({ label, reference, point, historicalSector, copied, onCopy }: { label: string; reference?: string; point: any; historicalSector?: unknown; copied: boolean; onCopy: () => void }) {
+  if (!validFarePoint(point)) return <article className="fare-point-card unavailable"><strong>{label}</strong><span>{reference ?? "Sin referencia"}</span><small>Este viaje no conserva coordenadas consultables.</small></article>;
+  const currentSector = point?.fareSector;
+  const currentStatus = currentSector?.contains
+    ? `Actualmente dentro de ${currentSector.name ?? fareSectorLabel(currentSector.code)}`
+    : currentSector
+      ? `Actualmente fuera de los sectores · más cercano: ${currentSector.name ?? fareSectorLabel(currentSector.code)} a ${Math.max(0, Number(currentSector.distanceMeters ?? 0))} m`
+      : "Actualmente fuera de todos los sectores tarifarios activos";
+  return <article className="fare-point-card">
+    <div className="fare-point-heading"><div><strong>{label}</strong><span>{reference ?? "Sin referencia"}</span></div><span className={`fare-point-status ${currentSector?.contains ? "inside" : "outside"}`}>{currentSector?.contains ? "Dentro" : "Fuera"}</span></div>
+    <code>{farePointCoordinates(point)}</code>
+    <small><b>Clasificación histórica:</b> {fareSectorLabel(historicalSector)}</small>
+    <small><b>Geometría vigente:</b> {currentStatus}</small>
+    <div className="fare-point-actions"><a className="secondary" href={farePointMapUrl(point)} target="_blank" rel="noreferrer">Ver en Google Maps</a><button className="secondary" type="button" onClick={onCopy}>{copied ? "Coordenadas copiadas" : "Copiar coordenadas"}</button></div>
+  </article>;
+}
+
 function FareAuditDialog({ trip, onClose }: { trip: any; onClose: () => void }) {
   const snapshot = pricingSnapshotOf(trip);
   const legs = fareLegs(trip);
   const hasDistanceFare = legs.some(leg => leg.method === "DISTANCE");
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card fare-audit-modal" role="dialog" aria-modal="true"><Header eyebrow="AUDITORÍA TARIFARIA" title="Cómo se calculó este viaje" action={`Versión ${trip.pricingVersion ?? snapshot.version ?? "—"}`} /><p><strong>{trip.originReference ?? "Origen"}</strong> → {trip.destinationReference ?? "Destino"}</p>{legs.length ? <Table headers={["Tramo", "Rango tarifario", "Distancia de ruta", "Tarifa", "Comisión", "Aplicación"]} rows={legs.map((leg, index) => [Number(leg.order ?? index + 1), `${fareSectorLabel(leg.originSector)} → ${fareSectorLabel(leg.destinationSector)}`, leg.distanceMeters == null ? "No registrada" : `${(Number(leg.distanceMeters) / 1000).toFixed(2)} km`, money(Number(leg.fareCents ?? 0)), money(Number(leg.commissionCents ?? 0)), fareMethodLabel(leg)])} /> : <Empty text="Este viaje es anterior al detalle tarifario por tramos." />}<div className="metric-grid fare-audit-summary"><article className="metric"><span>Tarifa de trayectos</span><strong>{money(Number(snapshot.baseCents ?? 0))}</strong></article><article className="metric"><span>Comisión operativa</span><strong>{money(Number(snapshot.platformCommissionCents ?? 0))}</strong></article><article className="metric"><span>Adicional por paradas</span><strong>{money(Number(snapshot.stopSurchargeCents ?? 0))}</strong></article><article className="metric"><span>Total cotizado</span><strong>{money(Number(trip.quotedTotalCents ?? snapshot.totalCents ?? 0))}</strong></article></div><small>{snapshot.suggested ? "Se utilizó al menos un valor sugerido porque no existía una regla territorial exacta y la ruta estaba dentro del límite local." : hasDistanceFare ? `No existía una regla territorial exacta; se aplicaron ${Number(snapshot.distancePolicy?.centsPerKm ?? 0)} ctvs/km sobre la ruta real, con límite local de ${Number(snapshot.distancePolicy?.localMaximumMeters ?? 0) / 1000} km y mínimo de ${money(Number(snapshot.distancePolicy?.minimumCents ?? 0))}.` : "Se aplicaron reglas territoriales configuradas vigentes al momento de solicitar el viaje."}</small><div className="modal-actions"><button className="primary" type="button" onClick={onClose}>Cerrar</button></div></section></div>;
+  const [copiedPoint, setCopiedPoint] = useState("");
+  const stops = Array.isArray(trip.stops) && trip.stops.length
+    ? trip.stops
+    : [{ order: 1, reference: trip.destinationReference, ...trip.destinationLocation }];
+  async function copyPoint(key: string, point: any) {
+    try { await navigator.clipboard.writeText(farePointCoordinates(point)); setCopiedPoint(key); }
+    catch { setCopiedPoint(""); }
+  }
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card fare-audit-modal" role="dialog" aria-modal="true">
+    <Header eyebrow="AUDITORÍA TARIFARIA" title="Cómo se calculó este viaje" action={`Versión ${trip.pricingVersion ?? snapshot.version ?? "—"}`} />
+    <p><strong>{trip.originReference ?? "Origen"}</strong> → {trip.destinationReference ?? "Destino"}</p>
+    <section className="fare-point-section"><div className="fare-point-title"><strong>Puntos geográficos del pedido</strong><small>La clasificación histórica explica el cobro. La geometría vigente permite comprobar ajustes posteriores de los polígonos.</small></div><div className="fare-point-grid">
+      <FarePointCard label="Origen" reference={trip.originReference} point={trip.originLocation} historicalSector={legs[0]?.originSector} copied={copiedPoint === "origin"} onCopy={() => void copyPoint("origin", trip.originLocation)} />
+      {stops.map((stop: any, index: number) => <FarePointCard key={stop.order ?? index} label={`Destino ${Number(stop.order ?? index + 1)}`} reference={stop.reference} point={stop} historicalSector={legs[index]?.destinationSector} copied={copiedPoint === `stop-${index}`} onCopy={() => void copyPoint(`stop-${index}`, stop)} />)}
+    </div></section>
+    {legs.length ? <Table headers={["Tramo", "Rango tarifario", "Distancia de ruta", "Tarifa", "Comisión", "Aplicación"]} rows={legs.map((leg, index) => [Number(leg.order ?? index + 1), `${fareSectorLabel(leg.originSector)} → ${fareSectorLabel(leg.destinationSector)}`, leg.distanceMeters == null ? "No registrada" : `${(Number(leg.distanceMeters) / 1000).toFixed(2)} km`, money(Number(leg.fareCents ?? 0)), money(Number(leg.commissionCents ?? 0)), fareMethodLabel(leg)])} /> : <Empty text="Este viaje es anterior al detalle tarifario por tramos." />}
+    <div className="metric-grid fare-audit-summary"><article className="metric"><span>Tarifa de trayectos</span><strong>{money(Number(snapshot.baseCents ?? 0))}</strong></article><article className="metric"><span>Comisión operativa</span><strong>{money(Number(snapshot.platformCommissionCents ?? 0))}</strong></article><article className="metric"><span>Adicional por paradas</span><strong>{money(Number(snapshot.stopSurchargeCents ?? 0))}</strong></article><article className="metric"><span>Total cotizado</span><strong>{money(Number(trip.quotedTotalCents ?? snapshot.totalCents ?? 0))}</strong></article></div>
+    <small>{snapshot.suggested ? "Se utilizó al menos un valor sugerido porque no existía una regla territorial exacta y la ruta estaba dentro del límite local." : hasDistanceFare ? `No existía una regla territorial exacta; se aplicaron ${Number(snapshot.distancePolicy?.centsPerKm ?? 0)} ctvs/km sobre la ruta real, con límite local de ${Number(snapshot.distancePolicy?.localMaximumMeters ?? 0) / 1000} km y mínimo de ${money(Number(snapshot.distancePolicy?.minimumCents ?? 0))}.` : "Se aplicaron reglas territoriales configuradas vigentes al momento de solicitar el viaje."}</small>
+    <div className="modal-actions"><button className="primary" type="button" onClick={onClose}>Cerrar</button></div>
+  </section></div>;
 }
 
 function Trips({ token, admin }: { token: string; admin: boolean }) {
   const [data, setData] = useState<any[]>([]); const [error, setError] = useState("");
   const [cancelTrip, setCancelTrip] = useState<any | null>(null); const [cancelling, setCancelling] = useState(false);
-  const [fareTrip, setFareTrip] = useState<any | null>(null);
+  const [fareTrip, setFareTrip] = useState<any | null>(null); const [fareLoadingId, setFareLoadingId] = useState("");
   const [filters, setFilters] = useState({ scheduled: "ALL", status: "", passenger: "", driver: "", from: "", to: "", unassigned: false });
   const load = () => { const query = new URLSearchParams(); Object.entries(filters).forEach(([key, value]) => { if (value !== "" && value !== false && value !== "ALL") query.set(key, String(value)); }); return apiFetch<any[]>(`/v1/admin/trips${query.size ? `?${query}` : ""}`, token).then(setData).catch(reason => setError(errorText(reason))); };
   useEffect(() => { void load(); const id = setInterval(load, 15000); return () => clearInterval(id); }, [token, filters]);
   async function cancel(reason: string) { if (!cancelTrip) return; setCancelling(true); setError(""); try { await apiFetch(`/v1/admin/trips/${cancelTrip.id}/action`, token, { method: "POST", body: JSON.stringify({ action: "CANCEL", reason }) }); setCancelTrip(null); await load(); } catch (cause) { setError(errorText(cause)); } finally { setCancelling(false); } }
+  async function openFareAudit(trip: any) { setFareLoadingId(trip.id); setError(""); try { setFareTrip(await apiFetch(`/v1/admin/trips/${trip.id}/fare-audit`, token)); } catch (cause) { setError(errorText(cause)); } finally { setFareLoadingId(""); } }
   return <>
     <section className="card"><Header eyebrow="FILTROS" title="Viajes inmediatos y programados" action={`${data.filter(t => !["COMPLETED", "CANCELLED", "NO_DRIVER"].includes(t.status)).length} activos`} /><div className="filter-grid"><label>Tipo<select value={filters.scheduled} onChange={event => setFilters({ ...filters, scheduled: event.target.value })}><option value="ALL">Todos</option><option value="IMMEDIATE">Inmediatos</option><option value="SCHEDULED">Programados</option></select></label><label>Estado<select value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{["SEARCHING", "ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED"].map(value => <option key={value} value={value}>{stateLabels[value]}</option>)}</select></label><label>Pasajero<input value={filters.passenger} onChange={event => setFilters({ ...filters, passenger: event.target.value })} /></label><label>Conductor<input value={filters.driver} onChange={event => setFilters({ ...filters, driver: event.target.value })} /></label><label>Desde<input type="date" value={filters.from} onChange={event => setFilters({ ...filters, from: event.target.value })} /></label><label>Hasta<input type="date" value={filters.to} onChange={event => setFilters({ ...filters, to: event.target.value })} /></label><label className="checkbox"><input type="checkbox" checked={filters.unassigned} onChange={event => setFilters({ ...filters, unassigned: event.target.checked })} /> Solo sin conductor</label></div></section>
     <section className="card"><Header eyebrow="OPERACIÓN" title="Viajes y asignaciones" /><Notice error={error} />{data.length ? <Table headers={["Fecha del viaje", "Pasajero", "Conductor", "Itinerario", "Rango tarifario", "Estado", "Total", "Creado", "Acción"]} rows={data.map(t => [
@@ -363,7 +412,7 @@ function Trips({ token, admin }: { token: string; admin: boolean }) {
       t.passenger,
       t.driver,
       <div><strong>{t.originReference ?? "Origen"}</strong>{(t.stops?.length ? t.stops : [{ reference: t.destinationReference }]).map((stop: any, index: number) => <small key={index} className="table-line">→ {index + 1}. {stop.reference ?? "Destino"}</small>)}</div>,
-      <div className="fare-range-cell"><strong>{fareRangeSummary(t)}</strong>{fareLegs(t).length ? <><small className="table-line">{[...new Set(fareLegs(t).map(fareMethodLabel))].join(" · ")}</small><button className="link" type="button" onClick={() => setFareTrip(t)}>Ver cálculo</button></> : null}</div>,
+      <div className="fare-range-cell"><strong>{fareRangeSummary(t)}</strong>{fareLegs(t).length ? <><small className="table-line">{[...new Set(fareLegs(t).map(fareMethodLabel))].join(" · ")}</small><button className="link" type="button" disabled={fareLoadingId === t.id} onClick={() => void openFareAudit(t)}>{fareLoadingId === t.id ? "Consultando…" : "Ver cálculo"}</button></> : null}</div>,
       <div><Badge value={t.scheduleStatus ?? t.status} /><small className="table-line">{stateLabels[t.status] ?? String(t.status).replaceAll("_", " ")}</small></div>,
       money(t.quotedTotalCents),
       new Date(t.requestedAt).toLocaleString(),

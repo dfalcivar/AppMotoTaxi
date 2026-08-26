@@ -30,6 +30,113 @@
   margin: 22px 0 14px;
 }
 
+.fare-point-section {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 22px;
+}
+
+.fare-point-title {
+  display: grid;
+  gap: 3px;
+}
+
+.fare-point-title strong {
+  color: #17343c;
+}
+
+.fare-point-title small {
+  color: #587178;
+}
+
+.fare-point-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fare-point-card {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid #cbdde2;
+  border-radius: 16px;
+  background: #f8fbfc;
+}
+
+.fare-point-card.unavailable {
+  color: #587178;
+}
+
+.fare-point-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fare-point-heading > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fare-point-heading strong,
+.fare-point-heading span {
+  overflow-wrap: anywhere;
+}
+
+.fare-point-card code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: #e8f1f4;
+  color: #17343c;
+  font-size: .8rem;
+  overflow-wrap: anywhere;
+}
+
+.fare-point-card small {
+  color: #587178;
+  line-height: 1.35;
+}
+
+.fare-point-status {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 800;
+}
+
+.fare-point-status.inside {
+  background: #ddf3e6;
+  color: #286044;
+}
+
+.fare-point-status.outside {
+  background: #fff1ca;
+  color: #775a12;
+}
+
+.fare-point-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.fare-point-actions .secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 11px;
+  text-decoration: none;
+}
+
 .badge.suggested {
   background: #fff1ca;
   color: #775a12;
@@ -48,6 +155,10 @@
 
   .fare-audit-summary {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .fare-point-grid {
+    grid-template-columns: 1fr;
   }
 }
 

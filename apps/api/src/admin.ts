@@ -1476,6 +1476,78 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       order by coalesce(t.scheduled_for,t.requested_at) desc limit 200
     `;
   } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_TRIP_FILTERS"}); return guardError(e, reply); } });
+  app.get("/v1/admin/trips/:id/fare-audit", async (request, reply) => { try {
+    requirePermission(request, "trips:view");
+    if (!process.env.DATABASE_URL) return reply.code(404).send({ error: "TRIP_NOT_FOUND" });
+    const id = z.string().uuid().parse((request.params as { id: string }).id);
+    const [trip] = await database()`
+      select t.id::text, t.quoted_total_cents as "quotedTotalCents",
+        t.pricing_version as "pricingVersion", t.pricing_snapshot as "pricingSnapshot",
+        t.origin_reference as "originReference", t.destination_reference as "destinationReference",
+        json_build_object(
+          'latitude', ST_Y(t.origin::geometry),
+          'longitude', ST_X(t.origin::geometry),
+          'fareSector', (
+            select json_build_object(
+              'code', sector.code,
+              'name', sector.name,
+              'contains', ST_Covers(sector.boundary, t.origin),
+              'distanceMeters', round(ST_Distance(sector.boundary, t.origin))::int
+            )
+            from fare_sectors sector
+            where sector.service_area_id=t.service_area_id and sector.enabled=true
+            order by ST_Covers(sector.boundary, t.origin) desc,
+              ST_Distance(sector.boundary, t.origin), sector.priority desc
+            limit 1
+          )
+        ) as "originLocation",
+        json_build_object(
+          'latitude', ST_Y(t.destination::geometry),
+          'longitude', ST_X(t.destination::geometry),
+          'fareSector', (
+            select json_build_object(
+              'code', sector.code,
+              'name', sector.name,
+              'contains', ST_Covers(sector.boundary, t.destination),
+              'distanceMeters', round(ST_Distance(sector.boundary, t.destination))::int
+            )
+            from fare_sectors sector
+            where sector.service_area_id=t.service_area_id and sector.enabled=true
+            order by ST_Covers(sector.boundary, t.destination) desc,
+              ST_Distance(sector.boundary, t.destination), sector.priority desc
+            limit 1
+          )
+        ) as "destinationLocation",
+        coalesce((
+          select json_agg(json_build_object(
+            'order', stop.stop_order,
+            'reference', stop.reference,
+            'completedAt', stop.completed_at,
+            'latitude', ST_Y(stop.location::geometry),
+            'longitude', ST_X(stop.location::geometry),
+            'fareSector', (
+              select json_build_object(
+                'code', sector.code,
+                'name', sector.name,
+                'contains', ST_Covers(sector.boundary, stop.location),
+                'distanceMeters', round(ST_Distance(sector.boundary, stop.location))::int
+              )
+              from fare_sectors sector
+              where sector.service_area_id=t.service_area_id and sector.enabled=true
+              order by ST_Covers(sector.boundary, stop.location) desc,
+                ST_Distance(sector.boundary, stop.location), sector.priority desc
+              limit 1
+            )
+          ) order by stop.stop_order)
+          from trip_stops stop where stop.trip_id=t.id
+        ), '[]'::json) as stops
+      from trips t
+      where t.id=${id}::uuid
+      limit 1
+    `;
+    if (!trip) return reply.code(404).send({ error: "TRIP_NOT_FOUND" });
+    return trip;
+  } catch(e) { if(e instanceof z.ZodError)return reply.code(400).send({error:"INVALID_TRIP_ID"}); return guardError(e, reply); } });
   app.get("/v1/admin/settings", async (request, reply) => { try {
     requirePermission(request, "settings:view");
     const [settings] = await database()`select search_radius_meters as "searchRadiusMeters",
