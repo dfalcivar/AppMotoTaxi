@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { cellsToGeometry, generateHexGrid, pointInGeometry, type HexGridStats } from "./hex-grid.js";
 
 export type Point = [number, number];
 export type ServiceAreaGeometry = { type: "Polygon"; coordinates: Point[][] } | { type: "MultiPolygon"; coordinates: Point[][][] };
@@ -80,9 +81,10 @@ function googlePaths(geometry: ServiceAreaGeometry) {
   return polygonsOf(geometry).map(polygon => polygon.map(ring => ring.slice(0, -1).map(([lng, lat]) => ({ lat, lng }))));
 }
 
-export function ServiceAreaMap({ geometry, zones, editable, drawing, onDrawingChange, onGeometryChange, selectedId }:{
+export function ServiceAreaMap({ geometry, zones, editable, drawing, onDrawingChange, onGeometryChange, selectedId, hexMode=false, hexBoundary=null, hexCellRadiusMeters=250, onHexStatsChange }:{
   geometry?: ServiceAreaGeometry | null; zones: ZoneLayer[]; editable: boolean; drawing: boolean;
   onDrawingChange(value:boolean):void; onGeometryChange(value:ServiceAreaGeometry|null):void; selectedId?:string;
+  hexMode?:boolean; hexBoundary?:ServiceAreaGeometry|null; hexCellRadiusMeters?:number; onHexStatsChange?(value:HexGridStats):void;
 }) {
   const host = useRef<HTMLDivElement>(null); const map = useRef<any>(null); const overlays = useRef<any[]>([]);
   const listenerHandles = useRef<any[]>([]); const draft = useRef<Point[]>([]); const draftLine = useRef<any>(null);
@@ -104,7 +106,20 @@ export function ServiceAreaMap({ geometry, zones, editable, drawing, onDrawingCh
     for(const zone of zones){if(zone.id===selectedId)continue;for(const paths of googlePaths(zone.geometry)){
       const polygon=new maps.Polygon({map:map.current,paths,strokeColor:zone.enabled?"#427b85":"#87989c",strokeOpacity:.75,strokeWeight:1.5,fillColor:zone.enabled?"#5ba9b4":"#aebabc",fillOpacity:.12,clickable:false});overlays.current.push(polygon);
     }}
-    if(geometry){for(const paths of googlePaths(geometry)){
+    if(hexMode&&hexBoundary){
+      const cells=generateHexGrid(hexBoundary,hexCellRadiusMeters);
+      const selectedIds=new Set(cells.filter(cell=>pointInGeometry(cell.center,geometry)).map(cell=>cell.id));
+      const otherEnabled=zones.filter(zone=>zone.id!==selectedId&&zone.enabled);
+      for(const paths of googlePaths(hexBoundary)){const boundary=new maps.Polygon({map:map.current,paths,strokeColor:"#087f8c",strokeWeight:3,fillColor:"#1aa2ae",fillOpacity:.03,clickable:false});overlays.current.push(boundary);}
+      for(const cell of cells){
+        const selected=selectedIds.has(cell.id);const overlaps=selected&&otherEnabled.some(zone=>pointInGeometry(cell.center,zone.geometry));
+        const polygon=new maps.Polygon({map:map.current,paths:cell.ring.map(([lng,lat])=>({lat,lng})),strokeColor:overlaps?"#d97706":selected?"#087f8c":"#78909c",strokeOpacity:.9,strokeWeight:selected?2:1,fillColor:overlaps?"#f59e0b":selected?"#1aa2ae":"#cbd5e1",fillOpacity: selected ? 0.3 : 0.1,clickable:editable});overlays.current.push(polygon);
+        if(editable)listenerHandles.current.push(maps.event.addListener(polygon,"click",()=>{const next=new Set(selectedIds);if(next.has(cell.id))next.delete(cell.id);else next.add(cell.id);skipNextFit.current=true;onGeometryChange(cellsToGeometry(cells.filter(candidate=>next.has(candidate.id))));}));
+      }
+      const overlaps=cells.filter(cell=>selectedIds.has(cell.id)&&otherEnabled.some(zone=>pointInGeometry(cell.center,zone.geometry))).length;
+      const gaps=cells.filter(cell=>!selectedIds.has(cell.id)&&!otherEnabled.some(zone=>pointInGeometry(cell.center,zone.geometry))).length;
+      onHexStatsChange?.({total:cells.length,selected:selectedIds.size,gaps,overlaps});
+    }else if(geometry){for(const paths of googlePaths(geometry)){
       const polygon=new maps.Polygon({map:map.current,paths,editable,draggable:false,strokeColor:"#087f8c",strokeWeight:3,fillColor:"#1aa2ae",fillOpacity:.22});overlays.current.push(polygon);
       if(editable){const sync=()=>{if(syncTimer.current)window.clearTimeout(syncTimer.current);syncTimer.current=window.setTimeout(()=>{const polygons=overlays.current.filter(layer=>layer.getPaths&&layer.getEditable?.()).map(layer=>{
         const rings:Point[][]=[];layer.getPaths().forEach((path:any)=>{const points:Point[]=[];path.forEach((p:any)=>points.push([p.lng(),p.lat()]));rings.push(closeRing(points));});return rings;});
@@ -113,21 +128,21 @@ export function ServiceAreaMap({ geometry, zones, editable, drawing, onDrawingCh
         listenerHandles.current.push(maps.event.addListener(polygon,"rightclick",(event:any)=>{if(event.vertex==null)return;const path=polygon.getPaths().getAt(event.path??0);if(path.getLength()>3)path.removeAt(event.vertex);}));
       }
     }}
-    const candidates=geometry?[geometry]:zones.map(zone=>zone.geometry);const bounds=new maps.LatLngBounds();let count=0;
+    const candidates=hexMode&&hexBoundary?[hexBoundary]:geometry?[geometry]:zones.map(zone=>zone.geometry);const bounds=new maps.LatLngBounds();let count=0;
     candidates.flatMap(polygonsOf).flat(2).forEach(([lng,lat])=>{bounds.extend({lat,lng});count++;});if(count&&!skipNextFit.current)map.current.fitBounds(bounds,64);skipNextFit.current=false;
-  },[geometry,zones,editable,selectedId,ready]);
+  },[geometry,zones,editable,selectedId,ready,hexMode,hexBoundary,hexCellRadiusMeters,onHexStatsChange]);
 
   useEffect(()=>{if(!map.current||!window.google?.maps)return;const maps=window.google.maps;
     if(draftLine.current){draftLine.current.setMap(null);draftLine.current=undefined;}draft.current=[];
-    if(!drawing)return;
+    if(!drawing||hexMode)return;
     draftLine.current=new maps.Polyline({map:map.current,path:[],strokeColor:"#e2a820",strokeWeight:3});
     const handle=maps.event.addListener(map.current,"click",(event:any)=>{const point:Point=[event.latLng.lng(),event.latLng.lat()];draft.current.push(point);draftLine.current.setPath(draft.current.map(([lng,lat])=>({lat,lng})));
       if(draft.current.length>=3)onGeometryChange({type:"Polygon",coordinates:[closeRing(draft.current)]});});
     return()=>{handle.remove?.();};
-  },[drawing,ready]);
+  },[drawing,ready,hexMode]);
 
   if(error)return <div className="map-configuration-error"><strong>Google Maps no está configurado</strong><span>{error}</span></div>;
-  return <div className="service-area-map-shell"><div ref={host} className="service-area-google-map" />{editable&&<div className="map-editor-tools">
+  return <div className="service-area-map-shell"><div ref={host} className="service-area-google-map" />{editable&&!hexMode&&<div className="map-editor-tools">
     <button type="button" className={drawing?"primary":"secondary"} onClick={()=>onDrawingChange(!drawing)}>{drawing?"Finalizar dibujo":"Dibujar zona"}</button>
     <button type="button" className="secondary" onClick={()=>{draft.current.pop();if(draft.current.length>=3)onGeometryChange({type:"Polygon",coordinates:[closeRing(draft.current)]});else onGeometryChange(null);}}>Deshacer punto</button>
     <button type="button" className="secondary" onClick={()=>{draft.current=[];onGeometryChange(null);}}>Limpiar</button>
