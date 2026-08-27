@@ -12,6 +12,7 @@ import { database } from "./database.js";
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
+import { registerTripSharingRoutes } from "./trip-sharing.js";
 import { reverseLocation, searchLocations, searchLocationsInArea } from "./geocoding.js";
 import { computeRoute, type RouteResult } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
@@ -439,6 +440,7 @@ export async function buildApp() {
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
   await registerSupportRoutes(app);
+  await registerTripSharingRoutes(app);
   await registerMembershipRoutes(app);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);

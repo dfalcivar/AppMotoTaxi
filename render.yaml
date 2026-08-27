@@ -41,6 +41,8 @@ services:
         sync: false
       - key: PUBLIC_WEB_BASE_URL
         value: https://costa-go.com
+      - key: PUBLIC_SITE_BASE_URL
+        value: https://costa-go.com
       - key: SENTRY_DSN
         sync: false
       - key: SENTRY_ENVIRONMENT
@@ -82,6 +84,12 @@ services:
       - key: PUBLIC_API_BASE_URL
         value: https://mototaxi-atacames-api.onrender.com
     routes:
+      - type: rewrite
+        source: /viaje/*
+        destination: /viaje/index.html
+      - type: rewrite
+        source: /viaje
+        destination: /viaje/index.html
       - type: rewrite
         source: /anunciarme/comprobante/*
         destination: /anunciarme/comprobante/index.html

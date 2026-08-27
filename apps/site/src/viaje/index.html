@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow,noarchive" />
+  <meta name="theme-color" content="#06375d" />
+  <title>Seguimiento seguro | Costa-Go</title>
+  <style>
+    :root{color-scheme:light dark;--navy:#06375d;--blue:#087fbd;--cyan:#0ab4e5;--surface:#fff;--soft:#eef7fb;--text:#092f43;--muted:#607985;--line:#d7e5eb;--ok:#169b62;--shadow:0 18px 55px rgba(1,42,65,.14)}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at top right,rgba(10,180,229,.16),transparent 35%),linear-gradient(160deg,#f8fcfe,#eaf6fa)}
+    main{width:min(680px,100%);margin:auto;padding:24px 16px 42px}header{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:20px}header img{width:64px;height:64px;object-fit:contain}header strong{display:block;color:var(--navy);font-size:1.35rem}header span{color:var(--muted)}
+    .card{background:var(--surface);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);overflow:hidden}.hero{padding:25px 22px 20px;background:linear-gradient(135deg,var(--navy),var(--blue));color:#fff}.eyebrow{margin:0 0 8px;font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;opacity:.78;font-weight:800}h1{margin:0;font-size:clamp(1.55rem,6vw,2.25rem);line-height:1.08}.reference{margin:10px 0 0;opacity:.88;font-weight:700}.content{padding:20px}
+    .driver{display:grid;grid-template-columns:52px 1fr;gap:13px;align-items:center;padding-bottom:18px;border-bottom:1px solid var(--line)}.avatar{width:52px;height:52px;display:grid;place-items:center;border-radius:16px;background:var(--soft);color:var(--blue);font-size:25px}.driver strong{display:block;font-size:1.12rem}.driver small{color:var(--muted)}
+    .route{position:relative;margin:19px 0;padding-left:29px;display:grid;gap:18px}.route:before{content:"";position:absolute;left:8px;top:13px;bottom:13px;border-left:2px dashed #a9cbd9}.point{position:relative}.point:before{content:"";position:absolute;left:-26px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--blue);border:3px solid var(--surface);box-shadow:0 0 0 2px var(--blue)}.point span{display:block;color:var(--muted);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.point p{margin:4px 0 0;line-height:1.35}
+    .tracking{padding:16px;border-radius:18px;background:var(--soft);border:1px solid var(--line)}.tracking-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.pulse{display:inline-flex;align-items:center;gap:8px;font-weight:800;color:var(--ok)}.pulse:before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor;box-shadow:0 0 0 6px rgba(22,155,98,.12)}.tracking p{color:var(--muted);margin:8px 0 13px;font-size:.9rem}.button{display:flex;justify-content:center;align-items:center;min-height:46px;border-radius:14px;color:#fff;background:linear-gradient(135deg,var(--blue),var(--cyan));text-decoration:none;font-weight:800}.privacy{margin:18px 8px 0;text-align:center;color:var(--muted);font-size:.78rem;line-height:1.45}
+    .state{padding:34px 22px;text-align:center}.state img{width:92px}.state h1{margin:10px 0;color:var(--navy)}.state p{color:var(--muted)}[hidden]{display:none!important}
+    @media(prefers-color-scheme:dark){:root{--surface:#101b22;--soft:#172731;--text:#eef8fb;--muted:#a9bdc7;--line:#29414c;--shadow:0 18px 55px rgba(0,0,0,.35)}body{background:radial-gradient(circle at top right,rgba(10,180,229,.13),transparent 35%),#081218}header strong,.state h1{color:#ecfaff}}
+  </style>
+</head>
+<body>
+<main>
+  <header><img src="/assets/costa-go-emblem.png" alt="Costa-Go" /><div><strong>Costa-Go</strong><span>Seguimiento seguro del viaje</span></div></header>
+  <section id="loading" class="card state"><img src="/assets/costa-go-emblem.png" alt="" /><h1>Preparando el seguimiento</h1><p>Estamos consultando el estado seguro del viaje.</p></section>
+  <section id="error" class="card state" hidden><img src="/assets/costa-go-emblem.png" alt="" /><h1>Enlace no disponible</h1><p id="errorText">Este enlace no es válido, fue revocado o ya caducó.</p></section>
+  <section id="tripCard" class="card" hidden>
+    <div class="hero"><p class="eyebrow">Estado del viaje</p><h1 id="statusLabel">Viaje Costa-Go</h1><p class="reference">Referencia <span id="reference"></span></p></div>
+    <div class="content">
+      <div class="driver"><div class="avatar">🛺</div><div><strong id="driverName"></strong><small><span id="vehicle"></span> · ★ <span id="rating"></span></small></div></div>
+      <div class="route"><div class="point"><span>Origen</span><p id="origin"></p></div><div class="point"><span>Destino</span><p id="destination"></p></div></div>
+      <div class="tracking"><div class="tracking-head"><span id="trackingState" class="pulse">Ubicación actualizada</span><small id="updatedAt"></small></div><p id="trackingCopy">La ubicación se actualiza automáticamente mientras el viaje está activo.</p><a id="mapLink" class="button" target="_blank" rel="noopener noreferrer">Ver ubicación en Google Maps</a></div>
+    </div>
+  </section>
+  <p class="privacy">Por seguridad, esta página no muestra teléfonos, correos ni identificadores internos. El enlace caduca automáticamente después del viaje.</p>
+</main>
+<script src="/config.js"></script>
+<script>
+  const loading=document.querySelector('#loading'),error=document.querySelector('#error'),card=document.querySelector('#tripCard');
+  const token=decodeURIComponent(location.pathname.split('/').filter(Boolean).at(-1)||'');
+  const api=(window.COSTA_GO_PUBLIC_CONFIG?.apiBaseUrl||'').replace(/\/$/,'');let timer;
+  const text=(id,value)=>{document.querySelector(id).textContent=value??''};
+  function render(trip){loading.hidden=true;error.hidden=true;card.hidden=false;text('#statusLabel',trip.statusLabel);text('#reference',trip.publicReference);text('#driverName',trip.driverName);text('#vehicle',trip.vehicleIdentifier);text('#rating',Number(trip.driverRating||0).toFixed(1));text('#origin',trip.originReference);text('#destination',trip.destinationReference);const map=document.querySelector('#mapLink'),state=document.querySelector('#trackingState'),copy=document.querySelector('#trackingCopy');if(trip.location){const{latitude,longitude,updatedAt}=trip.location;map.hidden=false;map.href=`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;state.textContent='Ubicación actualizada';text('#updatedAt',new Intl.DateTimeFormat('es-EC',{hour:'2-digit',minute:'2-digit'}).format(new Date(updatedAt)));copy.textContent='La ubicación se actualiza automáticamente mientras el viaje está activo.'}else{map.hidden=true;text('#updatedAt','');state.textContent=trip.terminal?'Seguimiento finalizado':'Ubicación no disponible';copy.textContent=trip.terminal?'El seguimiento terminó junto con el viaje.':'El conductor todavía no comparte una ubicación disponible.'}}
+  async function refresh(){try{const response=await fetch(`${api}/v1/public/trips/${encodeURIComponent(token)}`,{cache:'no-store'});if(!response.ok)throw new Error(response.status===410?'Este seguimiento ya caducó.':'Este enlace no es válido o ya no está disponible.');const data=await response.json();render(data.trip);clearTimeout(timer);if(!data.trip.terminal)timer=setTimeout(refresh,Math.max(10,Number(data.refreshSeconds||15))*1000)}catch(reason){clearTimeout(timer);loading.hidden=true;card.hidden=true;error.hidden=false;text('#errorText',reason.message||'No fue posible cargar el seguimiento.')}}
+  if(!token||!api){loading.hidden=true;error.hidden=false}else refresh();
+</script>
+</body>
+</html>

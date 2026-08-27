@@ -144,6 +144,7 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
 
   Widget expandedBanner(BuildContext context, Map<String, dynamic> banner) {
     final scheme = Theme.of(context).colorScheme;
+    final campaignSlogan = banner['title']?.toString().trim() ?? '';
     final hasLink = banner['actionType']?.toString() != 'NONE' &&
         (banner['actionValue']?.toString().trim().isNotEmpty == true ||
             banner['targetUrl']?.toString().trim().isNotEmpty == true);
@@ -167,29 +168,80 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 9, 10, 9),
-            child: Row(children: [
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('Comercio afiliado',
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelSmall
-                              ?.copyWith(color: scheme.onSurfaceVariant)),
-                      Text(banner['title']?.toString() ?? 'Promoción cercana',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700)),
-                    ]),
-              ),
-              if (hasLink)
-                TextButton(
-                    onPressed: () => widget.onTap?.call(banner),
-                    child: const Text('Ver promoción')),
-            ]),
+            padding: const EdgeInsets.fromLTRB(12, 5, 8, 5),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.primaryContainer.withValues(alpha: .62),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.campaign_outlined,
+                            size: 13, color: scheme.onPrimaryContainer),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Comercio afiliado',
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: scheme.onPrimaryContainer,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        campaignSlogan,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    if (hasLink) ...[
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: () => widget.onTap?.call(banner),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Ver promoción',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(
+                                      color: scheme.primary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                              Icon(Icons.chevron_right,
+                                  size: 18, color: scheme.primary),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ]),
       ),
@@ -248,7 +300,8 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
     if (banners.isEmpty) return const SizedBox.shrink();
     final compact = widget.variant == AffiliateBannerVariant.compact;
     return LayoutBuilder(builder: (context, constraints) {
-      final expandedHeight = constraints.maxWidth / 3 + 58;
+      // El banner conserva exactamente su relación 3:1; solo se compacta el pie.
+      final expandedHeight = constraints.maxWidth / 3 + 52;
       return SizedBox(
         height: compact ? 78 : expandedHeight,
         child: PageView.builder(

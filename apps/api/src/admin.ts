@@ -166,7 +166,11 @@ const operationalSettingsSchema = z.object({
   documentExpiryAlertDays: z.number().int().min(1).max(180),
   distanceFareCentsPerKm: z.number().int().min(1).max(10000).default(50),
   localFareMaxDistanceMeters: z.number().int().min(100).max(50000).default(2000),
-  distanceFareMinimumCents: z.number().int().min(0).max(100000).default(0)
+  distanceFareMinimumCents: z.number().int().min(0).max(100000).default(0),
+  tripTrackingGraceMinutes: z.number().int().min(30).max(60).default(45),
+  supportWhatsappCountryCode: z.string().trim().regex(/^\d{1,4}$/).default("593"),
+  supportWhatsappNumber: z.string().trim().max(30).default(""),
+  supportWhatsappEnabled: z.boolean().default(false)
 }).refine(value => value.scheduledTripMinimumNoticeMinutes >= value.scheduledTripLeadMinutes + 5, {
   message: "MINIMUM_NOTICE_MUST_EXCEED_ACTIVATION_LEAD",
   path: ["scheduledTripMinimumNoticeMinutes"]
@@ -1556,8 +1560,13 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       driver_search_round_wait_seconds as "driverSearchRoundWaitSeconds",
       scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays",
       distance_fare_cents_per_km as "distanceFareCentsPerKm", local_fare_max_distance_meters as "localFareMaxDistanceMeters",
-      distance_fare_minimum_cents as "distanceFareMinimumCents", updated_at as "updatedAt" from operational_settings where id=1`;
-    return settings ?? { searchRadiusMeters: 3000, driverSearchInitialRadiusMeters: 1000, driverSearchRadiusIncrementMeters: 1000, driverSearchRoundWaitSeconds: 15, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30, documentExpiryAlertDays: 30, distanceFareCentsPerKm: 50, localFareMaxDistanceMeters: 2000, distanceFareMinimumCents: 0 };
+      distance_fare_minimum_cents as "distanceFareMinimumCents",
+      trip_tracking_grace_minutes as "tripTrackingGraceMinutes",
+      support_whatsapp_country_code as "supportWhatsappCountryCode",
+      coalesce(support_whatsapp_number, '') as "supportWhatsappNumber",
+      support_whatsapp_enabled as "supportWhatsappEnabled",
+      updated_at as "updatedAt" from operational_settings where id=1`;
+    return settings ?? { searchRadiusMeters: 3000, driverSearchInitialRadiusMeters: 1000, driverSearchRadiusIncrementMeters: 1000, driverSearchRoundWaitSeconds: 15, scheduledTripLeadMinutes: 10, scheduledTripMinimumNoticeMinutes: 30, documentExpiryAlertDays: 30, distanceFareCentsPerKm: 50, localFareMaxDistanceMeters: 2000, distanceFareMinimumCents: 0, tripTrackingGraceMinutes: 45, supportWhatsappCountryCode: "593", supportWhatsappNumber: "", supportWhatsappEnabled: false };
   } catch(e) { return guardError(e, reply); } });
   app.patch("/v1/admin/settings", async (request, reply) => { try {
     const user = requirePermission(request, "settings:manage");
@@ -1567,11 +1576,13 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         driver_search_radius_increment_meters, driver_search_round_wait_seconds,
         scheduled_trip_lead_minutes, scheduled_trip_minimum_notice_minutes, document_expiry_alert_days,
         distance_fare_cents_per_km, local_fare_max_distance_meters, distance_fare_minimum_cents,
+        trip_tracking_grace_minutes, support_whatsapp_country_code, support_whatsapp_number, support_whatsapp_enabled,
         updated_at, updated_by)
       values (1, ${body.searchRadiusMeters}, ${body.driverSearchInitialRadiusMeters},
         ${body.driverSearchRadiusIncrementMeters}, ${body.driverSearchRoundWaitSeconds},
         ${body.scheduledTripLeadMinutes}, ${body.scheduledTripMinimumNoticeMinutes}, ${body.documentExpiryAlertDays},
         ${body.distanceFareCentsPerKm}, ${body.localFareMaxDistanceMeters}, ${body.distanceFareMinimumCents},
+        ${body.tripTrackingGraceMinutes}, ${body.supportWhatsappCountryCode}, ${body.supportWhatsappNumber || null}, ${body.supportWhatsappEnabled},
         now(), ${user.id!})
       on conflict (id) do update set search_radius_meters=excluded.search_radius_meters,
         driver_search_initial_radius_meters=excluded.driver_search_initial_radius_meters,
@@ -1583,6 +1594,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         distance_fare_cents_per_km=excluded.distance_fare_cents_per_km,
         local_fare_max_distance_meters=excluded.local_fare_max_distance_meters,
         distance_fare_minimum_cents=excluded.distance_fare_minimum_cents,
+        trip_tracking_grace_minutes=excluded.trip_tracking_grace_minutes,
+        support_whatsapp_country_code=excluded.support_whatsapp_country_code,
+        support_whatsapp_number=excluded.support_whatsapp_number,
+        support_whatsapp_enabled=excluded.support_whatsapp_enabled,
         updated_at=now(), updated_by=excluded.updated_by
       returning search_radius_meters as "searchRadiusMeters",
         driver_search_initial_radius_meters as "driverSearchInitialRadiusMeters",
@@ -1590,7 +1605,11 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         driver_search_round_wait_seconds as "driverSearchRoundWaitSeconds",
         scheduled_trip_lead_minutes as "scheduledTripLeadMinutes", scheduled_trip_minimum_notice_minutes as "scheduledTripMinimumNoticeMinutes", document_expiry_alert_days as "documentExpiryAlertDays",
         distance_fare_cents_per_km as "distanceFareCentsPerKm", local_fare_max_distance_meters as "localFareMaxDistanceMeters",
-        distance_fare_minimum_cents as "distanceFareMinimumCents", updated_at as "updatedAt"
+        distance_fare_minimum_cents as "distanceFareMinimumCents",
+        trip_tracking_grace_minutes as "tripTrackingGraceMinutes",
+        support_whatsapp_country_code as "supportWhatsappCountryCode",
+        coalesce(support_whatsapp_number, '') as "supportWhatsappNumber",
+        support_whatsapp_enabled as "supportWhatsappEnabled", updated_at as "updatedAt"
     `;
     await persistAudit(user, "OPERATIONAL_SETTINGS_UPDATED", "SETTINGS", "1", `Búsqueda progresiva: ${body.driverSearchInitialRadiusMeters} m + ${body.driverSearchRadiusIncrementMeters} m por ronda, máximo ${body.searchRadiusMeters} m, espera ${body.driverSearchRoundWaitSeconds} s. Tarifa por distancia: ${body.distanceFareCentsPerKm} ctvs/km desde ${body.localFareMaxDistanceMeters} m, mínimo ${body.distanceFareMinimumCents} ctvs.`);
     return settings;

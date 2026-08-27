@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -614,48 +615,192 @@ Future<void> shareText(BuildContext context, String text) async {
 Future<void> showTripSafety({
   required BuildContext context,
   required dynamic trip,
-  required String counterpart,
-  LatLng? location,
+  required String token,
 }) async {
   final tripId = trip?['tripId']?.toString() ?? '';
   final origin = trip?['originReference']?.toString() ?? 'Origen';
   final destination = trip?['destinationReference']?.toString() ?? 'Destino';
-  final mapLink = location == null
-      ? ''
-      : '\nUbicación actual: https://maps.google.com/?q=${location.latitude},${location.longitude}';
+  Map<String, dynamic>? sharing;
+  Future<Map<String, dynamic>> loadSharing() async {
+    if (sharing != null) return sharing!;
+    if (tripId.isEmpty) {
+      throw const ApiException('No se encontró el viaje activo.');
+    }
+    final response =
+        await Api().call('POST', '/v1/trips/$tripId/share', token: token);
+    sharing = Map<String, dynamic>.from(response as Map);
+    return sharing!;
+  }
+
+  Future<void> shareTrip() async {
+    try {
+      final data = await loadSharing();
+      if (!context.mounted) return;
+      await shareText(context, data['message']?.toString() ?? 'Viaje Costa-Go');
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(error is ApiException
+                  ? error.message
+                  : 'No se pudo preparar el enlace seguro.')),
+        );
+      }
+    }
+  }
+
+  Future<void> contactSupport() async {
+    try {
+      final data = await loadSharing();
+      final supportUrl = data['supportUrl']?.toString() ?? '';
+      if (supportUrl.isEmpty) {
+        throw const ApiException(
+            'El canal de soporte por WhatsApp no está disponible en este momento.');
+      }
+      final launched = await launchUrl(Uri.parse(supportUrl),
+          mode: LaunchMode.externalApplication);
+      if (!launched) throw const ApiException('No se pudo abrir WhatsApp.');
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(error is ApiException
+                  ? error.message
+                  : 'No se pudo contactar a soporte.')),
+        );
+      }
+    }
+  }
+
   await showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const ListTile(
-            leading: Icon(Icons.shield_outlined),
-            title: Text('Seguridad del viaje'),
-            subtitle:
-                Text('Comparte los datos del recorrido o solicita ayuda.'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.share_outlined),
-            title: const Text('Compartir viaje'),
-            subtitle: Text('$origin → $destination'),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              shareText(context,
-                  'Estoy realizando un viaje en Costa-Go con $counterpart.\nRuta: $origin → $destination\nViaje: $tripId$mapLink');
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.emergency_outlined, color: Colors.red),
-            title: const Text('Llamar al ECU 911'),
-            subtitle: const Text('Solo para una emergencia real'),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              dialPhone(context, '911');
-            },
-          ),
-        ]),
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Builder(builder: (context) {
+          final theme = Theme.of(context);
+          final colors = theme.colorScheme;
+          Widget actionCard({
+            required IconData icon,
+            required String title,
+            required String subtitle,
+            required VoidCallback onTap,
+            bool destructive = false,
+          }) {
+            final accent = destructive ? colors.error : colors.primary;
+            return Card(
+              margin: const EdgeInsets.only(top: 10),
+              elevation: 0,
+              color: colors.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+                side: BorderSide(
+                    color: colors.outlineVariant.withValues(alpha: .65)),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: onTap,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  child: Row(children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Icon(icon, color: accent, size: 27),
+                    ),
+                    const SizedBox(width: 13),
+                    Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    color: destructive ? colors.error : null)),
+                            const SizedBox(height: 2),
+                            Text(subtitle,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                    height: 1.25)),
+                          ]),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(Icons.chevron_right_rounded, color: accent),
+                  ]),
+                ),
+              ),
+            );
+          }
+
+          return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Container(
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(17)),
+                    child: Icon(Icons.shield_outlined,
+                        color: colors.primary, size: 31),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Text('Seguridad del viaje',
+                            style: theme.textTheme.headlineSmall
+                                ?.copyWith(fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 3),
+                        Text(
+                            'Comparte tu recorrido o solicita ayuda si lo necesitas.',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                                color: colors.onSurfaceVariant, height: 1.3)),
+                      ])),
+                ]),
+                const SizedBox(height: 8),
+                actionCard(
+                  icon: Icons.share_outlined,
+                  title: 'Compartir viaje',
+                  subtitle: '$origin → $destination',
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    shareTrip();
+                  },
+                ),
+                actionCard(
+                  icon: Icons.emergency_outlined,
+                  title: 'Llamar al ECU 911',
+                  subtitle: 'Solo para una emergencia real',
+                  destructive: true,
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    dialPhone(context, '911');
+                  },
+                ),
+                actionCard(
+                  icon: Icons.support_agent_outlined,
+                  title: 'Contactar soporte',
+                  subtitle: 'Estamos aquí para ayudarte durante tu viaje',
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    contactSupport();
+                  },
+                ),
+              ]);
+        }),
       ),
     ),
   );
@@ -4031,119 +4176,187 @@ class _ProfileState extends State<Profile> {
     final photoVersion = p['photoUpdatedAt']?.toString() ?? 'profile';
     final photoUrl =
         '$base/v1/users/${widget.s.id}/profile-photo?v=${Uri.encodeQueryComponent(photoVersion)}';
+    final theme = Theme.of(c);
+    final scheme = theme.colorScheme;
+    final isDriver = widget.s.role == 'DRIVER';
+
+    Widget sectionTitle(String title) => Padding(
+          padding: const EdgeInsets.fromLTRB(4, 16, 4, 7),
+          child: Text(
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        );
+
+    Widget leadingIcon(IconData icon, {Color? color}) => Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: (color ?? scheme.primary).withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: color ?? scheme.primary, size: 22),
+        );
+
+    Widget groupedCard(List<Widget> children) => Card(
+          margin: EdgeInsets.zero,
+          clipBehavior: Clip.antiAlias,
+          child: Column(mainAxisSize: MainAxisSize.min, children: children),
+        );
+
+    const rowPadding = EdgeInsets.symmetric(horizontal: 14, vertical: 3);
     return Scaffold(
         appBar: AppBar(title: const Text('Mi perfil')),
-        body: ListView(padding: const EdgeInsets.all(16), children: [
-          Container(
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                  colors: [Color(0xff032b49), Color(0xff087ccb)]),
-              borderRadius: BorderRadius.circular(26),
-            ),
-            child: Column(children: [
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
+          children: [
+            Column(children: [
               Stack(alignment: Alignment.bottomRight, children: [
-                ClipOval(
-                  child: SizedBox(
-                    width: 92,
-                    height: 92,
-                    child: hasPhoto
-                        ? Image.network(
-                            photoUrl,
-                            headers: {
-                              'Authorization': 'Bearer ${widget.s.token}'
-                            },
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Center(
-                              child: Text(p['name'].substring(0, 1),
-                                  style: const TextStyle(fontSize: 30)),
-                            ),
-                          )
-                        : Center(
-                            child: Text(p['name'].substring(0, 1),
-                                style: const TextStyle(fontSize: 30)),
-                          ),
+                Container(
+                  width: 112,
+                  height: 112,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: scheme.surfaceContainerHighest,
+                    border: Border.all(
+                        color: scheme.outlineVariant.withValues(alpha: 0.65)),
                   ),
+                  clipBehavior: Clip.antiAlias,
+                  child: hasPhoto
+                      ? Image.network(
+                          photoUrl,
+                          headers: {
+                            'Authorization': 'Bearer ${widget.s.token}'
+                          },
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Center(
+                            child: Text(p['name'].substring(0, 1),
+                                style: theme.textTheme.headlineLarge),
+                          ),
+                        )
+                      : Center(
+                          child: Text(p['name'].substring(0, 1),
+                              style: theme.textTheme.headlineLarge),
+                        ),
                 ),
                 Material(
-                  color: Colors.white,
+                  color: scheme.surface,
+                  elevation: 3,
                   shape: const CircleBorder(),
                   child: IconButton(
                     tooltip: 'Cambiar fotografía',
                     onPressed: photoBusy ? null : changePhoto,
                     icon: photoBusy
                         ? const SizedBox(
-                            width: 18,
-                            height: 18,
+                            width: 19,
+                            height: 19,
                             child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.camera_alt_outlined,
-                            color: Color(0xff087ccb)),
+                        : Icon(Icons.camera_alt_outlined,
+                            color: scheme.primary, size: 22),
                   ),
                 ),
               ]),
-              const SizedBox(height: 12),
-              Text(p['name'],
-                  textAlign: TextAlign.center,
-                  style: Theme.of(c).textTheme.headlineSmall?.copyWith(
-                      color: Colors.white, fontWeight: FontWeight.w800)),
-              Text(p['role'] == 'DRIVER' ? 'Conductor verificado' : 'Pasajero',
-                  style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 10),
+              Text(
+                p['name'],
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(99),
+                  border:
+                      Border.all(color: scheme.primary.withValues(alpha: 0.20)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(
+                    isDriver ? Icons.verified_outlined : Icons.person_outline,
+                    color: scheme.primary,
+                    size: 17,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    isDriver ? 'Conductor verificado' : 'Pasajero Costa-Go',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ]),
+              ),
             ]),
-          ),
-          const SizedBox(height: 14),
-          Card(
-            child: Column(children: [
+            sectionTitle('Información personal'),
+            groupedCard([
               ListTile(
-                  leading: const Icon(Icons.alternate_email),
-                  title: const Text('Correo electrónico'),
-                  subtitle: Text(p['email'] ?? 'Sin correo registrado')),
+                contentPadding: rowPadding,
+                leading: leadingIcon(Icons.alternate_email),
+                title: const Text('Correo electrónico'),
+                subtitle: Text(p['email'] ?? 'Sin correo registrado'),
+              ),
               const Divider(height: 1),
               ListTile(
-                  leading: const Icon(Icons.phone_outlined),
-                  title: const Text('Teléfono'),
-                  subtitle: Text(p['phone'] ?? 'Sin teléfono registrado')),
+                contentPadding: rowPadding,
+                leading: leadingIcon(Icons.phone_outlined),
+                title: const Text('Teléfono'),
+                subtitle: Text(p['phone'] ?? 'Sin teléfono registrado'),
+              ),
               if (p['vehicle'] != null) ...[
                 const Divider(height: 1),
                 ListTile(
-                    leading: const Icon(Icons.electric_rickshaw_outlined),
-                    title: const Text('Mototaxi'),
-                    subtitle: Text(p['vehicle'])),
+                  contentPadding: rowPadding,
+                  leading: leadingIcon(Icons.electric_rickshaw_outlined),
+                  title: const Text('Mototaxi'),
+                  subtitle: Text(p['vehicle']),
+                ),
               ],
-              if (widget.s.role == 'DRIVER') ...[
+              if (isDriver) ...[
                 const Divider(height: 1),
                 SwitchListTile(
-                  secondary: const Icon(Icons.account_balance_wallet_outlined),
+                  contentPadding: rowPadding,
+                  secondary: leadingIcon(Icons.account_balance_wallet_outlined),
                   title: const Text('Cobros con DeUna'),
-                  subtitle: const Text(
-                      'Actívalo para recibir solicitudes pagadas con DeUna.'),
+                  subtitle: const Text('Recibir solicitudes pagadas con DeUna'),
                   value: p['deunaEnabled'] == true,
                   onChanged: paymentSettingsBusy ? null : updateDeunaPreference,
                 ),
               ],
             ]),
-          ),
-          Card(
-              child: ListTile(
-            leading: const Icon(Icons.directions_bike_outlined),
-            title: const Text('Mis viajes'),
-            subtitle: const Text('Viajes en curso e historial'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              final repeat = await Navigator.push<TripRepeatDraft>(
-                  c, MaterialPageRoute(builder: (_) => TripsPanel(widget.s)));
-              if (repeat != null && c.mounted) Navigator.pop(c, repeat);
-            },
-          )),
-          Card(
-              child: ListTile(
-                  leading: const Icon(Icons.star, color: Colors.amber),
-                  title:
-                      Text('${(p['rating'] as num).toStringAsFixed(1)} de 5'),
-                  subtitle: Text('${p['ratingCount']} calificaciones'))),
-          Card(
-            child: Column(children: [
+            sectionTitle('Mi actividad'),
+            groupedCard([
+              ListTile(
+                contentPadding: rowPadding,
+                leading: leadingIcon(Icons.directions_bike_outlined),
+                title: const Text('Mis viajes'),
+                subtitle: const Text('Viajes en curso e historial'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () async {
+                  final repeat = await Navigator.push<TripRepeatDraft>(c,
+                      MaterialPageRoute(builder: (_) => TripsPanel(widget.s)));
+                  if (repeat != null && c.mounted) Navigator.pop(c, repeat);
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                contentPadding: rowPadding,
+                leading: leadingIcon(Icons.star_rounded, color: Colors.amber),
+                title: const Text('Calificación promedio'),
+                subtitle: Text(
+                    '${(p['rating'] as num).toStringAsFixed(1)} de 5 · ${p['ratingCount']} calificaciones'),
+              ),
+            ]),
+            sectionTitle('Ajustes y seguridad'),
+            groupedCard([
               SwitchListTile(
-                secondary: const Icon(Icons.fingerprint),
+                contentPadding: rowPadding,
+                secondary: leadingIcon(Icons.fingerprint),
                 title: const Text('Ingreso biométrico'),
                 subtitle: const Text('Usar huella o reconocimiento facial'),
                 value: biometricEnabled,
@@ -4151,7 +4364,8 @@ class _ProfileState extends State<Profile> {
               ),
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.password_outlined),
+                contentPadding: rowPadding,
+                leading: leadingIcon(Icons.password_outlined),
                 title: const Text('Cambiar contraseña'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.push(
@@ -4161,7 +4375,8 @@ class _ProfileState extends State<Profile> {
               ),
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.notifications_active_outlined),
+                contentPadding: rowPadding,
+                leading: leadingIcon(Icons.notifications_active_outlined),
                 title: const Text('Probar notificaciones'),
                 subtitle: const Text('Comprueba la recepción en segundo plano'),
                 trailing: pushTestBusy
@@ -4172,10 +4387,11 @@ class _ProfileState extends State<Profile> {
                     : const Icon(Icons.chevron_right),
                 onTap: pushTestBusy ? null : testBackgroundNotification,
               ),
-              if (widget.s.role == 'DRIVER') ...[
+              if (isDriver) ...[
                 const Divider(height: 1),
                 ListTile(
-                  leading: const Icon(Icons.badge_outlined),
+                  contentPadding: rowPadding,
+                  leading: leadingIcon(Icons.badge_outlined),
                   title: const Text('Documentos habilitantes'),
                   subtitle: const Text('Foto, licencia, matrícula y permiso'),
                   trailing: const Icon(Icons.chevron_right),
@@ -4190,24 +4406,64 @@ class _ProfileState extends State<Profile> {
                 ),
               ],
             ]),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
-            child: Text('Comentarios recibidos',
-                style: Theme.of(c)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w800)),
-          ),
-          ...rs.map((r) => Card(
-              child: ListTile(
-                  title: Text(r['comment']?.toString().isNotEmpty == true
-                      ? r['comment']
-                      : 'Sin comentario'),
-                  subtitle: Text(
-                      '${r['author']} · ${(r['tags'] as List).join(' · ')}'),
-                  trailing: Text('★ ${r['score']}'))))
-        ]));
+            sectionTitle('Comentarios recibidos'),
+            if (rs.isEmpty)
+              groupedCard([
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(children: [
+                    leadingIcon(Icons.chat_bubble_outline),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text('Todavía no has recibido comentarios.',
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(color: scheme.onSurfaceVariant)),
+                    ),
+                  ]),
+                ),
+              ])
+            else
+              groupedCard([
+                for (var index = 0; index < rs.length; index++) ...[
+                  if (index > 0) const Divider(height: 1),
+                  Builder(builder: (_) {
+                    final review = rs[index] as Map;
+                    final author = review['author']?.toString().trim();
+                    final displayAuthor = author?.isNotEmpty == true
+                        ? author!
+                        : 'Usuario Costa-Go';
+                    final comment = review['comment']?.toString().trim();
+                    final tags = review['tags'] is List
+                        ? (review['tags'] as List)
+                            .map((tag) => tag.toString())
+                            .where((tag) => tag.isNotEmpty)
+                            .join(' · ')
+                        : '';
+                    return ListTile(
+                      contentPadding: rowPadding,
+                      leading: CircleAvatar(
+                        backgroundColor: scheme.primaryContainer,
+                        foregroundColor: scheme.onPrimaryContainer,
+                        child: Text(displayAuthor.substring(0, 1).toUpperCase(),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w800)),
+                      ),
+                      title: Text(displayAuthor),
+                      subtitle: Text(comment?.isNotEmpty == true
+                          ? comment!
+                          : (tags.isNotEmpty ? tags : 'Sin comentario')),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.star_rounded,
+                            color: Colors.amber, size: 19),
+                        const SizedBox(width: 3),
+                        Text('${review['score']}'),
+                      ]),
+                    );
+                  }),
+                ],
+              ]),
+          ],
+        ));
   }
 }
 
@@ -4835,15 +5091,20 @@ class _AccountHubState extends State<AccountHub> {
     }
   }
 
-  Widget accountAvatar() {
+  Widget accountAvatar({double size = 58}) {
     final data = accountProfile;
     final name = (data?['name'] ?? widget.s.name).toString();
+    final scheme = Theme.of(context).colorScheme;
     final fallback = Container(
-      color: Colors.white24,
+      width: size,
+      height: size,
+      color: scheme.primaryContainer,
       alignment: Alignment.center,
       child: Text(name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
-          style: const TextStyle(
-              color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+          style: TextStyle(
+              color: scheme.onPrimaryContainer,
+              fontSize: size * .4,
+              fontWeight: FontWeight.w800)),
     );
     if (data?['hasPhoto'] != true) return ClipOval(child: fallback);
     final version = data?['photoUpdatedAt']?.toString() ?? 'profile';
@@ -4851,8 +5112,8 @@ class _AccountHubState extends State<AccountHub> {
       child: Image.network(
         '$base/v1/users/${widget.s.id}/profile-photo?v=${Uri.encodeQueryComponent(version)}',
         headers: {'Authorization': 'Bearer ${widget.s.token}'},
-        width: 58,
-        height: 58,
+        width: size,
+        height: size,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => fallback,
       ),
@@ -4902,74 +5163,156 @@ class _AccountHubState extends State<AccountHub> {
   }
 
   @override
-  Widget build(BuildContext c) => Scaffold(
-      appBar: AppBar(title: const Text('Mi cuenta')),
-      body: ListView(padding: const EdgeInsets.all(20), children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-                colors: [Color(0xff032b49), Color(0xff087ccb)]),
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Row(children: [
-            SizedBox(width: 58, height: 58, child: accountAvatar()),
-            const SizedBox(width: 14),
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(widget.s.name,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w800)),
-                  Text(
-                      widget.s.role == 'DRIVER'
-                          ? 'Conductor Costa-Go'
-                          : 'Pasajero Costa-Go',
-                      style: const TextStyle(color: Colors.white70)),
-                ])),
-          ]),
+  Widget build(BuildContext c) {
+    final theme = Theme.of(c);
+    final scheme = theme.colorScheme;
+    final isDriver = widget.s.role == 'DRIVER';
+
+    Widget actionCard({
+      required IconData icon,
+      required String title,
+      required String subtitle,
+      required VoidCallback? onTap,
+      Widget? trailing,
+      Color? accent,
+    }) {
+      final color = accent ?? scheme.primary;
+      return Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        elevation: 0,
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .65)),
         ),
-        const SizedBox(height: 18),
-        Text('Gestiona tu cuenta',
-            style: Theme.of(c)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 6),
-        if (widget.s.availableRoles.contains('DRIVER'))
-          ListTile(
-              leading: Icon(widget.s.role == 'DRIVER'
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          minTileHeight: 74,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+          leading: Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(icon, color: color),
+          ),
+          title: Text(title,
+              style: theme.textTheme.titleSmall
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          subtitle: Text(subtitle,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant)),
+          trailing: trailing ??
+              Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
+          onTap: onTap,
+        ),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Mi cuenta')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 6, 20, 28),
+        children: [
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 100,
+                  height: 100,
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: scheme.surface,
+                    border: Border.all(color: scheme.outlineVariant),
+                    boxShadow: [
+                      BoxShadow(
+                        color: scheme.shadow.withValues(alpha: .12),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: accountAvatar(size: 94),
+                ),
+                const SizedBox(height: 12),
+                Text(widget.s.name,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 2),
+                Text(isDriver ? 'Conductor Costa-Go' : 'Pasajero Costa-Go',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+                const SizedBox(height: 10),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: scheme.primaryContainer.withValues(alpha: .65),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                        color: scheme.primary.withValues(alpha: .18)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.verified_user_outlined,
+                          size: 17, color: scheme.primary),
+                      const SizedBox(width: 6),
+                      Text('Cuenta verificada',
+                          style: theme.textTheme.labelLarge?.copyWith(
+                              color: scheme.primary,
+                              fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 26),
+          Text('GESTIONA TU CUENTA',
+              style: theme.textTheme.labelMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: .8)),
+          const SizedBox(height: 10),
+          if (widget.s.availableRoles.contains('DRIVER'))
+            actionCard(
+              icon: isDriver
                   ? Icons.person_pin_circle_outlined
-                  : Icons.directions_bike_outlined),
-              title: Text(widget.s.role == 'DRIVER'
+                  : Icons.directions_bike_outlined,
+              title: isDriver
                   ? 'Cambiar a modo pasajero'
-                  : 'Cambiar a modo conductor'),
-              subtitle: const Text('Usa la misma cuenta y conserva tus datos'),
+                  : 'Cambiar a modo conductor',
+              subtitle: 'Usa la misma cuenta y conserva tus datos',
               trailing: switchingMode
                   ? const SizedBox.square(
                       dimension: 22,
                       child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.swap_horiz_rounded),
+                  : Icon(Icons.swap_horiz_rounded, color: scheme.primary),
               onTap: switchingMode
                   ? null
-                  : () => switchMode(
-                      widget.s.role == 'DRIVER' ? 'PASSENGER' : 'DRIVER'))
-        else
-          ListTile(
-              leading: const Icon(Icons.directions_bike_outlined),
-              title: const Text('Quiero conducir con Costa-Go'),
-              subtitle: const Text('Completa tu perfil sin crear otra cuenta'),
-              trailing: const Icon(Icons.chevron_right),
+                  : () => switchMode(isDriver ? 'PASSENGER' : 'DRIVER'),
+            )
+          else
+            actionCard(
+              icon: Icons.directions_bike_outlined,
+              title: 'Quiero conducir con Costa-Go',
+              subtitle: 'Completa tu perfil sin crear otra cuenta',
               onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => DriverEnrollmentScreen(widget.s)))),
-        ListTile(
-            leading: const Icon(Icons.person_outline),
-            title: const Text('Mi perfil'),
+                context,
+                MaterialPageRoute(
+                    builder: (_) => DriverEnrollmentScreen(widget.s)),
+              ),
+            ),
+          actionCard(
+            icon: Icons.person_outline_rounded,
+            title: 'Mi perfil',
+            subtitle: 'Administra tu información personal',
             onTap: () async {
               final repeat = await Navigator.push<TripRepeatDraft>(
                   c, MaterialPageRoute(builder: (_) => Profile(widget.s)));
@@ -4979,51 +5322,73 @@ class _AccountHubState extends State<AccountHub> {
               }
               await loadAccountProfile();
               await loadBiometricState();
-            }),
-        ListTile(
-            leading: const Icon(Icons.history_rounded),
-            title: const Text('Actividad'),
-            subtitle: const Text('Historial de tu actividad'),
+            },
+          ),
+          actionCard(
+            icon: Icons.history_rounded,
+            title: 'Actividad',
+            subtitle: 'Historial de tu actividad',
             onTap: () => Navigator.push(
-                c, MaterialPageRoute(builder: (_) => ActivityPanel(widget.s)))),
-        ListTile(
-            leading: const Icon(Icons.support_agent_outlined),
-            title: const Text('Ayuda y soporte'),
-            subtitle: const Text('Preguntas frecuentes y solicitudes de ayuda'),
-            trailing: const Icon(Icons.chevron_right),
+              c,
+              MaterialPageRoute(builder: (_) => ActivityPanel(widget.s)),
+            ),
+          ),
+          actionCard(
+            icon: Icons.support_agent_outlined,
+            title: 'Ayuda y soporte',
+            subtitle: 'Preguntas frecuentes y solicitudes de ayuda',
             onTap: () => Navigator.push(
-                c, MaterialPageRoute(builder: (_) => SupportCenter(widget.s)))),
-        ListTile(
-            leading: const Icon(Icons.privacy_tip_outlined),
-            title: const Text('Privacidad y datos'),
-            subtitle: const Text('Ubicación, política y eliminación de cuenta'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(c,
-                MaterialPageRoute(builder: (_) => PrivacyAndData(widget.s)))),
-        ListTile(
-            leading: const Icon(Icons.info_outline),
-            title: const Text('Acerca de'),
+              c,
+              MaterialPageRoute(builder: (_) => SupportCenter(widget.s)),
+            ),
+          ),
+          actionCard(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Privacidad y datos',
+            subtitle: 'Ubicación, política y eliminación de cuenta',
             onTap: () => Navigator.push(
-                c, MaterialPageRoute(builder: (_) => const AboutCostaGo()))),
-        if (pending != null)
-          Card(
-              child: ListTile(
-                  leading: const Icon(Icons.star, color: Colors.amber),
-                  title: const Text('Tienes una calificación pendiente'),
-                  subtitle: Text(pending['driverName'] ??
-                      pending['passengerName'] ??
-                      'Viaje completado'),
-                  onTap: () => rating(c, widget.s, pending['tripId'],
-                      () => setState(() => pending = null)))),
-        const Divider(),
-        ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text('Cerrar sesión'),
+              c,
+              MaterialPageRoute(builder: (_) => PrivacyAndData(widget.s)),
+            ),
+          ),
+          actionCard(
+            icon: Icons.info_outline_rounded,
+            title: 'Acerca de Costa-Go',
+            subtitle: 'Versión de la app e información legal',
+            onTap: () => Navigator.push(
+              c,
+              MaterialPageRoute(builder: (_) => const AboutCostaGo()),
+            ),
+          ),
+          if (pending != null) ...[
+            const SizedBox(height: 4),
+            actionCard(
+              icon: Icons.star_rounded,
+              accent: Colors.amber.shade700,
+              title: 'Tienes una calificación pendiente',
+              subtitle: pending['driverName'] ??
+                  pending['passengerName'] ??
+                  'Viaje completado',
+              onTap: () => rating(c, widget.s, pending['tripId'],
+                  () => setState(() => pending = null)),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Divider(color: scheme.outlineVariant),
+          const SizedBox(height: 12),
+          actionCard(
+            icon: Icons.logout_rounded,
+            accent: scheme.error,
+            title: 'Cerrar sesión',
             subtitle: biometricEnabled
-                ? const Text('Podrás volver a ingresar con biometría')
-                : null,
-            onTap: () => logout(c))
-      ]));
+                ? 'Podrás volver a ingresar con biometría'
+                : 'Salir de tu cuenta en este dispositivo',
+            onTap: () => logout(c),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class PrivacyAndData extends StatelessWidget {
@@ -5273,6 +5638,7 @@ class _SupportCenterState extends State<SupportCenter> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final query = search.text.trim().toLowerCase();
     final visibleFaqs = (faqs ?? []).where((item) {
       if (query.isEmpty) return true;
@@ -5284,160 +5650,349 @@ class _SupportCenterState extends State<SupportCenter> {
       appBar: AppBar(title: const Text('Ayuda y soporte')),
       body: RefreshIndicator(
         onRefresh: load,
-        child: ListView(padding: const EdgeInsets.all(16), children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                  colors: [Color(0xff032b49), Color(0xff087ccb)]),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.support_agent, color: Colors.white, size: 38),
-                  SizedBox(height: 10),
-                  Text('¿Cómo podemos ayudarte?',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800)),
-                  SizedBox(height: 4),
-                  Text(
-                      'Consulta respuestas o crea una solicitud para nuestro equipo.',
-                      style: TextStyle(color: Colors.white70)),
-                ]),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: search,
-            decoration: InputDecoration(
-              hintText: 'Buscar en preguntas frecuentes',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: search.text.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: search.clear, icon: const Icon(Icons.close)),
-            ),
-          ),
-          if (error != null)
-            Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(error!,
-                    style:
-                        TextStyle(color: Theme.of(context).colorScheme.error))),
-          const SizedBox(height: 12),
-          Text('Preguntas frecuentes',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w800)),
-          if (faqs == null)
-            const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: CircularProgressIndicator()))
-          else if (visibleFaqs.isEmpty)
-            const Card(
-                child: Padding(
-                    padding: EdgeInsets.all(18),
-                    child: Text(
-                        'No encontramos una respuesta. Puedes crear una solicitud de soporte.')))
-          else
-            ...visibleFaqs.map((faq) {
-              final answer = faq['answer']?.toString() ?? '';
-              final link = firstWebUrl(answer);
-              return Card(
-                  child: ExpansionTile(
-                leading: const Icon(Icons.help_outline),
-                title: Text(faq['question']),
-                subtitle: Text(faq['category']),
-                children: [
-                  Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                      child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(answerWithoutWebUrl(answer)),
-                                if (link != null) ...[
-                                  const SizedBox(height: 10),
-                                  OutlinedButton.icon(
-                                      onPressed: () async {
-                                        if (!await launchUrl(link,
-                                                mode: LaunchMode
-                                                    .externalApplication) &&
-                                            context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(const SnackBar(
-                                                  content: Text(
-                                                      'No se pudo abrir el enlace.')));
-                                        }
-                                      },
-                                      icon: const Icon(Icons.open_in_new),
-                                      label: const Text('Consultar tarifario')),
-                                ]
-                              ])))
-                ],
-              ));
-            }),
-          const SizedBox(height: 18),
-          FilledButton.icon(
-            onPressed: () async {
-              final created = await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => CreateSupportRequest(widget.session)));
-              if (created == true) await load();
-            },
-            icon: const Icon(Icons.add_comment_outlined),
-            label: const Text('Crear solicitud de soporte'),
-          ),
-          if (whatsapp.isNotEmpty)
-            OutlinedButton.icon(
-                onPressed: openWhatsapp,
-                icon: const Icon(Icons.chat_outlined),
-                label: const Text('Contactar por WhatsApp')),
-          const SizedBox(height: 22),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text('Mis solicitudes',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800)),
-            IconButton(onPressed: load, icon: const Icon(Icons.refresh)),
-          ]),
-          if (incidents == null)
-            const Padding(
-                padding: EdgeInsets.all(20),
-                child: Center(child: CircularProgressIndicator()))
-          else if (incidents!.isEmpty)
-            const Card(
-                child: Padding(
-                    padding: EdgeInsets.all(18),
-                    child: Text('Aún no has creado solicitudes de soporte.')))
-          else
-            ...incidents!.map((item) => Card(
+        child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
+            children: [
+              _SupportIntro(scheme: scheme),
+              const SizedBox(height: 18),
+              TextField(
+                controller: search,
+                decoration: InputDecoration(
+                  hintText: 'Buscar en preguntas frecuentes',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: search.text.isEmpty
+                      ? null
+                      : IconButton(
+                          onPressed: search.clear,
+                          icon: const Icon(Icons.close)),
+                ),
+              ),
+              if (error != null)
+                Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(error!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error))),
+              const SizedBox(height: 22),
+              Text('Preguntas frecuentes',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              if (faqs == null)
+                const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()))
+              else if (visibleFaqs.isEmpty)
+                _SupportEmptyState(
+                  icon: Icons.search_off_rounded,
+                  title: 'No encontramos esa respuesta',
+                  message:
+                      'Prueba con otras palabras o crea una solicitud de soporte.',
+                  scheme: scheme,
+                )
+              else
+                ...visibleFaqs.map((faq) {
+                  final answer = faq['answer']?.toString() ?? '';
+                  final link = firstWebUrl(answer);
+                  return Card(
+                      margin: const EdgeInsets.only(bottom: 9),
+                      clipBehavior: Clip.antiAlias,
+                      child: ExpansionTile(
+                        tilePadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 3),
+                        childrenPadding: EdgeInsets.zero,
+                        leading: _SupportIcon(
+                            icon: Icons.help_outline_rounded, scheme: scheme),
+                        title: Text(faq['question']?.toString() ?? '',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text(faq['category']?.toString() ?? '',
+                              style: TextStyle(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                        iconColor: scheme.primary,
+                        collapsedIconColor: scheme.primary,
+                        children: [
+                          Divider(height: 1, color: scheme.outlineVariant),
+                          Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                              child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(answerWithoutWebUrl(answer),
+                                            style: TextStyle(
+                                                height: 1.45,
+                                                color:
+                                                    scheme.onSurfaceVariant)),
+                                        if (link != null) ...[
+                                          const SizedBox(height: 10),
+                                          OutlinedButton.icon(
+                                              onPressed: () async {
+                                                if (!await launchUrl(link,
+                                                        mode: LaunchMode
+                                                            .externalApplication) &&
+                                                    context.mounted) {
+                                                  ScaffoldMessenger.of(context)
+                                                      .showSnackBar(const SnackBar(
+                                                          content: Text(
+                                                              'No se pudo abrir el enlace.')));
+                                                }
+                                              },
+                                              icon:
+                                                  const Icon(Icons.open_in_new),
+                                              label: const Text(
+                                                  'Consultar tarifario')),
+                                        ]
+                                      ])))
+                        ],
+                      ));
+                }),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: () async {
+                  final created = await Navigator.push<bool>(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              CreateSupportRequest(widget.session)));
+                  if (created == true) await load();
+                },
+                icon: const Icon(Icons.add_comment_outlined),
+                label: const Text('Crear solicitud de soporte'),
+              ),
+              if (whatsapp.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                    onPressed: openWhatsapp,
+                    icon: const Icon(Icons.chat_outlined),
+                    label: const Text('Contactar por WhatsApp')),
+              ],
+              const SizedBox(height: 26),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text('Mis solicitudes',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w800)),
+                IconButton(onPressed: load, icon: const Icon(Icons.refresh)),
+              ]),
+              if (incidents == null)
+                const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Center(child: CircularProgressIndicator()))
+              else if (incidents!.isEmpty)
+                _SupportEmptyState(
+                  icon: Icons.mark_unread_chat_alt_outlined,
+                  title: 'Aún no tienes solicitudes',
+                  message:
+                      'Cuando necesites ayuda, podrás seguir aquí el estado de tu caso.',
+                  scheme: scheme,
+                )
+              else
+                ...incidents!.map((item) => Card(
+                    margin: const EdgeInsets.only(bottom: 8),
                     child: ListTile(
-                  leading: CircleAvatar(
-                      child: Icon(item['priority'] == 'CRITICA'
-                          ? Icons.warning_amber
-                          : Icons.support_agent_outlined)),
-                  title: Text(item['subject']),
-                  subtitle: Text(
-                      '${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => SupportIncidentDetail(
-                                widget.session, item['id'])));
-                    await load();
-                  },
-                ))),
-        ]),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 4),
+                      leading: _SupportIcon(
+                          icon: item['priority'] == 'CRITICA'
+                              ? Icons.warning_amber_rounded
+                              : Icons.support_agent_outlined,
+                          scheme: scheme,
+                          isWarning: item['priority'] == 'CRITICA'),
+                      title: Text(item['subject']),
+                      subtitle: Text(
+                          '${supportStatusLabel(item['status'])} · ${supportCategoryLabels[item['category']] ?? item['category']}'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => SupportIncidentDetail(
+                                    widget.session, item['id'])));
+                        await load();
+                      },
+                    ))),
+              const SizedBox(height: 24),
+              const _CostaGoSupportFooter(),
+            ]),
       ),
+    );
+  }
+}
+
+class _SupportIntro extends StatelessWidget {
+  const _SupportIntro({required this.scheme});
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+        children: [
+          Positioned(
+            right: 4,
+            top: 4,
+            child: Icon(Icons.arrow_forward_rounded,
+                size: 86, color: scheme.primary.withValues(alpha: .07)),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 4),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _SupportIcon(
+                  icon: Icons.support_agent_rounded, scheme: scheme, size: 56),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('¿Cómo podemos ayudarte?',
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Consulta respuestas o crea una solicitud para nuestro equipo.',
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: scheme.onSurfaceVariant, height: 1.35),
+                      ),
+                    ]),
+              ),
+            ]),
+          ),
+          Positioned(
+            left: 70,
+            right: 12,
+            bottom: 2,
+            child: SizedBox(
+              height: 18,
+              child: CustomPaint(
+                painter: _SupportWavePainter(
+                    color: scheme.primary.withValues(alpha: .10)),
+              ),
+            ),
+          ),
+        ],
+      );
+}
+
+class _SupportWavePainter extends CustomPainter {
+  const _SupportWavePainter({required this.color});
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    for (var index = 0; index < 3; index++) {
+      final y = 5.0 + index * 4;
+      final path = ui.Path()..moveTo(0, y);
+      path.cubicTo(
+          size.width * .25, y - 7, size.width * .5, y + 7, size.width * .75, y);
+      path.cubicTo(
+          size.width * .85, y - 3, size.width * .93, y + 3, size.width, y);
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SupportWavePainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+class _SupportIcon extends StatelessWidget {
+  const _SupportIcon({
+    required this.icon,
+    required this.scheme,
+    this.size = 42,
+    this.isWarning = false,
+  });
+  final IconData icon;
+  final ColorScheme scheme;
+  final double size;
+  final bool isWarning;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = isWarning ? scheme.error : scheme.primary;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: foreground.withValues(alpha: .09),
+        borderRadius: BorderRadius.circular(size * .34),
+      ),
+      alignment: Alignment.center,
+      child: Icon(icon, color: foreground, size: size * .54),
+    );
+  }
+}
+
+class _SupportEmptyState extends StatelessWidget {
+  const _SupportEmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.scheme,
+  });
+  final IconData icon;
+  final String title;
+  final String message;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(children: [
+            _SupportIcon(icon: icon, scheme: scheme),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 3),
+                    Text(message,
+                        style: TextStyle(color: scheme.onSurfaceVariant)),
+                  ]),
+            ),
+          ]),
+        ),
+      );
+}
+
+class _CostaGoSupportFooter extends StatelessWidget {
+  const _CostaGoSupportFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      label: 'Costa-Go',
+      image: true,
+      child: Column(children: [
+        Image.asset('assets/images/costa-go-emblem.png',
+            width: 76, height: 76, fit: BoxFit.contain),
+        const SizedBox(height: 3),
+        Text('Costa-Go',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: scheme.primary,
+                fontWeight: FontWeight.w900,
+                letterSpacing: .2)),
+      ]),
     );
   }
 }
@@ -5543,108 +6098,222 @@ class _CreateSupportRequestState extends State<CreateSupportRequest> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Nueva solicitud')),
-        body: ListView(padding: const EdgeInsets.all(18), children: [
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final priorityField = DropdownButtonFormField<String>(
+      initialValue: priority,
+      isExpanded: true,
+      decoration: _supportFormDecoration(
+        context,
+        label: 'Prioridad',
+        icon: Icons.outlined_flag_rounded,
+      ),
+      items: const [
+        DropdownMenuItem(value: 'BAJA', child: Text('Baja')),
+        DropdownMenuItem(value: 'MEDIA', child: Text('Media')),
+        DropdownMenuItem(value: 'ALTA', child: Text('Alta')),
+        DropdownMenuItem(value: 'CRITICA', child: Text('Crítica')),
+      ],
+      onChanged: (value) => setState(() => priority = value!),
+    );
+    final contactField = DropdownButtonFormField<String>(
+      initialValue: contact,
+      isExpanded: true,
+      decoration: _supportFormDecoration(
+        context,
+        label: 'Contacto',
+        icon: Icons.chat_bubble_outline_rounded,
+      ),
+      items: const [
+        DropdownMenuItem(value: 'APP', child: Text('Aplicación')),
+        DropdownMenuItem(value: 'TELEFONO', child: Text('Teléfono')),
+        DropdownMenuItem(value: 'WHATSAPP', child: Text('WhatsApp')),
+        DropdownMenuItem(value: 'CORREO', child: Text('Correo')),
+      ],
+      onChanged: (value) => setState(() => contact = value!),
+    );
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Nueva solicitud')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+        children: [
           DropdownButtonFormField<String>(
-              initialValue: category,
-              decoration: const InputDecoration(labelText: 'Categoría *'),
-              items: supportCategoryLabels.entries
-                  .map((entry) => DropdownMenuItem(
-                      value: entry.key, child: Text(entry.value)))
-                  .toList(),
-              onChanged: (value) => setState(() => category = value!)),
+            initialValue: category,
+            isExpanded: true,
+            decoration: _supportFormDecoration(
+              context,
+              label: 'Categoría *',
+              icon: Icons.receipt_long_outlined,
+            ),
+            items: supportCategoryLabels.entries
+                .map((entry) => DropdownMenuItem(
+                    value: entry.key, child: Text(entry.value)))
+                .toList(),
+            onChanged: (value) => setState(() => category = value!),
+          ),
           const SizedBox(height: 14),
           DropdownButtonFormField<String>(
-              initialValue: tripId,
-              decoration: const InputDecoration(
-                  labelText: 'Viaje relacionado',
-                  helperText: 'Opcional; facilita que soporte revise el caso'),
-              items: [
-                const DropdownMenuItem(
-                    value: '', child: Text('Sin viaje relacionado')),
-                ...(trips ?? [])
-                    .take(30)
-                    .where((trip) => supportTripIdentifier(trip).isNotEmpty)
-                    .map((trip) => DropdownMenuItem(
-                        value: supportTripIdentifier(trip),
-                        child: Text(
-                            '${trip['originReference'] ?? 'Origen'} → ${trip['destinationReference'] ?? 'Destino'}',
-                            overflow: TextOverflow.ellipsis)))
-              ],
-              onChanged: (value) => setState(() => tripId = value!)),
+            initialValue: tripId,
+            isExpanded: true,
+            decoration: _supportFormDecoration(
+              context,
+              label: 'Viaje relacionado',
+              icon: Icons.luggage_outlined,
+              helperText: 'Opcional; facilita que soporte revise el caso',
+            ),
+            items: [
+              const DropdownMenuItem(
+                  value: '', child: Text('Sin viaje relacionado')),
+              ...(trips ?? [])
+                  .take(30)
+                  .where((trip) => supportTripIdentifier(trip).isNotEmpty)
+                  .map((trip) => DropdownMenuItem(
+                      value: supportTripIdentifier(trip),
+                      child: Text(
+                          '${trip['originReference'] ?? 'Origen'} → ${trip['destinationReference'] ?? 'Destino'}',
+                          overflow: TextOverflow.ellipsis)))
+            ],
+            onChanged: (value) => setState(() => tripId = value!),
+          ),
           const SizedBox(height: 14),
           TextField(
-              controller: subject,
-              maxLength: 140,
-              textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(labelText: 'Asunto *')),
+            controller: subject,
+            maxLength: 140,
+            textInputAction: TextInputAction.next,
+            decoration: _supportFormDecoration(
+              context,
+              label: 'Asunto *',
+              icon: Icons.help_outline_rounded,
+            ),
+          ),
           const SizedBox(height: 8),
           TextField(
-              controller: description,
-              minLines: 4,
-              maxLines: 8,
-              maxLength: 4000,
-              decoration: const InputDecoration(
-                  labelText: 'Descripción *',
-                  alignLabelWithHint: true,
-                  hintText:
-                      'Indica qué ocurrió, cuándo y qué ayuda necesitas.')),
+            controller: description,
+            minLines: 4,
+            maxLines: 8,
+            maxLength: 4000,
+            decoration: _supportFormDecoration(
+              context,
+              label: 'Descripción *',
+              icon: Icons.help_outline_rounded,
+              hintText: 'Indica qué ocurrió, cuándo y qué ayuda necesitas.',
+              alignLabelWithHint: true,
+            ),
+          ),
           const SizedBox(height: 8),
-          Row(children: [
-            Expanded(
-                child: DropdownButtonFormField<String>(
-                    initialValue: priority,
-                    decoration: const InputDecoration(labelText: 'Prioridad'),
-                    items: const [
-                      DropdownMenuItem(value: 'BAJA', child: Text('Baja')),
-                      DropdownMenuItem(value: 'MEDIA', child: Text('Media')),
-                      DropdownMenuItem(value: 'ALTA', child: Text('Alta')),
-                      DropdownMenuItem(value: 'CRITICA', child: Text('Crítica'))
-                    ],
-                    onChanged: (value) => setState(() => priority = value!))),
-            const SizedBox(width: 10),
-            Expanded(
-                child: DropdownButtonFormField<String>(
-                    initialValue: contact,
-                    decoration: const InputDecoration(labelText: 'Contacto'),
-                    items: const [
-                      DropdownMenuItem(value: 'APP', child: Text('Aplicación')),
-                      DropdownMenuItem(
-                          value: 'TELEFONO', child: Text('Teléfono')),
-                      DropdownMenuItem(
-                          value: 'WHATSAPP', child: Text('WhatsApp')),
-                      DropdownMenuItem(value: 'CORREO', child: Text('Correo'))
-                    ],
-                    onChanged: (value) => setState(() => contact = value!)))
-          ]),
+          LayoutBuilder(builder: (context, constraints) {
+            if (constraints.maxWidth < 370) {
+              return Column(children: [
+                priorityField,
+                const SizedBox(height: 12),
+                contactField,
+              ]);
+            }
+            return Row(children: [
+              Expanded(child: priorityField),
+              const SizedBox(width: 10),
+              Expanded(child: contactField),
+            ]);
+          }),
           const SizedBox(height: 14),
-          OutlinedButton.icon(
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
               onPressed: chooseAttachment,
-              icon: const Icon(Icons.attach_file),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(54),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18)),
+              ),
+              icon: const Icon(Icons.attach_file_rounded),
               label: Text(attachment == null
                   ? 'Adjuntar fotografía'
-                  : attachment!.name)),
+                  : attachment!.name),
+            ),
+          ),
           if (attachmentBytes != null)
             Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Image.memory(attachmentBytes!,
-                        height: 150, fit: BoxFit.cover))),
+              padding: const EdgeInsets.only(top: 12),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Image.memory(attachmentBytes!,
+                    height: 150, fit: BoxFit.cover),
+              ),
+            ),
           if (message != null)
-            Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(message!,
-                    style:
-                        TextStyle(color: Theme.of(context).colorScheme.error))),
-          const SizedBox(height: 10),
-          FilledButton.icon(
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.errorContainer,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.error_outline_rounded,
+                    color: scheme.onErrorContainer),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(message!,
+                      style: TextStyle(color: scheme.onErrorContainer)),
+                ),
+              ]),
+            ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
               onPressed: busy ? null : submit,
-              icon: const Icon(Icons.send_outlined),
-              label: Text(busy ? 'Enviando…' : 'Enviar solicitud')),
-        ]),
-      );
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(56),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18)),
+              ),
+              icon: busy
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.send_outlined),
+              label: Text(busy ? 'Enviando…' : 'Enviar solicitud'),
+            ),
+          ),
+          const SizedBox(height: 26),
+          const _CostaGoSupportFooter(),
+        ],
+      ),
+    );
+  }
+}
+
+InputDecoration _supportFormDecoration(
+  BuildContext context, {
+  required String label,
+  required IconData icon,
+  String? hintText,
+  String? helperText,
+  bool alignLabelWithHint = false,
+}) {
+  final scheme = Theme.of(context).colorScheme;
+  final border = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(20),
+    borderSide: BorderSide(color: scheme.outlineVariant),
+  );
+  return InputDecoration(
+    labelText: label,
+    hintText: hintText,
+    helperText: helperText,
+    alignLabelWithHint: alignLabelWithHint,
+    filled: true,
+    fillColor: scheme.surfaceContainerLow,
+    prefixIcon: Icon(icon, color: scheme.primary),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+    border: border,
+    enabledBorder: border,
+    focusedBorder: border.copyWith(
+      borderSide: BorderSide(color: scheme.primary, width: 1.5),
+    ),
+  );
 }
 
 class SupportIncidentDetail extends StatefulWidget {
@@ -8808,7 +9477,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                       ),
                       child: Column(
                         children: [
-                          _CancellationInfoRow(
+                          const _CancellationInfoRow(
                             icon: Icons.schedule_rounded,
                             title: 'Podrías esperar menos tiempo',
                             detail:
@@ -9182,8 +9851,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         onPressed: () => showTripSafety(
           context: context,
           trip: active,
-          counterpart: active?['driverName']?.toString() ?? 'mi conductor',
-          location: currentLocation,
+          token: widget.s.token,
         ),
         icon: const Icon(Icons.shield_outlined),
         label: const Text('Seguridad y compartir viaje'),
@@ -13200,6 +13868,136 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  Future<bool> _confirmMembershipPlanActivation(
+      BuildContext context, Map<String, dynamic> plan) async {
+    final colors = Theme.of(context).colorScheme;
+    final name = plan['name']?.toString().trim().isNotEmpty == true
+        ? plan['name'].toString().trim()
+        : 'Membresía';
+    final amount = (plan['amount'] as num?)?.toDouble() ?? 0;
+    final durationDays = (plan['durationDays'] as num?)?.toInt() ?? 0;
+    final includedTrips = (plan['includedTrips'] as num?)?.toInt() ?? 0;
+
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+            backgroundColor: colors.surface,
+            surfaceTintColor: colors.surfaceTint,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(26),
+              side: BorderSide(color: colors.outlineVariant),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 390),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 58,
+                      height: 58,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: colors.primaryContainer,
+                      ),
+                      child: Icon(
+                        Icons.event_available_rounded,
+                        color: colors.onPrimaryContainer,
+                        size: 30,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '¿Activar membresía?',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(dialogContext)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 10),
+                    Text.rich(
+                      TextSpan(children: [
+                        const TextSpan(text: 'Vas a activar el plan '),
+                        TextSpan(
+                          text: name,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const TextSpan(text: ' por '),
+                        TextSpan(
+                          text: '\$${amount.toStringAsFixed(2)}.',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const TextSpan(
+                            text:
+                                '\nSe generará una orden de pago para continuar.'),
+                      ]),
+                      textAlign: TextAlign.center,
+                      style: Theme.of(dialogContext)
+                          .textTheme
+                          .bodyLarge
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: colors.outlineVariant),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.event_available_outlined,
+                              color: colors.primary, size: 22),
+                          const SizedBox(width: 9),
+                          Flexible(
+                            child: Text(
+                              'Plan ${name.toLowerCase()} · $durationDays días · $includedTrips viajes',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(dialogContext)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () =>
+                                Navigator.pop(dialogContext, false),
+                            child: const Text('Cancelar'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () => Navigator.pop(dialogContext, true),
+                            child: const Text('Sí, activar'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ) ??
+        false;
+  }
+
   Future<void> _showMembershipDetails() async {
     final data = membershipData;
     if (data == null || !mounted) return;
@@ -13209,6 +14007,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     var pendingOrder = data['pendingOrder'] is Map
         ? Map<String, dynamic>.from(data['pendingOrder'] as Map)
         : null;
+    var orderGenerationInProgress = false;
     await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
@@ -13220,7 +14019,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               final extraAmount =
                   (membership['billableExtraAmount'] as num?)?.toDouble() ?? 0;
               Future<void> selectPlan(Map<String, dynamic> plan) async {
-                if (pendingOrder != null) return;
+                if (pendingOrder != null || orderGenerationInProgress) return;
+                setSheetState(() => orderGenerationInProgress = true);
+                final confirmed =
+                    await _confirmMembershipPlanActivation(sheetContext, plan);
+                if (!confirmed) {
+                  if (sheetContext.mounted) {
+                    setSheetState(() => orderGenerationInProgress = false);
+                  }
+                  return;
+                }
                 try {
                   final response = await api.createMembershipPaymentOrder(
                       widget.s.token, plan['id'].toString(), 'CASH');
@@ -13237,6 +14045,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   if (sheetContext.mounted) {
                     ScaffoldMessenger.of(sheetContext).showSnackBar(
                         SnackBar(content: Text(error.toString())));
+                  }
+                } finally {
+                  if (sheetContext.mounted) {
+                    setSheetState(() => orderGenerationInProgress = false);
                   }
                 }
               }
@@ -13379,7 +14191,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                             child: InkWell(
                                                 borderRadius:
                                                     BorderRadius.circular(16),
-                                                onTap: pendingOrder == null
+                                                onTap: pendingOrder == null &&
+                                                        !orderGenerationInProgress
                                                     ? () => selectPlan(plan)
                                                     : null,
                                                 child: Padding(
@@ -13727,9 +14540,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               onPressed: () => showTripSafety(
                     context: context,
                     trip: active,
-                    counterpart:
-                        active?['passengerName']?.toString() ?? 'mi pasajero',
-                    location: currentDriverPosition,
+                    token: widget.s.token,
                   )),
         ]),
         const SizedBox(height: 8),
