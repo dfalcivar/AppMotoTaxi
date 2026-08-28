@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstSearchBounds, nextSearchBounds, noDriverReason, type DriverSearchSettings } from "./driver-search.js";
+import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
 
 const settings: DriverSearchSettings = {
   initialRadiusMeters: 1000,
@@ -7,6 +7,33 @@ const settings: DriverSearchSettings = {
   maximumRadiusMeters: 4500,
   roundWaitSeconds: 15
 };
+
+describe('server search progress presentation',()=>{
+  const now=new Date('2026-08-28T12:00:00Z');
+  const cycleStartedAt=new Date('2026-08-28T11:59:40Z');
+  it('uses partial final range and configured wait, not a hardcoded duration',()=>{
+    const progress=driverSearchProgress(settings,{round:2,upperMeters:2000,nextRoundAt:new Date(now.getTime()+10000),cycleStartedAt},now)!;
+    expect(progress).toMatchObject({round:2,totalRounds:5,totalSeconds:75,elapsedSeconds:20,remainingSeconds:55});
+    expect(progress.cycleStartedAt).toBe(cycleStartedAt.toISOString());
+  });
+  it('supports a single round and a different initial radius',()=>{
+    expect(driverSearchProgress({...settings,initialRadiusMeters:5000,maximumRadiusMeters:3000,roundWaitSeconds:20},
+      {round:1,upperMeters:3000,nextRoundAt:new Date(now.getTime()+20000),cycleStartedAt},now))
+      .toMatchObject({totalRounds:1,totalSeconds:20,elapsedSeconds:0});
+  });
+  it('does not invent dispatch rounds when the scheduler is delayed',()=>{
+    expect(driverSearchProgress(settings,{round:1,upperMeters:1000,nextRoundAt:new Date(now.getTime()-90000),cycleStartedAt},now))
+      .toMatchObject({round:1,elapsedSeconds:15,remainingSeconds:60});
+  });
+  it('last round reaches 100%, without changing any trip status',()=>{
+    const progress=driverSearchProgress(settings,{round:5,upperMeters:4500,nextRoundAt:now,cycleStartedAt},now)!;
+    expect(progress.remainingSeconds).toBe(0);expect(progress.elapsedSeconds).toBe(progress.totalSeconds);
+    expect(progress).not.toHaveProperty('status');
+  });
+  it('waits for the first real dispatch',()=>{
+    expect(driverSearchProgress(settings,{round:0,upperMeters:0,nextRoundAt:now,cycleStartedAt},now)).toBeNull();
+  });
+});
 
 describe("progressive driver search bounds", () => {
   it("starts at zero and uses the configured initial radius", () => {

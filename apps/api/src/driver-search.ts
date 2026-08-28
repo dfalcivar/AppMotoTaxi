@@ -12,6 +12,23 @@ export interface DriverSearchBounds {
   finalRound: boolean;
 }
 
+/** UI estimate of the existing dispatch rounds; never authorizes a transition. */
+export function driverSearchProgress(settings: DriverSearchSettings, current: {
+  round:number; upperMeters:number; nextRoundAt:Date; cycleStartedAt:Date;
+}, now=new Date()) {
+  if(current.round<1||settings.roundWaitSeconds<=0||settings.radiusIncrementMeters<=0)return null;
+  const remainingRounds=Math.ceil(Math.max(0,settings.maximumRadiusMeters-current.upperMeters)/settings.radiusIncrementMeters);
+  const totalRounds=current.round+remainingRounds;
+  const elapsedInRound=Math.min(settings.roundWaitSeconds,Math.max(0,
+    settings.roundWaitSeconds-(current.nextRoundAt.getTime()-now.getTime())/1000));
+  const totalSeconds=totalRounds*settings.roundWaitSeconds;
+  const elapsedSeconds=(current.round-1)*settings.roundWaitSeconds+elapsedInRound;
+  return {round:current.round,totalRounds,totalSeconds,elapsedSeconds,
+    remainingSeconds:Math.max(0,totalSeconds-elapsedSeconds),roundWaitSeconds:settings.roundWaitSeconds,
+    initialRadiusMeters:settings.initialRadiusMeters,radiusIncrementMeters:settings.radiusIncrementMeters,
+    maximumRadiusMeters:settings.maximumRadiusMeters,cycleStartedAt:current.cycleStartedAt.toISOString(),serverNow:now.toISOString()};
+}
+
 export type NoDriverReason =
   | "NO_DEUNA_COMPATIBLE_DRIVER"
   | "NO_DRIVER_ACCEPTED"

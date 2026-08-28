@@ -31,6 +31,8 @@ import 'in_app_notification_banner.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
 import 'reject_offer_dialog.dart';
+import 'cancellation_feedback_dialog.dart';
+import 'driver_search_indicator.dart';
 import 'service_areas.dart';
 import 'trip_lifecycle.dart';
 import 'notification_alerts.dart';
@@ -589,6 +591,58 @@ Future<void> handleRevokedSession() async {
         MaterialPageRoute(builder: (_) => const Welcome()), (_) => false);
   }
   handlingRevokedSession = false;
+}
+
+bool _suspensionDialogOpen = false;
+String? _lastSuspensionNotice;
+Future<void> showAccountSuspension(Map<String, dynamic> data,
+    {bool force = false, Session? session}) async {
+  final key = '${data['accountId']}:${data['suspendedUntil']}';
+  if (_suspensionDialogOpen || (!force && _lastSuspensionNotice == key)) return;
+  final context = rootNavigatorKey.currentContext;
+  if (context == null) return;
+  _suspensionDialogOpen = true;
+  _lastSuspensionNotice = key;
+  final until = DateTime.tryParse(data['suspendedUntil']?.toString() ?? '');
+  try {
+    await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => CancellationFeedbackDialog(
+            kind: CancellationFeedback.suspended,
+            indefinite: data['indefinite'] == true,
+            suspensionEndLabel:
+                until == null ? null : formatEcuadorLongDateTime(until),
+            onSupport: () {
+              Navigator.pop(dialogContext);
+              if (session != null) {
+                rootNavigatorKey.currentState?.push(
+                    MaterialPageRoute(builder: (_) => SupportCenter(session)));
+              } else {
+                unawaited(
+                    _openSuspensionSupport(data['supportUrl']?.toString()));
+              }
+            }));
+  } finally {
+    _suspensionDialogOpen = false;
+  }
+}
+
+Future<void> _openSuspensionSupport(String? url) async {
+  final uri = Uri.tryParse(url ?? 'mailto:soporte@costa-go.com');
+  try {
+    if (uri == null ||
+        !{'https', 'mailto'}.contains(uri.scheme) ||
+        !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw StateError('support_unavailable');
+    }
+  } catch (_) {
+    final context = rootNavigatorKey.currentContext;
+    if (context != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Puedes escribir a soporte@costa-go.com para consultar tu suspensión.')));
+    }
+  }
 }
 
 Future<void> dialPhone(BuildContext context, dynamic phoneValue) async {
@@ -1164,10 +1218,11 @@ class Session {
 }
 
 class ApiException implements Exception {
-  const ApiException(this.message, {this.code, this.statusCode});
+  const ApiException(this.message, {this.code, this.statusCode, this.details});
   final String message;
   final String? code;
   final int? statusCode;
+  final Map<String, dynamic>? details;
   @override
   String toString() => message;
 }
@@ -1441,8 +1496,14 @@ class Api {
               const {'UNAUTHORIZED', 'SESSION_REPLACED'}.contains(code)) {
             unawaited(handleRevokedSession());
           }
+          if (code == 'PASSENGER_CANCELLATION_SUSPENDED' && data is Map) {
+            unawaited(showAccountSuspension(Map<String, dynamic>.from(data),
+                force: token == null));
+          }
           throw ApiException(mensajeApi(code),
-              code: code, statusCode: response.statusCode);
+              code: code,
+              statusCode: response.statusCode,
+              details: data is Map ? Map<String, dynamic>.from(data) : null);
         }
         return data;
       } on ApiException {
@@ -7793,8 +7854,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   int passengerLoadRevision = 0;
+  bool passengerLoadBusy = false;
   Future<void> load() async {
-    if (cancellationBusy) return;
+    if (cancellationBusy || passengerLoadBusy) return;
+    passengerLoadBusy = true;
     final revision = ++passengerLoadRevision;
     final requestedTripId = active?['tripId'];
     try {
@@ -7931,7 +7994,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       }
       realtime.subscribeTrip(t['tripId'].toString());
       refreshRoute(force: routePoints.isEmpty);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      passengerLoadBusy = false;
+    }
   }
 
   Future<void> useCurrentLocation({bool explicit = true}) async {
@@ -9469,7 +9535,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       final isScheduled = payload['scheduledFor'] != null;
       setState(() {
         if (!isScheduled) {
-          active = {'tripId': t['tripId'], 'status': 'SEARCHING'};
+          active = {
+            'tripId': t['tripId'],
+            'status': 'SEARCHING',
+            'searchProgress': t['searchProgress']
+          };
           sheetExtent = .46;
         } else {
           _resetRequestAfterScheduledTrip(editingId == null
@@ -9578,24 +9648,24 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         message = 'Solicitud cancelada correctamente.';
       });
       _movePassengerSheet(.35);
-      await showDialog<void>(
-          context: context,
-          builder: (c) => AlertDialog(
-                title: const Text('Carrera cancelada'),
-                content: Text(consequence == null
-                    ? 'Solicitud cancelada correctamente.'
-                    : days == null
-                        ? 'Cuenta suspendida indefinidamente por cancelaciones. Contacta a soporte para solicitar reactivación.'
-                        : days == 0
-                            ? 'La cancelación quedó registrada. Evita cancelar después de que un conductor acepte.'
-                            : 'Tu cuenta quedó suspendida durante $days días por cancelaciones después de la aceptación.'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(c),
-                      child: const Text('OK'))
-                ],
-              ));
+      if (consequence is Map && (days == null || (days is num && days > 0))) {
+        await showAccountSuspension({
+          'accountId': widget.s.id,
+          'suspendedUntil': consequence['suspendedUntil'],
+          'indefinite': days == null
+        }, force: true, session: widget.s);
+      } else {
+        await showDialog<void>(
+            context: context,
+            builder: (_) => CancellationFeedbackDialog(
+                kind: consequence == null
+                    ? CancellationFeedback.success
+                    : CancellationFeedback.warning));
+      }
     } catch (e) {
+      if (e is ApiException && e.code == 'PASSENGER_CANCELLATION_SUSPENDED') {
+        return;
+      }
       if (mounted) {
         await showDialog<void>(
             context: context,
@@ -9703,46 +9773,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   List<Widget> _searchingContent(BuildContext context) => [
         const SizedBox(height: 8),
-        Center(
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: .92, end: 1),
-            duration: const Duration(milliseconds: 950),
-            curve: Curves.easeOutBack,
-            builder: (context, value, child) => Transform.scale(
-              scale: value,
-              child: Container(
-                width: 156,
-                height: 156,
-                padding: const EdgeInsets.all(25),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withValues(alpha: .3),
-                      width: 2),
-                  color: Theme.of(context)
-                      .colorScheme
-                      .primaryContainer
-                      .withValues(alpha: .22),
-                ),
-                child: Image.asset('assets/images/costa-go-emblem.png'),
-              ),
-            ),
-          ),
+        DriverSearchIndicator(
+          key: ValueKey('search-progress-${active?['tripId']}'),
+          progress: SearchProgress.fromJson(active?['searchProgress']),
+          onDeadline: load,
         ),
-        const SizedBox(height: 20),
-        Text('Buscando un conductor cercano',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: Theme.of(context).colorScheme.primary,
-                fontWeight: FontWeight.w900)),
-        const SizedBox(height: 6),
-        Text('Estamos buscando el mototaxi más cercano para ti.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant)),
         if (message != null) ...[
           const SizedBox(height: 5),
           Text(message!, textAlign: TextAlign.center),

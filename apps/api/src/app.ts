@@ -4,7 +4,8 @@ import Fastify from "fastify";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { calculateTerritorialFare } from "./fare-engine.js";
-import { firstSearchBounds, nextSearchBounds, noDriverReason, type DriverSearchSettings } from "./driver-search.js";
+import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
+import { cancellationSuspensionResponse } from './suspension-presentation.js';
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
@@ -354,6 +355,16 @@ export function scheduledTimeError(scheduledFor: Date, policy: ScheduledTripPoli
   if (scheduledFor > latest) return "SCHEDULE_TOO_FAR";
 }
 
+async function tripSearchProgress(tripId:string) {
+  const [row]=await database()`select driver_search_round as round,driver_search_upper_meters as "upperMeters",
+    driver_search_next_round_at as "nextRoundAt",clock_timestamp() as "serverNow",
+    coalesce((select max(occurred_at) from trip_events where trip_id=t.id and to_status='SEARCHING'),t.requested_at) as "cycleStartedAt"
+    from trips t where t.id=${tripId} and t.status='SEARCHING'`;
+  if(!row?.nextRoundAt)return null;
+  return driverSearchProgress(await configuredDriverSearch(),{round:Number(row.round),upperMeters:Number(row.upperMeters),
+    nextRoundAt:new Date(row.nextRoundAt as string),cycleStartedAt:new Date(row.cycleStartedAt as string)},new Date(row.serverNow as string));
+}
+
 export function tripTotalCents(
   price: Record<string, unknown>,
   passengers: number,
@@ -390,7 +401,7 @@ async function authenticatedUser(request: { headers: Record<string, string | str
   if (!active.length) { reply.code(401).send({ error: "SESSION_REPLACED" }); return; }
   if (!active[0]?.roleAllowed) { reply.code(403).send({ error: "ROLE_NOT_AVAILABLE" }); return; }
   const cancellationReplay = options.allowCancellationReplay && user.role === 'PASSENGER' && active[0]?.status === 'SUSPENDED' && active[0]?.cancellationSuspended;
-  if (active[0]?.status !== "ACTIVE" && !cancellationReplay) { reply.code(403).send({ error: active[0]?.cancellationSuspended ? "PASSENGER_CANCELLATION_SUSPENDED" : "ACCOUNT_NOT_ACTIVE", suspendedUntil: active[0]?.suspendedUntil }); return; }
+  if (active[0]?.status !== "ACTIVE" && !cancellationReplay) { reply.code(403).send(active[0]?.cancellationSuspended ? cancellationSuspensionResponse(user.id,active[0]?.suspendedUntil) : { error:"ACCOUNT_NOT_ACTIVE" }); return; }
   if (user.role === "DRIVER" && active[0]?.approvalStatus !== "APROBADO" && !options.allowPendingDriver) {
     reply.code(403).send({ error: "DRIVER_NOT_APPROVED" });
     return;
@@ -1176,6 +1187,7 @@ export async function buildApp() {
 
     const rows = await database()`
       select u.id,u.email,u.full_name,u.role,u.last_mobile_role as "lastMobileRole",u.status,
+        u.passenger_cancellation_suspended as "cancellationSuspended",u.passenger_suspended_until as "suspendedUntil",
         u.email_verified_at as "emailVerifiedAt",u.must_change_password as "mustChangePassword",
         d.approval_status as "approvalStatus",
         array(select mar.role from mobile_account_roles mar where mar.user_id=u.id order by mar.role) roles
@@ -1185,10 +1197,10 @@ export async function buildApp() {
         and role in ('PASSENGER', 'DRIVER')
         and deleted_at is null
     `;
-    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; lastMobileRole?: "PASSENGER" | "DRIVER"; roles: Array<"PASSENGER" | "DRIVER">; status: string; emailVerifiedAt?: Date; mustChangePassword: boolean; approvalStatus?: string } | undefined;
+    const account = rows[0] as { id: string; email: string; full_name: string; role: "PASSENGER" | "DRIVER"; lastMobileRole?: "PASSENGER" | "DRIVER"; roles: Array<"PASSENGER" | "DRIVER">; status: string; emailVerifiedAt?: Date; mustChangePassword: boolean; approvalStatus?: string; cancellationSuspended:boolean;suspendedUntil:Date|null } | undefined;
     if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
     if (!account.emailVerifiedAt) return reply.code(403).send({ error: "EMAIL_VERIFICATION_REQUIRED" });
-    if (account.status !== "ACTIVE") return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
+    if (account.status !== "ACTIVE") return reply.code(403).send(account.cancellationSuspended ? cancellationSuspensionResponse(account.id,account.suspendedUntil) : { error:"ACCOUNT_NOT_ACTIVE" });
     const activeRole = parsed.data.role ?? account.lastMobileRole ?? account.role;
     if (!account.roles.includes(activeRole)) return reply.code(403).send({ error: "ROLE_NOT_AVAILABLE" });
     if (activeRole === "DRIVER" && account.approvalStatus === "RECHAZADO") return reply.code(403).send({ error: "DRIVER_REJECTED" });
@@ -1227,6 +1239,7 @@ export async function buildApp() {
     const hash = privateTokenHash(`biometric:${parsed.data.credential}`);
     const [account] = await database()`select u.id::text,u.email,u.full_name,u.role,
         u.last_mobile_role as "lastMobileRole",u.status,u.email_verified_at as "emailVerifiedAt",
+        u.passenger_cancellation_suspended as "cancellationSuspended",u.passenger_suspended_until as "suspendedUntil",
         u.must_change_password as "mustChangePassword",d.approval_status as "approvalStatus",
         array(select mar.role from mobile_account_roles mar where mar.user_id=u.id order by mar.role) roles
       from biometric_credentials biometric
@@ -1236,7 +1249,7 @@ export async function buildApp() {
       limit 1`;
     if (!account) return reply.code(401).send({ error: "INVALID_BIOMETRIC_CREDENTIAL" });
     if (!account.emailVerifiedAt || account.status !== "ACTIVE") {
-      return reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" });
+      return reply.code(403).send(account.cancellationSuspended ? cancellationSuspensionResponse(String(account.id),account.suspendedUntil) : { error:"ACCOUNT_NOT_ACTIVE" });
     }
     const roles = account.roles as Array<"PASSENGER" | "DRIVER">;
     const activeRole = parsed.data.role ?? account.lastMobileRole ?? account.role as "PASSENGER" | "DRIVER";
@@ -1890,7 +1903,8 @@ export async function buildApp() {
       stops: destinations,
       zone,
       serviceArea: { id: operationalArea.id, code: operationalArea.code, name: operationalArea.name },
-      idempotentReplay: trip.replay
+      idempotentReplay: trip.replay,
+      searchProgress:scheduledFor?null:await tripSearchProgress(String(trip.id))
     });
   });
 
@@ -1966,7 +1980,7 @@ export async function buildApp() {
     `;
     const trip = rows[0];
     if (!trip) return reply.code(404).send({ error: "TRIP_NOT_FOUND" });
-    return trip;
+    return {...trip,searchProgress:trip.status==='SEARCHING'?await tripSearchProgress(tripId):null};
   });
 
   app.get("/v1/trips/active", async (request, reply) => {
@@ -2001,7 +2015,8 @@ export async function buildApp() {
         and (t.scheduled_for is null or t.schedule_status in ('SCHEDULED_READY','ACTIVATED'))
       order by t.requested_at desc limit 1
     `;
-    return rows[0] ?? null;
+    const trip=rows[0];
+    return trip ? {...trip,searchProgress:trip.status==='SEARCHING'?await tripSearchProgress(String(trip.tripId)):null} : null;
   });
 
   app.get("/v1/trips/mine", async (request, reply) => {
