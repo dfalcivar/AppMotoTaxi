@@ -2,6 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>FlutterDeepLinkingEnabled</key><false/>
+    <key>NSCameraUsageDescription</key><string>Costa-Go utiliza la cámara para escanear el QR de la mototaxi que vas a conducir.</string>
+    <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>costa-go</string></array></dict></array>
 	<key>GOOGLE_MAPS_IOS_API_KEY</key>
 	<string>$(GOOGLE_MAPS_IOS_API_KEY)</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

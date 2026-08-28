@@ -32,7 +32,7 @@ async function safeTrip(tripId: string) {
       t.destination_reference as "destinationReference", t.requested_at as "requestedAt",
       t.started_at as "startedAt", t.completed_at as "completedAt", t.cancelled_at as "cancelledAt",
       u.full_name as "driverName", p.full_name as "passengerName",
-      coalesce(nullif(v.identifier,''), 'Sin identificar') as "vehicleIdentifier",
+      coalesce(nullif(t.vehicle_snapshot->>'identifier',''), 'Sin identificar') as "vehicleIdentifier",
       coalesce(d.rating, 0)::float as "driverRating",
       st_y(ll.position::geometry)::float as latitude,
       st_x(ll.position::geometry)::float as longitude, ll.recorded_at as "locationUpdatedAt"
@@ -40,12 +40,6 @@ async function safeTrip(tripId: string) {
     left join users u on u.id=t.driver_id
     left join drivers d on d.user_id=t.driver_id
     left join users p on p.id=t.passenger_id
-    left join lateral (
-      select vehicle.identifier from vehicles vehicle
-      where vehicle.id=t.vehicle_id or vehicle.driver_id=t.driver_id
-      order by (vehicle.id=t.vehicle_id) desc nulls last, vehicle.created_at desc
-      limit 1
-    ) v on true
     left join lateral (
       select location.position,location.recorded_at
       from trip_live_locations location

@@ -109,6 +109,7 @@ enum NotificationTarget {
   support,
   offers,
   membership,
+  fleet,
   inbox
 }
 
@@ -223,6 +224,7 @@ NotificationTarget notificationTargetFor(String? value) {
   if (type == 'SUPPORT') return NotificationTarget.support;
   if (type == 'TRIP_OFFERS') return NotificationTarget.offers;
   if (type == 'MEMBERSHIP') return NotificationTarget.membership;
+  if (type == 'FLEET' || type == 'FLEET_SESSION') return NotificationTarget.fleet;
   if (type == 'NOTIFICATIONS') return NotificationTarget.inbox;
   if (type == 'CHAT_MESSAGE') return NotificationTarget.chat;
   if (const {
@@ -905,7 +907,9 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
         : <String, dynamic>{};
     final id = (data['tripId'] ?? item['entityId'])?.toString();
     if (!mounted) return;
-    if (target == NotificationTarget.chat && id != null) {
+    if(target==NotificationTarget.fleet&&data['vehicleId']!=null){
+      await Navigator.push(context,MaterialPageRoute(builder:(_)=>VehicleDetail(gateway:fleetFor(widget.session),id:data['vehicleId'].toString())));
+    } else if (target == NotificationTarget.chat && id != null) {
       await openNotificationChat(context, widget.session, id);
     } else if (target == NotificationTarget.support) {
       final incidentId = (data['incidentId'] ?? item['entityId'])?.toString();
@@ -1122,6 +1126,8 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _participant(context, item),
+                    const SizedBox(height:12),
+                    TripVehicleBadge(gateway:fleetFor(widget.session),vehicle:item['vehicleDetails']),
                     const SizedBox(height: 22),
                     _routeInfo(context, item),
                     const Divider(height: 36),

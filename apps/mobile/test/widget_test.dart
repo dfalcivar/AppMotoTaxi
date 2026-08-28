@@ -45,7 +45,7 @@ void main() {
     expect(find.text('Placa o identificador de mototaxi *'), findsNothing);
   });
 
-  testWidgets('registro de conductor muestra foto, cooperativa y placa',
+  testWidgets('registro de conductor conserva foto y cooperativa y difiere las mototaxis al perfil',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -63,7 +63,8 @@ void main() {
     expect(find.text('Conductor independiente'), findsOneWidget);
     expect(find.text('Fotografía frontal *'), findsOneWidget);
     expect(find.text('Seleccionar fotografía'), findsOneWidget);
-    expect(find.text('Placa o identificador de mototaxi *'), findsOneWidget);
+    expect(find.text('Placa o identificador de mototaxi *'), findsNothing);
+    expect(find.text('Podrás agregar tus mototaxis después desde tu perfil.'), findsOneWidget);
   });
 
   testWidgets('recuperación presenta validación inline en modo oscuro',

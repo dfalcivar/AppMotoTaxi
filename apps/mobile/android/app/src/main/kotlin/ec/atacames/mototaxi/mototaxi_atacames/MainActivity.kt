@@ -72,14 +72,14 @@ class MainActivity : FlutterFragmentActivity() {
                         playDriverArrivalAlert()
                         result.success(null)
                     }
-                    "pickDocument" -> pickDocument(result)
+                    "pickDocument" -> pickDocument(result, call.argument<List<String>>("extensions"))
                     "authenticateFingerprintLegacy" -> authenticateFingerprintLegacy(result)
                     else -> result.notImplemented()
                 }
             }
     }
 
-    private fun pickDocument(result: MethodChannel.Result) {
+    private fun pickDocument(result: MethodChannel.Result, extensions: List<String>? = null) {
         if (pendingDocumentResult != null) {
             result.error("DOCUMENT_PICKER_BUSY", "Ya hay un selector de documentos abierto.", null)
             return
@@ -90,7 +90,7 @@ class MainActivity : FlutterFragmentActivity() {
             type = "*/*"
             putExtra(
                 Intent.EXTRA_MIME_TYPES,
-                arrayOf(
+                if (extensions == listOf("pdf")) arrayOf("application/pdf") else arrayOf(
                     "application/pdf",
                     "application/msword",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

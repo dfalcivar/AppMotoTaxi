@@ -15,6 +15,7 @@ import "./brand.css";
 import "./fare-audit.css";
 import { MobileAccountActions } from "./mobile-account-actions.js";
 import { MembershipAdmin } from "./memberships-admin.js";
+import {FleetAdmin} from './fleet-admin.js';
 import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
 import { FareTerritories } from "./fare-admin.js";
@@ -23,9 +24,10 @@ const FiscalAdmin = lazy(() => import('./fiscal-admin.js').then(module => ({defa
 import { AdminErrorBoundary } from "./observability.js";
 import { PassengerCancellationSettings, PassengerCancellationHistory } from './passenger-cancellations.js';
 
-type Module = "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
+type Module = "fleet" | "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
 
 const labels: Record<Module, string> = {
+  fleet:'Mototaxis',
   fiscal: 'Finanzas / Facturación',
   dashboard: "Tablero",
   operations: "Centro de operaciones",
@@ -45,8 +47,9 @@ const labels: Record<Module, string> = {
   audit: "Auditoría",
   database: "PostgreSQL"
 };
-const icons: Record<Module, string> = { fiscal: "▤", dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", memberships: "◈", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", commercial: "◆", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
+const icons: Record<Module, string> = { fleet:'▣', fiscal: "▤", dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", memberships: "◈", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", commercial: "◆", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
 const modulePermissions: Record<Module, string[]> = {
+  fleet:['fleet:view'],
   fiscal: ['FACTURACION_VER','FACTURACION_DASHBOARD_VER','CLIENTES_FISCALES_VER'],
   dashboard: ["dashboard:view", "cooperative_dashboard:view"],
   operations: ["operations:view"], alerts: ["alerts:view"],
@@ -821,6 +824,7 @@ function App() {
       {currentModule === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}
       {currentModule === "drivers" && <Drivers canEditAccounts={allowed("mobile_accounts:edit")} canDeleteIncomplete={allowed("mobile_accounts:delete_incomplete")} token={session.token} canApprove={allowed("drivers:approve")} canViewDocuments={allowed("drivers:documents:view")} canManageDocuments={allowed("drivers:documents:manage")} canResetPasswords={allowed("users:manage")} />}
       {currentModule === "memberships" && <MembershipAdmin token={session.token} permissions={session.user.permissions ?? []} />}
+      {currentModule === "fleet" && <FleetAdmin token={session.token} permissions={session.user.permissions ?? []} cooperativeScoped={session.user.role==='ANALISTA_COOPERATIVA'} />}
       {currentModule === "passengers" && <Passengers canEditAccounts={allowed("mobile_accounts:edit")} token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}
       {currentModule === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}
       {currentModule === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}

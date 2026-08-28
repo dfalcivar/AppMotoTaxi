@@ -13,6 +13,8 @@ export const adminRoles = [
 export type AdminRole = typeof adminRoles[number];
 
 export const allPermissions = [
+  "fleet:view",
+  "fleet:manage",
   "FACTURACION_VER",
   "FACTURACION_ADMINISTRAR",
   "CLIENTES_FISCALES_VER",
@@ -118,6 +120,7 @@ const supportPermissions: Permission[] = [
 ];
 
 const cooperativeAnalystPermissions: Permission[] = [
+  "fleet:view", "fleet:manage",
   "cooperative_dashboard:view", "reports:view", "reports:export_aggregated"
 ];
 

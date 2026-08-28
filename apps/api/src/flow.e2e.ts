@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, InjectOptions } from "fastify";
 import { buildApp } from "./app.js";
 import { closeDatabase, database } from "./database.js";
+import { startSession, releaseSession } from "./fleet/service.js";
 
 interface SessionBody {
   token: string;
@@ -40,25 +41,29 @@ async function prepareAccounts(): Promise<void> {
         must_change_password=false
     `;
     await tx`
-      insert into drivers (user_id, approval_note, approved_at, is_available)
-      values (${e2eDriverId}, 'Cuenta automática E2E', now(), false)
-      on conflict (user_id) do update set is_available=false
+      insert into drivers (user_id, approval_note, approved_at, is_available, approval_status)
+      values (${e2eDriverId}, 'Cuenta automática E2E', now(), false, 'APROBADO')
+      on conflict (user_id) do update set is_available=false, approval_status='APROBADO'
     `;
     await tx`
-      insert into drivers (user_id, approval_note, approved_at, is_available)
-      values (${e2eDriver2Id}, 'Cuenta automática E2E', now(), false)
-      on conflict (user_id) do update set is_available=false
+      insert into drivers (user_id, approval_note, approved_at, is_available, approval_status)
+      values (${e2eDriver2Id}, 'Cuenta automática E2E', now(), false, 'APROBADO')
+      on conflict (user_id) do update set is_available=false, approval_status='APROBADO'
     `;
     await tx`
-      insert into vehicles (driver_id, identifier, maximum_passengers, status)
-      values (${e2eDriverId}, 'E2E-TEST', 3, 'ACTIVE')
-      on conflict (identifier) do update set driver_id=excluded.driver_id, status='ACTIVE'
+      insert into vehicles (driver_id, identifier, maximum_passengers, status, fleet_status)
+      values (${e2eDriverId}, 'E2E-TEST', 3, 'ACTIVE', 'VERIFIED')
+      on conflict (identifier) do update set driver_id=excluded.driver_id, status='ACTIVE', fleet_status='VERIFIED'
     `;
     await tx`
-      insert into vehicles (driver_id, identifier, maximum_passengers, status)
-      values (${e2eDriver2Id}, 'E2E-TEST-2', 3, 'ACTIVE')
-      on conflict (identifier) do update set driver_id=excluded.driver_id, status='ACTIVE'
+      insert into vehicles (driver_id, identifier, maximum_passengers, status, fleet_status)
+      values (${e2eDriver2Id}, 'E2E-TEST-2', 3, 'ACTIVE', 'VERIFIED')
+      on conflict (identifier) do update set driver_id=excluded.driver_id, status='ACTIVE', fleet_status='VERIFIED'
     `;
+    await tx`insert into user_vehicle_relations(user_id,vehicle_id,relation_type,status,source)
+      select driver_id,id,'AUTHORIZED_DRIVER','APPROVED','LEGACY_MIGRATION' from vehicles
+      where driver_id in (${e2eDriverId},${e2eDriver2Id}) and merged_into is null
+      on conflict(user_id,vehicle_id,relation_type) do update set status='APPROVED'`;
   });
 }
 
@@ -78,19 +83,24 @@ async function cleanup(tripId?: string): Promise<void> {
   const sql = database();
   await sql.begin(async tx => {
     if (tripId) {
-      await tx`delete from incidents where trip_id=${tripId}`;
-      await tx`delete from driver_offers where trip_id=${tripId}`;
-      await tx`delete from trip_events where trip_id=${tripId}`;
-      await tx`delete from trips where id=${tripId}`;
+      await tx`update trips set status='CANCELLED' where id=${tripId}
+        and status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS','INCIDENT')`;
     }
-    await tx`delete from vehicles where driver_id in (${e2eDriverId}, ${e2eDriver2Id})`;
-    await tx`delete from drivers where user_id in (${e2eDriverId}, ${e2eDriver2Id})`;
-    await tx`delete from users where id in (${e2ePassengerId}, ${e2eDriverId}, ${e2eDriver2Id})`;
+    await tx`update drivers set is_available=false where user_id in (${e2eDriverId},${e2eDriver2Id})`;
   });
+  // Keep immutable assignment/session evidence. The disposable E2E database is
+  // reset by its operator, never by deleting business audit rows in this runner.
+  const sessions=await sql`select id,driver_id from driver_vehicle_sessions where status='ACTIVE'
+    and driver_id in (${e2eDriverId},${e2eDriver2Id})`;
+  for(const session of sessions)await releaseSession({id:String(session.driver_id)},String(session.id),'LOGOUT');
 }
 
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL es obligatoria para test:flow.");
+  const target=new URL(process.env.DATABASE_URL);
+  if(process.env.E2E_DATABASE_CONFIRMED!=='true'||!['localhost','127.0.0.1','[::1]'].includes(target.hostname)||!/test|e2e/i.test(target.pathname)){
+    throw new Error('test:flow requiere una BD local desechable con test/e2e en su nombre y E2E_DATABASE_CONFIRMED=true. No ejecutar sobre producción.');
+  }
   await prepareAccounts();
   const app = await buildApp();
   let tripId: string | undefined;
@@ -119,6 +129,10 @@ async function main(): Promise<void> {
     if (passengerActive || driverActive) {
       throw new Error("Las cuentas de prueba tienen un viaje activo. Finalízalo o cancélalo antes de ejecutar test:flow.");
     }
+
+    const units=await database()`select id,driver_id from vehicles where identifier in ('E2E-TEST','E2E-TEST-2') and merged_into is null`;
+    for(const unit of units)await startSession({id:String(unit.driver_id)},String(unit.id),'MANUAL_SELECTION');
+    console.log('✓ Conductores con unidad autorizada y jornada confirmada');
 
     await Promise.all([driver, driver2].map((session, index) => request(app, {
       method: "PUT", url: "/v1/driver/availability", headers: auth(session.token),

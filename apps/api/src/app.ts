@@ -13,6 +13,10 @@ import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./adm
 import { registerMobileAccountAdminRoutes } from './mobile-account-admin.js';
 import { anonymizeMobileIdentity } from './mobile-account-maintenance.js';
 import { database } from "./database.js";
+import { registerFleetRoutes } from './fleet/routes.js';
+import { currentSession, releaseSession, releaseStaleSessions } from './fleet/service.js';
+import { fleetError } from './fleet/routes.js';
+import {deliverFleetNotifications} from './fleet/notifications.js';
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
@@ -119,7 +123,7 @@ const registrationSchema = z.object({
   }
 });
 const driverEnrollmentSchema = z.object({
-  vehicleIdentifier: z.string().trim().min(3).max(30),
+  vehicleIdentifier: z.string().trim().max(30).optional(),
   cooperativeId: z.string().uuid().nullable().optional(),
   profilePhotoBase64: z.string().min(100).max(3_500_000),
   profilePhotoMime: z.enum(["image/jpeg", "image/png", "image/webp"])
@@ -437,6 +441,13 @@ async function refreshDriverApprovalState(driverId: string, driverName: string) 
 
 export async function buildApp() {
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
+  app.setErrorHandler((error:Error & {statusCode?:number},request,reply)=>{
+    if(['VEHICLE_SESSION_REQUIRED','VEHICLE_NOT_VERIFIED','VEHICLE_HAS_ACTIVE_TRIP'].includes(error.message)){
+      return reply.code(409).send({error:error.message,message:'Tu mototaxi o jornada cambió. Actualiza la pantalla y verifica tu unidad antes de continuar.'});
+    }
+    // Preserve Fastify's existing error semantics for unrelated modules.
+    return reply.send(error);
+  });
   await app.register(cors, {
     origin: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -453,6 +464,13 @@ export async function buildApp() {
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
   await registerFiscalRoutes(app);
+  await registerFleetRoutes(app, authenticatedUser);
+  const fleetScheduler = setInterval(() => {
+    void releaseStaleSessions().catch(error => app.log.error({err:error},'fleet_scheduler_failed'));
+    void deliverFleetNotifications().catch(error=>app.log.error({err:error},'fleet_notifications_failed'));
+  }, 30_000);
+  fleetScheduler.unref();
+  app.addHook('onClose',async()=>clearInterval(fleetScheduler));
   const membershipScheduler = setInterval(() => {
     void membershipSchedulerTick().catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
   }, 60_000);
@@ -605,7 +623,7 @@ export async function buildApp() {
           with eligible as (
             select d.user_id, d.deuna_enabled
             from drivers d join users u on u.id=d.user_id
-            where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO'
+            where d.is_available=true and fleet_driver_can_receive(d.user_id) and u.status='ACTIVE' and d.approval_status='APROBADO'
               and d.last_location is not null
               and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
               and ((select not membership_enforcement_enabled from operational_settings where id=1)
@@ -658,7 +676,7 @@ export async function buildApp() {
           select d.user_id,
             round(ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${trip.originLongitude}, ${trip.originLatitude}),4326)::geography))::int as distance_meters
           from drivers d join users u on u.id=d.user_id
-          where d.is_available=true and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
+          where d.is_available=true and fleet_driver_can_receive(d.user_id) and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
           and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
             or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
@@ -730,6 +748,7 @@ export async function buildApp() {
           and t.driver_search_next_round_at>now()
         where d.user_id=${driverId}
           and d.is_available=true
+          and fleet_driver_can_receive(d.user_id)
           and u.status='ACTIVE'
           and d.approval_status='APROBADO'
           and d.last_location is not null
@@ -815,7 +834,8 @@ export async function buildApp() {
               and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
             limit 1
           `;
-          if (busy) {
+          const [fleet]=await tx`select fleet_driver_can_receive(${item.driverId}) as eligible`;
+          if (busy || !fleet?.eligible) {
             const [released] = await tx`
               update trips set driver_id=null, assigned_at=null, schedule_status='SCHEDULED_READY'
               where id=${item.tripId} and status='SEARCHING' and schedule_status='SCHEDULED_ASSIGNED'
@@ -1310,7 +1330,6 @@ export async function buildApp() {
     const normalizedEmail = normalizeEmail(input.email);
     const normalizedPhone = normalizePhone(input.phone);
     if (!normalizedPhone) return reply.code(400).send({ error: "INVALID_PHONE" });
-    if (input.role === "DRIVER" && !input.vehicleIdentifier) return reply.code(400).send({ error: "VEHICLE_REQUIRED" });
     let profilePhoto: Buffer | null = null;
     if (input.profilePhotoBase64 && input.profilePhotoMime) {
       try { profilePhoto = decodeImage(input.profilePhotoBase64, input.profilePhotoMime); }
@@ -1321,14 +1340,10 @@ export async function buildApp() {
       const [duplicates] = await database()`
         select
           exists(select 1 from users where lower(email)=lower(${normalizedEmail}) and deleted_at is null) as "emailExists",
-          exists(select 1 from users where phone_e164 in ${database()(phoneAliases)} and deleted_at is null) as "phoneExists",
-          ${input.role === "DRIVER" && input.vehicleIdentifier
-            ? database()`exists(select 1 from vehicles where lower(identifier)=lower(${input.vehicleIdentifier.trim()}))`
-            : database()`false`} as "vehicleExists"
-      ` as unknown as [{ emailExists: boolean; phoneExists: boolean; vehicleExists: boolean }];
+          exists(select 1 from users where phone_e164 in ${database()(phoneAliases)} and deleted_at is null) as "phoneExists"
+      ` as unknown as [{ emailExists: boolean; phoneExists: boolean }];
       if (duplicates.emailExists) return reply.code(409).send({ error: "EMAIL_ALREADY_EXISTS" });
       if (duplicates.phoneExists) return reply.code(409).send({ error: "PHONE_ALREADY_EXISTS" });
-      if (duplicates.vehicleExists) return reply.code(409).send({ error: "VEHICLE_ALREADY_EXISTS" });
       const account = await database().begin(async tx => {
         if (input.role === "DRIVER" && input.cooperativeId) {
           const cooperative = await tx`select id from cooperatives where id=${input.cooperativeId} and status='ACTIVE'`;
@@ -1346,7 +1361,6 @@ export async function buildApp() {
         if (input.role === "DRIVER") {
           await tx`insert into mobile_account_roles(user_id,role) values (${user!.id},'DRIVER') on conflict do nothing`;
           await tx`insert into drivers (user_id, is_available, approval_status) values (${user!.id}, false, 'PENDIENTE_DOCUMENTOS')`;
-          await tx`insert into vehicles (driver_id, identifier, maximum_passengers, status) values (${user!.id}, ${input.vehicleIdentifier!}, 3, 'PENDING')`;
           await tx`insert into driver_documents
             (driver_id, document_type, file_url, file_data, file_mime, status)
             values (${user!.id}, 'PROFILE_PHOTO', 'database', ${profilePhoto!}, ${input.profilePhotoMime!}, 'PENDING')`;
@@ -1414,13 +1428,10 @@ export async function buildApp() {
       await database().begin(async tx=>{
         const existing=await tx`select 1 from drivers where user_id=${user.id!}`;
         if(existing.length)throw new Error("DRIVER_PROFILE_ALREADY_EXISTS");
-        const vehicle=await tx`select 1 from vehicles where lower(identifier)=lower(${parsed.data.vehicleIdentifier})`;
-        if(vehicle.length)throw new Error("VEHICLE_ALREADY_EXISTS");
         if(parsed.data.cooperativeId){const coop=await tx`select 1 from cooperatives where id=${parsed.data.cooperativeId} and status='ACTIVE'`;if(!coop.length)throw new Error("INVALID_COOPERATIVE");}
         await tx`update users set cooperative_id=${parsed.data.cooperativeId??null},profile_photo_data=${photo},profile_photo_mime=${parsed.data.profilePhotoMime},profile_photo_updated_at=now(),last_mobile_role='DRIVER',active_session_id=${nextSessionId},updated_at=now() where id=${user.id!}`;
         await tx`insert into mobile_account_roles(user_id,role) values (${user.id!},'DRIVER')`;
         await tx`insert into drivers(user_id,is_available,approval_status) values (${user.id!},false,'PENDIENTE_DOCUMENTOS')`;
-        await tx`insert into vehicles(driver_id,identifier,maximum_passengers,status) values (${user.id!},${parsed.data.vehicleIdentifier},3,'PENDING')`;
         await tx`insert into driver_documents(driver_id,document_type,file_url,file_data,file_mime,status) values (${user.id!},'PROFILE_PHOTO','database',${photo},${parsed.data.profilePhotoMime},'PENDING')`;
       });
     } catch(error) {
@@ -1438,6 +1449,12 @@ export async function buildApp() {
 
   app.post("/v1/auth/logout", async (request, reply) => {
     const user = await authenticatedUser(request, reply, { allowPasswordChange: true, allowPendingDriver: true }); if (!user) return;
+    if(user.role==='DRIVER'){
+      const [busy]=await database()`select fleet_driver_has_active_trip(${user.id!}) as busy`;
+      if(busy?.busy)return reply.code(409).send({error:'VEHICLE_HAS_ACTIVE_TRIP',message:'Finaliza la carrera antes de cerrar sesión.'});
+      const {session}=await currentSession({id:user.id!});
+      if(session)try{await releaseSession({id:user.id!},String(session.id),'LOGOUT');}catch(e){return fleetError(e,reply);}
+    }
     await database().begin(async tx => {
       await tx`update users set active_session_id=null where id=${user.id!} and active_session_id=${user.sessionId!}::uuid`;
       await tx`delete from device_tokens where user_id=${user.id!}`;
@@ -1516,7 +1533,7 @@ export async function buildApp() {
         d.approval_observation as "approvalObservation"
       from users u
       left join drivers d on d.user_id=u.id
-      left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true
+      left join lateral (select v.identifier from vehicles v join driver_vehicle_sessions s on s.vehicle_id=v.id where s.driver_id=u.id and s.status='ACTIVE') v on true
       left join lateral (select file_data, file_mime from driver_documents where driver_id=u.id and document_type='PROFILE_PHOTO' limit 1) photo on true
       where u.id=${user.id!}
     `;
@@ -1690,6 +1707,8 @@ export async function buildApp() {
     const parsed = availabilitySchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "INVALID_AVAILABILITY" });
     if (parsed.data.available && !parsed.data.location) return reply.code(400).send({ error: "LOCATION_REQUIRED" });
     if (parsed.data.available) {
+      const [fleet]=await database()`select fleet_driver_can_receive(${user.id!}) as eligible`;
+      if(!fleet?.eligible)return reply.code(409).send({error:'VEHICLE_SESSION_REQUIRED',message:'Selecciona una mototaxi verificada y confirma tu jornada antes de conectarte.'});
       const eligibility = await driverMembershipEligibility(user.id!);
       if (!eligibility.eligible) return reply.code(403).send({ error: eligibility.reason ?? "MEMBERSHIP_REQUIRED", membership: eligibility.membership });
     }
@@ -1955,7 +1974,8 @@ export async function buildApp() {
         coalesce(d.rating, 0)::float8 as "driverRating", (d_user.profile_photo_data is not null) as "driverHasPhoto",
         t.passenger_id::text as "passengerId", p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone",
         coalesce((select avg(r.score) from ratings r where r.recipient_id=t.passenger_id), 0)::float8 as "passengerRating",
-        (p_user.profile_photo_data is not null) as "passengerHasPhoto", v.identifier as vehicle,
+        (p_user.profile_photo_data is not null) as "passengerHasPhoto", t.vehicle_snapshot->>'identifier' as vehicle,
+        t.vehicle_snapshot as "vehicleDetails",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
@@ -1975,7 +1995,6 @@ export async function buildApp() {
       left join users d_user on d_user.id=t.driver_id
       left join drivers d on d.user_id=t.driver_id
       join users p_user on p_user.id=t.passenger_id
-      left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) v on true
       left join trip_live_locations live on live.trip_id=t.id
       left join lateral (select reason_code from trip_events where trip_id=t.id and to_status='CANCELLED' order by occurred_at desc limit 1) cancellation on true
       where t.id=${tripId} and (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
@@ -1993,7 +2012,8 @@ export async function buildApp() {
         coalesce(d.rating, 0)::float8 as "driverRating", (d_user.profile_photo_data is not null) as "driverHasPhoto",
         t.passenger_id::text as "passengerId", p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone",
         coalesce((select avg(r.score) from ratings r where r.recipient_id=t.passenger_id), 0)::float8 as "passengerRating",
-        (p_user.profile_photo_data is not null) as "passengerHasPhoto", v.identifier as vehicle,
+        (p_user.profile_photo_data is not null) as "passengerHasPhoto", t.vehicle_snapshot->>'identifier' as vehicle,
+        t.vehicle_snapshot as "vehicleDetails",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
         ST_X(t.destination::geometry) as "destinationLongitude", ST_Y(t.destination::geometry) as "destinationLatitude",
@@ -2010,7 +2030,6 @@ export async function buildApp() {
       join users p_user on p_user.id=t.passenger_id
       left join users d_user on d_user.id=t.driver_id
       left join drivers d on d.user_id=t.driver_id
-      left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) v on true
       left join trip_live_locations live on live.trip_id=t.id
       where (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
         and t.status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
@@ -2040,10 +2059,9 @@ export async function buildApp() {
         (driver.profile_photo_data is not null) as "driverHasPhoto",
         (passenger.profile_photo_data is not null) as "passengerHasPhoto",
         coalesce((select avg(r.score) from ratings r where r.recipient_id=t.passenger_id), 0)::float8 as "passengerRating",
-        vehicle.identifier as vehicle
+        t.vehicle_snapshot->>'identifier' as vehicle,t.vehicle_snapshot as "vehicleDetails"
       from trips t join users passenger on passenger.id=t.passenger_id
       left join users driver on driver.id=t.driver_id
-      left join lateral (select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1) vehicle on true
       where ((${user.role}='DRIVER' and ${user.id!}=t.driver_id)
         or (${user.role}<>'DRIVER' and ${user.id!}=t.passenger_id))
         and (${cursor ?? null}::timestamptz is null or t.requested_at < ${cursor ?? null}::timestamptz)
@@ -2072,7 +2090,8 @@ export async function buildApp() {
         coalesce((select avg(r.score) from ratings r where r.recipient_id=t.passenger_id), 0)::float8 as "passengerRating",
         t.driver_id::text as "driverId", driver.full_name as "driverName",
         (driver.profile_photo_data is not null) as "driverHasPhoto",
-        coalesce(driver_profile.rating, 0)::float8 as "driverRating", vehicle.identifier as vehicle,
+        coalesce(driver_profile.rating, 0)::float8 as "driverRating", t.vehicle_snapshot->>'identifier' as vehicle,
+        t.vehicle_snapshot as "vehicleDetails",
         coalesce((select json_agg(json_build_object(
           'id', stop.id::text, 'order', stop.stop_order, 'reference', stop.reference,
           'latitude', ST_Y(stop.location::geometry), 'longitude', ST_X(stop.location::geometry),
@@ -2082,9 +2101,6 @@ export async function buildApp() {
       join users passenger on passenger.id=t.passenger_id
       left join users driver on driver.id=t.driver_id
       left join drivers driver_profile on driver_profile.user_id=t.driver_id
-      left join lateral (
-        select identifier from vehicles where driver_id=t.driver_id order by created_at desc limit 1
-      ) vehicle on true
       where t.scheduled_for is not null
         and (${user.id!}=t.passenger_id or ${user.id!}=t.driver_id)
         and t.status not in ('COMPLETED','CANCELLED')
@@ -2544,6 +2560,8 @@ export async function buildApp() {
   app.get("/v1/driver/offers", async (request, reply) => {
     const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const [fleet]=await database()`select fleet_driver_can_receive(${user.id!}) as eligible`;
+    if(!fleet?.eligible)return [];
     await database()`update drivers set last_location_at=now() where user_id=${user.id!} and is_available=true`;
     const [activeTrip] = await database()`
       select id from trips
@@ -2602,7 +2620,8 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     if (user.role !== "DRIVER") return reply.code(403).send({ error: "FORBIDDEN" });
     const [driver] = await database()`select is_available as available from drivers where user_id=${user.id!}`;
-    return { available: Boolean(driver?.available) };
+    const fleet=await currentSession({id:user.id!});
+    return { available: Boolean(driver?.available && fleet.session?.eligible), ...fleet };
   });
 
   app.post("/v1/driver/offers/:offerId/respond", async (request, reply) => {

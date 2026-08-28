@@ -30,7 +30,12 @@ export async function revokeMobileAccess(tx:TransactionSql,userId:string) {
 export async function anonymizeMobileIdentity(tx:TransactionSql,userId:string) {
   await revokeMobileAccess(tx,userId);
   await tx`update drivers set is_available=false,last_location=null,last_location_at=null where user_id=${userId}`;
-  await tx`update vehicles set identifier='DELETED-' || id::text where driver_id=${userId}`;
+  // Units are shared assets: deleting an account must never rename its vehicles.
+  const ended=await tx`update driver_vehicle_sessions set status='ENDED',ended_at=now(),end_reason='ADMIN_RELEASE',updated_at=now()
+    where driver_id=${userId} and status='ACTIVE' returning id,vehicle_id`;
+  for(const session of ended)await tx`insert into vehicle_audit(vehicle_id,driver_id,action,reason,next_value)
+    values(${session.vehicle_id},${userId},'session_ended','Cuenta eliminada',${JSON.stringify({sessionId:session.id,endReason:'ADMIN_RELEASE'})}::jsonb)`;
+  await tx`update user_vehicle_relations set status='REVOKED',reason='Cuenta eliminada',reviewed_at=now() where user_id=${userId}`;
   await tx`update users set full_name='Cuenta eliminada',email=${`deleted+${userId}@deleted.invalid`},
     phone_e164=${`deleted:${userId}`},password_hash=crypt(${randomBytes(32).toString('hex')},gen_salt('bf')),
     profile_photo_data=null,profile_photo_mime=null,profile_photo_updated_at=null,

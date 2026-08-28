@@ -33,11 +33,12 @@ import UniformTypeIdentifiers
         result(FlutterMethodNotImplemented)
         return
       }
-      self?.presentDocumentPicker(result: result)
+      let arguments = call.arguments as? [String: Any]
+      self?.presentDocumentPicker(result: result, pdfOnly: (arguments?["extensions"] as? [String]) == ["pdf"])
     }
   }
 
-  private func presentDocumentPicker(result: @escaping FlutterResult) {
+  private func presentDocumentPicker(result: @escaping FlutterResult, pdfOnly: Bool = false) {
     guard pendingDocumentResult == nil else {
       result(FlutterError(code: "DOCUMENT_PICKER_BUSY", message: "Ya hay un selector de documentos abierto.", details: nil))
       return
@@ -47,7 +48,7 @@ import UniformTypeIdentifiers
       UTType(filenameExtension: "doc"),
       UTType(filenameExtension: "docx")
     ].compactMap { $0 }
-    let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+    let picker = UIDocumentPickerViewController(forOpeningContentTypes: pdfOnly ? [UTType.pdf] : types, asCopy: true)
     picker.delegate = self
     pendingDocumentResult = result
     guard let presenter = activeViewController() else {

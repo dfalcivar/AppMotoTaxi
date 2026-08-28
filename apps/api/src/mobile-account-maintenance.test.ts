@@ -38,6 +38,8 @@ beforeAll(async()=>{
     create unique index users_email_lower_idx on users(lower(email));
     create table drivers(user_id uuid primary key references users(id),approval_status text,approved_at timestamptz,is_available boolean,last_location text,last_location_at timestamptz);
     create table vehicles(id uuid primary key default gen_random_uuid(),driver_id uuid references users(id),identifier text);
+    create table driver_vehicle_sessions(id uuid primary key default gen_random_uuid(),vehicle_id uuid,driver_id uuid references users(id),status text,ended_at timestamptz,end_reason text,updated_at timestamptz);
+    create table user_vehicle_relations(user_id uuid references users(id),status text,reason text,reviewed_at timestamptz);
     create table trips(id uuid primary key default gen_random_uuid(),passenger_id uuid references users(id),driver_id uuid references users(id),status text);
     create table driver_memberships(id uuid primary key default gen_random_uuid(),driver_id uuid references users(id));
     create table membership_payment_orders(id uuid primary key default gen_random_uuid(),driver_id uuid references users(id));
@@ -113,6 +115,7 @@ describe('mantenimiento seguro de cuentas móviles',()=>{
     expect((await account()).deleted_at).toBeTruthy();expect((await account()).password_hash).not.toBe('previous-hash');
     expect((await pg.query('select * from driver_documents')).rows).toHaveLength(1);expect((await pg.query('select * from driver_approval_reviews')).rows).toHaveLength(1);
     expect((await pg.query('select * from audit_log')).rows).toHaveLength(1);
+    expect((await pg.query<any>('select identifier from vehicles where driver_id=$1',[id])).rows[0].identifier).toBe('TEST-123');
     await pg.query("insert into users(id,email,phone_e164) values(gen_random_uuid(),'registro@gimal.test','+593991234567')");
     await expect(updateMobileIdentity(id,edit(),actor)).rejects.toThrow('MOBILE_ACCOUNT_NOT_FOUND');
   });

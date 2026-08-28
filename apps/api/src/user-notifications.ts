@@ -1,6 +1,7 @@
 import { database } from "./database.js";
 
 const persistentTypes = new Set([
+  "FLEET_SESSION",
   "TRIP_OFFER",
   "TRIP_OFFER_CANCELLED",
   "SCHEDULED_TRIP_AVAILABLE",
@@ -40,8 +41,8 @@ export async function persistUserNotification(input: {
   data?: Record<string, string>;
 }): Promise<string | undefined> {
   if (!process.env.DATABASE_URL || !shouldPersistNotification(input.type)) return undefined;
-  const entityId = uuid(input.data?.tripId ?? input.data?.incidentId);
-  const entityType = input.data?.tripId ? "TRIP" : input.data?.incidentId ? "INCIDENT" : null;
+  const entityId = uuid(input.data?.tripId ?? input.data?.incidentId ?? input.data?.vehicleId);
+  const entityType = input.data?.tripId ? "TRIP" : input.data?.incidentId ? "INCIDENT" : input.data?.vehicleId ? 'VEHICLE' : null;
   const uniquePart = input.data?.messageId ?? input.data?.eventId ?? input.data?.eventAt ?? input.type;
   const eventKey = entityId ? `${input.type}:${entityId}:${uniquePart}` : undefined;
   const [stored] = await database()`

@@ -11,6 +11,8 @@ Plataforma de movilidad para solicitar mototaxis en las zonas de cobertura habil
 - `compose.yaml`: PostgreSQL 16 + PostGIS 3.4 para desarrollo local.
 - `docs`: arquitectura y decisiones de base de datos.
 
+La nueva gestión de unidades y jornadas está documentada en [Mototaxis, propietarios, jornadas y QR](docs/FLOTA_MOTOTAXIS_Y_JORNADAS.md), incluyendo migraciones, permisos, pruebas y coordinación obligatoria de la futura actualización móvil/API.
+
 ## Requisitos para una computadora nueva
 
 1. Git.

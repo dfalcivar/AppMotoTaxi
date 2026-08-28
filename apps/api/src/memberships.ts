@@ -1186,28 +1186,27 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     if(missing.length)return reply.code(400).send({error:"CSV_MISSING_COLUMNS",missing});
     const rows=parsed.slice(1).map((values,index)=>importedRow(values,headerIndex,index+2));
     const emails=rows.map(row=>row.email); const phones=rows.map(row=>normalizePhone(row.phone)).filter(Boolean) as string[];
-    const identities=rows.map(row=>row.identityNumber); const plates=rows.map(row=>row.plate);
+    const identities=rows.map(row=>row.identityNumber);
     const cooperatives=await database()`select id::text,name,coalesce(registration_number,'') as code from cooperatives where status='ACTIVE'`;
     const cooperativeMap=new Map<string,string>();
     for(const cooperative of cooperatives){cooperativeMap.set(String(cooperative.name).trim().toUpperCase(),String(cooperative.id));if(cooperative.code)cooperativeMap.set(String(cooperative.code).trim().toUpperCase(),String(cooperative.id));}
     const existing=await database()`select lower(email) email,phone_e164 phone from users where deleted_at is null and (lower(email)=any(${emails.map(value=>value.toLowerCase())}) or phone_e164=any(${phones}))`;
-    const existingDrivers=await database()`select lower(coalesce(d.identity_number,'')) identity,lower(v.identifier) plate from drivers d left join vehicles v on v.driver_id=d.user_id where lower(coalesce(d.identity_number,''))=any(${identities.map(value=>value.toLowerCase())}) or lower(v.identifier)=any(${plates.map(value=>value.toLowerCase())})`;
+    const existingDrivers=await database()`select lower(coalesce(d.identity_number,'')) identity from drivers d where lower(coalesce(d.identity_number,''))=any(${identities.map(value=>value.toLowerCase())})`;
     const existingEmails=new Set(existing.map(row=>String(row.email)));const existingPhones=new Set(existing.map(row=>String(row.phone)));
-    const existingIdentities=new Set(existingDrivers.map(row=>String(row.identity)));const existingPlates=new Set(existingDrivers.map(row=>String(row.plate)));
-    const seenEmails=new Set<string>(),seenPhones=new Set<string>(),seenIdentities=new Set<string>(),seenPlates=new Set<string>();
+    const existingIdentities=new Set(existingDrivers.map(row=>String(row.identity)));
+    const seenEmails=new Set<string>(),seenPhones=new Set<string>(),seenIdentities=new Set<string>();
     const preview=rows.map(row=>{
-      const errors:string[]=[];const phone=normalizePhone(row.phone);const email=row.email.toLowerCase();const identity=row.identityNumber.toLowerCase();const plate=row.plate.toLowerCase();
+      const errors:string[]=[];const phone=normalizePhone(row.phone);const email=row.email.toLowerCase();const identity=row.identityNumber.toLowerCase();
       if(!row.firstNames||!row.lastNames)errors.push("NAME_REQUIRED");
       if(!/^\S+@\S+\.\S+$/.test(email))errors.push("INVALID_EMAIL");
       if(!phone)errors.push("INVALID_PHONE");
       if(row.identityNumber.length<5)errors.push("INVALID_IDENTITY");
-      if(row.plate.length<5)errors.push("INVALID_PLATE");
+      if(row.plate&&(!/^[a-zA-Z0-9 -]{3,30}$/.test(row.plate)))errors.push("INVALID_PLATE");
       if(row.vehicleYear&&(row.vehicleYear<1980||row.vehicleYear>new Date().getFullYear()+1))errors.push("INVALID_VEHICLE_YEAR");
       if(row.cooperativeCode!=="INDIVIDUAL"&&!cooperativeMap.has(row.cooperativeCode))errors.push("COOPERATIVE_NOT_FOUND");
       if(existingEmails.has(email)||seenEmails.has(email))errors.push("EMAIL_ALREADY_EXISTS");else seenEmails.add(email);
       if(phone&&(existingPhones.has(phone)||seenPhones.has(phone)))errors.push("PHONE_ALREADY_EXISTS");else if(phone)seenPhones.add(phone);
       if(existingIdentities.has(identity)||seenIdentities.has(identity))errors.push("IDENTITY_ALREADY_EXISTS");else seenIdentities.add(identity);
-      if(existingPlates.has(plate)||seenPlates.has(plate))errors.push("VEHICLE_ALREADY_EXISTS");else seenPlates.add(plate);
       return {...row,phone:phone??row.phone,cooperativeId:row.cooperativeCode==="INDIVIDUAL"?null:cooperativeMap.get(row.cooperativeCode),errors,status:errors.length?"REJECTED":"VALID"};
     });
     const validRows=preview.filter(row=>row.status==="VALID").length;
@@ -1228,7 +1227,16 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         const [user]=await tx`insert into users(phone_e164,full_name,email,password_hash,role,status,cooperative_id,phone_verified_at,email_verified_at,terms_accepted_at,must_change_password) values (${row.phone},${`${row.firstNames} ${row.lastNames}`.trim()},${row.email},crypt(${password},gen_salt('bf')),'DRIVER','ACTIVE',${row.cooperativeId??null},now(),now(),now(),true) returning id::text,email,full_name as name`;
         await tx`insert into mobile_account_roles(user_id,role) values (${user!.id},'PASSENGER'),(${user!.id},'DRIVER') on conflict do nothing`;
         await tx`insert into drivers(user_id,is_available,approval_status,identity_number,imported_at,imported_by) values (${user!.id},false,'PENDIENTE_DOCUMENTOS',${row.identityNumber},now(),${actor.id!})`;
-        await tx`insert into vehicles(driver_id,identifier,maximum_passengers,status,brand,model,model_year,notes) values (${user!.id},${row.plate},3,'PENDING',${row.vehicleBrand||null},${row.vehicleModel||null},${row.vehicleYear??null},${row.notes||null})`;
+        if(row.plate){
+          await tx`select pg_advisory_xact_lock(737301)`;
+          let [vehicle]=await tx`select id from vehicles where merged_into is null and fleet_normalize_identifier(identifier)=fleet_normalize_identifier(${row.plate})`;
+          if(!vehicle)[vehicle]=await tx`insert into vehicles(identifier,cooperative_id,maximum_passengers,status,brand,model,model_year,notes)
+            values (${row.plate},${row.cooperativeId??null},3,'PENDING',${row.vehicleBrand||null},${row.vehicleModel||null},${row.vehicleYear??null},${row.notes||null}) returning id`;
+          await tx`insert into user_vehicle_relations(user_id,vehicle_id,relation_type,status,source)
+            values(${user!.id},${vehicle!.id},'AUTHORIZED_DRIVER','PENDING','ADMIN') on conflict do nothing`;
+          await tx`insert into vehicle_audit(vehicle_id,driver_id,actor_id,action,reason)
+            values(${vehicle!.id},${user!.id},${actor.id!},'driver_link_requested','Importación CSV: no asigna propiedad ni autoriza automáticamente')`;
+        }
         await tx`update driver_import_rows set status='IMPORTED',driver_id=${user!.id} where id=${item.id}`;created.push(user as {id:string;email:string;name:string});
       }
       await tx`update driver_import_batches set status='COMPLETED',imported_rows=${created.length},completed_at=now() where id=${batchId}`;
@@ -1247,7 +1255,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/api-usage",async(request,reply)=>{try{requirePermission(request,"api_usage:view");const [settings]=await database()`select * from operational_settings where id=1`;if(!settings)throw new Error("SETTINGS_NOT_FOUND");const rows=await database()`select provider,count(*)::int as requests,count(*) filter(where result='ERROR')::int as errors from api_usage_events where billing_period=date_trunc('month',now())::date group by provider order by provider`;const map=Object.fromEntries(rows.map(row=>[String(row.provider),Number(row.requests)]));const textSearch=map.TEXT_SEARCH_PRO??0;const navigation=map.NAVIGATION_SDK??0;return {period:new Date().toISOString().slice(0,7),providers:rows,textSearch:{used:textSearch,freeCap:Number(settings.text_search_free_cap_reference),operationalLimit:Number(settings.text_search_free_cap_reference)+Math.floor(Number(settings.text_search_monthly_budget_usd)*1000/Math.max(0.01,Number(settings.text_search_price_per_thousand_usd))),estimatedCost:Math.max(0,textSearch-Number(settings.text_search_free_cap_reference))*Number(settings.text_search_price_per_thousand_usd)/1000},navigation:{used:navigation,freeCap:Number(settings.navigation_free_cap_reference)}};}catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/collector/payment-orders/token/:token",async(request,reply)=>{try{requirePermission(request,"payments:collect");const token=(request.params as {token:string}).token;const [order]=await database()`select o.id::text,o.status,o.short_code as "shortCode",o.total_amount::float8 as amount,o.currency,o.expires_at as "expiresAt",o.plan_snapshot as plan,u.full_name as driver,concat('****',right(coalesce(d.identity_number,''),4)) as identification,v.identifier as vehicle,c.name as cooperative,dm.expires_at as "currentExpiresAt" from membership_payment_orders o join users u on u.id=o.driver_id join drivers d on d.user_id=o.driver_id left join lateral(select identifier from vehicles where driver_id=o.driver_id order by created_at desc limit 1)v on true left join cooperatives c on c.id=u.cooperative_id left join lateral(select expires_at from driver_memberships where driver_id=o.driver_id and cycle_closed_at is null order by created_at desc limit 1)dm on true where o.public_token_hash=${sha256(token)} and o.status in ('PENDING','PENDING_VERIFICATION') and o.expires_at>now()`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});return order;}catch(error){return businessError(error,reply);} });
+  app.get("/v1/collector/payment-orders/token/:token",async(request,reply)=>{try{requirePermission(request,"payments:collect");const token=(request.params as {token:string}).token;const [order]=await database()`select o.id::text,o.status,o.short_code as "shortCode",o.total_amount::float8 as amount,o.currency,o.expires_at as "expiresAt",o.plan_snapshot as plan,u.full_name as driver,concat('****',right(coalesce(d.identity_number,''),4)) as identification,v.identifier as vehicle,c.name as cooperative,dm.expires_at as "currentExpiresAt" from membership_payment_orders o join users u on u.id=o.driver_id join drivers d on d.user_id=o.driver_id left join lateral(select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=o.driver_id and r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED' and v.merged_into is null)v on true left join cooperatives c on c.id=u.cooperative_id left join lateral(select expires_at from driver_memberships where driver_id=o.driver_id and cycle_closed_at is null order by created_at desc limit 1)dm on true where o.public_token_hash=${sha256(token)} and o.status in ('PENDING','PENDING_VERIFICATION') and o.expires_at>now()`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});return order;}catch(error){return businessError(error,reply);} });
 
   app.get("/v1/collector/payment-orders/search",async(request,reply)=>{try{
     requirePermission(request,"payments:collect");
@@ -1263,7 +1271,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         c.name as cooperative,dm.expires_at as "currentExpiresAt"
       from membership_payment_orders o
       join users u on u.id=o.driver_id join drivers d on d.user_id=o.driver_id
-      left join lateral(select identifier from vehicles where driver_id=o.driver_id order by created_at desc limit 1)v on true
+      left join lateral(select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=o.driver_id and r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED' and v.merged_into is null)v on true
       left join cooperatives c on c.id=u.cooperative_id
       left join lateral(select expires_at from driver_memberships where driver_id=o.driver_id and cycle_closed_at is null order by created_at desc limit 1)dm on true
       where o.status in ('PENDING','PENDING_VERIFICATION') and o.expires_at>now() and (
@@ -1271,7 +1279,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         or upper(o.short_code)=upper(${query})
         or (
           lower(u.email)=lower(${query})
-          or regexp_replace(lower(coalesce(v.identifier,'')),'[^a-z0-9]','','g')=${normalized}
+          or exists(select 1 from vehicles unit join user_vehicle_relations rel on rel.vehicle_id=unit.id where rel.user_id=o.driver_id and rel.relation_type='AUTHORIZED_DRIVER' and rel.status='APPROVED' and unit.merged_into is null and fleet_normalize_identifier(unit.identifier)=upper(${normalized}))
           or regexp_replace(lower(coalesce(u.phone_e164,'')),'[^a-z0-9]','','g')=${normalized}
           or lower(u.full_name) like lower(${`%${query}%`})
         )

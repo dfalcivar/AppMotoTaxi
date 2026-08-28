@@ -852,7 +852,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       from drivers d
       join users u on u.id = d.user_id
       left join cooperatives c on c.id=u.cooperative_id
-      left join lateral (select identifier from vehicles where driver_id = d.user_id order by created_at desc limit 1) v on true
+      left join lateral (select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=d.user_id and r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED' and v.merged_into is null) v on true
       where u.deleted_at is null
       order by u.created_at
     `;
@@ -870,7 +870,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         count(dd.id) filter (where dd.status='ACTIVE')::int as "approvedDocuments"
       from drivers d join users u on u.id=d.user_id
       left join cooperatives c on c.id=u.cooperative_id
-      left join lateral (select identifier from vehicles where driver_id=u.id order by created_at desc limit 1) v on true
+      left join lateral (select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=u.id and r.relation_type='AUTHORIZED_DRIVER' and r.status in ('APPROVED','PENDING') and v.merged_into is null) v on true
       left join driver_documents dd on dd.driver_id=u.id and dd.status<>'SUSPENDED'
       where u.deleted_at is null
         and d.approval_status in ('PENDIENTE_DOCUMENTOS','PENDIENTE_REVISION','OBSERVADO','RECHAZADO')
@@ -893,12 +893,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       }
       const next={APPROVE:"APROBADO",REJECT:"RECHAZADO",OBSERVE:"OBSERVADO",REQUEST_CORRECTIONS:"OBSERVADO",SUSPEND:"SUSPENDIDO"}[body.decision];
       const accountStatus="ACTIVE";
-      const vehicleStatus={APPROVE:"ACTIVE",REJECT:"REJECTED",OBSERVE:"PENDING",REQUEST_CORRECTIONS:"PENDING",SUSPEND:"SUSPENDED"}[body.decision];
       await tx`update drivers set approval_status=${next},approval_observation=${body.observation||null},approval_updated_at=now(),
         approval_note=${body.observation||'Documentación completa'},approved_at=case when ${body.decision}='APPROVE' then now() else approved_at end,
         approved_by=case when ${body.decision}='APPROVE' then ${actor.id!} else approved_by end,is_available=false where user_id=${driverId}`;
       await tx`update users set status=${accountStatus},updated_at=now() where id=${driverId}`;
-      await tx`update vehicles set status=${vehicleStatus} where driver_id=${driverId}`;
       await tx`insert into driver_approval_reviews(driver_id,reviewer_id,previous_status,next_status,decision,observation)
         values(${driverId},${actor.id!},${current.approval_status},${next},${body.decision},${body.observation||null})`;
       return {name:String(current.full_name),email:String(current.email),approvalStatus:next,accountStatus};
@@ -1025,7 +1023,6 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
               approved_by=case when ${body.status}='ACTIVE' then ${user.id!} else approved_by end
           where user_id=${id}
         `;
-        await tx`update vehicles set status=${body.status} where driver_id=${id}`;
       }
       return updated;
     });

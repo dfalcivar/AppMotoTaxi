@@ -22,16 +22,16 @@ export async function cooperativeOverview(cooperativeId: string) {
     `,
     sql`
       select u.id::text, u.full_name name, u.email, u.phone_e164 phone, u.status,
-        coalesce(v.identifier,'Sin vehículo') vehicle, d.is_available as available,
+        coalesce(v.identifier,'Sin vehículo') vehicle, d.is_available and fleet_driver_can_receive(d.user_id) as available,
         d.last_location_at as "lastActivity", coalesce(d.rating,0)::float8 rating,
         count(t.id)::int trips,
         count(t.id) filter(where t.requested_at>=date_trunc('month',now()))::int as "tripsThisMonth",
         count(t.id) filter(where t.status='COMPLETED')::int completed,
         count(t.id) filter(where t.status='CANCELLED')::int cancelled
-      from users u join drivers d on d.user_id=u.id left join vehicles v on v.driver_id=u.id
+      from users u join drivers d on d.user_id=u.id left join lateral(select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=u.id and r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED' and v.merged_into is null) v on true
       left join trips t on t.driver_id=u.id
       where u.cooperative_id=${cooperativeId}::uuid and u.role='DRIVER' and u.deleted_at is null
-      group by u.id,v.identifier,d.is_available,d.last_location_at,d.rating
+      group by u.id,v.identifier,d.user_id,d.is_available,d.last_location_at,d.rating
       order by u.status, d.last_location_at desc nulls last, u.full_name
     `,
     sql`

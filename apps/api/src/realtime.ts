@@ -135,7 +135,7 @@ async function nearbyDrivers(
       d.last_location_at as "recordedAt"
     from drivers d
     join users u on u.id=d.user_id
-    where d.is_available=true and u.status='ACTIVE' and u.deleted_at is null
+    where d.is_available=true and fleet_driver_can_receive(d.user_id) and u.status='ACTIVE' and u.deleted_at is null
       and (${onlyDriverId ?? null}::uuid is null or d.user_id=${onlyDriverId ?? null}::uuid)
       and d.approval_status='APROBADO' and d.last_location is not null
       and (${paymentMethod}='CASH' or d.deuna_enabled=true)
@@ -290,6 +290,9 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
             if (Math.abs(Date.now() - recordedAt.getTime()) > 10 * 60 * 1000) {
               send(socket, { type: "error", code: "STALE_LOCATION" }); return;
             }
+            await database()`update driver_vehicle_sessions set last_heartbeat=now(),updated_at=now()
+              where driver_id=${user.id!} and status='ACTIVE'
+                and (fleet_driver_has_active_trip(driver_id) or last_heartbeat>now()-make_interval(secs=>(select auto_release_seconds from fleet_settings)))`;
             const [driver] = await database()`
               update drivers set
                 last_location=ST_SetSRID(ST_MakePoint(${event.longitude}, ${event.latitude}),4326)::geography,
