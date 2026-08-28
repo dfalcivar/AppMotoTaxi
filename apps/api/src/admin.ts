@@ -1037,13 +1037,15 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!process.env.DATABASE_URL) return passengers;
     return await database()`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,
-        u.passenger_cancellation_count as "cancellationCount", u.passenger_suspended_until as "suspendedUntil",
+        case when cy.ends_at>now() then u.passenger_cancellation_count else 0 end as "cancellationCount",
+        u.passenger_cancellation_total::int as "historicalCancellationTotal", u.passenger_suspended_until as "suspendedUntil",
         u.passenger_cancellation_suspended as "cancellationSuspended",
         count(t.id)::int as trips, max(t.requested_at)::text as "lastTrip"
       from users u left join trips t on t.passenger_id = u.id
+      left join passenger_cancellation_cycles cy on cy.id=u.passenger_cancellation_cycle_id
       where u.deleted_at is null
         and exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role='PASSENGER')
-      group by u.id order by u.created_at
+      group by u.id,cy.ends_at order by u.created_at
     `;
   } catch(e){return guardError(e,reply);} });
   app.patch("/v1/admin/passengers/:id", async (request, reply) => { try {

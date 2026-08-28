@@ -23,7 +23,8 @@ describe("consola administrativa", () => {
       for (const request of [
         { method: "GET" as const, url: "/v1/admin/settings/passenger-cancellations" },
         { method: "PATCH" as const, url: "/v1/admin/settings/passenger-cancellations", payload: { enabled: false, steps: [] } },
-        { method: "GET" as const, url: "/v1/admin/passengers/00000000-0000-4000-8000-000000000001/cancellations" }
+        { method: "GET" as const, url: "/v1/admin/passengers/00000000-0000-4000-8000-000000000001/cancellations" },
+        { method: "GET" as const, url: "/v1/admin/passengers/00000000-0000-4000-8000-000000000001/cancellation-summary" }
       ]) {
         expect((await app.inject({ ...request, headers })).statusCode).toBe(403);
       }
@@ -31,6 +32,8 @@ describe("consola administrativa", () => {
     expect((await app.inject({ method: "PATCH", url: "/v1/admin/settings/passenger-cancellations",
       headers: { authorization: `Bearer ${adminToken}` }, payload: { enabled: true, steps: [{ fromCount: 3, suspensionDays: -2 }] }
     })).statusCode).toBe(400);
+    expect((await app.inject({method:'PATCH',url:'/v1/admin/settings/passenger-cancellations',
+      headers:{authorization:`Bearer ${adminToken}`},payload:{enabled:true,cycleDurationDays:0,steps:[{fromCount:1,suspensionDays:0}]}})).statusCode).toBe(400);
   });
 
   it("rechaza credenciales inválidas", async () => {

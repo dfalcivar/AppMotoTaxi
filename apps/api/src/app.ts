@@ -24,9 +24,9 @@ import { advertisingSchedulerTick, registerCommercialRoutes } from "./commercial
 import {
   driverMembershipEligibility,
   membershipSchedulerTick,
-  recordCompletedTripMembershipUsage,
   registerMembershipRoutes
 } from "./memberships.js";
+import { recordAcceptedTripMembershipUsage, markMembershipTripCompleted } from './membership-trip-usage.js';
 import {
   legacyPhoneAliases,
   normalizeEmail,
@@ -1889,8 +1889,10 @@ export async function buildApp() {
   app.get('/v1/passenger/cancellation-policy', async (request, reply) => {
     const user = await authenticatedUser(request,reply); if (!user) return;
     if(user.role!=='PASSENGER') return reply.code(403).send({error:'FORBIDDEN'});
-    const [row] = await database()`select passenger_cancellation_count as count, passenger_cancellation_policy as policy
-      from users cross join operational_settings where users.id=${user.id!} and operational_settings.id=1`;
+    const [row] = await database()`select case when cy.ends_at>now() then users.passenger_cancellation_count else 0 end as count,
+      passenger_cancellation_policy as policy
+      from users left join passenger_cancellation_cycles cy on cy.id=users.passenger_cancellation_cycle_id
+      cross join operational_settings where users.id=${user.id!} and operational_settings.id=1`;
     const count=Number(row!.count);
     return {count, nextCount:count+1, suspensionDays:cancellationConsequence(passengerCancellationPolicySchema.parse(row!.policy),count+1)};
   });
@@ -2224,6 +2226,7 @@ export async function buildApp() {
         on conflict (trip_id, driver_id) do update set accepted=true, responded_at=now()
       `;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code, metadata) values (${tripId}, 'SEARCHING', 'SEARCHING', ${user.id!}, 'SCHEDULED_ACCEPTED', ${JSON.stringify({ scheduleStatus: "SCHEDULED_ASSIGNED" })}::jsonb)`;
+      await recordAcceptedTripMembershipUsage(tx, tripId, user.id!);
       return { passengerId: String(trip.passengerId), scheduledFor: trip.scheduledFor };
     });
     if ("error" in result) return reply.code(409).send(result);
@@ -2415,6 +2418,8 @@ export async function buildApp() {
       if (!trip) return undefined;
       if (transition.to === "COMPLETED") {
         await tx`update trip_stops set completed_at=coalesce(completed_at,now()) where trip_id=${tripId}`;
+        // Consumption was registered at acceptance, not a second time at completion.
+        await markMembershipTripCompleted(tx, tripId, user.id!);
       }
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id) values (${tripId}, ${transition.from}, ${transition.to}, ${user.id!})`;
       // El conductor vuelve a estar disponible solamente al cerrar su viaje activo.
@@ -2436,7 +2441,6 @@ export async function buildApp() {
       }, "trip_status_push_not_delivered");
     }
     if (result.status === "COMPLETED") {
-      await recordCompletedTripMembershipUsage(tripId, user.id!);
       const eligibility = await driverMembershipEligibility(user.id!);
       if (!eligibility.eligible) await database()`update drivers set is_available=false where user_id=${user.id!}`;
       else void redispatchOldestTrip().catch(() => undefined);
@@ -2625,6 +2629,7 @@ export async function buildApp() {
         where driver_id=${user.id!} and id<>${offerId} and responded_at is null`;
       await tx`update drivers set is_available=false where user_id=${user.id!}`;
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id) values (${offer.trip_id}, 'SEARCHING', 'DRIVER_EN_ROUTE', ${user.id!})`;
+      await recordAcceptedTripMembershipUsage(tx, String(offer.trip_id), user.id!);
       return {
         status: "DRIVER_EN_ROUTE",
         tripId: String(offer.trip_id),

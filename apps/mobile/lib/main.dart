@@ -30,6 +30,7 @@ import 'driver_navigation.dart';
 import 'in_app_notification_banner.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
+import 'reject_offer_dialog.dart';
 import 'service_areas.dart';
 import 'trip_lifecycle.dart';
 import 'notification_alerts.dart';
@@ -10966,6 +10967,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   void showDriverCancellationNotification(Map<String, dynamic> data,
       {String? title, String? body}) {
     if (!mounted) return;
+    unawaited(refreshMembership(force: true));
     InAppNotificationBanner.show(context,
         id: 'TRIP_CANCELLED-${data['tripId']}',
         title: title ?? data['title']?.toString() ?? 'Solicitud cancelada',
@@ -11749,6 +11751,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               onPressed: () async {
                                 await api.respondScheduled(widget.s.token,
                                     offer['tripId'].toString(), true);
+                                unawaited(refreshMembership(force: true));
                                 if (sheetContext.mounted) {
                                   Navigator.pop(sheetContext);
                                 }
@@ -12567,19 +12570,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (!accept && confirmReject) {
       final confirmed = await showDialog<bool>(
             context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('Rechazar esta solicitud'),
-              content: const Text(
-                  'Solo se quitará de tu lista. Otro conductor todavía podrá aceptarla.'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: const Text('Volver')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    child: const Text('Rechazar')),
-              ],
-            ),
+            builder: (_) => const RejectOfferDialog(),
           ) ??
           false;
       if (!confirmed) return false;
@@ -12589,6 +12580,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await api.respond(widget.s.token, offerId, accept: accept);
       if (!mounted) return true;
       if (accept) {
+        unawaited(refreshMembership(force: true));
         await restore();
         await refresh();
       } else {

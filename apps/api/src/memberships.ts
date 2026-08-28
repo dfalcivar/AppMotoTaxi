@@ -6,6 +6,7 @@ import { persistAudit, requirePermission, userFrom, type SessionUser } from "./a
 import { legacyPhoneAliases, normalizeEmail, normalizePhone } from "./auth-security.js";
 import { sendTransactionalEmail } from "./email.js";
 import { sendPush } from "./push.js";
+import { lockMembershipBilling } from './membership-trip-usage.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
@@ -358,43 +359,13 @@ export async function grantInitialDriverGrace(driverId: string, actorId?: string
   });
 }
 
-export async function recordCompletedTripMembershipUsage(tripId: string, driverId: string): Promise<void> {
-  await database().begin(async tx => {
-    const [settings] = await tx`select membership_usage_billing_enabled as enabled from operational_settings where id=1`;
-    if (!settings?.enabled) return;
-    const [cycle] = await tx`
-      select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
-      order by created_at desc limit 1 for update
-    `;
-    if (!cycle || !["ACTIVE", "EXPIRING", "GRACE_PERIOD", "PAYMENT_DUE"].includes(String(cycle.status))) return;
-    const [trip] = await tx`select completed_at from trips where id=${tripId} and driver_id=${driverId} and status='COMPLETED'`;
-    if (!trip?.completed_at) return;
-    const sequence = Number(cycle.completed_trips ?? 0) + 1;
-    const included = sequence <= Number(cycle.included_trips_snapshot ?? 0);
-    const rawExtra = included ? Number(cycle.raw_extra_amount ?? 0) : money(Number(cycle.raw_extra_amount ?? 0) + Number(cycle.extra_trip_fee_snapshot ?? 0));
-    const maximumExtra = Math.max(0, Number(cycle.max_renewal_amount_snapshot) - Number(cycle.base_membership_amount_snapshot));
-    const billable = Math.min(rawExtra, maximumExtra);
-    const inserted = await tx`
-      insert into membership_cycle_trip_usages (
-        membership_cycle_id,trip_id,driver_id,completed_at,sequence_number,usage_kind,
-        extra_trip_fee_snapshot,amount_before_cap,amount_after_cap,idempotency_key
-      ) values (${cycle.id},${tripId},${driverId},${trip.completed_at},${sequence},
-        ${included ? "INCLUDED" : "EXTRA"},${cycle.extra_trip_fee_snapshot},${rawExtra},${billable},${`trip-completed:${tripId}`})
-      on conflict (trip_id) do nothing returning id
-    `;
-    if (!inserted.length) return;
-    const adjustment = Number(cycle.adjustment_amount ?? 0);
-    const estimate = Math.max(0, Math.min(Number(cycle.max_renewal_amount_snapshot), money(Number(cycle.base_membership_amount_snapshot) + billable + adjustment)));
-    await tx`update driver_memberships set completed_trips=${sequence}, extra_trips=${Math.max(0, sequence - Number(cycle.included_trips_snapshot))}, raw_extra_amount=${rawExtra}, billable_extra_amount=${billable}, estimated_next_renewal_amount=${estimate}, updated_at=now() where id=${cycle.id}`;
-  });
-}
-
 async function currentMembership(driverId: string) {
   const [row] = await database()`
     select dm.id::text, dm.plan_code as "planCode", coalesce(mp.name,dm.plan_code) as "planName",
       dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",
       dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",
       dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",
+      greatest(0,dm.included_trips_snapshot-dm.completed_trips) as "remainingTrips",
       dm.extra_trip_fee_snapshot::float8 as "extraTripFee",dm.raw_extra_amount::float8 as "rawExtraAmount",
       dm.billable_extra_amount::float8 as "billableExtraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedNextRenewalAmount",
       dm.final_renewal_amount::float8 as "finalRenewalAmount",dm.base_membership_amount_snapshot::float8 as "baseAmount",
@@ -498,7 +469,7 @@ async function activePaymentOrder(driverId: string) {
 
 async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>) {
   const result = await database().begin(async tx => {
-    await tx`select pg_advisory_xact_lock(hashtext(${`membership-order:${driverId}`}))`;
+    await lockMembershipBilling(tx, driverId);
     await tx`update membership_payment_orders set status='EXPIRED',updated_at=now() where driver_id=${driverId} and status='PENDING' and expires_at<=now()`;
     const [existing] = await tx`
       select id::text,status,short_code as "shortCode",base_amount::float8 as "baseAmount",
@@ -645,6 +616,9 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
   return database().begin(async tx => {
     const [priorPayment] = await tx`select id::text,"status",membership_cycle_id::text as "membershipId" from membership_payments where idempotency_key=${input.idempotencyKey}`;
     if (priorPayment) return { alreadyProcessed: true, paymentId: priorPayment.id, membershipId: priorPayment.membershipId };
+    const [orderOwner] = await tx`select driver_id from membership_payment_orders where id=${orderId}`;
+    if (!orderOwner) throw new Error("PAYMENT_ORDER_NOT_FOUND");
+    await lockMembershipBilling(tx, String(orderOwner.driver_id));
     const [order] = await tx`select * from membership_payment_orders where id=${orderId} for update`;
     if (!order) throw new Error("PAYMENT_ORDER_NOT_FOUND");
     if (order.status === "PAID") throw new Error("PAYMENT_ORDER_ALREADY_PAID");
