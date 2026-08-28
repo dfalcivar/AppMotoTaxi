@@ -17,6 +17,19 @@ describe("consola administrativa", () => {
   });
   afterAll(async () => app.close());
 
+  it('protege la corrección y eliminación de cuentas por permisos explícitos',async()=>{
+    const id='00000000-0000-4000-8000-000000000001';
+    const passenger=tokenFor({role:'PASSENGER',name:'Pasajero',email:'p@example.test'});
+    for(const token of [undefined,passenger,supportToken]){
+      const headers=token?{authorization:`Bearer ${token}`} : {};
+      expect((await app.inject({method:'PATCH',url:`/v1/admin/mobile-accounts/${id}/identity`,headers,payload:{}})).statusCode).toBe(403);
+      expect((await app.inject({method:'POST',url:`/v1/admin/mobile-accounts/${id}/delete-incomplete`,headers,payload:{}})).statusCode).toBe(403);
+    }
+    const headers={authorization:`Bearer ${adminToken}`};
+    expect((await app.inject({method:'PATCH',url:`/v1/admin/mobile-accounts/${id}/identity`,headers,payload:{name:'Nombre',email:'mal',phone:'abc',reason:'Prueba',expectedEmail:null}})).statusCode).toBe(400);
+    expect((await app.inject({method:'POST',url:`/v1/admin/mobile-accounts/${id}/delete-incomplete`,headers,payload:{reason:'Prueba',confirmation:'si',expectedEmail:null}})).statusCode).toBe(400);
+  });
+
   it("protege por backend la política y el historial de cancelaciones", async () => {
     const passengerToken = tokenFor({ email: "pasajero@test.local", name: "Pasajero", role: "PASSENGER" });
     for (const headers of [{}, { authorization: `Bearer ${passengerToken}` }]) {

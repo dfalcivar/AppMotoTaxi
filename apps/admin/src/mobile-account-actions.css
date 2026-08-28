@@ -1,0 +1,5 @@
+.mobile-account-dialog { gap: 14px; }
+.mobile-account-dialog p { margin: 0; line-height: 1.45; }
+.mobile-account-dialog .panel-dialog-heading p { margin-top: 6px; }
+.mobile-account-dialog .panel-dialog-fields { gap: 12px; }
+.mobile-account-dialog .note { padding: 10px 12px; }

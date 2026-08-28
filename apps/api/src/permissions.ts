@@ -17,6 +17,8 @@ export const allPermissions = [
   "cooperative_dashboard:view",
   "passengers:view",
   "passengers:manage",
+  "mobile_accounts:edit",
+  "mobile_accounts:delete_incomplete",
   "drivers:view",
   "drivers:manage",
   "drivers:approve",

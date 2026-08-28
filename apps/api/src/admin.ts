@@ -846,6 +846,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName",
         d.approval_status as "approvalStatus", d.approval_observation as "approvalObservation",
         d.submitted_for_review_at as "submittedForReviewAt", u.created_at as "createdAt",
+        u.email_verified_at as "emailVerifiedAt",d.approved_at as "approvedAt",
         (select count(*)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status='ACTIVE') as "approvedDocuments",
         (select count(*)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status<>'SUSPENDED') as "uploadedDocuments"
       from drivers d
@@ -884,7 +885,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const driverId=(request.params as {id:string}).id;
     const required=["PROFILE_PHOTO","IDENTIFICATION","LICENSE","REGISTRATION","OPERATING_PERMIT"];
     const result=await database().begin(async tx=>{
-      const [current]=await tx`select d.approval_status,u.full_name,u.email from drivers d join users u on u.id=d.user_id where d.user_id=${driverId} for update`;
+      const [current]=await tx`select d.approval_status,u.full_name,u.email from drivers d join users u on u.id=d.user_id where d.user_id=${driverId} and u.deleted_at is null for update`;
       if(!current)return undefined;
       if(body.decision==="APPROVE") {
         const [documents]=await tx`select count(distinct document_type)::int count from driver_documents where driver_id=${driverId} and document_type in ${tx(required)} and status='ACTIVE'`;
@@ -1036,7 +1037,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     requirePermission(request, "passengers:view");
     if (!process.env.DATABASE_URL) return passengers;
     return await database()`
-      select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,
+      select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,u.email_verified_at as "emailVerifiedAt",
         case when cy.ends_at>now() then u.passenger_cancellation_count else 0 end as "cancellationCount",
         u.passenger_cancellation_total::int as "historicalCancellationTotal", u.passenger_suspended_until as "suspendedUntil",
         u.passenger_cancellation_suspended as "cancellationSuspended",

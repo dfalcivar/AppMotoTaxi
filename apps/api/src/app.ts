@@ -8,6 +8,8 @@ import { firstSearchBounds, nextSearchBounds, noDriverReason, type DriverSearchS
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
+import { registerMobileAccountAdminRoutes } from './mobile-account-admin.js';
+import { anonymizeMobileIdentity } from './mobile-account-maintenance.js';
 import { database } from "./database.js";
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
@@ -261,16 +263,23 @@ async function issueEmailVerificationCode(userId: string, email: string): Promis
   });
 }
 
-async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRIP"> {
+async function eraseUserAccount(userId: string, deletionRequestId?:string): Promise<"DELETED" | "ACTIVE_TRIP"> {
   const sql = database();
-  const [activeTrip] = await sql`
+  return sql.begin(async tx => {
+  const [account]=await tx`select deleted_at from users where id=${userId} for update`;
+  if(!account||account.deleted_at)return 'DELETED' as const;
+  if(deletionRequestId){
+    const [request]=await tx`select id from account_deletion_requests where id=${deletionRequestId}
+      and user_id=${userId} and expires_at>now() and completed_at is null and confirmed_at is null for update`;
+    if(!request)throw new Error('INVALID_DELETION_TOKEN');
+  }
+  const [activeTrip] = await tx`
     select id from trips
     where (passenger_id=${userId} or driver_id=${userId})
       and status not in ('COMPLETED','CANCELLED','NO_DRIVER')
     limit 1
   `;
-  if (activeTrip) return "ACTIVE_TRIP";
-  await sql.begin(async tx => {
+  if (activeTrip) return "ACTIVE_TRIP" as const;
     const trips = await tx`select id from trips where passenger_id=${userId} or driver_id=${userId}`;
     const tripIds = trips.map(row => row.id as string);
     if (tripIds.length) {
@@ -282,15 +291,11 @@ async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRI
         destination_reference=null, passenger_notes=null, route_snapshot=null
         where id in ${tx(tripIds)}`;
     }
-    await tx`delete from device_tokens where user_id=${userId}`;
-    await tx`delete from biometric_credentials where user_id=${userId}`;
     await tx`delete from favorite_places where user_id=${userId}`;
     await tx`delete from user_notifications where user_id=${userId}`;
-    await tx`delete from password_reset_tokens where user_id=${userId}`;
     await tx`delete from admin_sessions where user_id=${userId}`;
     await tx`delete from user_service_area_access where user_id=${userId}`;
     await tx`delete from admin_permission_overrides where user_id=${userId}`;
-    await tx`delete from email_verification_codes where user_id=${userId}`;
     await tx`delete from mobile_account_roles where user_id=${userId}`;
     await tx`delete from driver_documents where driver_id=${userId}`;
     await tx`delete from support_incident_attachments where uploaded_by=${userId}`;
@@ -300,27 +305,11 @@ async function eraseUserAccount(userId: string): Promise<"DELETED" | "ACTIVE_TRI
       subject='Solicitud anonimizada', description='Contenido eliminado por solicitud del usuario',
       evidence='[]'::jsonb where reported_by=${userId} or related_user_id=${userId}`;
     await tx`update ratings set comment=null, tags='{}'::text[] where author_id=${userId} or recipient_id=${userId}`;
-    await tx`update drivers set is_available=false, last_location=null,
-      last_location_at=null where user_id=${userId}`;
-    await tx`update vehicles set identifier='DELETED-' || id::text where driver_id=${userId}`;
-    await tx`update users set
-      full_name='Cuenta eliminada',
-      email=${`deleted+${userId}@deleted.invalid`},
-      phone_e164=${`deleted:${userId}`},
-      password_hash=crypt(${randomBytes(32).toString("hex")}, gen_salt('bf')),
-      profile_photo_data=null,
-      profile_photo_mime=null,
-      profile_photo_updated_at=null,
-      cooperative_id=null,
-      active_session_id=null,
-      status='SUSPENDED',
-      deleted_at=now(),
-      updated_at=now()
-      where id=${userId}`;
+    await anonymizeMobileIdentity(tx,userId);
     await tx`insert into audit_log(action,entity_type,entity_id,next_value,reason)
       values ('ACCOUNT_DELETED','USER',${userId},'{"anonymized":true}'::jsonb,'Solicitud del titular')`;
+    return "DELETED" as const;
   });
-  return "DELETED";
 }
 
 async function configuredDriverSearch(): Promise<DriverSearchSettings> {
@@ -444,6 +433,7 @@ export async function buildApp() {
   await app.register(websocket);
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
+  await registerMobileAccountAdminRoutes(app);
   await registerSupportRoutes(app);
   await registerTripSharingRoutes(app);
   await registerPassengerCancellationRoutes(app);
@@ -1016,11 +1006,21 @@ export async function buildApp() {
       return reply.code(400).send({ error: "INVALID_OR_EXPIRED_EMAIL_CODE" });
     }
     const sessionId = randomUUID();
-    await database().begin(async tx => {
-      await tx`update email_verification_codes set used_at=now() where id=${verification.id}`;
-      await tx`update users set email_verified_at=now(),status='ACTIVE',
-          active_session_id=${sessionId},updated_at=now() where id=${verification.userId}`;
+    const verifiedStatus=await database().begin(async tx => {
+      const [account]=await tx`select status from users where id=${verification.userId}
+        and lower(email)=lower(${email}) and deleted_at is null for update`;
+      if(!account)return null;
+      const [used]=await tx`update email_verification_codes set used_at=now() where id=${verification.id}
+        and user_id=${verification.userId} and code_hash=${hash} and used_at is null and expires_at>now() and attempts<5 returning id`;
+      if(!used)return null;
+      const [updated]=await tx`update users set email_verified_at=now(),
+        status=case when status='PENDING' then 'ACTIVE'::account_status else status end,
+        active_session_id=case when status in ('PENDING','ACTIVE') then ${sessionId}::uuid else null end,
+        updated_at=now() where id=${verification.userId} returning status`;
+      return updated!.status;
     });
+    if(!verifiedStatus)return reply.code(400).send({error:'INVALID_OR_EXPIRED_EMAIL_CODE'});
+    if(verifiedStatus!=='ACTIVE')return reply.code(403).send({error:'ACCOUNT_NOT_ACTIVE'});
     const user: SessionUser = {
       id: String(verification.userId),
       email,
@@ -1100,17 +1100,24 @@ export async function buildApp() {
     const [samePassword] = await database()`select 1 from users
       where id=${token.userId} and password_hash=crypt(${parsed.data.password},password_hash)`;
     if (samePassword) return reply.code(409).send({ error: "PASSWORD_REUSED" });
-    await database().begin(async tx => {
+    const resetCompleted=await database().begin(async tx => {
+      const [account]=await tx`select id from users where id=${token.userId}
+        and lower(email)=lower(${email}) and deleted_at is null for update`;
+      if(!account)return false;
+      const [used]=await tx`update password_reset_tokens set used_at=now() where id=${token.id}
+        and user_id=${token.userId} and code_hash=${hash} and used_at is null and expires_at>now() and attempts<5 returning id`;
+      if(!used)return false;
       await tx`update users set password_hash=crypt(${parsed.data.password},gen_salt('bf')),
         must_change_password=false, email_verified_at=coalesce(email_verified_at,now()),
-        status='ACTIVE',
+        status=case when status='PENDING' then 'ACTIVE'::account_status else status end,
         active_session_id=null, updated_at=now()
         where id=${token.userId}`;
-      await tx`update password_reset_tokens set used_at=now() where id=${token.id}`;
       await tx`delete from device_tokens where user_id=${token.userId}`;
       await tx`delete from biometric_credentials where user_id=${token.userId}`;
       await tx`update drivers set is_available=false where user_id=${token.userId}`;
+      return true;
     });
+    if(!resetCompleted)return reply.code(400).send({error:'INVALID_OR_EXPIRED_RESET_CODE'});
     return { changed: true };
   });
 
@@ -1147,8 +1154,9 @@ export async function buildApp() {
     if (!deletion?.userId) return reply.code(400).send({ error: "INVALID_DELETION_TOKEN" });
     let result: "DELETED" | "ACTIVE_TRIP";
     try {
-      result = await eraseUserAccount(deletion.userId as string);
+      result = await eraseUserAccount(deletion.userId as string,String(deletion.id));
     } catch (error) {
+      if(error instanceof Error&&error.message==='INVALID_DELETION_TOKEN')return reply.code(400).send({error:'INVALID_DELETION_TOKEN'});
       request.log.error({ err: error, userId: deletion.userId }, "external_account_deletion_failed");
       return reply.code(500).send({ error: "ACCOUNT_DELETION_FAILED" });
     }

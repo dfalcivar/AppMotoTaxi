@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { hasPermission, permissionsForRole } from "./permissions.js";
 
 describe("matriz de permisos administrativos", () => {
+  it('reserva edición de identidad y eliminación incompleta a administradores autorizados',()=>{
+    for(const permission of ['mobile_accounts:edit','mobile_accounts:delete_incomplete'] as const){
+      expect(hasPermission('ADMIN',permission)).toBe(true);expect(hasPermission('SUPER_ADMIN',permission)).toBe(true);
+      for(const role of ['SOPORTE','ADMIN_OPERACIONES','COLLECTOR','FINANCE','COMMERCIAL'] as const)expect(hasPermission(role,permission)).toBe(false);
+    }
+  });
   it("conserva ADMIN como superadministrador legado", () => {
     expect(hasPermission("ADMIN", "roles:manage")).toBe(true);
     expect(hasPermission("ADMIN", "database:view")).toBe(true);
