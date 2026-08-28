@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
+import { requiredDriverDocuments } from "./driver-document-requirements.js";
 import { normalizeAdvertisingActionMessage, normalizeAdvertisingActionValue } from "./advertising-actions.js";
 import {
   legacyPhoneAliases,
@@ -838,9 +839,11 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   app.get("/v1/admin/drivers", async (request, reply) => { try {
     requirePermission(request, "drivers:view");
     if (!process.env.DATABASE_URL) return drivers;
-    return await database()`
+    const sql = database();
+    return await sql`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, coalesce(v.identifier, 'Sin vehículo') as vehicle,
-        u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl", coalesce((select count(*)::text || '/5 documentos' from driver_documents dd where dd.driver_id = d.user_id and dd.status<>'SUSPENDED'), '0/5 documentos') as documents,
+        u.status, d.deuna_enabled as "deunaEnabled", d.deuna_qr_image_url as "deunaQrImageUrl",
+        (select count(distinct dd.document_type)::text || '/' || ${requiredDriverDocuments.length}::text || ' obligatorios cargados' from driver_documents dd where dd.driver_id=d.user_id and dd.status<>'SUSPENDED' and dd.document_type in ${sql(requiredDriverDocuments)}) as documents,
         coalesce(d.rating, 0)::float8 as rating, (u.profile_photo_data is not null) as "hasPhoto",
         encode(u.profile_photo_data,'base64') as "profilePhotoBase64", u.profile_photo_mime as "profilePhotoMime",
         u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName",
@@ -848,7 +851,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         d.submitted_for_review_at as "submittedForReviewAt", u.created_at as "createdAt",
         u.email_verified_at as "emailVerifiedAt",d.approved_at as "approvedAt",
         (select count(*)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status='ACTIVE') as "approvedDocuments",
-        (select count(*)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status<>'SUSPENDED') as "uploadedDocuments"
+        (select count(*)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status<>'SUSPENDED') as "uploadedDocuments",
+        ${requiredDriverDocuments.length}::int as "requiredDocumentCount",
+        (select count(distinct dd.document_type)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status='ACTIVE' and dd.document_type in ${sql(requiredDriverDocuments)}) as "approvedRequiredDocuments",
+        (select count(distinct dd.document_type)::int from driver_documents dd where dd.driver_id=d.user_id and dd.status<>'SUSPENDED' and dd.document_type in ${sql(requiredDriverDocuments)}) as "uploadedRequiredDocuments"
       from drivers d
       join users u on u.id = d.user_id
       left join cooperatives c on c.id=u.cooperative_id
@@ -860,14 +866,18 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   app.get("/v1/admin/driver-approvals", async (request, reply) => { try {
     requirePermission(request, "drivers:approve");
     if (!process.env.DATABASE_URL) return [];
-    return database()`
+    const sql = database();
+    return sql`
       select u.id::text, u.full_name name, u.email, u.phone_e164 phone,
         encode(u.profile_photo_data,'base64') as "profilePhotoBase64", u.profile_photo_mime as "profilePhotoMime",
         coalesce(c.name,'Sin cooperativa') cooperative, v.identifier vehicle,
         d.approval_status as "approvalStatus", d.approval_observation as "approvalObservation",
         d.submitted_for_review_at as "submittedForReviewAt", u.created_at as "createdAt",
         count(dd.id)::int as "uploadedDocuments",
-        count(dd.id) filter (where dd.status='ACTIVE')::int as "approvedDocuments"
+        count(dd.id) filter (where dd.status='ACTIVE')::int as "approvedDocuments",
+        ${requiredDriverDocuments.length}::int as "requiredDocumentCount",
+        count(distinct dd.document_type) filter (where dd.status='ACTIVE' and dd.document_type in ${sql(requiredDriverDocuments)})::int as "approvedRequiredDocuments",
+        count(distinct dd.document_type) filter (where dd.document_type in ${sql(requiredDriverDocuments)})::int as "uploadedRequiredDocuments"
       from drivers d join users u on u.id=d.user_id
       left join cooperatives c on c.id=u.cooperative_id
       left join lateral (select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=u.id and r.relation_type='AUTHORIZED_DRIVER' and r.status in ('APPROVED','PENDING') and v.merged_into is null) v on true
@@ -883,7 +893,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const actor=requirePermission(request,"drivers:approve"); const body=approvalDecisionSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return { ok:true };
     const driverId=(request.params as {id:string}).id;
-    const required=["PROFILE_PHOTO","IDENTIFICATION","LICENSE","REGISTRATION","OPERATING_PERMIT"];
+    const required=requiredDriverDocuments;
     const result=await database().begin(async tx=>{
       const [current]=await tx`select d.approval_status,u.full_name,u.email from drivers d join users u on u.id=d.user_id where d.user_id=${driverId} and u.deleted_at is null for update`;
       if(!current)return undefined;

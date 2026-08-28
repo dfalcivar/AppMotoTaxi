@@ -4,8 +4,8 @@
 
 1. El conductor crea su cuenta con foto frontal y vehículo.
 2. La cuenta queda restringida y puede acceder únicamente a su perfil, documentos, notificaciones y cierre de sesión.
-3. Debe cargar foto, identificación, licencia, matrícula y permiso de operación.
-4. Al completar los cinco documentos pasa automáticamente a `PENDIENTE_REVISION`.
+3. Debe cargar foto, identificación, licencia y matrícula. El permiso de operación del expediente del conductor es opcional.
+4. Al completar los cuatro documentos obligatorios pasa automáticamente a `PENDIENTE_REVISION`.
 5. Se genera una notificación interna y, si está configurado, un correo administrativo.
 6. Administración revisa cada documento y después aprueba, observa, solicita correcciones, rechaza o suspende.
 7. La decisión registra revisor, fecha, estado anterior, estado nuevo y observación.
@@ -28,9 +28,12 @@ Estos estados están separados de `users.status`. El estado de usuario continúa
 - `IDENTIFICATION`
 - `LICENSE`
 - `REGISTRATION`
-- `OPERATING_PERMIT`
 
 La aprobación final se rechaza con `DRIVER_DOCUMENTS_NOT_APPROVED` si alguno no está aprobado individualmente.
+
+`OPERATING_PERMIT` permanece disponible como documento opcional. Su ausencia o estado no impide aprobar los cuatro obligatorios y tampoco sustituye ninguno de ellos. No se elimina ni renombra ningún archivo existente.
+
+Esta regla se refiere al expediente del conductor. Los documentos, revisión, autorización y jornada de la mototaxi mantienen su flujo independiente, documentado en [Flota y jornadas](FLOTA_MOTOTAXIS_Y_JORNADAS.md). Aprobar al conductor no aprueba automáticamente sus vehículos ni lo conecta para recibir viajes.
 
 ## Endpoints administrativos
 
@@ -64,13 +67,29 @@ Si el proveedor no está configurado, la notificación interna continúa funcion
 - `driver_approval_notification_settings`;
 - índices para la bandeja e historial.
 
+`075_optional_driver_operating_permit.sql` deja en revisión los expedientes no eliminados que estaban en `PENDIENTE_DOCUMENTOS` y ya tienen los cuatro documentos obligatorios cargados. No aprueba cuentas ni modifica decisiones previas, documentos, membresías o vehículos.
+
+Los listados administrativos conservan `approvedDocuments` y `uploadedDocuments` como totales de archivos. Añaden `requiredDocumentCount`, `approvedRequiredDocuments` y `uploadedRequiredDocuments` para la aprobación y los indicadores de obligatorios. El panel no suma archivos opcionales al umbral de aprobación.
+
+## Pendiente: catálogo de documentos configurable
+
+Próxima mejora, **no implementada en esta entrega**:
+
+- Administrar desde el panel el nombre visible y la obligatoriedad de los documentos, diferenciando conductor y vehículo.
+- Incorporar un catálogo servido por la API y consumido por la app, conservando identificadores internos, archivos e historial.
+- Permitir cambiar posteriormente «Permiso de operación» a «Anexos» sin cambiar su identificador `OPERATING_PERMIT`.
+- Versionar/auditar cambios, restringirlos a administradores autorizados y definir su aplicación a expedientes existentes.
+- Ese soporte dinámico requerirá una primera actualización de la app; después los cambios de nombre/requisitos del catálogo no necesitarán nuevos AAB.
+
+El cambio actual de obligatoriedad es únicamente API/panel/migración: no requiere otro AAB. Las apps instaladas conservan la etiqueta y la opción de cargar «Permiso de operación», pero su ausencia no impide la aprobación en el servidor actualizado. El despliegue debe incluir primero API/migración y después el panel.
+
 ## Prueba manual
 
 1. Crear un conductor y comprobar `PENDIENTE_DOCUMENTOS`.
 2. Cerrar sesión e ingresar de nuevo: debe abrir la pantalla de habilitación, no el mapa de viajes.
-3. Cargar cinco documentos y comprobar `PENDIENTE_REVISION`.
+3. Cargar los cuatro documentos obligatorios, sin permiso, y comprobar `PENDIENTE_REVISION`.
 4. Desde el panel, abrir y aprobar cada documento.
-5. Intentar aprobar antes de tener 5/5: debe bloquearse.
+5. Intentar aprobar antes de tener los cuatro obligatorios aprobados: debe bloquearse, incluso si el permiso opcional está aprobado.
 6. Solicitar correcciones con observación y comprobarla en el teléfono.
 7. Reemplazar el documento observado y reenviar a revisión.
 8. Aprobar y volver a iniciar sesión: debe habilitarse el módulo normal de conductor.
