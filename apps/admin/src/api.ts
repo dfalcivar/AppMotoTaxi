@@ -25,7 +25,11 @@ function persistentPath(path: string, method?: string): string {
 async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
-    throw Object.assign(new Error(body.message ?? body.error ?? `Error HTTP ${response.status}`),{code:body.error});
+    const raw=body.message ?? body.error ?? `Error HTTP ${response.status}`;
+    const message=/constraint|SQL|relation "|syntax error|column .*does not exist|FROM-clause|database.*error/i.test(raw)
+      ? "No fue posible completar la operación. Intenta nuevamente o contacta soporte."
+      : ({FORBIDDEN:"Tu usuario no tiene permiso para realizar esta acción.",DATABASE_UNAVAILABLE:"La base de datos no está disponible temporalmente. Intenta nuevamente.",INVALID_DATA:"Revisa los datos ingresados antes de continuar.",UNAUTHORIZED:"La sesión no es válida. Vuelve a ingresar."} as Record<string,string>)[raw] ?? raw;
+    throw Object.assign(new Error(message),{code:body.error});
   }
   return response.json() as Promise<T>;
 }

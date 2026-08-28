@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
 import { requiredDriverDocuments } from "./driver-document-requirements.js";
+import { registerConsoleRoutes } from './admin-console.js';
 import { normalizeAdvertisingActionMessage, normalizeAdvertisingActionValue } from "./advertising-actions.js";
 import {
   legacyPhoneAliases,
@@ -346,6 +347,7 @@ function guardError(error: unknown, reply: any) { const message = error instance
 export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   publishTripStatus(tripId: string, status: string): void;
 }) {
+  registerConsoleRoutes(app, requireAdminSession);
   app.addHook("preHandler", async (request, reply) => {
     const path = request.url.split("?", 1)[0] ?? "";
     if (!process.env.DATABASE_URL || !path.startsWith("/v1/admin/") || path === "/v1/admin/session") return;
@@ -1474,7 +1476,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       driver: z.string().trim().max(100).optional(),
       from: z.string().date().optional(),
       to: z.string().date().optional(),
-      unassigned: z.coerce.boolean().optional()
+      unassigned: z.coerce.boolean().optional(),
+      record: z.string().uuid().optional()
     }).parse(request.query);
     return await database()`
       select t.id::text, t.status, t.passengers, t.service_zone as zone,
@@ -1489,6 +1492,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       join users passenger on passenger.id=t.passenger_id
       left join users driver on driver.id=t.driver_id
       where (${filters.scheduled}='ALL' or (${filters.scheduled}='SCHEDULED' and t.scheduled_for is not null) or (${filters.scheduled}='IMMEDIATE' and t.scheduled_for is null))
+        and (${filters.record ?? null}::uuid is null or t.id=${filters.record ?? null}::uuid)
         and (${filters.status ?? null}::text is null or t.status=${filters.status ?? null})
         and (${filters.passenger ?? null}::text is null or passenger.full_name ilike ${filters.passenger ? `%${filters.passenger}%` : null})
         and (${filters.driver ?? null}::text is null or driver.full_name ilike ${filters.driver ? `%${filters.driver}%` : null})

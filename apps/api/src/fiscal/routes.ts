@@ -233,6 +233,7 @@ export function summarizeFiscalRows(rows:any[]){
     averageInvoicesPerClient:ids.size?authorized.length/ids.size:0,
     averagePerDriver:averageForSource('MEMBRESIA'),averagePerBusiness:averageForSource('PUBLICIDAD'),
     recurringClients:groups(rows.filter(r=>!r.reversed&&r.clientId).map(r=>({...r,one:1})),r=>r.clientId,'one').filter(r=>r.value>1).length,
+    collectedByDay:groups(rows.filter(r=>!r.reversed&&r.paidAt),r=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Guayaquil',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(r.paidAt)),'amount').sort((a,b)=>a.label.localeCompare(b.label)),
     byDay:groups(authorized,day,'total'),byMonth:groups(authorized,r=>day(r).slice(0,7),'total'),
     bySource:groups(authorized,r=>r.source,'total'),byService:groups(authorized,r=>r.serviceType,'total'),
     byStatus:groups(rows.filter(r=>r.invoiceId).map(r=>({...r,one:1})),r=>r.status,'one'),

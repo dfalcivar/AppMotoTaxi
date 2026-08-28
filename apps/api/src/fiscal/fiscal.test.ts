@@ -226,6 +226,7 @@ describe('fiscal integration, durable local payments and deletion',()=>{
   });
   it('separates paid amounts from authorized amounts and ignores reversed income',()=>{
     expect(summarizeFiscalRows([{amount:12,status:'PENDIENTE_INTEGRACION',invoiceId:'x'},{amount:10,reversed:true}])).toMatchObject({collected:12,invoiced:0,pendingAmount:12,invoiceCount:1});
+    expect(summarizeFiscalRows([{amount:12,paidAt:'2026-08-29T01:00:00Z'},{amount:5,paidAt:'2026-08-28T22:00:00Z'},{amount:10,paidAt:'2026-08-29T01:00:00Z',reversed:true}]).collectedByDay).toEqual([{label:'2026-08-28',value:17}]);
     expect(fiscalFilterSchema.safeParse({start:'2026-09-01',end:'2026-08-01'}).success).toBe(false);
   });
   it('requires authentication for driver data and admin permissions for fiscal lists',async()=>{

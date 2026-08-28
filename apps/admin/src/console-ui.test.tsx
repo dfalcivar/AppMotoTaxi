@@ -1,0 +1,19 @@
+import {describe,it,expect,vi} from 'vitest';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {ConsoleContext,DataTable,ManagedTable,MetricStrip,cellText,compareCells} from './console-ui';
+import {consoleGroups,csvCell,dateRange,ecuDate,normalizeSearch,subNavigation} from './console-model';
+
+describe('sistema de presentación del panel',()=>{
+  it('ordena fechas y moneda por su valor, no por el texto',()=>{expect(compareCells('28/08/2026, 14:00','01/09/2026, 09:00')).toBeLessThan(0);expect(compareCells('$10,50','$9,99')).toBeGreaterThan(0);});
+  it('compacta varias acciones sin eliminar los controles existentes',()=>{const html=renderToStaticMarkup(<DataTable headers={['Acciones']} rows={[[<div><button>Editar</button><button>Suspender</button><button>Historial</button></div>]]}/>);expect(html).toContain('cg-row-actions');expect(html).toContain('Suspender');});
+  it('no duplica módulos y conserva los enlaces de negocio',()=>{const modules=consoleGroups.flatMap(g=>g.modules);expect(new Set(modules).size).toBe(modules.length);expect(modules).toContain('home');expect(subNavigation.memberships?.some(t=>t.id==='payments')).toBe(true);});
+  it('formatea fechas con horario Ecuador, independiente del navegador',()=>{expect(ecuDate('2026-08-29T01:08:00Z')).toContain('28/08/2026');expect(ecuDate('2026-08-29T01:08:00Z')).toContain('20:08');expect(ecuDate('invalid')).toBe('—');});
+  it('el período de hoy corresponde a Ecuador, no a UTC',()=>{expect(dateRange('today',new Date('2026-08-29T01:00:00Z'))).toEqual({from:'2026-08-28',to:'2026-08-28'});expect(dateRange('week',new Date('2026-08-29T01:00:00Z')).from).toBe('2026-08-22');});
+  it('normaliza tildes y protege CSV contra fórmulas',()=>{expect(normalizeSearch('  Cooperación ')).toBe('cooperacion');expect(csvCell('=HYPERLINK("x")')).toBe('"\'=HYPERLINK(""x"")"');expect(csvCell('Costa-Go')).toBe('"Costa-Go"');});
+  it('no incluye valores de contraseña, inputs en texto exportable',()=>{expect(cellText(<input type="password" value="secreto" readOnly/>)).toBe('');expect(cellText(<button>Ver Juan</button>)).toBe('Ver Juan');expect(cellText(<span>Juan <small>Cooperativa</small></span>)).toContain('Juan');});
+  it('la tabla pagina, ordena y ofrece columnas sin exportar sin permiso',()=>{const html=renderToStaticMarkup(<DataTable headers={['Nombre','Acciones']} rows={Array.from({length:20},(_,i)=>['Usuario '+i,<button key={i}>Ver</button>])}/>);expect(html).toContain('Página 1 de 2');expect(html).toContain('Columnas');expect(html).toContain('aria-sort');expect(html).not.toContain('Exportar');});
+  it('permite exportar solo desde contexto autorizado',()=>{const html=renderToStaticMarkup(<ConsoleContext.Provider value={{userId:'test',module:'trips',canExport:true}}><DataTable headers={['Nombre']} rows={[['Prueba']]}/></ConsoleContext.Provider>);expect(html).toContain('Exportar');});
+  it('mantiene botones de las tablas heredadas y no duplica filas',()=>{const html=renderToStaticMarkup(<ManagedTable><thead><tr><th>Nombre</th><th>Acción</th></tr></thead><tbody>{['A','B'].map(v=><tr key={v}><td>{v}</td><td><button>Ver {v}</button></td></tr>)}</tbody></ManagedTable>);expect(html).toContain('2 resultados');expect(html.match(/Ver A/g)?.length).toBe(1);});
+  it('muestra vacío explícito, no registros de ejemplo',()=>{const html=renderToStaticMarkup(<DataTable headers={['Nombre']} rows={[]}/>);expect(html).toContain('Todavía no hay registros');expect(html).toContain('0 resultados');});
+  it('no convierte métricas sin acción en botones activos',()=>{const html=renderToStaticMarkup(<MetricStrip items={[{label:'Recaudación',value:'$0,00'}]}/>);expect(html).toContain('disabled');expect(html).not.toContain('Consultar registros');});
+});

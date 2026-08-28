@@ -1,10 +1,12 @@
+import {ManagedTable} from './console-ui';
+import {ecuDate} from './console-model';
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from './api.js';
 import './panel-dialog.css';
 import './passenger-cancellations.css';
 
 export type Policy = { enabled:boolean; cycleDurationDays:number; steps:Array<{fromCount:number;suspensionDays:number|null}> };
-const date = (v:string|null) => v ? new Date(v).toLocaleString('es-EC',{timeZone:'America/Guayaquil'}) : '—';
+const date = ecuDate;
 const outcome = (days:number|null) => days === null ? 'Suspensión indefinida' : days === 0 ? 'Advertencia' : `${days} días de suspensión`;
 const tone = (days:number|null) => days === null ? 'indefinite' : days === 0 ? 'warning' : 'suspension';
 const rangeLabel = (steps:Policy['steps'], index:number) => {
@@ -90,12 +92,12 @@ export function PassengerCancellationHistory({token,passenger}:{token:string;pas
       {summary&&<PassengerCancellationSummaryCard summary={summary}/>}
       <div className="row-actions"><button className="secondary" disabled={loading} onClick={()=>setRefresh(n=>n+1)}>Actualizar</button><button className="secondary" disabled={loading} aria-expanded={history} onClick={()=>{setPage(1);setHistory(!history);}}>{history?'Ocultar historial':'Ver historial de cancelaciones'}</button></div>
       {history&&!loading&&!error&&<><h3>Historial permanente · todos los ciclos</h3><p className="note">Solo consulta. Los registros y las penalizaciones de ciclos anteriores no se eliminan.</p>
-      {rows.length?<div className="table-wrap cancellation-history"><table><thead><tr><th>Ciclo / cancelación</th><th>Viaje y responsable</th><th>Penalización</th><th>Estado</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}>
+      {rows.length?<div className="table-wrap cancellation-history"><ManagedTable serverPaged><thead><tr><th>Ciclo / cancelación</th><th>Viaje y responsable</th><th>Penalización</th><th>Estado</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}>
         <td><strong>N.º {r.consecutive_number} del ciclo</strong><small className="table-line">Cancelación: {date(r.occurred_at)}</small><small className="table-line">Ciclo: {date(r.cycleStartsAt)} → {date(r.cycleEndsAt)}</small><small className="table-line">{r.cycleDurationDays} días{r.cycleSource==='LEGACY'?' · Historial previo al sistema de ciclos':''}</small><details><summary>Identificador del ciclo</summary>{r.cycle_id}</details></td>
         <td>{r.origin} → {r.destination}<small className="table-line">Conductor: {r.driverName}</small><small className="table-line">Originada por: {r.originatorName} (pasajero)</small><small className="table-line">Motivo: {r.reason_code==='PASSENGER_CANCELLED'?'Cancelación del pasajero':r.reason_code}</small><details><summary>Referencia del viaje</summary>{r.trip_id}</details></td>
         <td>{r.policy_snapshot?.enabled===false?'Registrada sin sanción automática':outcome(r.suspension_days)}{r.suspension_started_at&&<small className="table-line">{date(r.suspension_started_at)} → {r.suspension_until?date(r.suspension_until):'Sin fecha de fin'}</small>}</td>
         <td>{r.policy_snapshot?.enabled===false&&r.status==='RECORDED'?'Registrada':statuses[r.status]??r.status}<small className="table-line">{r.reactivated_at?`Reactivada: ${date(r.reactivated_at)}`:''}</small></td>
-      </tr>)}</tbody></table></div>:<p>No hay cancelaciones después de la aceptación.</p>}
+      </tr>)}</tbody></ManagedTable></div>:<p>No hay cancelaciones después de la aceptación.</p>}
       <div className="row-actions"><button className="secondary" disabled={page===1} onClick={()=>setPage(page-1)}>Anterior</button><span>Página {page}</span><button className="secondary" disabled={rows.length<20||page*20>=Number(rows[0]?.totalCount??0)} onClick={()=>setPage(page+1)}>Siguiente</button></div></>}
     </section></div>}</>;
 }

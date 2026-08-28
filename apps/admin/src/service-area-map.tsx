@@ -7,7 +7,7 @@ type ZoneLayer = { id: string; code: string; geometry: ServiceAreaGeometry; enab
 
 declare global { interface Window { google?: any; __costaGoMapsPromise?: Promise<any>; } }
 
-function loadGoogleMaps() {
+export function loadGoogleMaps() {
   if (window.google?.maps) return Promise.resolve(window.google.maps);
   if (window.__costaGoMapsPromise) return window.__costaGoMapsPromise;
   const key = import.meta.env.VITE_GOOGLE_MAPS_WEB_API_KEY as string | undefined;
@@ -17,10 +17,11 @@ function loadGoogleMaps() {
     const mapId = import.meta.env.VITE_GOOGLE_MAPS_WEB_MAP_ID as string | undefined;
     script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly${mapId ? `&map_ids=${encodeURIComponent(mapId)}` : ""}`;
     script.async = true; script.defer = true;
-    script.onload = () => resolve(window.google.maps);
-    script.onerror = () => reject(new Error("No fue posible cargar Google Maps."));
+    script.onload = () => window.google?.maps ? resolve(window.google.maps) : reject(new Error("Google Maps no pudo inicializarse."));
+    script.onerror = () => {script.remove();reject(new Error("No fue posible cargar Google Maps."));};
     document.head.appendChild(script);
   });
+  window.__costaGoMapsPromise = window.__costaGoMapsPromise.catch(reason => { window.__costaGoMapsPromise = undefined; throw reason; });
   return window.__costaGoMapsPromise;
 }
 

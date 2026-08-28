@@ -11,7 +11,7 @@ describe('resumen de cancelaciones del pasajero',()=>{
     expect(html).toContain('Cancelaciones del ciclo actual');expect(html).toContain('<dd>2</dd>');
     expect(html).toContain('Cancelaciones históricas totales');expect(html).toContain('<dd>14</dd>');
     expect(html).toContain('Advertencia');expect(html).toContain('30 días');
-    expect(html).toContain('10/9/2026');expect(html).toContain('Siguiente penalización: n.º 3');
+    expect(html).toContain('10/09/2026');expect(html).toContain('Siguiente penalización: n.º 3');
   });
   it('ciclo vencido muestra cero y conserva suspensión indefinida',()=>{
     const html=renderToStaticMarkup(<PassengerCancellationSummaryCard summary={{...summary,cycleCount:0,cycleActive:false,state:'INDEFINITE'}}/>);
