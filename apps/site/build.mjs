@@ -11,7 +11,11 @@ await mkdir(resolve(output, "assets"), { recursive: true });
 await cp(resolve(current, "src"), output, { recursive: true });
 await writeFile(
   resolve(output, "config.js"),
-  `window.COSTA_GO_PUBLIC_CONFIG=${JSON.stringify({ apiBaseUrl: process.env.PUBLIC_API_BASE_URL ?? "https://mototaxi-atacames-api.onrender.com" })};\n`,
+  `window.COSTA_GO_PUBLIC_CONFIG=${JSON.stringify({
+    apiBaseUrl: process.env.PUBLIC_API_BASE_URL ?? "https://mototaxi-atacames-api.onrender.com",
+    // Browser-only, referrer-restricted key. Never use the server or Android key here.
+    googleMapsWebApiKey: process.env.PUBLIC_GOOGLE_MAPS_WEB_API_KEY ?? "",
+  })};\n`,
   "utf8"
 );
 
@@ -22,6 +26,10 @@ for (const page of ["privacy.html", "terms.html", "account-deletion.html", "fare
 await cp(
   resolve(root, "apps/admin/public/costa-go-emblem.png"),
   resolve(output, "assets/costa-go-emblem.png")
+);
+await cp(
+  resolve(root, "apps/mobile/assets/images/mototaxi-map-marker.png"),
+  resolve(output, "assets/mototaxi-map-marker.png")
 );
 await cp(
   resolve(root, "docs/google-play/assets/feature-background-source.png"),

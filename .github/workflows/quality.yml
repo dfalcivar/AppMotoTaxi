@@ -22,6 +22,8 @@ jobs:
       - run: pnpm --filter @mototaxi/api build
       - run: pnpm --filter @mototaxi/admin test
       - run: pnpm --filter @mototaxi/admin build
+      - run: pnpm --filter @mototaxi/site test
+      - run: pnpm --filter @mototaxi/site build
 
   flutter:
     runs-on: ubuntu-latest

@@ -94,6 +94,9 @@ services:
     envVars:
       - key: PUBLIC_API_BASE_URL
         value: https://mototaxi-atacames-api.onrender.com
+      # Maps JavaScript API only; restrict HTTP referrers to the public website.
+      - key: PUBLIC_GOOGLE_MAPS_WEB_API_KEY
+        sync: false
     routes:
       - type: rewrite
         source: /viaje/*

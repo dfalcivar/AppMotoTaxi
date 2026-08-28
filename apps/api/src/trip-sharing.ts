@@ -5,6 +5,7 @@ import { database } from "./database.js";
 import { userFrom } from "./admin.js";
 
 const terminalStatuses = new Set(["COMPLETED", "CANCELLED", "NO_DRIVER"]);
+const trackingStatuses = new Set(["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"]);
 
 const statusLabels: Record<string, string> = {
   SEARCHING: "Buscando conductor",
@@ -48,7 +49,7 @@ async function safeTrip(tripId: string) {
     left join lateral (
       select location.position,location.recorded_at
       from trip_live_locations location
-      where location.trip_id=t.id
+      where location.trip_id=t.id and location.driver_id=t.driver_id
       order by location.recorded_at desc limit 1
     ) ll on true
     where t.id=${tripId}::uuid
@@ -112,6 +113,12 @@ async function shareLink(tripId: string, userId: string): Promise<{ publicRefere
 
 function publicPayload(trip: Record<string, any>, publicReference: string) {
   const terminal = terminalStatuses.has(String(trip.status));
+  const latitude = Number(trip.latitude), longitude = Number(trip.longitude);
+  const validLocation = trip.driverId && trackingStatuses.has(String(trip.status)) &&
+    trip.latitude != null && trip.longitude != null &&
+    Number.isFinite(latitude) && Math.abs(latitude) <= 90 &&
+    Number.isFinite(longitude) && Math.abs(longitude) <= 180 &&
+    trip.locationUpdatedAt != null && Number.isFinite(new Date(trip.locationUpdatedAt).getTime());
   return {
     publicReference,
     status: String(trip.status),
@@ -124,8 +131,8 @@ function publicPayload(trip: Record<string, any>, publicReference: string) {
     startedAt: trip.startedAt ?? trip.requestedAt,
     // La página conserva el estado durante la gracia, pero deja de publicar
     // la última ubicación en cuanto el viaje termina.
-    location: terminal || trip.latitude == null || trip.longitude == null ? null : {
-      latitude: Number(trip.latitude), longitude: Number(trip.longitude),
+    location: !validLocation ? null : {
+      latitude, longitude,
       updatedAt: trip.locationUpdatedAt,
     },
     terminal,
@@ -180,6 +187,9 @@ export async function registerTripSharingRoutes(app: FastifyInstance) {
     if (!trip) return reply.code(404).send({ error: "TRIP_SHARE_NOT_FOUND" });
     const settings = await sharingSettings();
     if (isExpired(trip, settings.graceMinutes)) return reply.code(410).send({ error: "TRIP_SHARE_EXPIRED" });
-    return { trip: publicPayload(trip, link.publicReference), refreshSeconds: 15 };
+    return {
+      trip: publicPayload(trip, link.publicReference), refreshSeconds: 15,
+      serverTime: new Date().toISOString(), locationFreshnessSeconds: 60,
+    };
   });
 }
