@@ -1,15 +1,54 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from './api.js';
 import './panel-dialog.css';
 import './passenger-cancellations.css';
 
-type Policy = { enabled:boolean; cycleDurationDays:number; steps:Array<{fromCount:number;suspensionDays:number|null}> };
+export type Policy = { enabled:boolean; cycleDurationDays:number; steps:Array<{fromCount:number;suspensionDays:number|null}> };
 const date = (v:string|null) => v ? new Date(v).toLocaleString('es-EC',{timeZone:'America/Guayaquil'}) : '—';
 const outcome = (days:number|null) => days === null ? 'Suspensión indefinida' : days === 0 ? 'Advertencia' : `${days} días de suspensión`;
+const tone = (days:number|null) => days === null ? 'indefinite' : days === 0 ? 'warning' : 'suspension';
+const rangeLabel = (steps:Policy['steps'], index:number) => {
+  const start=steps[index]!.fromCount, end=steps[index+1]?.fromCount;
+  return end === undefined ? `Cancelación ${start} o más` : end === start+1 ? `Cancelación ${start}` : `Cancelaciones ${start}–${end-1}`;
+};
+
+export function CancellationPolicyOverview({policy}:{policy:Policy}) {
+  return <><div className="cancellation-policy-stats"><div><span>Aplicación de sanciones</span><strong className={`cancellation-policy-status ${policy.enabled?'enabled':''}`}><span aria-hidden="true">●</span> {policy.enabled?'Control activo':'Solo registro'}</strong></div><div><span>Duración de cada ciclo nuevo</span><strong>{policy.cycleDurationDays} días</strong></div><div><span>Inicio del ciclo</span><strong>Primera cancelación penalizable</strong></div></div>
+    <div className="cancellation-policy-rules" aria-label="Rangos de cancelaciones">{policy.steps.map((step,index)=><div className={`cancellation-policy-rule ${tone(step.suspensionDays)}`} key={step.fromCount}><span>{rangeLabel(policy.steps,index)}</span><strong>{outcome(step.suspensionDays)}</strong></div>)}</div></>;
+}
+
+export function CancellationPolicyFields({draft,onChange,disabled}:{draft:Policy;onChange:(value:Policy)=>void;disabled:boolean}) {
+  return <fieldset className="cancellation-policy-fields" disabled={disabled}><legend className="cancellation-sr-only">Condiciones de cancelación</legend>
+    <label className="cancellation-policy-toggle"><span><strong>Suspensiones automáticas</strong><small>Desactiva para registrar cancelaciones sin aplicar nuevas sanciones.</small></span><input type="checkbox" role="switch" checked={draft.enabled} onChange={e=>onChange({...draft,enabled:e.target.checked})}/></label>
+    <div className="cancellation-cycle-setting"><label>Duración de los nuevos ciclos (días)<input required type="number" min="1" max="3650" step="1" value={draft.cycleDurationDays} onChange={e=>onChange({...draft,cycleDurationDays:Number(e.target.value)})}/></label><p>Por ejemplo: 30, 60 o 90 días desde la primera cancelación. Los ciclos ya iniciados conservan su duración.</p></div>
+    <div className="cancellation-rules-heading"><h3>Escala de sanciones</h3><p>Cada rango aplica desde el número indicado hasta el siguiente rango.</p></div>
+    <div className="cancellation-rule-editors">{draft.steps.map((step,index)=><section className="cancellation-rule-editor" key={index} aria-label={`Rango ${index+1}`}><div className="cancellation-rule-heading"><span className="cancellation-rule-number">Rango {index+1}</span><span className={`cancellation-outcome ${tone(step.suspensionDays)}`}>{outcome(step.suspensionDays)}</span><button type="button" className="cancellation-remove" disabled={draft.steps.length===1} aria-label={`Quitar rango ${index+1}`} onClick={()=>onChange({...draft,steps:draft.steps.filter((_,j)=>j!==index)})}>Quitar</button></div>
+      <div className="cancellation-rule-inputs"><label>Desde cancelación<input required type="number" min="1" max="10000" step="1" value={step.fromCount} onChange={e=>onChange({...draft,steps:draft.steps.map((value,j)=>j===index?{...value,fromCount:Number(e.target.value)}:value)})}/></label><label>Días de suspensión<input required disabled={step.suspensionDays===null} type="number" min="0" max="3650" step="1" value={step.suspensionDays??0} onChange={e=>onChange({...draft,steps:draft.steps.map((value,j)=>j===index?{...value,suspensionDays:Number(e.target.value)}:value)})}/><small>{step.suspensionDays===null?'Sin fecha de finalización':'0 días = solo advertencia'}</small></label><label className="cancellation-indefinite"><input type="checkbox" checked={step.suspensionDays===null} onChange={e=>onChange({...draft,steps:draft.steps.map((value,j)=>j===index?{...value,suspensionDays:e.target.checked?null:0}:value)})}/><span>Indefinida</span></label></div>
+    </section>)}</div>
+    <button className="secondary cancellation-add-range" type="button" disabled={draft.steps.length>=30} onClick={()=>onChange({...draft,steps:[...draft.steps,{fromCount:(draft.steps.at(-1)?.fromCount??0)+1,suspensionDays:0}]})}>+ Agregar rango</button>
+    <p className="cancellation-policy-note">Una suspensión indefinida requiere reactivación manual. Cambiar esta política no acorta suspensiones ya aplicadas.</p>
+  </fieldset>;
+}
 
 export function PassengerCancellationSettings({token,canManage}:{token:string;canManage:boolean}) {
   const [policy,setPolicy]=useState<Policy>(); const [draft,setDraft]=useState<Policy>();
   const [busy,setBusy]=useState(false); const [message,setMessage]=useState('');
+  const dialogRef=useRef<HTMLFormElement>(null), triggerRef=useRef<HTMLButtonElement>(null);
+  const dialogOpen=Boolean(draft);
+  useEffect(()=>{
+    if(!dialogOpen)return;
+    const overflow=document.body.style.overflow;
+    document.body.style.overflow='hidden';
+    return()=>{document.body.style.overflow=overflow;triggerRef.current?.focus();};
+  },[dialogOpen]);
+  function dialogKeyDown(event:React.KeyboardEvent) {
+    if(event.key==='Escape'&&!busy){event.preventDefault();setDraft(undefined);return;}
+    if(event.key!=='Tab')return;
+    const controls=Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button,input,[tabindex="0"]')??[]).filter(element=>!element.matches(':disabled')&&element.tabIndex>=0);
+    const first=controls[0],last=controls.at(-1);
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+  }
   useEffect(()=>{let current=true;apiFetch<Policy>('/v1/admin/settings/passenger-cancellations',token).then(v=>{if(current)setPolicy(v);}).catch(()=>{if(current)setMessage('No se pudo cargar la política de cancelaciones.');});return()=>{current=false;};},[token]);
   async function save(event:React.FormEvent) {
     event.preventDefault(); if(busy||!draft)return; setBusy(true);setMessage('');
@@ -17,20 +56,14 @@ export function PassengerCancellationSettings({token,canManage}:{token:string;ca
     catch {setMessage('No se pudo guardar. Los rangos deben iniciar en 1 y aumentar, dejando la suspensión indefinida al final.');}
     finally {setBusy(false);}
   }
-  return <section className="card"><h2>Cancelaciones después de aceptar</h2><p className="muted">Solo cuentan las cancelaciones del pasajero posteriores a una aceptación real y antes de iniciar el viaje. Cada ciclo comienza con la primera cancelación, no con el mes calendario. Al vencer se reinicia el contador, nunca el historial ni una suspensión vigente.</p>
-    {policy&&<><p>{policy.enabled?'Control activo':'Solo registro, sin sanciones automáticas'} · Ciclos de {policy.cycleDurationDays} días</p><div className="row-actions">{policy.steps.map(s=><span key={s.fromCount}>Desde la n.º {s.fromCount}: {outcome(s.suspensionDays)}</span>)}</div><button onClick={()=>setDraft(structuredClone(policy))}>{canManage?'Configurar política':'Ver política'}</button></>}
-    {!policy&&!message&&<p role="status">Cargando…</p>}{message&&<p role="status">{message}</p>}
-    {draft&&<div className="panel-dialog-backdrop"><form className="panel-dialog-card" role="dialog" aria-modal="true" aria-label="Política de cancelaciones" onSubmit={save}>
-      <h2>Política de cancelaciones</h2><fieldset disabled={!canManage||busy}><label><input type="checkbox" checked={draft.enabled} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/> Aplicar suspensiones automáticas</label>
-      <label>Duración de los nuevos ciclos (días)<input required type="number" min="1" max="3650" step="1" value={draft.cycleDurationDays} onChange={e=>setDraft({...draft,cycleDurationDays:Number(e.target.value)})}/></label>
-      <p className="note">Por ejemplo: 30, 60 o 90 días desde la primera cancelación. Los ciclos ya iniciados conservan su duración.</p>
-      {draft.steps.map((s,i)=><div className="form-grid" key={i}><label>Desde cancelación<input required type="number" min="1" max="10000" step="1" value={s.fromCount} onChange={e=>setDraft({...draft,steps:draft.steps.map((v,j)=>j===i?{...v,fromCount:Number(e.target.value)}:v)})}/></label>
-        <label>Días (0 = advertencia)<input required disabled={s.suspensionDays===null} type="number" min="0" max="3650" step="1" value={s.suspensionDays??0} onChange={e=>setDraft({...draft,steps:draft.steps.map((v,j)=>j===i?{...v,suspensionDays:Number(e.target.value)}:v)})}/></label>
-        <label><input type="checkbox" checked={s.suspensionDays===null} onChange={e=>setDraft({...draft,steps:draft.steps.map((v,j)=>j===i?{...v,suspensionDays:e.target.checked?null:0}:v)})}/> Indefinida</label>
-        <button type="button" disabled={draft.steps.length===1} onClick={()=>setDraft({...draft,steps:draft.steps.filter((_,j)=>j!==i)})}>Quitar rango</button></div>)}
-      <button type="button" disabled={draft.steps.length>=30} onClick={()=>setDraft({...draft,steps:[...draft.steps,{fromCount:(draft.steps.at(-1)?.fromCount??0)+1,suspensionDays:0}]})}>Agregar rango</button></fieldset>
-      <p className="note">Una suspensión indefinida requiere reactivación manual. Cambiar esta política no acorta suspensiones ya aplicadas.</p>
-      {message&&<p role="alert">{message}</p>}<div className="row-actions"><button type="button" disabled={busy} onClick={()=>setDraft(undefined)}>Cerrar</button>{canManage&&<button className="primary" disabled={busy}>{busy?'Guardando…':'Guardar'}</button>}</div>
+  return <section className="card cancellation-policy-card"><div className="cancellation-policy-heading"><div className="cancellation-policy-title"><span className="settings-summary-icon" aria-hidden="true">↺</span><div><span className="eyebrow">POLÍTICA DE PASAJEROS</span><h2>Cancelaciones después de aceptar</h2></div></div>{policy&&<button ref={triggerRef} className="secondary" onClick={()=>{setMessage('');setDraft(structuredClone(policy));}}>{canManage?'Configurar política':'Ver política'}</button>}</div><p className="cancellation-policy-description">Solo cuentan las cancelaciones del pasajero después de una aceptación real y antes de iniciar el viaje.</p>
+    {policy&&<CancellationPolicyOverview policy={policy}/>}
+    <p className="cancellation-policy-note">Al vencer el ciclo se reinicia el contador, no el historial ni una suspensión vigente. No depende del mes calendario.</p>
+    {!policy&&!message&&<p role="status">Cargando política…</p>}{message&&!draft&&<p className="cancellation-policy-note" role="status">{message}</p>}
+    {draft&&<div className="panel-dialog-backdrop cancellation-policy-backdrop"><form ref={dialogRef} className="panel-dialog-card cancellation-policy-modal" role="dialog" aria-modal="true" aria-labelledby="cancellation-policy-title" onKeyDown={dialogKeyDown} onSubmit={save}>
+      <div className="panel-dialog-heading cancellation-policy-modal-header"><div><span className="eyebrow">CONFIGURACIÓN OPERATIVA</span><h2 id="cancellation-policy-title">Política de cancelaciones</h2><p>Define el ciclo y las condiciones de cada sanción.</p></div><button autoFocus type="button" className="modal-close-button" aria-label="Cerrar política" disabled={busy} onClick={()=>setDraft(undefined)}>×</button></div>
+      <div className="cancellation-policy-modal-body"><CancellationPolicyFields draft={draft} onChange={setDraft} disabled={!canManage||busy}/>{message&&<p className="alert error" role="alert">{message}</p>}</div>
+      <div className="cancellation-policy-actions"><button className="secondary" type="button" disabled={busy} onClick={()=>setDraft(undefined)}>{canManage?'Cancelar':'Cerrar'}</button>{canManage&&<button className="primary" type="submit" disabled={busy}>{busy?'Guardando…':'Guardar política'}</button>}</div>
     </form></div>}
   </section>;
 }

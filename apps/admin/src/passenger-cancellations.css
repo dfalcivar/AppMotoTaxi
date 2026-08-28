@@ -6,3 +6,79 @@
 .cancellation-history td { min-width:140px; }
 .cancellation-history details { overflow-wrap:anywhere; font-size:.8rem; margin-top:6px; }
 @media(max-width:520px){.cancellation-summary{grid-template-columns:1fr}}
+
+/* Policy controls share the existing operational-settings identity. */
+.cancellation-policy-card { display:grid; gap:18px; }
+.cancellation-policy-heading,.cancellation-policy-title { display:flex; align-items:center; gap:14px; }
+.cancellation-policy-heading { justify-content:space-between; flex-wrap:wrap; }
+.cancellation-policy-heading h2 { margin:5px 0 0; font-size:1.2rem; color:var(--costa-navy); }
+.cancellation-policy-description { margin:0; max-width:850px; color:#536d75; line-height:1.55; font-size:.9rem; }
+.cancellation-policy-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.cancellation-policy-stats>div { display:grid; gap:8px; padding:15px; border-radius:13px; background:#f4f8fa; min-width:0; }
+.cancellation-policy-stats>div>span { font-size:.76rem; color:#536d75; }
+.cancellation-policy-stats strong { color:var(--costa-navy); font-size:.95rem; }
+.cancellation-policy-stats .cancellation-policy-status { color:#536d75; }
+.cancellation-policy-stats .cancellation-policy-status.enabled { color:#28764e; }
+.cancellation-policy-rules { display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:10px; }
+.cancellation-policy-rule { display:grid; align-content:start; gap:8px; padding:14px; border:1px solid #dce7ec; border-radius:13px; min-width:0; }
+.cancellation-policy-rule>span { color:#536d75; font-size:.76rem; }
+.cancellation-policy-rule strong { font-size:.88rem; line-height:1.45; }
+.cancellation-policy-rule.warning strong,.cancellation-outcome.warning { color:#855b0a; }
+.cancellation-policy-rule.suspension strong,.cancellation-outcome.suspension { color:var(--costa-blue); }
+.cancellation-policy-rule.indefinite strong,.cancellation-outcome.indefinite { color:#a43640; }
+.cancellation-policy-note { margin:0; padding:12px 14px; border-radius:12px; background:var(--costa-sky); color:#365969; font-size:.8rem; line-height:1.55; }
+.panel-dialog-card.cancellation-policy-modal { width:min(760px,100%); display:flex; flex-direction:column; gap:0; padding:0; overflow:hidden; }
+.cancellation-policy-modal-header { flex:0 0 auto; padding:22px 24px 18px; border-bottom:1px solid #e1eaec; }
+.cancellation-policy-modal-header h2 { font-size:1.3rem; color:var(--costa-navy); }
+.cancellation-policy-modal-header p { margin:8px 0 0; color:#536d75; font-size:.85rem; line-height:1.5; }
+.cancellation-policy-modal-header .modal-close-button { display:grid; place-items:center; width:34px; height:34px; flex:0 0 34px; padding:0; border:1px solid #dce7ec; border-radius:11px; background:#f4f8fa; color:#536d75; font-size:1.35rem; cursor:pointer; }
+.cancellation-policy-modal-body { padding:20px 24px; overflow-y:auto; overscroll-behavior:contain; min-height:0; }
+.cancellation-policy-fields { display:grid; gap:18px; border:0; padding:0; margin:0; min-width:0; }
+.cancellation-policy-fields label { font-size:.8rem; color:#36545e; font-weight:750; }
+.cancellation-policy-fields input[type="number"] { display:block; width:100%; min-width:0; margin-top:8px; border:1px solid #cadadd; border-radius:11px; padding:10px 12px; color:#17343c; background:#fff; font:inherit; }
+.cancellation-policy-fields input:focus-visible,.cancellation-policy-modal button:focus-visible,.cancellation-policy-card>div>button:focus-visible { outline:3px solid var(--costa-cyan); outline-offset:3px; }
+.cancellation-policy-fields input:disabled { background:#edf3f4; color:#647d83; }
+.cancellation-policy-fields small { display:block; margin-top:6px; color:#536d75; font-weight:400; font-size:.75rem; line-height:1.5; }
+.cancellation-policy-toggle { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px; background:#f4f8fa; border:1px solid #dce7ec; border-radius:14px; }
+.cancellation-policy-toggle strong { color:var(--costa-navy); font-size:.88rem; }
+.cancellation-policy-toggle input { appearance:none; flex:0 0 40px; width:40px; height:24px; padding:0; border:1px solid #78929d; border-radius:99px; background:#dce7ec; position:relative; cursor:pointer; }
+.cancellation-policy-toggle input::after { content:''; position:absolute; width:16px; height:16px; top:3px; left:3px; border-radius:50%; background:#fff; box-shadow:0 1px 3px #36596944; }
+.cancellation-policy-toggle input:checked { background:var(--costa-blue); border-color:var(--costa-blue); }
+.cancellation-policy-toggle input:checked::after { left:19px; }
+.cancellation-cycle-setting { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; align-items:center; }
+.cancellation-cycle-setting p { margin:0; color:#536d75; font-size:.8rem; line-height:1.6; }
+.cancellation-rules-heading h3 { margin:0 0 6px; color:var(--costa-navy); font-size:1rem; }
+.cancellation-rules-heading p { margin:0; color:#536d75; font-size:.8rem; line-height:1.5; }
+.cancellation-rule-editors { display:grid; gap:12px; }
+.cancellation-rule-editor { padding:15px; border:1px solid #dce7ec; border-radius:14px; min-width:0; }
+.cancellation-rule-heading { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:14px; }
+.cancellation-rule-number { color:#536d75; font-size:.75rem; font-weight:700; }
+.cancellation-outcome { padding:5px 8px; border-radius:8px; background:#f4f8fa; font-size:.72rem; font-weight:750; }
+.cancellation-rule-heading .cancellation-remove { margin-left:auto; border:0; background:transparent; color:#a43640; padding:6px 8px; font-size:.78rem; cursor:pointer; border-radius:8px; }
+.cancellation-rule-heading .cancellation-remove:hover:not(:disabled) { background:#fff0f1; }
+.cancellation-rule-inputs { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:16px; align-items:start; }
+.cancellation-indefinite { display:flex; align-items:center; gap:8px; padding-top:35px; }
+.cancellation-indefinite input { width:18px; height:18px; margin:0; accent-color:var(--costa-blue); }
+.cancellation-add-range { justify-self:start; }
+.cancellation-policy-actions { display:flex; flex:0 0 auto; justify-content:flex-end; gap:10px; padding:16px 24px max(16px,env(safe-area-inset-bottom)); border-top:1px solid #e1eaec; background:#fff; }
+.cancellation-policy-actions button,.cancellation-add-range,.cancellation-policy-heading>button { min-height:42px; }
+.cancellation-policy-modal button:disabled,.cancellation-policy-modal input:disabled { cursor:not-allowed; opacity:.6; }
+.cancellation-sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media(max-width:720px) {
+  .cancellation-policy-stats { grid-template-columns:1fr; }
+  .cancellation-policy-stats>div { gap:5px; padding:12px; }
+}
+@media(max-width:520px) {
+  .cancellation-policy-card { padding:18px; gap:14px; }
+  .cancellation-policy-heading>button { width:100%; }
+  .cancellation-policy-heading h2 { font-size:1.05rem; }
+  .cancellation-policy-modal-header { padding:18px 16px 14px; }
+  .cancellation-policy-modal-header h2 { font-size:1.15rem; }
+  .cancellation-policy-modal-body { padding:16px; }
+  .cancellation-cycle-setting { grid-template-columns:1fr; gap:10px; }
+  .cancellation-rule-editor { padding:12px; }
+  .cancellation-rule-inputs { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .cancellation-indefinite { grid-column:1/-1; padding-top:0; }
+  .cancellation-policy-actions { padding:12px 16px max(14px,env(safe-area-inset-bottom)); }
+  .cancellation-policy-actions button { flex:1; min-width:0; }
+}
