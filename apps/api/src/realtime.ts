@@ -4,7 +4,7 @@ import type { WebSocket } from "@fastify/websocket";
 import { z } from "zod";
 import { userFrom, type SessionUser } from "./admin.js";
 import { database } from "./database.js";
-import { sendPush } from "./push.js";
+import { sendPush, pushPresentationForType } from "./push.js";
 import { resolveServiceArea } from "./service-areas.js";
 
 const pointSchema = z.object({
@@ -123,7 +123,8 @@ async function nearbyDrivers(
   latitude: number,
   longitude: number,
   paymentMethod: "CASH" | "DEUNA" = "CASH",
-  excludeDriverId?: string
+  excludeDriverId?: string,
+  onlyDriverId?: string
 ) {
   const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
   const radius = Number(settings?.search_radius_meters ?? 3000);
@@ -134,7 +135,8 @@ async function nearbyDrivers(
       d.last_location_at as "recordedAt"
     from drivers d
     join users u on u.id=d.user_id
-    where d.is_available=true and u.status='ACTIVE'
+    where d.is_available=true and u.status='ACTIVE' and u.deleted_at is null
+      and (${onlyDriverId ?? null}::uuid is null or d.user_id=${onlyDriverId ?? null}::uuid)
       and d.approval_status='APROBADO' and d.last_location is not null
       and (${paymentMethod}='CASH' or d.deuna_enabled=true)
       and not exists (
@@ -161,7 +163,6 @@ async function nearbyDrivers(
         ${radius}
       )
     order by ST_Distance(d.last_location, ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}),4326)::geography)
-    limit 20
   `;
   return rows.map(row => ({
     driverId: publicDriverId(String(row.driverId)),
@@ -212,10 +213,15 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
   const broadcastNearbyLocation = async (driverId: string, location: { latitude: number; longitude: number; recordedAt: string }) => {
     const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
     const [driver] = await database()`select deuna_enabled as "deunaEnabled" from drivers where user_id=${driverId}`;
+    const eligible = await nearbyDrivers(location.latitude, location.longitude, 'CASH', undefined, driverId);
     const radius = Number(settings?.search_radius_meters ?? 3000);
     for (const client of clients) {
-      if (!client.nearby || distanceMeters(client.nearby, location) > radius) continue;
-      if (client.nearby.paymentMethod === "DEUNA" && driver?.deunaEnabled !== true) continue;
+      if (!client.nearby) continue;
+      if (!eligible.length || distanceMeters(client.nearby, location) > radius ||
+          (client.nearby.paymentMethod === "DEUNA" && driver?.deunaEnabled !== true)) {
+        send(client.socket, {type:'nearby:remove', driverId:publicDriverId(driverId)});
+        continue;
+      }
       send(client.socket, {
         type: "nearby:update",
         paymentMethod: client.nearby.paymentMethod,
@@ -450,7 +456,8 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
 
   return {
     publishTripStatus(tripId, status) {
-      broadcastTrip(tripId, { type: "trip:status", tripId, status, occurredAt: new Date().toISOString() });
+      const presentation=pushPresentationForType(status,'Actualización del viaje','El estado de tu viaje cambió.');
+      broadcastTrip(tripId, { type: "trip:status", tripId, status, ...presentation, occurredAt: new Date().toISOString() });
     },
     publishTripEvent(tripId, type, payload = {}) {
       broadcastTrip(tripId, { type, tripId, ...payload, occurredAt: new Date().toISOString() });

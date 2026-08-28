@@ -19,6 +19,7 @@ import { CoverageZones } from "./service-area-admin.js";
 import { FareTerritories } from "./fare-admin.js";
 import { CommercialAdmin } from "./commercial-admin.js";
 import { AdminErrorBoundary } from "./observability.js";
+import { PassengerCancellationSettings, PassengerCancellationHistory } from './passenger-cancellations.js';
 
 type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
 
@@ -76,8 +77,8 @@ const stateLabels: Record<string, string> = {
   NUEVO: "Nuevo", ASIGNADO: "Asignado", EN_REVISION: "En revisión",
   ESPERANDO_USUARIO: "Esperando usuario", RESUELTO: "Resuelto", CERRADO: "Cerrado",
   SUGGESTED: "Valor sugerido", CONFIGURED: "Regla territorial",
-  CASH: "Efectivo", DEUNA: "De Una",
-  NO_DEUNA_COMPATIBLE_DRIVER: "Sin conductor habilitado para De Una",
+  CASH: "Efectivo", DEUNA: "Transferencia",
+  NO_DEUNA_COMPATIBLE_DRIVER: "Sin conductor habilitado para Transferencia",
   NO_DRIVER_ACCEPTED: "Ningún conductor aceptó",
   NO_ELIGIBLE_DRIVER_IN_RADIUS: "Sin conductores elegibles en el radio"
 };
@@ -246,7 +247,7 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
     scheduledTrips: { label: "Programados", icon: "◷", tone: "neutral" },
     searchingWithoutDriver: { label: "Buscando conductor", icon: "⌕", tone: "live-tone" },
     withoutDriver: { label: "Sin conductor encontrado", icon: "!", tone: "warning" },
-    deunaWithoutCompatibleDriver: { label: "Sin conductor habilitado para De Una", icon: "$", tone: "warning" },
+    deunaWithoutCompatibleDriver: { label: "Sin conductor habilitado para Transferencia", icon: "$", tone: "warning" },
     connectedDrivers: { label: "Conductores conectados", icon: "⌁", tone: "positive" },
     activeDrivers: { label: "Conductores habilitados", icon: "◉", tone: "neutral" },
     pendingDrivers: { label: "Pendientes de aprobación", icon: "…", tone: "warning" },
@@ -491,7 +492,7 @@ function Drivers({ token, canApprove, canViewDocuments, canManageDocuments, canR
   async function load() { try { const next = await apiFetch<any[]>("/v1/admin/drivers", token); setData(next); if (canApprove) setCooperatives(await apiFetch<any[]>("/v1/admin/cooperatives", token)); } catch (reason) { setError(errorText(reason)); } }
   useEffect(() => { void load(); }, [token, canApprove]);
   async function update(driver: any, status = driver.status, deunaEnabled = Boolean(driver.deunaEnabled), cooperativeId: string | null | undefined = driver.cooperativeId) { setBusy(driver.id); setError(""); try { await apiFetch(`/v1/admin/drivers/${driver.id}`, token, { method: "PATCH", body: JSON.stringify({ status, deunaEnabled, cooperativeId, reason: status === "ACTIVE" ? "Conductor aprobado desde el panel" : "Estado actualizado desde el panel" }) }); await load(); } catch (reason) { setError(errorText(reason)); } finally { setBusy(undefined); } }
-  return <>{canApprove && <DriverApprovalInbox token={token} canManageDocuments={canManageDocuments} onChanged={() => void load()} />}<section className="card"><Header eyebrow="GESTIÓN GENERAL" title="Todos los conductores" action={`${data.length} registrados`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Correo", "Teléfono", "Vehículo", "Cooperativa", "Documentos", "Aprobación", "De Una", "Acción"]} rows={data.map(driver => [driver.name, driver.email ?? "Sin correo", driver.phone, driver.vehicle, canApprove ? <select aria-label={`Cooperativa de ${driver.name}`} value={driver.cooperativeId ?? ""} disabled={busy === driver.id} onChange={event => update(driver, driver.status, Boolean(driver.deunaEnabled), event.target.value || null)}><option value="">Sin cooperativa</option>{cooperatives.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select> : driver.cooperativeName ?? "Sin cooperativa", <div><span>{driver.documents}</span>{canViewDocuments && <DriverDocuments token={token} driver={driver} canManage={canManageDocuments} />}</div>, <Badge value={driver.approvalStatus ?? driver.status} />, canApprove ? <input aria-label={`De Una para ${driver.name}`} type="checkbox" checked={Boolean(driver.deunaEnabled)} disabled={busy === driver.id} onChange={e => update(driver, driver.status, e.target.checked)} /> : "—", canResetPasswords ? <PasswordReset token={token} userId={driver.id} userName={driver.name} /> : "Solo lectura"])} /> : <Empty text="No hay conductores registrados." />}</section></>;
+  return <>{canApprove && <DriverApprovalInbox token={token} canManageDocuments={canManageDocuments} onChanged={() => void load()} />}<section className="card"><Header eyebrow="GESTIÓN GENERAL" title="Todos los conductores" action={`${data.length} registrados`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Correo", "Teléfono", "Vehículo", "Cooperativa", "Documentos", "Aprobación", "Transferencia", "Acción"]} rows={data.map(driver => [driver.name, driver.email ?? "Sin correo", driver.phone, driver.vehicle, canApprove ? <select aria-label={`Cooperativa de ${driver.name}`} value={driver.cooperativeId ?? ""} disabled={busy === driver.id} onChange={event => update(driver, driver.status, Boolean(driver.deunaEnabled), event.target.value || null)}><option value="">Sin cooperativa</option>{cooperatives.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select> : driver.cooperativeName ?? "Sin cooperativa", <div><span>{driver.documents}</span>{canViewDocuments && <DriverDocuments token={token} driver={driver} canManage={canManageDocuments} />}</div>, <Badge value={driver.approvalStatus ?? driver.status} />, canApprove ? <input aria-label={`Transferencia para ${driver.name}`} type="checkbox" checked={Boolean(driver.deunaEnabled)} disabled={busy === driver.id} onChange={e => update(driver, driver.status, e.target.checked)} /> : "—", canResetPasswords ? <PasswordReset token={token} userId={driver.id} userName={driver.name} /> : "Solo lectura"])} /> : <Empty text="No hay conductores registrados." />}</section></>;
 }
 
 function Passengers({ token, canManage, canResetPasswords }: { token: string; canManage: boolean; canResetPasswords: boolean }) {
@@ -499,7 +500,7 @@ function Passengers({ token, canManage, canResetPasswords }: { token: string; ca
   const load = () => apiFetch<any[]>("/v1/admin/passengers", token).then(setData).catch(reason => setError(errorText(reason)));
   useEffect(() => { void load(); }, [token]);
   async function update(passenger: any) { try { await apiFetch(`/v1/admin/passengers/${passenger.id}`, token, { method: "PATCH", body: JSON.stringify({ status: passenger.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE", reason: "Actualización desde el panel administrativo" }) }); await load(); } catch (reason) { setError(errorText(reason)); } }
-  return <section className="card"><Header eyebrow="USUARIOS" title="Pasajeros" action={`${data.length} registrados`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Correo", "Teléfono", "Viajes", "Último viaje", "Estado", "Acción"]} rows={data.map(passenger => [passenger.name, passenger.email ?? "Sin correo", passenger.phone, passenger.trips, passenger.lastTrip ? new Date(passenger.lastTrip).toLocaleString() : "Sin viajes", <Badge value={passenger.status} />, canManage || canResetPasswords ? <div className="row-actions">{canManage && <button className="link" onClick={() => update(passenger)}>{passenger.status === "ACTIVE" ? "Suspender" : "Reactivar"}</button>}{canResetPasswords && <PasswordReset token={token} userId={passenger.id} userName={passenger.name} />}</div> : "Solo lectura"])} /> : <Empty text="No hay pasajeros registrados." />}</section>;
+  return <section className="card"><Header eyebrow="USUARIOS" title="Pasajeros" action={`${data.length} registrados`} /><Notice error={error} />{data.length ? <Table headers={["Nombre", "Correo", "Teléfono", "Viajes", "Último viaje", "Estado", "Acción"]} rows={data.map(passenger => [passenger.name, passenger.email ?? "Sin correo", passenger.phone, <div>{passenger.trips}<PassengerCancellationHistory token={token} passenger={passenger}/></div>, passenger.lastTrip ? new Date(passenger.lastTrip).toLocaleString() : "Sin viajes", <Badge value={passenger.status} />, canManage || canResetPasswords ? <div className="row-actions">{canManage && <button className="link" onClick={() => update(passenger)}>{passenger.status === "ACTIVE" ? "Suspender" : "Reactivar"}</button>}{canResetPasswords && <PasswordReset token={token} userId={passenger.id} userName={passenger.name} />}</div> : "Solo lectura"])} /> : <Empty text="No hay pasajeros registrados." />}</section>;
 }
 
 function Pricing({ token, admin }: { token: string; admin: boolean }) {
@@ -588,6 +589,7 @@ function Settings({ token, admin }: { token: string; admin: boolean }) {
 
   const activeDefinition = panels.find(panel => panel.id === activePanel);
   return <div className="operations-settings">
+    <PassengerCancellationSettings token={token} canManage={admin}/>
     <section className="settings-intro"><div><span className="eyebrow">CONTROL CENTRAL</span><h2>Parámetros de operación</h2><p>Consulta la configuración vigente y edita únicamente el grupo que necesites.</p></div><span className="settings-access">{admin ? "Edición habilitada" : "Solo lectura"}</span></section>
     <Notice error={error} success={success} />
     <div className="settings-overview-grid">{panels.map(panel => <article className="settings-summary-card" key={panel.id}><div className="settings-summary-heading"><span className="settings-summary-icon" aria-hidden="true">{panel.icon}</span><div><span className="eyebrow">{panel.eyebrow}</span><h3>{panel.title}</h3></div></div><p>{panel.description}</p><dl>{panel.values.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><button className="secondary settings-edit-button" type="button" onClick={() => { setError(""); setSuccess(""); setActivePanel(panel.id); }}>{admin ? "Configurar" : "Ver detalle"}<span aria-hidden="true">→</span></button></article>)}</div>

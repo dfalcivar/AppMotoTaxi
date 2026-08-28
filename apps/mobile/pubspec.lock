@@ -105,6 +105,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.0"
+  costa_go_alerts:
+    dependency: "direct main"
+    description:
+      path: "packages/costa_go_alerts"
+      relative: true
+    source: path
+    version: "1.0.0"
   cross_file:
     dependency: transitive
     description:

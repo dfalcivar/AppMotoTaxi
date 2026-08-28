@@ -1,10 +1,20 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'notification_alerts.dart';
 
 class InAppNotificationBanner {
   static final Map<String, DateTime> _recent = <String, DateTime>{};
   static OverlayEntry? _current;
+  static String? _currentId;
+  static void dismiss(String id) {
+    if (_currentId != id) return;
+    _current?.remove();
+    _current = null;
+    _currentId = null;
+  }
 
   static bool show(
     BuildContext context, {
@@ -15,7 +25,12 @@ class InAppNotificationBanner {
     String actionLabel = 'Ver',
     VoidCallback? onTap,
     Duration duration = const Duration(seconds: 7),
+    bool sound = true,
   }) {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
+      return false;
+    }
     final now = DateTime.now();
     _recent.removeWhere(
         (_, seenAt) => now.difference(seenAt) > const Duration(minutes: 2));
@@ -26,6 +41,7 @@ class InAppNotificationBanner {
     }
     _recent[id] = now;
     _current?.remove();
+    _current = null;
 
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
     if (overlay == null) return false;
@@ -39,13 +55,25 @@ class InAppNotificationBanner {
         duration: duration,
         onTap: onTap,
         onDismiss: () {
-          if (_current == entry) _current = null;
-          entry.remove();
+          if (_current == entry) dismiss(id);
         },
       ),
     );
     _current = entry;
+    _currentId = id;
     overlay.insert(entry);
+    if (sound && nativeAlertsSupported) {
+      unawaited(notificationAlerts.invokeMethod<void>('feedback', {
+        'channelId': id.startsWith('chat-')
+            ? 'costa_go_chat_v2'
+            : 'costa_go_trip_updates_v2',
+      }).catchError((_) {}));
+    } else if (sound &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS) {
+      unawaited(SystemSound.play(SystemSoundType.alert));
+      unawaited(HapticFeedback.mediumImpact());
+    }
     return true;
   }
 }

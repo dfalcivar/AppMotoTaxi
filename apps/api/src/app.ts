@@ -13,6 +13,7 @@ import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
 import { registerTripSharingRoutes } from "./trip-sharing.js";
+import { registerPassengerCancellationRoutes, releaseExpiredPassengerSuspensions, cancelPassengerTrip, cancellationConsequence, passengerCancellationPolicySchema } from "./passenger-cancellations.js";
 import { reverseLocation, searchLocations, searchLocationsInArea } from "./geocoding.js";
 import { computeRoute, type RouteResult } from "./routing.js";
 import { notifyAdministratorsDriverReady } from "./approval-notifications.js";
@@ -175,6 +176,7 @@ const routeSchema = z.object({
 const deviceTokenSchema = z.object({
   token: z.string().min(20).max(4096),
   platform: z.enum(["ANDROID", "IOS"]).default("ANDROID"),
+  notificationProtocol: z.number().int().min(1).max(2).default(1),
   firebaseProjectId: z.string().trim().min(3).max(200).optional()
 });
 const testPushSchema = z.object({ delaySeconds: z.number().int().min(0).max(15).default(0) });
@@ -384,11 +386,13 @@ export function tripTotalCents(
   return { baseCents, stopSurchargeCents, totalCents: baseCents + stopSurchargeCents };
 }
 
-async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, options: { allowPasswordChange?: boolean; allowPendingDriver?: boolean } = {}) {
+async function authenticatedUser(request: { headers: Record<string, string | string[] | undefined> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, options: { allowPasswordChange?: boolean; allowPendingDriver?: boolean; allowCancellationReplay?: boolean } = {}) {
   const user = userFrom(request as never);
   if (!user?.id || !user.sessionId) { reply.code(401).send({ error: "UNAUTHORIZED" }); return; }
+  await releaseExpiredPassengerSuspensions(user.id);
   const active = await database()`
     select u.must_change_password as "mustChangePassword",u.status,
+      u.passenger_cancellation_suspended as "cancellationSuspended", u.passenger_suspended_until as "suspendedUntil",
       d.approval_status as "approvalStatus",
       exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role=${user.role}) as "roleAllowed"
     from users u left join drivers d on d.user_id=u.id
@@ -396,7 +400,8 @@ async function authenticatedUser(request: { headers: Record<string, string | str
   `;
   if (!active.length) { reply.code(401).send({ error: "SESSION_REPLACED" }); return; }
   if (!active[0]?.roleAllowed) { reply.code(403).send({ error: "ROLE_NOT_AVAILABLE" }); return; }
-  if (active[0]?.status !== "ACTIVE") { reply.code(403).send({ error: "ACCOUNT_NOT_ACTIVE" }); return; }
+  const cancellationReplay = options.allowCancellationReplay && user.role === 'PASSENGER' && active[0]?.status === 'SUSPENDED' && active[0]?.cancellationSuspended;
+  if (active[0]?.status !== "ACTIVE" && !cancellationReplay) { reply.code(403).send({ error: active[0]?.cancellationSuspended ? "PASSENGER_CANCELLATION_SUSPENDED" : "ACCOUNT_NOT_ACTIVE", suspendedUntil: active[0]?.suspendedUntil }); return; }
   if (user.role === "DRIVER" && active[0]?.approvalStatus !== "APROBADO" && !options.allowPendingDriver) {
     reply.code(403).send({ error: "DRIVER_NOT_APPROVED" });
     return;
@@ -441,6 +446,7 @@ export async function buildApp() {
   await registerAdminRoutes(app, realtime);
   await registerSupportRoutes(app);
   await registerTripSharingRoutes(app);
+  await registerPassengerCancellationRoutes(app);
   await registerMembershipRoutes(app);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
@@ -678,7 +684,7 @@ export async function buildApp() {
     if (dispatched?.kind === "NO_DRIVER") {
       realtime.publishToUser(dispatched.passengerId, { type: "trip:status", tripId: dispatched.tripId, status: "NO_DRIVER" });
       const noDriverMessage = dispatched.noDriverReason === 'NO_DEUNA_COMPATIBLE_DRIVER'
-        ? "No encontramos un conductor cercano habilitado para cobros con De Una. Puedes intentar con efectivo."
+        ? "No encontramos un conductor cercano habilitado para cobros con Transferencia. Puedes intentar con efectivo."
         : "La búsqueda alcanzó el radio máximo configurado. Puedes intentarlo nuevamente.";
       await sendPush(dispatched.passengerId, "No encontramos conductores disponibles", noDriverMessage,
         { tripId: dispatched.tripId, type: "NO_DRIVER", reasonCode: dispatched.noDriverReason ?? "NO_DRIVER" });
@@ -705,12 +711,11 @@ export async function buildApp() {
   }
 
   async function dispatchReachedTripsToDriver(driverId: string): Promise<number> {
-    const settings = await configuredDriverSearch();
     const inserted = await database()`
       with new_offers as (
         insert into driver_offers (trip_id, driver_id, expires_at, search_round, distance_meters)
         select t.id, d.user_id,
-          now() + (${settings.roundWaitSeconds} * interval '1 second'),
+          t.driver_search_next_round_at,
           t.driver_search_round,
           round(ST_Distance(d.last_location, t.origin))::int
         from drivers d
@@ -719,6 +724,7 @@ export async function buildApp() {
           and (t.scheduled_for is null or t.schedule_status='SCHEDULED_READY')
           and t.driver_search_round>0
           and t.driver_search_upper_meters>0
+          and t.driver_search_next_round_at>now()
         where d.user_id=${driverId}
           and d.is_available=true
           and u.status='ACTIVE'
@@ -744,6 +750,7 @@ export async function buildApp() {
               and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
           )
           and ST_DWithin(d.last_location, t.origin, t.driver_search_upper_meters)
+          and (t.driver_search_lower_meters=0 or ST_Distance(d.last_location,t.origin)>t.driver_search_lower_meters)
         on conflict (trip_id, driver_id) do nothing
         returning trip_id, driver_id
       )
@@ -797,6 +804,8 @@ export async function buildApp() {
     `;
     for (const item of due) {
       const activated = await database().begin(async tx => {
+        const [current] = await tx`select driver_id::text as "driverId",status,schedule_status as schedule from trips where id=${item.tripId} for update`;
+        if (!current || current.status!=='SEARCHING' || current.driverId!==item.driverId || !['SCHEDULED','SCHEDULED_ASSIGNED'].includes(current.schedule)) return 'SKIPPED' as const;
         if (item.driverId) {
           const [busy] = await tx`
             select 1 from trips where driver_id=${item.driverId} and id<>${item.tripId}
@@ -817,6 +826,8 @@ export async function buildApp() {
             update trips set status='ASSIGNED', schedule_status='SCHEDULED_READY',
               schedule_activated_at=now(), passenger_reminder_sent_at=now(), driver_reminder_sent_at=now()
             where id=${item.tripId} and status='SEARCHING' and schedule_status='SCHEDULED_ASSIGNED'
+              and driver_id=${item.driverId} and assigned_at is not null
+              and exists(select 1 from scheduled_trip_responses where trip_id=${item.tripId} and driver_id=${item.driverId} and accepted=true)
             returning id
           `;
           if (!ready) return "SKIPPED" as const;
@@ -1153,6 +1164,7 @@ export async function buildApp() {
     if (!process.env.DATABASE_URL) {
       return reply.code(503).send({ error: "AUTH_DATABASE_UNAVAILABLE" });
     }
+    await releaseExpiredPassengerSuspensions();
 
     const rows = await database()`
       select u.id,u.email,u.full_name,u.role,u.last_mobile_role as "lastMobileRole",u.status,
@@ -1203,6 +1215,7 @@ export async function buildApp() {
   app.post("/v1/auth/biometric/session", async (request, reply) => {
     const parsed = biometricSessionSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_BIOMETRIC_CREDENTIAL" });
+    await releaseExpiredPassengerSuspensions();
     const hash = privateTokenHash(`biometric:${parsed.data.credential}`);
     const [account] = await database()`select u.id::text,u.email,u.full_name,u.role,
         u.last_mobile_role as "lastMobileRole",u.status,u.email_verified_at as "emailVerifiedAt",
@@ -1443,9 +1456,9 @@ export async function buildApp() {
       // retiramos tokens antiguos sin crear una ventana en la que no haya push.
       await tx`delete from device_tokens where user_id=${user.id!} and token<>${parsed.data.token}`;
       await tx`
-        insert into device_tokens (user_id, token, platform, last_seen_at)
-        values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now())
-        on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now()
+        insert into device_tokens (user_id, token, platform, last_seen_at, notification_protocol)
+        values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now(),${parsed.data.notificationProtocol})
+        on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now(), notification_protocol=excluded.notification_protocol
       `;
     });
     return { registered: true, push };
@@ -1808,6 +1821,8 @@ export async function buildApp() {
     }
     const total = fare.totalCents;
     const trip = await sql.begin(async tx => {
+      const [account] = await tx`select status from users where id=${user.id!} for update`;
+      if (account?.status !== 'ACTIVE') return { error: 'ACCOUNT_NOT_ACTIVE' };
       const [created] = await tx`
         insert into trips (
           passenger_id, passengers, payment_method, origin, destination,
@@ -1851,6 +1866,7 @@ export async function buildApp() {
       await tx`insert into trip_events (trip_id, to_status, actor_id, metadata) values (${created!.id}, 'SEARCHING', ${user.id!}, ${JSON.stringify({ scheduledFor: scheduledFor?.toISOString() ?? null, scheduleStatus: scheduledFor ? "SCHEDULED" : null, stops: destinations.length })}::jsonb)`;
       return { id: created.id, replay: false };
     });
+    if ('error' in trip) return reply.code(403).send({error:trip.error});
     const firstRound = scheduledFor || trip.replay ? null : await redispatchOldestTrip(String(trip.id));
     if (scheduledFor && !trip.replay) await sendPush(user.id!, "Viaje programado", `Tu solicitud quedó guardada para ${scheduledFor.toLocaleString("es-EC", { timeZone: "America/Guayaquil" })}.`, { tripId: String(trip.id), type: "SCHEDULED_TRIP_CREATED" });
     return reply.code(201).send({
@@ -1870,46 +1886,36 @@ export async function buildApp() {
     });
   });
 
+  app.get('/v1/passenger/cancellation-policy', async (request, reply) => {
+    const user = await authenticatedUser(request,reply); if (!user) return;
+    if(user.role!=='PASSENGER') return reply.code(403).send({error:'FORBIDDEN'});
+    const [row] = await database()`select passenger_cancellation_count as count, passenger_cancellation_policy as policy
+      from users cross join operational_settings where users.id=${user.id!} and operational_settings.id=1`;
+    const count=Number(row!.count);
+    return {count, nextCount:count+1, suspensionDays:cancellationConsequence(passengerCancellationPolicySchema.parse(row!.policy),count+1)};
+  });
+
   app.post("/v1/trips/:tripId/cancel", async (request, reply) => {
-    const user = await authenticatedUser(request, reply); if (!user) return;
+    const user = await authenticatedUser(request, reply, {allowCancellationReplay:true}); if (!user) return;
     if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
     const tripId = (request.params as { tripId: string }).tripId;
-    const result = await database().begin(async tx => {
-      const [existing] = await tx`
-        select driver_id::text as "driverId", schedule_status as "scheduleStatus"
-        from trips where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
-        for update
-      `;
-      if (!existing) return null;
-      const [trip] = await tx`
-        update trips set status='CANCELLED', cancelled_at=now(), schedule_status=null
-        where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
-        returning id::text
-      `;
-      if (!trip) return null;
-      const drivers = await tx`select driver_id from driver_offers where trip_id=${tripId} and responded_at is null`;
-      await tx`update driver_offers set responded_at=coalesce(responded_at, now()),
-        accepted=coalesce(accepted, false), response_reason=coalesce(response_reason,'PASSENGER_CANCELLED')
-        where trip_id=${tripId}`;
-      await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code) values (${tripId}, 'SEARCHING', 'CANCELLED', ${user.id!}, 'PASSENGER_CANCELLED')`;
-      return {
-        driverIds: [...new Set([
-          ...drivers.map(driver => String(driver.driver_id)),
-          ...(existing.driverId ? [String(existing.driverId)] : [])
-        ])],
-        scheduled: Boolean(existing.scheduleStatus)
-      };
-    });
+    if (!z.string().uuid().safeParse(tripId).success) return reply.code(400).send({ error: "INVALID_TRIP_ID" });
+    const result = await cancelPassengerTrip(user.id!,tripId);
     if (!result) return reply.code(409).send({ error: "TRIP_NOT_CANCELLABLE" });
-    for (const driverId of result.driverIds) realtime.publishToUser(driverId, { type: "trip:offer:cancelled", tripId });
+    if (result.replay) return { tripId, status:'CANCELLED', idempotentReplay:true, consequence:result.consequence };
+    for (const driverId of result.driverIds) realtime.publishToUser(driverId, {
+      type: "trip:offer:cancelled", tripId, reason:'PASSENGER_CANCELLED',
+      title: result.scheduled ? "Viaje programado cancelado" : "Solicitud cancelada",
+      body: result.scheduled ? "El pasajero canceló la reserva programada." : "El pasajero canceló la carrera. Puedes recibir nuevas solicitudes."
+    });
     await Promise.all(result.driverIds.map(driverId => sendPush(
       driverId,
       result.scheduled ? "Viaje programado cancelado" : "Solicitud cancelada",
-      result.scheduled ? "El pasajero canceló la reserva programada." : "El pasajero canceló la solicitud antes de ser asignada.",
+      result.scheduled ? "El pasajero canceló la reserva programada." : "El pasajero canceló la carrera. Puedes recibir nuevas solicitudes.",
       { tripId, type: "TRIP_CANCELLED" }
     )));
     realtime.publishTripStatus(tripId, "CANCELLED");
-    return { tripId, status: "CANCELLED", cancellationReason: "PASSENGER_CANCELLED" };
+    return { tripId, status: "CANCELLED", cancellationReason: "PASSENGER_CANCELLED", consequence:result.consequence };
   });
 
   app.get("/v1/trips/:tripId", async (request, reply) => {
@@ -2580,13 +2586,17 @@ export async function buildApp() {
     }
     const offerId = (request.params as { offerId: string }).offerId;
     const result = await database().begin(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtext(${user.id!}::text))`;
+      const [reference] = await tx`select trip_id from driver_offers where id=${offerId} and driver_id=${user.id!}`;
+      if (!reference) return { error: "OFFER_UNAVAILABLE" };
+      // Same lock order as cancellation and progressive dispatch: trip, then offer.
+      await tx`select id from trips where id=${reference.trip_id} for update`;
       const [offer] = await tx`select trip_id from driver_offers where id=${offerId} and driver_id=${user.id!} and responded_at is null and expires_at > now() for update`;
       if (!offer) return { error: "OFFER_UNAVAILABLE" };
       if (!body.data.accept) {
         await tx`update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_REJECTED' where id=${offerId}`;
         return { status: "REJECTED", tripId: String(offer.trip_id), otherDriverIds: [] as string[] };
       }
-      await tx`select pg_advisory_xact_lock(hashtext(${user.id!}::text))`;
       const activeTrips = await tx`select id from trips where driver_id=${user.id!} and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS') limit 1 for update`;
       if (activeTrips.length) {
         await tx`update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_BUSY' where id=${offerId}`;
@@ -2623,10 +2633,13 @@ export async function buildApp() {
     });
     if ("error" in result) return reply.code(409).send(result);
     if (result.status === "REJECTED") {
+      realtime.publishToUser(user.id!,{type:'trip:offer:cancelled',tripId:result.tripId});
+      void sendPush(user.id!,'','',{type:'OFFER_CLOSED',tripId:result.tripId});
       request.log.info({ offerId, tripId: result.tripId, driverId: user.id }, "trip_offer_rejected_by_driver");
       return result;
     }
     realtime.publishDriverUnavailable(user.id!);
+    void sendPush(user.id!,'','',{type:'OFFER_CLOSED',tripId:String(result.tripId)});
     realtime.publishTripStatus(String(result.tripId), "DRIVER_EN_ROUTE");
     const cancelledOfferPushes = [];
     for (const driverId of result.otherDriverIds) {

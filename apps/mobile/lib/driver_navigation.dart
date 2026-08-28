@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_navigation_flutter/google_navigation_flutter.dart'
     as nav;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,12 +27,14 @@ class DriverNavigationScreen extends StatefulWidget {
     super.key,
     required this.stops,
     required this.phaseLabel,
+    this.cancelled,
     this.routeToken,
   });
 
   final List<DriverNavigationStop> stops;
   final String phaseLabel;
   final String? routeToken;
+  final ValueListenable<bool>? cancelled;
 
   @override
   State<DriverNavigationScreen> createState() => _DriverNavigationScreenState();
@@ -62,6 +65,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.cancelled?.addListener(_handleCancellation);
     WidgetsBinding.instance.addPostFrameCallback((_) => _initialize());
   }
 
@@ -130,6 +134,10 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
           await nav.GoogleMapsNavigator.setDestinations(destinations);
       if (status != nav.NavigationRouteStatus.statusOk) {
         _setFailure('No se pudo preparar la navegación ($status).');
+        return;
+      }
+      if (!mounted || widget.cancelled?.value == true) {
+        await nav.GoogleMapsNavigator.cleanup();
         return;
       }
       await nav.GoogleMapsNavigator.startGuidance();
@@ -279,9 +287,18 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
 
   @override
   void dispose() {
+    widget.cancelled?.removeListener(_handleCancellation);
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_stopNavigation());
     super.dispose();
+  }
+
+  void _handleCancellation() {
+    if (widget.cancelled?.value != true) return;
+    unawaited(_stopNavigation());
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.of(context).pop();
+    }
   }
 
   @override

@@ -31,6 +31,8 @@ import 'in_app_notification_banner.dart';
 import 'live_map.dart';
 import 'realtime_service.dart';
 import 'service_areas.dart';
+import 'trip_lifecycle.dart';
+import 'notification_alerts.dart';
 
 part 'passenger_experience.dart';
 
@@ -39,8 +41,11 @@ const base = String.fromEnvironment('API_BASE_URL',
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
-String normalizePassengerTripUpdateType(String type) =>
-    type == 'CANCELLED' ? 'TRIP_CANCELLED' : type;
+String normalizePassengerTripUpdateType(String type) => type == 'CANCELLED'
+    ? 'TRIP_CANCELLED'
+    : {'ASSIGNED', 'TRIP_ASSIGNED'}.contains(type)
+        ? 'DRIVER_EN_ROUTE'
+        : type;
 
 String membershipPlanName(dynamic snapshot) {
   dynamic value = snapshot;
@@ -377,6 +382,7 @@ bool handlingRevokedSession = false;
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
+  await receiveBackgroundAlert(message.data);
 }
 
 String? supportedImageMime(Uint8List bytes) {
@@ -945,6 +951,7 @@ Future<void> main() async {
     HttpOverrides.global = AppHttpOverrides(Uri.parse(apiHttpProxy));
   }
   unawaited(warmApi());
+  initializeNativeNotificationOpens();
   try {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     await Firebase.initializeApp();
@@ -953,7 +960,7 @@ Future<void> main() async {
         .setForegroundNotificationPresentationOptions(
       alert: false,
       badge: true,
-      sound: true,
+      sound: false,
     );
     final permission = await FirebaseMessaging.instance.requestPermission(
       alert: true,
@@ -1187,6 +1194,8 @@ String mensajeApi(dynamic code) =>
       'DRIVER_SUSPENDED':
           'Tu cuenta de conductor está suspendida. Contacta a soporte.',
       'ACCOUNT_NOT_ACTIVE': 'Tu cuenta no está activa. Contacta a soporte.',
+      'PASSENGER_CANCELLATION_SUSPENDED':
+          'Tu cuenta está suspendida por cancelaciones después de la aceptación. Revisa la advertencia recibida o contacta a soporte.',
       'INVALID_LOGIN': 'Completa el correo y la contraseña.',
       'ACCOUNT_ALREADY_EXISTS': 'Ya existe una cuenta con estos datos.',
       'EMAIL_ALREADY_EXISTS': 'Este correo ya está registrado.',
@@ -1209,7 +1218,7 @@ String mensajeApi(dynamic code) =>
       'OFFER_UNAVAILABLE': 'Esta solicitud ya no está disponible.',
       'TRIP_ALREADY_ASSIGNED': 'Otro conductor ya aceptó este viaje.',
       'TRIP_NOT_CANCELLABLE':
-          'La solicitud ya fue asignada y no puede cancelarse desde aquí.',
+          'El viaje ya inició o cambió de estado. Actualiza la solicitud.',
       'TRIP_NOT_ASSIGNED_TO_DRIVER':
           'Este viaje ya no está asignado a tu cuenta.',
       'TRIP_NOT_CANCELLABLE_BY_DRIVER':
@@ -1533,6 +1542,7 @@ class Api {
           'platform':
               defaultTargetPlatform == TargetPlatform.iOS ? 'IOS' : 'ANDROID',
           'firebaseProjectId': Firebase.app().options.projectId,
+          'notificationProtocol': nativeAlertsSupported ? 2 : 1,
         });
         final push = response?['push'];
         if (push is Map && push['projectMatches'] == false) {
@@ -4063,8 +4073,8 @@ class _ProfileState extends State<Profile> {
       });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(enabled
-              ? 'Ya puedes recibir viajes con pago DeUna.'
-              : 'Los viajes con pago DeUna quedaron desactivados.')));
+              ? 'Ya puedes recibir viajes con pago Transferencia.'
+              : 'Los viajes con pago Transferencia quedaron desactivados.')));
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -4322,8 +4332,9 @@ class _ProfileState extends State<Profile> {
                 SwitchListTile(
                   contentPadding: rowPadding,
                   secondary: leadingIcon(Icons.account_balance_wallet_outlined),
-                  title: const Text('Cobros con DeUna'),
-                  subtitle: const Text('Recibir solicitudes pagadas con DeUna'),
+                  title: const Text('Cobros con Transferencia'),
+                  subtitle: const Text(
+                      'Recibir solicitudes pagadas con Transferencia'),
                   value: p['deunaEnabled'] == true,
                   onChanged: paymentSettingsBusy ? null : updateDeunaPreference,
                 ),
@@ -7037,6 +7048,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   StreamSubscription<RemoteMessage>? messageSubscription;
   StreamSubscription<RemoteMessage>? openedMessageSubscription;
+  StreamSubscription<Map<String, dynamic>>? nativeOpenSubscription;
   LatLng? pickup;
   LatLng? dropoff;
   int selectedDestinationIndex = 0;
@@ -7087,6 +7099,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
+    nativeOpenSubscription = listenToNativeNotificationOpens((data) {
+      if (mounted) handleOpenedPush(RemoteMessage(data: data));
+    });
     unawaited(api.registerFcm(widget.s.token));
     unawaited(UserNotificationStore.instance.refresh(widget.s));
     if (firebaseReady) {
@@ -7113,6 +7128,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           'DRIVER_ARRIVED',
           'IN_PROGRESS',
           'COMPLETED',
+          'NO_DRIVER',
           'TRIP_CANCELLED'
         }.contains(type)) {
           final status = type == 'TRIP_ASSIGNED' ? 'DRIVER_EN_ROUTE' : type;
@@ -7120,8 +7136,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           showPassengerNotification(
             status?.toString() ?? 'TRIP_UPDATE',
             push.data['tripId']?.toString(),
-            title: push.notification?.title,
-            body: push.notification?.body,
+            title: push.notification?.title ?? push.data['title']?.toString(),
+            body: push.notification?.body ?? push.data['body']?.toString(),
             notificationId: push.data['internalNotificationId'],
           );
           load();
@@ -7246,6 +7262,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     timer?.cancel();
     realtimeSubscription?.cancel();
+    nativeOpenSubscription?.cancel();
     messageSubscription?.cancel();
     openedMessageSubscription?.cancel();
     realtime.dispose();
@@ -7444,15 +7461,22 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         'El conductor canceló el traslado. Costa-Go ya está buscando otro conductor.'
       ],
       'DRIVER_EN_ROUTE': [
-        'Conductor en camino',
-        'Tu conductor se dirige hacia el origen.'
+        'Viaje confirmado',
+        'Un conductor aceptó tu solicitud y ya va en camino.'
       ],
       'DRIVER_ARRIVED': [
-        'Conductor llegó',
-        'Tu conductor ya se encuentra en el punto de partida.'
+        'Tu conductor llegó',
+        'Tu conductor está en el punto de recogida.'
       ],
-      'IN_PROGRESS': ['Viaje iniciado', 'Tu viaje está en curso.'],
-      'COMPLETED': ['Viaje finalizado', 'El recorrido terminó correctamente.'],
+      'IN_PROGRESS': ['Viaje iniciado', 'Tu viaje ya está en curso.'],
+      'COMPLETED': [
+        'Viaje finalizado',
+        'El recorrido terminó correctamente. Puedes calificar tu experiencia.'
+      ],
+      'NO_DRIVER': [
+        'Búsqueda finalizada',
+        'Ninguna mototaxi disponible en este momento.'
+      ],
       'TRIP_CANCELLED': [
         'Viaje cancelado',
         'La solicitud ya no se encuentra activa.'
@@ -7464,6 +7488,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final shown = InAppNotificationBanner.show(
       context,
       id: '$normalizedType-${tripId ?? 'active'}',
+      sound: normalizedType != 'DRIVER_ARRIVED',
       title: title ?? fallback[0],
       message: body ??
           (cancelled ? 'Solicitud cancelada correctamente.' : fallback[1]),
@@ -7492,10 +7517,21 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final tripId = tripIdValue?.toString();
     if (status == null || active == null) return;
     if (tripId != null && active['tripId']?.toString() != tripId) return;
-    if (status == 'COMPLETED' || status == 'TRIP_CANCELLED') return;
+    // Events are hints, not authoritative assignment snapshots. Fetch the
+    // trip before displaying an assigned state without a verified driver.
+    if (terminalTripStatuses.contains(status) || status == 'TRIP_CANCELLED') {
+      unawaited(load());
+      return;
+    }
+    if (assignedTripStatuses.contains(status) && !hasAssignedDriver(active)) {
+      unawaited(load());
+      return;
+    }
     setState(() {
       active = {...Map<String, dynamic>.from(active as Map), 'status': status};
       if (status == 'SEARCHING') {
+        active['driverId'] = null;
+        active['driverName'] = null;
         driverPosition = null;
         driverBearing = 0;
       }
@@ -7623,7 +7659,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       unawaited(UserNotificationStore.instance.refresh(widget.s));
       reflectTripStatus(event['status'], event['tripId']);
       showPassengerNotification(event['status']?.toString() ?? 'TRIP_UPDATE',
-          event['tripId']?.toString());
+          event['tripId']?.toString(),
+          title: event['title']?.toString(), body: event['body']?.toString());
       load();
       return;
     }
@@ -7754,12 +7791,21 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     unawaited(refreshRoute(force: true));
   }
 
+  int passengerLoadRevision = 0;
   Future<void> load() async {
+    if (cancellationBusy) return;
+    final revision = ++passengerLoadRevision;
+    final requestedTripId = active?['tripId'];
     try {
       final t = active == null
           ? await api.active(widget.s.token)
           : await api.trip(widget.s.token, active['tripId']);
-      if (!mounted) return;
+      if (!mounted ||
+          revision != passengerLoadRevision ||
+          cancellationBusy ||
+          requestedTripId != active?['tripId']) {
+        return;
+      }
       if (t == null) {
         if (active != null) {
           setState(() {
@@ -7791,6 +7837,23 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           await rating(context, widget.s, t['tripId'],
               () => setState(() => message = 'Gracias por tu calificación.'));
         }
+        return;
+      }
+      if (t['status'] == 'NO_DRIVER') {
+        setState(() {
+          active = null;
+          sheetExtent = .35;
+          driverPosition = null;
+          routePoints = [];
+          message = 'Ninguna mototaxi disponible en este momento.';
+        });
+        _movePassengerSheet(.35);
+        InAppNotificationBanner.show(context,
+            id: 'NO_DRIVER-${t['tripId']}',
+            title: 'Búsqueda finalizada',
+            message: 'Ninguna mototaxi disponible en este momento.',
+            actionLabel: 'Cerrar');
+        unawaited(refreshNearbyDrivers());
         return;
       }
       if (t['status'] == 'CANCELLED') {
@@ -8976,7 +9039,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                           Icons.account_balance_wallet_outlined,
                                       label: 'Pago',
                                       value: paymentMethod == 'DEUNA'
-                                          ? 'De Una'
+                                          ? 'Transferencia'
                                           : 'Efectivo')),
                               SizedBox(
                                   width: width,
@@ -9434,98 +9497,121 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
   }
 
+  bool cancellationBusy = false;
   Future<void> cancel() async {
     final tripId = active?['tripId']?.toString();
-    if (tripId == null) return;
-    final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (dialogContext) {
-              final theme = Theme.of(dialogContext);
-              final colors = theme.colorScheme;
-              return AlertDialog(
-                icon: CircleAvatar(
-                  radius: 27,
-                  backgroundColor: colors.errorContainer,
-                  foregroundColor: colors.onErrorContainer,
-                  child: const Icon(Icons.delete_outline_rounded),
-                ),
-                title: const Text('Cancelar búsqueda',
-                    textAlign: TextAlign.center),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '¿Deseas cancelar la búsqueda de mototaxi?',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Aún podemos buscar un conductor para ti.',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(color: colors.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: colors.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: colors.outlineVariant),
-                      ),
-                      child: Column(
-                        children: [
-                          const _CancellationInfoRow(
-                            icon: Icons.schedule_rounded,
-                            title: 'Podrías esperar menos tiempo',
-                            detail:
-                                'Si continúas esperando, te avisaremos cuando un conductor acepte tu solicitud.',
-                          ),
-                          Divider(height: 18, color: colors.outlineVariant),
-                          const _CancellationInfoRow(
-                            icon: Icons.shield_outlined,
-                            title: 'No se te cobrará nada',
-                            detail: 'Cancelar en este momento no tiene costo.',
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                actionsAlignment: MainAxisAlignment.center,
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: const Text('Volver'),
-                  ),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: colors.error,
-                      foregroundColor: colors.onError,
-                    ),
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    icon: const Icon(Icons.close_rounded),
-                    label: const Text('Sí, cancelar búsqueda'),
-                  ),
-                ],
-              );
-            }) ??
-        false;
-    if (!confirmed) return;
+    if (tripId == null || cancellationBusy || !canPassengerCancel(active)) {
+      return;
+    }
+    setState(() => cancellationBusy = true);
     try {
-      await api.cancelTrip(widget.s.token, tripId);
+      final assigned = hasAssignedDriver(active);
+      String warning = 'Cancelar en este momento no tiene costo.';
+      if (assigned) {
+        final policy = await api.call(
+            'GET', '/v1/passenger/cancellation-policy',
+            token: widget.s.token);
+        final days = policy['suspensionDays'];
+        final consequence = days == null
+            ? 'Se suspenderá tu cuenta indefinidamente; solo administración podrá reactivarla.'
+            : days == 0
+                ? 'Se registrará una advertencia.'
+                : 'Se suspenderá tu cuenta durante $days días.';
+        warning =
+            'Esta será tu cancelación n.º ${policy['nextCount']} después de una aceptación. $consequence';
+      }
+      if (!mounted || tripId != active?['tripId']) return;
+      final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) {
+                final colors = Theme.of(dialogContext).colorScheme;
+                return AlertDialog(
+                  icon: Icon(Icons.cancel_outlined, color: colors.error),
+                  title: Text(
+                      assigned ? 'Cancelar carrera' : 'Cancelar búsqueda',
+                      textAlign: TextAlign.center),
+                  content: SingleChildScrollView(
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(
+                        assigned
+                            ? '¿Deseas cancelar la carrera? Tu conductor ya aceptó la solicitud.'
+                            : '¿Deseas cancelar la búsqueda de mototaxi?',
+                        textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    if (!assigned)
+                      const Text(
+                          'Aún podemos buscar un conductor para ti. Si continúas esperando, te avisaremos cuando acepte.',
+                          textAlign: TextAlign.center),
+                    const SizedBox(height: 8),
+                    _CancellationInfoRow(
+                        icon: Icons.info_outline,
+                        title: assigned ? 'Antes de confirmar' : 'Sin costo',
+                        detail: warning),
+                  ])),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('Volver')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        style: FilledButton.styleFrom(
+                            backgroundColor: colors.error,
+                            foregroundColor: colors.onError),
+                        child: Text(assigned
+                            ? 'Sí, cancelar carrera'
+                            : 'Sí, cancelar búsqueda')),
+                  ],
+                );
+              }) ??
+          false;
+      if (!confirmed || !mounted) return;
+      final result = await api.cancelTrip(widget.s.token, tripId);
       if (!mounted) return;
+      final consequence = result['consequence'];
+      final days = consequence is Map ? consequence['suspensionDays'] : 0;
       setState(() {
         active = null;
+        driverPosition = null;
+        routePoints = [];
         sheetExtent = .35;
         message = 'Solicitud cancelada correctamente.';
       });
       _movePassengerSheet(.35);
+      await showDialog<void>(
+          context: context,
+          builder: (c) => AlertDialog(
+                title: const Text('Carrera cancelada'),
+                content: Text(consequence == null
+                    ? 'Solicitud cancelada correctamente.'
+                    : days == null
+                        ? 'Cuenta suspendida indefinidamente por cancelaciones. Contacta a soporte para solicitar reactivación.'
+                        : days == 0
+                            ? 'La cancelación quedó registrada. Evita cancelar después de que un conductor acepte.'
+                            : 'Tu cuenta quedó suspendida durante $days días por cancelaciones después de la aceptación.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(c),
+                      child: const Text('OK'))
+                ],
+              ));
     } catch (e) {
-      if (mounted) setState(() => message = e.toString());
-      await load();
+      if (mounted) {
+        await showDialog<void>(
+            context: context,
+            builder: (c) => AlertDialog(
+                    title: const Text('No se pudo cancelar'),
+                    content: Text(e.toString()),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(c),
+                          child: const Text('OK'))
+                    ]));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => cancellationBusy = false);
+        unawaited(load());
+      }
     }
   }
 
@@ -9856,6 +9942,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         icon: const Icon(Icons.shield_outlined),
         label: const Text('Seguridad y compartir viaje'),
       ),
+      if (canPassengerCancel(active)) ...[
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: cancellationBusy ? null : cancel,
+          style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error),
+          icon: const Icon(Icons.cancel_outlined),
+          label: Text(cancellationBusy ? 'Cancelando…' : 'Cancelar carrera'),
+        ),
+      ],
     ];
   }
 
@@ -10062,12 +10158,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                     Text(
                         nearbyDriversRefreshing
                             ? paymentMethod == 'DEUNA'
-                                ? 'Verificando quiénes aceptan pago con DeUna.'
+                                ? 'Verificando quiénes aceptan pago con Transferencia.'
                                 : 'Verificando quiénes aceptan pago en efectivo.'
                             : nearbyDrivers.isEmpty
                                 ? 'Te avisaremos cuando haya uno disponible.'
                                 : paymentMethod == 'DEUNA'
-                                    ? 'Conductores cercanos que aceptan DeUna.'
+                                    ? 'Conductores cercanos que aceptan Transferencia.'
                                     : 'Conductores cercanos que aceptan efectivo.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: Theme.of(context)
@@ -10254,7 +10350,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               children: [
                 for (final option in const [
                   ('CASH', 'Efectivo', Icons.payments_outlined),
-                  ('DEUNA', 'DeUna', Icons.account_balance_wallet_outlined),
+                  (
+                    'DEUNA',
+                    'Transferencia',
+                    Icons.account_balance_wallet_outlined
+                  ),
                 ]) ...[
                   if (option.$1 != 'CASH') const SizedBox(width: 8),
                   Expanded(
@@ -10483,9 +10583,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                         ..._mapSelectionContent(context)
                       else if (searching)
                         ..._searchingContent(context)
-                      else if (active != null)
+                      else if (isAssignedTrip(active))
                         ..._activeTripContent(context)
-                      else
+                      else if (active != null) ...[
+                        const Text(
+                            'Estamos verificando el estado de tu solicitud.'),
+                        OutlinedButton(
+                            onPressed: load, child: const Text('Actualizar')),
+                        if (canPassengerCancel(active))
+                          TextButton(
+                              onPressed: cancellationBusy ? null : cancel,
+                              child: const Text('Cancelar solicitud')),
+                      ] else
                         ..._requestContent(context),
                     ],
                   ),
@@ -10534,6 +10643,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   DateTime? lastRouteAt;
   bool driverChatOpen = false;
   final Map<String, DateTime> announcedOfferIds = <String, DateTime>{};
+  final Map<String, Timer> offerAlertTimers = {};
+  final Set<String> closedOfferTrips = {};
+  StreamSubscription<Map<String, dynamic>>? nativeOpenSubscription;
+  final ValueNotifier<bool> navigationCancelled = ValueNotifier(false);
+  bool nearbyCountReliable = false;
   int offerIndex = 0;
   String? preloadedRouteTripId;
   List<LatLng>? preloadedTripRoute;
@@ -10560,6 +10674,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
+    nativeOpenSubscription = listenToNativeNotificationOpens((data) {
+      if (mounted) handleOpenedPush(RemoteMessage(data: data));
+    });
     unawaited(UserNotificationStore.instance.refresh(widget.s));
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((message) {
@@ -10581,12 +10698,21 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         if (message.data['type'] == 'TRIP_OFFER') {
           announceTripOffer(
             message.data['tripId']?.toString(),
-            title: message.notification?.title,
-            body: message.notification?.body,
+            title: message.notification?.title ??
+                message.data['title']?.toString(),
+            body:
+                message.notification?.body ?? message.data['body']?.toString(),
             eventAt: message.data['eventAt']?.toString(),
           );
         }
         if (message.data['type'] == 'TRIP_CANCELLED' && mounted) {
+          closeOfferAlert(message.data['tripId']?.toString());
+          if (message.data['tripId'] == active?['tripId']) {
+            navigationCancelled.value = true;
+          }
+          showDriverCancellationNotification(message.data,
+              title: message.notification?.title,
+              body: message.notification?.body);
           setState(() => driverMessage =
               message.data['reason'] == 'ADMIN_CANCELLED'
                   ? 'El viaje fue cancelado por administración.'
@@ -10596,6 +10722,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             message.data['type'] == 'TRIP_OFFER_CANCELLED' ||
             message.data['type'] == 'TRIP_CANCELLED') {
           refresh();
+        }
+        if ({'TRIP_OFFER_CANCELLED', 'OFFER_CLOSED'}
+            .contains(message.data['type'])) {
+          closeOfferAlert(message.data['tripId']?.toString());
+          unawaited(refresh());
         }
         if (message.data['type']?.toString().startsWith('MEMBERSHIP_') ==
             true) {
@@ -10749,6 +10880,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     realtime.dispose();
     driverSheetController.dispose();
     offerPageController.dispose();
+    nativeOpenSubscription?.cancel();
+    for (final timer in offerAlertTimers.values) {
+      timer.cancel();
+    }
+    navigationCancelled.dispose();
     super.dispose();
   }
 
@@ -10768,6 +10904,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (target == NotificationTarget.chat) {
       unawaited(openDriverChat(push.data['tripId'],
           notificationId: push.data['internalNotificationId']));
+    } else if (target == NotificationTarget.tripDetail &&
+        push.data['tripId'] != null) {
+      unawaited(Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => PassengerTripDetail(
+                  widget.s, push.data['tripId'].toString()))));
     } else if (target == NotificationTarget.support &&
         push.data['incidentId'] != null) {
       unawaited(Navigator.push(
@@ -10789,7 +10932,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       unawaited(Navigator.push(context,
           MaterialPageRoute(builder: (_) => NotificationCenterView(widget.s))));
     } else {
-      unawaited(refresh());
+      unawaited(refresh().then((_) {
+        if (!mounted) return;
+        final index = offers
+            .indexWhere((o) => o['tripId']?.toString() == push.data['tripId']);
+        if (index >= 0) {
+          setState(() => offerIndex = index);
+          if (offerPageController.hasClients) {
+            offerPageController.jumpToPage(index);
+          }
+        }
+        _moveDriverSheet(.58);
+      }));
     }
   }
 
@@ -10801,9 +10955,70 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     handleOpenedPush(push);
   }
 
+  void closeOfferAlert(String? tripId) {
+    if (tripId == null || tripId.isEmpty) return;
+    closedOfferTrips.add(tripId);
+    offerAlertTimers.remove(tripId)?.cancel();
+    InAppNotificationBanner.dismiss('trip-offer-$tripId');
+    unawaited(stopOfferAlert(tripId));
+  }
+
+  void showDriverCancellationNotification(Map<String, dynamic> data,
+      {String? title, String? body}) {
+    if (!mounted) return;
+    InAppNotificationBanner.show(context,
+        id: 'TRIP_CANCELLED-${data['tripId']}',
+        title: title ?? data['title']?.toString() ?? 'Solicitud cancelada',
+        message: body ??
+            data['body']?.toString() ??
+            'El pasajero canceló la carrera. Puedes recibir nuevas solicitudes.',
+        onTap: () => handleOpenedPush(
+            RemoteMessage(data: {...data, 'type': 'TRIP_CANCELLED'})));
+  }
+
   Future<void> announceTripOffer(String? tripId,
       {String? title, String? body, String? eventAt}) async {
     if (!mounted || tripId == null || tripId.isEmpty) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+    if (closedOfferTrips.contains(tripId) ||
+        announcedOfferIds.containsKey(tripId)) {
+      return;
+    }
+    // Reconcile with the server before playing late WebSocket/FCM messages.
+    dynamic validOffer;
+    try {
+      final current = await api.offers(widget.s.token);
+      for (final offer in current) {
+        if (offer['tripId']?.toString() == tripId) validOffer = offer;
+      }
+    } catch (_) {
+      return;
+    }
+    if (!mounted ||
+        validOffer == null ||
+        closedOfferTrips.contains(tripId) ||
+        announcedOfferIds.containsKey(tripId)) {
+      return;
+    }
+    title ??= 'Nuevo viaje cercano';
+    body ??=
+        '${validOffer['passengers']} pasajero(s): ${validOffer['originReference'] ?? 'Origen'} → ${validOffer['destinationReference'] ?? 'Destino'}';
+    final deadline =
+        DateTime.tryParse(validOffer['expiresAt']?.toString() ?? '');
+    if (deadline == null || !deadline.isAfter(DateTime.now())) {
+      closeOfferAlert(tripId);
+      return;
+    }
+    offerAlertTimers[tripId]?.cancel();
+    offerAlertTimers[tripId] = Timer(deadline.difference(DateTime.now()), () {
+      closeOfferAlert(tripId);
+      if (mounted) {
+        setState(
+            () => offers.removeWhere((o) => o['tripId']?.toString() == tripId));
+      }
+    });
     final now = DateTime.now();
     announcedOfferIds.removeWhere(
         (_, value) => now.difference(value) > const Duration(minutes: 3));
@@ -10818,10 +11033,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       try {
         nativeNotificationShown =
-            await nativeActions.invokeMethod<bool>('showForegroundTripOffer', {
+            await notificationAlerts.invokeMethod<bool>('showOffer', {
                   'tripId': tripId,
-                  'title': title ?? 'Nuevo viaje disponible',
-                  'body': body ?? 'Un pasajero solicita un viaje cercano.',
+                  'type': 'TRIP_OFFER',
+                  'expiresAt': deadline.toUtc().toIso8601String(),
+                  'title': title,
+                  'body': body,
                 }) ??
                 false;
       } on PlatformException catch (error) {
@@ -10837,8 +11054,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         InAppNotificationBanner.show(
           context,
           id: 'trip-offer-$tripId',
-          title: title ?? 'Nuevo viaje disponible',
-          message: body ?? 'Un pasajero solicita un viaje cercano.',
+          title: title,
+          message: body,
           actionLabel: 'Ver viaje',
           onTap: () {
             _moveDriverSheet(.58);
@@ -10908,6 +11125,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       refresh();
     } else if (event['type'] == 'trip:offer:cancelled') {
       final tripId = event['tripId']?.toString();
+      closeOfferAlert(tripId);
+      if (event['reason'] == 'PASSENGER_CANCELLED') {
+        if (tripId == active?['tripId']) navigationCancelled.value = true;
+        showDriverCancellationNotification(event);
+      }
       if (tripId != null && mounted) {
         setState(() => offers
             .removeWhere((offer) => offer['tripId']?.toString() == tripId));
@@ -10925,6 +11147,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
       refresh();
     } else if (event['type'] == 'trip:status') {
+      if (event['status'] != 'SEARCHING') {
+        closeOfferAlert(event['tripId']?.toString());
+      }
+      if (terminalTripStatuses.contains(event['status']) &&
+          event['tripId'] == active?['tripId']) {
+        navigationCancelled.value = true;
+      }
       if (active == null) {
         unawaited(syncActivatedScheduledTrip(force: true));
       } else {
@@ -11142,9 +11371,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               item['driverId'].toString(),
               LatLng((item['latitude'] as num).toDouble(),
                   (item['longitude'] as num).toDouble()))));
+        nearbyCountReliable = true;
       });
     } catch (_) {
-      // Mantiene el último snapshot visible cuando la señal es inestable.
+      if (mounted) {
+        setState(() {
+          nearbyDriverPositions.clear();
+          nearbyCountReliable = false;
+        });
+      }
     }
   }
 
@@ -11224,7 +11459,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  bool driverRefreshing = false;
   Future<void> refresh() async {
+    if (driverRefreshing) return;
+    driverRefreshing = true;
     try {
       unawaited(refreshMembership());
       if (driverReviewLocationActive &&
@@ -11237,6 +11475,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       if (active != null) {
         final latest = await api.trip(widget.s.token, active['tripId']);
         if (latest['status'] == 'COMPLETED') {
+          closeOfferAlert(latest['tripId']?.toString());
+          navigationCancelled.value = true;
           final completedTripId = latest['tripId'].toString();
           if (mounted) {
             setState(() {
@@ -11252,6 +11492,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           return;
         }
         if (latest['status'] == 'CANCELLED') {
+          closeOfferAlert(latest['tripId']?.toString());
+          navigationCancelled.value = true;
           if (mounted) {
             setState(() => driverMessage =
                 latest['cancellationReason'] == 'ADMIN_CANCELLED'
@@ -11279,17 +11521,30 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           for (final offer in r) {
             unique[offer['tripId'].toString()] = offer;
           }
+          for (final old in offers) {
+            if (!unique.containsKey(old['tripId'].toString())) {
+              closeOfferAlert(old['tripId'].toString());
+            }
+          }
           setState(() {
             offers = unique.values.toList();
             if (offerIndex >= offers.length) offerIndex = 0;
           });
           if (!hadOffers && r.isNotEmpty) _moveDriverSheet(.48);
+          for (final offer in r) {
+            unawaited(announceTripOffer(offer['tripId']?.toString()));
+          }
         }
       } else if (offers.isNotEmpty && mounted) {
+        for (final offer in offers) {
+          closeOfferAlert(offer['tripId']?.toString());
+        }
         setState(() => offers = []);
       }
     } catch (e) {
       if (mounted) setState(() => driverMessage = e.toString());
+    } finally {
+      driverRefreshing = false;
     }
   }
 
@@ -11741,6 +11996,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> _openExternalNavigation(
       String status, List<DriverNavigationStop> stops) async {
+    final navigationTripId = active?['tripId'];
+    if (navigationTripId == null || active?['status'] != status) return;
     final validStops = stops.where((stop) {
       return stop.latitude.isFinite &&
           stop.longitude.isFinite &&
@@ -11790,6 +12047,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             mode: LaunchMode.externalNonBrowserApplication);
       }
       if (!opened) {
+        if (!mounted ||
+            active?['tripId'] != navigationTripId ||
+            active?['status'] != status) {
+          return;
+        }
         final target =
             defaultTargetPlatform == TargetPlatform.iOS ? appleUri : googleUri;
         opened = await launchUrl(target, mode: LaunchMode.externalApplication);
@@ -11809,6 +12071,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> openDriverNavigation() async {
     if (active == null) return;
+    final navigationTripId = active['tripId'];
     final status = active['status']?.toString();
     if (status != 'DRIVER_EN_ROUTE' && status != 'IN_PROGRESS') return;
     final provider = _navigationProvider(status!);
@@ -11838,7 +12101,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
     }
 
-    if (!mounted) return;
+    if (!mounted ||
+        active?['tripId'] != navigationTripId ||
+        active?['status'] != status) {
+      return;
+    }
 
     String? routeToken;
     final routeTimer = Stopwatch()..start();
@@ -11854,7 +12121,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 .sublist(0, navigationStops.length - 1)
                 .map((stop) => LatLng(stop.latitude, stop.longitude))
                 .toList(),
-        tripId: active['tripId']?.toString(),
+        tripId: navigationTripId?.toString(),
         purpose: 'NAVIGATION',
         includeRouteToken: true,
       );
@@ -11866,11 +12133,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           'NAVIGATION_ROUTE_TOKEN_UNAVAILABLE type=${error.runtimeType}');
       // Navigation SDK puede calcular la ruta; LiveMap sigue siendo el fallback.
     }
-    if (!mounted) return;
+    if (!mounted ||
+        active?['tripId'] != navigationTripId ||
+        active?['status'] != status) {
+      return;
+    }
+    navigationCancelled.value = false;
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => DriverNavigationScreen(
+          cancelled: navigationCancelled,
           stops: navigationStops,
           routeToken: routeToken,
           phaseLabel:
@@ -12289,6 +12562,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final offerId = offer['offerId']?.toString();
     final tripId = offer['tripId']?.toString();
     if (offerId == null || processingOfferIds.contains(offerId)) return false;
+    // Stop immediately even while the confirmation or API response is pending.
+    closeOfferAlert(tripId);
     if (!accept && confirmReject) {
       final confirmed = await showDialog<bool>(
             context: context,
@@ -12314,12 +12589,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await api.respond(widget.s.token, offerId, accept: accept);
       if (!mounted) return true;
       if (accept) {
-        if (!kIsWeb &&
-            defaultTargetPlatform == TargetPlatform.android &&
-            tripId != null) {
-          unawaited(nativeActions.invokeMethod<void>(
-              'stopTripOfferAlert', {'tripId': tripId}).catchError((_) {}));
-        }
         await restore();
         await refresh();
       } else {
@@ -12448,7 +12717,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         '\$${(fare / 100).toStringAsFixed(2)}', ''),
                   _driverOfferDatum(
                       Icons.payments_outlined,
-                      offer['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo',
+                      offer['paymentMethod'] == 'DEUNA'
+                          ? 'Transferencia'
+                          : 'Efectivo',
                       ''),
                 ],
               ),
@@ -14395,7 +14666,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   const SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                        '${nearbyDriverPositions.length} mototaxis cercanas',
+                        nearbyCountReliable
+                            ? '${nearbyDriverPositions.length} mototaxis cercanas'
+                            : 'Actualizando mototaxis cercanas…',
                         style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ]),
@@ -14517,8 +14790,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               leading: Icon(Icons.account_balance_wallet_outlined,
                   color: colors.primary, size: 21),
               title: const Text('Pago'),
-              subtitle: Text(
-                  active['paymentMethod'] == 'DEUNA' ? 'De Una' : 'Efectivo'),
+              subtitle: Text(active['paymentMethod'] == 'DEUNA'
+                  ? 'Transferencia'
+                  : 'Efectivo'),
             ),
           ]),
         ),

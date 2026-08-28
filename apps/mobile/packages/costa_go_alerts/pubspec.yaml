@@ -1,0 +1,15 @@
+name: costa_go_alerts
+description: Costa-Go notification lifecycle bridge, including background Flutter engines.
+version: 1.0.0
+publish_to: none
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.costago.alerts
+        pluginClass: CostaGoAlertsPlugin

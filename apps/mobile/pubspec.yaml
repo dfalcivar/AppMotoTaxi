@@ -7,6 +7,8 @@ environment:
   sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
+  costa_go_alerts:
+    path: packages/costa_go_alerts
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8

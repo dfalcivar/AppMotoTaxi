@@ -16,6 +16,7 @@ describe("pushRouteForType", () => {
     expect(pushRouteForType("DRIVER_ARRIVED")).toBe("ACTIVE_TRIP");
     expect(pushRouteForType("TRIP_OFFER")).toBe("TRIP_OFFERS");
     expect(pushRouteForType("COMPLETED")).toBe("TRIP_DETAIL");
+    expect(pushRouteForType("NO_DRIVER")).toBe("TRIP_DETAIL");
     expect(pushRouteForType("SUPPORT_UPDATE")).toBe("SUPPORT");
     expect(pushRouteForType("MEMBERSHIP_EXPIRING")).toBe("MEMBERSHIP");
     expect(pushRouteForType("SCHEDULED_TRIP_ASSIGNED")).toBe("SCHEDULED_TRIPS");
@@ -24,6 +25,8 @@ describe("pushRouteForType", () => {
 
 describe("pushPresentationForType", () => {
   it("usa la misma presentación canónica para el ciclo del viaje", () => {
+    expect(pushPresentationForType("ASSIGNED", "Otro", "Otro")).toEqual(pushPresentationForType("DRIVER_EN_ROUTE", "Otro", "Otro"));
+    expect(pushPresentationForType("NO_DRIVER", "Otro", "Otro").body).toBe("Ninguna mototaxi disponible en este momento.");
     expect(pushPresentationForType("TRIP_ASSIGNED", "Otro", "Otro")).toEqual({
       title: "Viaje confirmado",
       body: "Un conductor aceptó tu solicitud y ya va en camino."

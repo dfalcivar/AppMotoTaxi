@@ -245,7 +245,7 @@ NotificationTarget notificationTargetFor(String? value) {
   }.contains(type)) {
     return NotificationTarget.activeTrip;
   }
-  if (const {'COMPLETED', 'TRIP_CANCELLED'}.contains(type)) {
+  if (const {'COMPLETED', 'TRIP_CANCELLED', 'NO_DRIVER'}.contains(type)) {
     return NotificationTarget.tripDetail;
   }
   if (type?.startsWith('SUPPORT_') == true) {
@@ -1135,7 +1135,7 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
                     _summaryRow(
                         'Método de pago',
                         item['paymentMethod'] == 'DEUNA'
-                            ? 'De Una!'
+                            ? 'Transferencia!'
                             : 'Efectivo'),
                     _summaryRow(
                         'Total del viaje',

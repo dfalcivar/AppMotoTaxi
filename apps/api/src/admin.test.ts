@@ -17,6 +17,22 @@ describe("consola administrativa", () => {
   });
   afterAll(async () => app.close());
 
+  it("protege por backend la política y el historial de cancelaciones", async () => {
+    const passengerToken = tokenFor({ email: "pasajero@test.local", name: "Pasajero", role: "PASSENGER" });
+    for (const headers of [{}, { authorization: `Bearer ${passengerToken}` }]) {
+      for (const request of [
+        { method: "GET" as const, url: "/v1/admin/settings/passenger-cancellations" },
+        { method: "PATCH" as const, url: "/v1/admin/settings/passenger-cancellations", payload: { enabled: false, steps: [] } },
+        { method: "GET" as const, url: "/v1/admin/passengers/00000000-0000-4000-8000-000000000001/cancellations" }
+      ]) {
+        expect((await app.inject({ ...request, headers })).statusCode).toBe(403);
+      }
+    }
+    expect((await app.inject({ method: "PATCH", url: "/v1/admin/settings/passenger-cancellations",
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { enabled: true, steps: [{ fromCount: 3, suspensionDays: -2 }] }
+    })).statusCode).toBe(400);
+  });
+
   it("rechaza credenciales inválidas", async () => {
     const response = await app.inject({ method: "POST", url: "/v1/admin/session", payload: { email: "admin@mototaxi.local", password: "incorrecta" } });
     expect(response.statusCode).toBe(401);

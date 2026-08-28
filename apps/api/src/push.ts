@@ -90,7 +90,7 @@ export function pushRouteForType(type: string | undefined): string {
   if (normalized === "CHAT_MESSAGE") return "CHAT";
   if (normalized.startsWith("SUPPORT_")) return "SUPPORT";
   if (["TRIP_OFFER", "TRIP_OFFER_CANCELLED", "SCHEDULED_TRIP_AVAILABLE"].includes(normalized)) return "TRIP_OFFERS";
-  if (["COMPLETED", "TRIP_CANCELLED"].includes(normalized)) return "TRIP_DETAIL";
+  if (["COMPLETED", "TRIP_CANCELLED", "NO_DRIVER"].includes(normalized)) return "TRIP_DETAIL";
   if (normalized.startsWith("SCHEDULED_TRIP_") || normalized === "SCHEDULED_DRIVER_REMINDER") return "SCHEDULED_TRIPS";
   if ([
     "TRIP_ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS",
@@ -111,8 +111,8 @@ export function pushPresentationForType(
       body: "Un conductor aceptó tu solicitud y ya va en camino."
     },
     DRIVER_EN_ROUTE: {
-      title: "Conductor en camino",
-      body: "Tu conductor ya se dirige al punto de recogida."
+      title: "Viaje confirmado",
+      body: "Un conductor aceptó tu solicitud y ya va en camino."
     },
     DRIVER_ARRIVED: {
       title: "Tu conductor llegó",
@@ -126,12 +126,14 @@ export function pushPresentationForType(
       title: "Viaje finalizado",
       body: "El recorrido terminó correctamente. Puedes calificar tu experiencia."
     },
+    NO_DRIVER: { title: "Búsqueda finalizada", body: "Ninguna mototaxi disponible en este momento." },
     DRIVER_CANCELLED_REASSIGNING: {
       title: "Buscando otro conductor",
       body: "El conductor canceló el traslado. Costa-Go ya está buscando otro conductor."
     }
   };
-  return fixed[String(type ?? "").toUpperCase()] ?? {
+  const key=String(type ?? "").toUpperCase();
+  return fixed[key==='ASSIGNED'?'TRIP_ASSIGNED':key] ?? {
     title: fallbackTitle,
     body: fallbackBody
   };
@@ -167,7 +169,7 @@ export async function sendPush(userId: string, title: string, body: string, data
   data.eventType ??= eventType;
   data.notificationRoute ??= pushRouteForType(eventType);
   try {
-    const notificationId = await persistUserNotification({ userId, title, message: body, type: eventType, data });
+    const notificationId = eventType === 'OFFER_CLOSED' ? undefined : await persistUserNotification({ userId, title, message: body, type: eventType, data });
     if (notificationId) data.internalNotificationId = notificationId;
   } catch (error) {
     console.warn("No se pudo guardar la notificación interna.", {
@@ -197,7 +199,7 @@ export async function sendPush(userId: string, title: string, body: string, data
       return finish({ sent: 0, skipped: true, errorCode: "firebase/not-configured" });
     }
     const rows = await database()`
-      select distinct device.token, account.role::text as "userType"
+      select distinct device.token, device.notification_protocol as protocol, device.platform, account.role::text as "userType"
       from device_tokens device
       join users account on account.id=device.user_id
       where device.user_id=${userId} and device.last_seen_at > now() - interval '90 days'
@@ -211,19 +213,31 @@ export async function sendPush(userId: string, title: string, body: string, data
     const isChat = data.type === "CHAT_MESSAGE";
     const isTripOffer = data.type === "TRIP_OFFER";
     const isDriverArrival = data.type === "DRIVER_ARRIVED";
+    if (isTripOffer) {
+      const [offer] = await database()`select o.expires_at from driver_offers o join trips t on t.id=o.trip_id
+        where o.trip_id=${data.tripId!} and o.driver_id=${userId} and o.responded_at is null and o.expires_at>now() and t.status='SEARCHING'`;
+      if (!offer) return finish({sent:0, skipped:true, errorCode:'offer/expired'});
+      data.expiresAt=new Date(offer.expires_at).toISOString();
+    }
+    data.title=title; data.body=body;
     const notificationTag = data.tripId
       ? `${isChat ? "chat" : "trip"}-${data.tripId}`
       : `costa-go-${data.type ?? "general"}`;
-    const ttl = data.type === "TRIP_OFFER" ? 120_000 : isChat ? 86_400_000 : 900_000;
-    const result = await client.sendEachForMulticast({
-      tokens,
-      notification: { title, body },
+    const ttl = isTripOffer ? Math.max(0,new Date(data.expiresAt!).getTime()-Date.now()) : isChat ? 86_400_000 : 900_000;
+    // Older APKs keep their existing FCM presentation. Protocol 2 owns offer
+    // rendering/dismissal in a native bridge registered with the headless engine.
+    const result = await client.sendEach(rows.map(device => {
+      const lifecycle = Number(device.protocol)>=2 && device.platform==='ANDROID' && ['TRIP_OFFER','TRIP_OFFER_CANCELLED','TRIP_CANCELLED','OFFER_CLOSED'].includes(eventType);
+      const silent = eventType==='OFFER_CLOSED';
+      return {
+      token: String(device.token),
+      ...(!lifecycle && !silent ? {notification: { title, body }} : {}),
       data,
       android: {
-        priority: "high",
-        collapseKey: notificationTag,
+        priority: "high" as const,
+        collapseKey: silent ? `close-${data.tripId}` : notificationTag,
         ttl,
-        notification: {
+        ...(!lifecycle && !silent ? {notification: {
           channelId: isChat
             ? "costa_go_chat_v2"
             : isTripOffer
@@ -232,26 +246,26 @@ export async function sendPush(userId: string, title: string, body: string, data
                 ? "costa_go_driver_arrival_v2"
               : "costa_go_trip_updates_v2",
           tag: notificationTag,
-          priority: isTripOffer ? "max" : "high",
+          priority: isTripOffer ? "max" as const : "high" as const,
           icon: "ic_notification",
           color: "#00AEEF",
           sound: "default",
           defaultVibrateTimings: true,
-          visibility: "public",
-        }
+          visibility: "private" as const,
+        }} : {})
       },
       apns: {
-        headers: { "apns-priority": "10", "apns-push-type": "alert" },
+        headers: { "apns-priority": silent ? "5" : "10", "apns-push-type": silent ? "background" : "alert" },
         payload: {
           aps: {
-            sound: "default",
+            ...(silent ? {contentAvailable:true} : {sound:"default", alert:{title,body}}),
             badge: 1,
             category: data.notificationRoute,
             threadId: notificationTag
           }
         }
       }
-    });
+    }; }));
     const invalid = result.responses.flatMap((response, index) =>
       !response.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(response.error?.code ?? "")
         ? [tokens[index]!]

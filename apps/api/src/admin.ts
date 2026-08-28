@@ -1037,6 +1037,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!process.env.DATABASE_URL) return passengers;
     return await database()`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,
+        u.passenger_cancellation_count as "cancellationCount", u.passenger_suspended_until as "suspendedUntil",
+        u.passenger_cancellation_suspended as "cancellationSuspended",
         count(t.id)::int as trips, max(t.requested_at)::text as "lastTrip"
       from users u left join trips t on t.passenger_id = u.id
       where u.deleted_at is null
@@ -1048,9 +1050,15 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const user=requirePermission(request, "passengers:manage"); const body=passengerSchema.parse(request.body);
     if (!process.env.DATABASE_URL) { const item=passengers.find(p=>p.id===(request.params as any).id); if(!item)return reply.code(404).send({error:"NOT_FOUND"}); item.status=body.status; audit(user,"PASSENGER_STATUS",item.id,body.reason); return item; }
     const id=(request.params as { id: string }).id;
-    const rows=await database()`update users set status=${body.status},updated_at=now() where id=${id}
+    const rows=await database().begin(async tx => {
+      const updated=await tx`update users set status=${body.status},updated_at=now(),
+        passenger_cancellation_suspended=false, passenger_suspended_until=null where id=${id}
       and exists(select 1 from mobile_account_roles mar where mar.user_id=users.id and mar.role='PASSENGER')
       returning id,full_name as name,phone_e164 as phone,status`;
+      if (updated.length && body.status==='ACTIVE') await tx`update passenger_cancellations set status='REACTIVATED',
+        reactivated_by=${user.id!}, reactivated_at=now() where passenger_id=${id} and status='SUSPENDED'`;
+      return updated;
+    });
     const item=rows[0]; if(!item)return reply.code(404).send({error:"NOT_FOUND"});
     await persistAudit(user,"PASSENGER_STATUS","PASSENGER",id,body.reason);
     return item;

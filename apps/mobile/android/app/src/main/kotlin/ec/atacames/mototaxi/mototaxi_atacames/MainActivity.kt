@@ -3,8 +3,8 @@ package ec.atacames.mototaxi.mototaxi_atacames
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.Notification
 import android.app.AlertDialog
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -16,7 +16,6 @@ import android.media.ToneGenerator
 import android.hardware.fingerprint.FingerprintManager
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.app.Notification
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
@@ -67,17 +66,6 @@ class MainActivity : FlutterFragmentActivity() {
                             return@setMethodCallHandler
                         }
                         startActivity(Intent(Intent.ACTION_VIEW, uri))
-                        result.success(null)
-                    }
-                    "showForegroundTripOffer" -> {
-                        val title = call.argument<String>("title")?.trim().orEmpty()
-                        val body = call.argument<String>("body")?.trim().orEmpty()
-                        val tripId = call.argument<String>("tripId")?.trim().orEmpty()
-                        result.success(showForegroundTripOffer(title, body, tripId))
-                    }
-                    "stopTripOfferAlert" -> {
-                        val tripId = call.argument<String>("tripId")?.trim().orEmpty()
-                        stopTripOfferAlert(tripId)
                         result.success(null)
                     }
                     "playDriverArrivalAlert" -> {
@@ -152,52 +140,20 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    private fun showForegroundTripOffer(title: String, body: String, tripId: String): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return false
-
-        val manager = getSystemService(NotificationManager::class.java)
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("notificationType", "TRIP_OFFER")
-            putExtra("tripId", tripId)
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            tripId.hashCode(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, "costa_go_trip_offers_v3")
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-                .setPriority(Notification.PRIORITY_MAX)
-                .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
-                .setVibrate(longArrayOf(0, 350, 180, 350))
-        }
-        builder
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title.ifBlank { "Nuevo viaje disponible" })
-            .setContentText(body)
-            .setStyle(Notification.BigTextStyle().bigText(body))
-            .setCategory(Notification.CATEGORY_CALL)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(pendingIntent)
-        manager.notify(tripId.ifBlank { "trip-offer" }.hashCode(), builder.build())
-        return true
-    }
-
-    private fun stopTripOfferAlert(tripId: String) {
-        if (tripId.isBlank()) return
-        getSystemService(NotificationManager::class.java).cancel(tripId.hashCode())
-    }
 
     private fun playDriverArrivalAlert() {
+        val manager = getSystemService(NotificationManager::class.java)
+        val audio = getSystemService(AudioManager::class.java)
+        if (audio.ringerMode == AudioManager.RINGER_MODE_SILENT ||
+            (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled())) return
+        val channel = if (Build.VERSION.SDK_INT >= 26) manager.getNotificationChannel("costa_go_driver_arrival_v2") else null
+        if (channel?.importance == NotificationManager.IMPORTANCE_NONE) return
+        if (channel == null || channel.shouldVibrate()) {
+            @Suppress("DEPRECATION")
+            getSystemService(android.os.Vibrator::class.java).vibrate(longArrayOf(0, 220, 110, 220), -1)
+        }
+        if (audio.ringerMode != AudioManager.RINGER_MODE_NORMAL ||
+            (channel != null && channel.sound == null)) return
         val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
         tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 220)
         Handler(Looper.getMainLooper()).postDelayed({
