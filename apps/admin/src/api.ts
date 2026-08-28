@@ -25,7 +25,7 @@ function persistentPath(path: string, method?: string): string {
 async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
-    throw new Error(body.message ?? body.error ?? `Error HTTP ${response.status}`);
+    throw Object.assign(new Error(body.message ?? body.error ?? `Error HTTP ${response.status}`),{code:body.error});
   }
   return response.json() as Promise<T>;
 }

@@ -6,6 +6,7 @@ import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { calculateTerritorialFare } from "./fare-engine.js";
 import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
 import { cancellationSuspensionResponse } from './suspension-presentation.js';
+import { registerFiscalRoutes } from './fiscal/routes.js';
 import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
@@ -451,6 +452,7 @@ export async function buildApp() {
   await registerMembershipRoutes(app);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
+  await registerFiscalRoutes(app);
   const membershipScheduler = setInterval(() => {
     void membershipSchedulerTick().catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
   }, 60_000);

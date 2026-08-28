@@ -16,6 +16,21 @@
       <span class="eyebrow">PAGO SEGURO</span>
       <h1>Carga tu comprobante</h1>
       <div id="proof-context" class="proof-context">Validando el enlace seguro…</div>
+      <section id="fiscal-section" hidden aria-labelledby="fiscal-title">
+        <h2 id="fiscal-title">Datos de facturación</h2>
+        <p>Registra estos datos una sola vez. La razón social puede ser distinta del contacto de la solicitud.</p>
+        <div id="fiscal-summary" class="proof-context" hidden></div>
+        <div id="fiscal-actions" hidden><button id="fiscal-edit" class="secondary" type="button">Modificar datos</button><button id="fiscal-confirm" class="primary" type="button">Confirmar y continuar</button></div>
+        <form id="fiscal-form" hidden>
+          <label>Tipo de identificación<select name="identificationType"><option value="CEDULA">Cédula</option><option value="RUC">RUC</option></select></label>
+          <label>Número de identificación<input name="identification" required inputmode="numeric" maxlength="13" pattern="[0-9]{10}|[0-9]{13}"></label>
+          <label>Nombres / Razón social<input name="legalName" required minlength="3" maxlength="200"></label>
+          <label>Dirección<input name="address" required minlength="5" maxlength="500"></label>
+          <label>Correo para facturación<input name="billingEmail" type="email" required maxlength="254"></label>
+          <button class="primary" type="submit" id="fiscal-save">Guardar y continuar</button>
+        </form>
+        <p id="fiscal-result" role="status" aria-live="polite"></p>
+      </section>
       <form id="proof-form" hidden>
         <label>Referencia de la transferencia<input id="reference" required minlength="3" maxlength="160" placeholder="Número o referencia bancaria"></label>
         <label>Comprobante<input id="proof-file" type="file" required accept="image/png,image/jpeg,image/webp,application/pdf"><small>Imagen o PDF · máximo 5 MB</small></label>
@@ -25,6 +40,6 @@
       <a href="/" class="secondary proof-home">Volver a Costa-Go</a>
     </section>
   </main>
-  <script src="/config.js"></script><script src="/anunciarme/comprobante/proof.js" defer></script>
+  <script src="/config.js"></script><script src="/anunciarme/comprobante/fiscal.js" defer></script><script src="/anunciarme/comprobante/proof.js" defer></script>
 </body>
 </html>

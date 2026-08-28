@@ -4,6 +4,7 @@ Generada el 21 de agosto de 2026 desde la rama `main` del repositorio.
 
 ## Contenido
 
+- `docs/CLIENTES_FISCALES_Y_FACTURACION.md`: arquitectura fiscal, flujos de captura, permisos, pruebas y publicación coordinada (28/08/2026).
 - `docs/manuales_usuario/`: índice general y 15 manuales funcionales del ecosistema web.
 - `docs/tecnica/`: arquitectura, datos, API, reglas, seguridad, despliegue y trazabilidad.
 - `docs/fuentes/html/`: fuentes HTML editables utilizadas para los PDF.

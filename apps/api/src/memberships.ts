@@ -7,6 +7,7 @@ import { legacyPhoneAliases, normalizeEmail, normalizePhone } from "./auth-secur
 import { sendTransactionalEmail } from "./email.js";
 import { sendPush } from "./push.js";
 import { lockMembershipBilling } from './membership-trip-usage.js';
+import { requireOrderFiscalProfile } from './fiscal/clients.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
@@ -627,6 +628,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
       await tx`update membership_payment_orders set status='EXPIRED',updated_at=now() where id=${order.id}`;
       throw new Error("PAYMENT_ORDER_EXPIRED");
     }
+    if(input.receiverScope==='COLLECTION_POINT')await requireOrderFiscalProfile(tx,'MEMBRESIA',orderId);
     const [plan] = await tx`select * from membership_plans where id=${order.plan_id}`;
     if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
     const normalizedReference = input.reference ? normalizeReference(input.reference) : undefined;
@@ -834,6 +836,7 @@ function settingsProjection(row: any) {
 }
 
 function businessError(error: unknown, reply: FastifyReply) {
+  if(error instanceof Error&&error.message==='FISCAL_PROFILE_REQUIRED')return reply.code(400).send({error:error.message,message:'Registra los datos de facturación antes de confirmar el pago.'});
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.issues });
   const message = error instanceof Error ? error.message : "ERROR";
   const conflict = [
@@ -1003,6 +1006,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         if (order.status !== "PENDING") throw new Error("PAYMENT_ORDER_NOT_PAYABLE");
         if (new Date(String(order.expires_at)).getTime() <= Date.now()) throw new Error("PAYMENT_ORDER_EXPIRED");
         if (money(order.total_amount) !== money(body.declaredAmount)) throw new Error("PAYMENT_AMOUNT_MISMATCH");
+        await requireOrderFiscalProfile(tx,'MEMBRESIA',id);
         const [existingProof] = await tx`select id from membership_transfer_proofs where order_id=${id} and status in ('PENDING','APPROVED') limit 1`;
         if (existingProof) throw new Error("TRANSFER_PROOF_ALREADY_SUBMITTED");
         const [created] = await tx`insert into membership_transfer_proofs(order_id,bank_name,reference_normalized_hash,reference_masked,reference_display,transfer_date,declared_amount,file_mime,file_data,observation) values (${id},${body.bankName},${sha256(normalized)},${maskReference(body.reference)},${body.reference.trim()},${body.transferDate},${body.declaredAmount},${body.fileMime},${data},${body.observation ?? null}) returning id::text,status`;

@@ -13,6 +13,11 @@ export const adminRoles = [
 export type AdminRole = typeof adminRoles[number];
 
 export const allPermissions = [
+  "FACTURACION_VER",
+  "FACTURACION_ADMINISTRAR",
+  "CLIENTES_FISCALES_VER",
+  "CLIENTES_FISCALES_EDITAR",
+  "FACTURACION_DASHBOARD_VER",
   "dashboard:view",
   "cooperative_dashboard:view",
   "passengers:view",
@@ -123,6 +128,7 @@ const collectorPermissions: Permission[] = [
 ];
 
 const financePermissions: Permission[] = [
+  "FACTURACION_VER", "CLIENTES_FISCALES_VER", "CLIENTES_FISCALES_EDITAR", "FACTURACION_DASHBOARD_VER",
   "dashboard:view", "memberships:view", "payments:transfer_review",
   "payments:view_all", "cash_closures:review", "settlements:review",
   "settlements:view_all", "financial_accounts:manage", "reports:view",

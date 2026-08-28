@@ -5,6 +5,7 @@ import { database as rawDatabase } from "./database.js";
 import { imageDimensions, persistAudit, requirePermission, type SessionUser } from "./admin.js";
 import { sendTransactionalEmail } from "./email.js";
 import { composeAdvertisingActionValue, normalizeAdvertisingActionMessage, normalizeAdvertisingActionValue } from "./advertising-actions.js";
+import { requireOrderFiscalProfile } from './fiscal/clients.js';
 
 // El cliente postgres infiere las filas en tiempo de ejecución; este módulo
 // concentra consultas comerciales heterogéneas y valida sus bordes con Zod.
@@ -199,6 +200,7 @@ export function advertisingRenewalWindow(sourceEndsAt: unknown, durationDays: nu
   return { startsAt, endsAt: new Date(startsAt.getTime() + Math.max(1, Math.trunc(durationDays)) * 86_400_000) };
 }
 function publicError(error: unknown, reply: FastifyReply) {
+  if(error instanceof Error&&error.message==='FISCAL_PROFILE_REQUIRED')return reply.code(400).send({error:error.message,message:'Registra los datos de facturación antes de enviar el comprobante.'});
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.flatten() });
   const message = error instanceof Error ? error.message : "ERROR";
   const status = ["INVALID_WHATSAPP_NUMBER","WHATSAPP_NUMBER_REQUIRED"].includes(message) ? 400 : ["INVITATION_NOT_FOUND","PAYMENT_UPLOAD_NOT_FOUND"].includes(message) ? 404 : ["INVITATION_EXPIRED","PAYMENT_UPLOAD_EXPIRED"].includes(message) ? 410 : ["INVITATION_LOCKED","PAYMENT_UPLOAD_LOCKED"].includes(message) ? 409 : 500;
@@ -210,6 +212,7 @@ function publicError(error: unknown, reply: FastifyReply) {
   });
 }
 function adminError(error: unknown, reply: FastifyReply) {
+  if(error instanceof Error&&error.message==='FISCAL_PROFILE_REQUIRED')return reply.code(400).send({error:error.message,message:'Registra los datos de facturación antes de confirmar el cobro.'});
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_DATA", details: error.flatten() });
   const message = error instanceof Error ? error.message : "ERROR";
   if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message });
@@ -403,6 +406,7 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
       if (!upload) throw new Error("PAYMENT_UPLOAD_NOT_FOUND");
       if (upload.status === "SUBMITTED") return { received: true, duplicate: true };
       if (["EXPIRED","REVOKED"].includes(String(upload.status)) || new Date(String(upload.expires_at)).getTime() <= Date.now()) throw new Error("PAYMENT_UPLOAD_EXPIRED");
+      await requireOrderFiscalProfile(tx,'PUBLICIDAD',String(upload.order_id));
       await tx`update advertising_payments set proof_mime=${body.proof.fileMime},proof_data=${proof},reference=${body.proof.reference},status='UNDER_REVIEW',settlement_status='PENDING_RECONCILIATION',updated_at=now() where id=${upload.payment_id}`;
       await tx`update advertising_orders set status='PAYMENT_REVIEW',updated_at=now() where id=${upload.order_id}`;
       await tx`update affiliate_banners set campaign_status='PAYMENT_REVIEW',review_requested_at=now(),updated_at=now() where order_id=${upload.order_id}`;
@@ -625,6 +629,7 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
       if(!order)throw new Error("ORDER_NOT_FOUND");
       if(!["PENDING_PAYMENT","PAYMENT_REVIEW"].includes(String(order.status)))throw new Error("PAYMENT_ALREADY_RECEIVED");
       if(Math.abs(Number(order.amount)-body.amount)>0.009)throw new Error("PAYMENT_AMOUNT_MISMATCH");
+      await requireOrderFiscalProfile(tx,'PUBLICIDAD',id);
       const [method]=await tx`select id::text from advertising_payment_methods where code=${body.method} and active=true`;
       if(!method)throw new Error("PAYMENT_METHOD_NOT_FOUND");
       let proof:Buffer|null=null;
@@ -639,7 +644,7 @@ export async function registerCommercialRoutes(app: FastifyInstance) {
     if(!result.duplicate)await persistAudit(actor,"ADVERTISING_PAYMENT_RECEIVED","ADVERTISING_PAYMENT",String(result.id),`${body.method}: ${body.amount.toFixed(2)}`);
     return reply.code(result.duplicate?200:201).send(result);
   }catch(error){return adminError(error,reply);} });
-  app.get("/v1/admin/commercial/payments",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:payments:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select pay.id::text,pay.status,pay.settlement_status as "settlementStatus",pay.amount::float8,pay.currency,pay.reference,pay.proof_mime as "proofMime",pay.received_at as "receivedAt",pay.created_at as "createdAt",o.code as "orderCode",a.business_name as "businessName",m.code as "paymentMethodCode",m.name as "paymentMethod",receiver.full_name as "receivedBy" from advertising_payments pay join advertising_orders o on o.id=pay.order_id join advertisers a on a.id=pay.advertiser_id join advertising_payment_methods m on m.id=pay.payment_method_id left join users receiver on receiver.id=pay.received_by where (not ${own} or (o.assigned_commercial_id=${actor.id} and m.code<>'BANK_TRANSFER')) and (${q.status??null}::text is null or pay.status=${q.status??null}) order by coalesce(pay.received_at,pay.created_at) desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
+  app.get("/v1/admin/commercial/payments",async(request,reply)=>{try{const actor=requirePermission(request,"commercial:payments:view"),q=listSchema.parse(request.query),own=actor.role==="COMMERCIAL";return database()`select pay.id::text,pay.status,pay.settlement_status as "settlementStatus",pay.amount::float8,pay.currency,pay.reference,pay.proof_mime as "proofMime",pay.received_at as "receivedAt",pay.created_at as "createdAt",o.id::text as "orderId",o.code as "orderCode",a.business_name as "businessName",m.code as "paymentMethodCode",m.name as "paymentMethod",receiver.full_name as "receivedBy" from advertising_payments pay join advertising_orders o on o.id=pay.order_id join advertisers a on a.id=pay.advertiser_id join advertising_payment_methods m on m.id=pay.payment_method_id left join users receiver on receiver.id=pay.received_by where (not ${own} or (o.assigned_commercial_id=${actor.id} and m.code<>'BANK_TRANSFER')) and (${q.status??null}::text is null or pay.status=${q.status??null}) order by coalesce(pay.received_at,pay.created_at) desc limit ${q.limit} offset ${q.offset}`;}catch(error){return adminError(error,reply);} });
   app.post("/v1/admin/commercial/payments/:id/remind",async(request,reply)=>{try{
     const actor=requirePermission(request,"commercial:payments:review"),id=z.string().uuid().parse((request.params as any).id);
     const [item]=await database()`select pay.id::text,pay.order_id::text,pay.status,pay.proof_data,o.code as order_code,o.amount::float8,o.currency,lead.code as lead_code,lead.contact_name,lead.email,lead.submission_key,plan.name as plan_name,method.instructions,method.account_details,upload.status as upload_status

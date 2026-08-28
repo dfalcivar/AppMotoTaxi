@@ -13,6 +13,17 @@ services:
         value: 0.0.0.0
       - key: NODE_ENV
         value: production
+      # Fiscal profiles stay active; provider emission is deliberately disabled.
+      - key: FACTURACION_ENABLED
+        value: "false"
+      - key: FACTURACION_PROVIDER
+        value: DATIL
+      - key: FACTURACION_ENVIRONMENT
+        value: TEST
+      - key: FACTURACION_EMAIL_MODE
+        value: PROVIDER
+      - key: FACTURACION_SMTP_ENABLED
+        value: "false"
       - key: DATABASE_URL
         fromDatabase:
           name: mototaxi-atacames-db

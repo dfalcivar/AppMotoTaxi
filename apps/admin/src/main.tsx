@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import { StrictMode, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { apiFetch, apiUrl, changeAdminPassword, login, type Session, type SessionUser } from "./api.js";
 import "./styles.css";
@@ -19,12 +19,14 @@ import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
 import { FareTerritories } from "./fare-admin.js";
 import { CommercialAdmin } from "./commercial-admin.js";
+const FiscalAdmin = lazy(() => import('./fiscal-admin.js').then(module => ({default:module.FiscalAdmin})));
 import { AdminErrorBoundary } from "./observability.js";
 import { PassengerCancellationSettings, PassengerCancellationHistory } from './passenger-cancellations.js';
 
-type Module = "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
+type Module = "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
 
 const labels: Record<Module, string> = {
+  fiscal: 'Finanzas / Facturación',
   dashboard: "Tablero",
   operations: "Centro de operaciones",
   alerts: "Centro de alertas",
@@ -43,8 +45,9 @@ const labels: Record<Module, string> = {
   audit: "Auditoría",
   database: "PostgreSQL"
 };
-const icons: Record<Module, string> = { dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", memberships: "◈", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", commercial: "◆", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
+const icons: Record<Module, string> = { fiscal: "▤", dashboard: "▦", operations: "◫", alerts: "△", trips: "↔", drivers: "◉", memberships: "◈", passengers: "◎", cooperatives: "⌂", pricing: "$", zones: "◇", settings: "⌖", advertising: "▣", commercial: "◆", incidents: "!", access: "⚿", audit: "≡", database: "◫" };
 const modulePermissions: Record<Module, string[]> = {
+  fiscal: ['FACTURACION_VER','FACTURACION_DASHBOARD_VER','CLIENTES_FISCALES_VER'],
   dashboard: ["dashboard:view", "cooperative_dashboard:view"],
   operations: ["operations:view"], alerts: ["alerts:view"],
   trips: ["trips:view"], drivers: ["drivers:view"], memberships: ["memberships:view"], passengers: ["passengers:view"],
@@ -826,6 +829,7 @@ function App() {
       {currentModule === "settings" && <Settings token={session.token} admin={allowed("settings:manage")} />}
       {currentModule === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}
       {currentModule === "commercial" && <CommercialAdmin token={session.token} permissions={session.user.permissions ?? []} />}
+      {currentModule === "fiscal" && <Suspense fallback={<p role="status">Cargando módulo fiscal…</p>}><FiscalAdmin token={session.token} permissions={session.user.permissions ?? []} /></Suspense>}
       {currentModule === "incidents" && <SupportAdmin token={session.token} />}
       {currentModule === "access" && <AccessManagement token={session.token} currentUserId={session.user.id} />}
       {currentModule === "audit" && <Audit token={session.token} />}

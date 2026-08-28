@@ -33,6 +33,7 @@ import 'realtime_service.dart';
 import 'reject_offer_dialog.dart';
 import 'cancellation_feedback_dialog.dart';
 import 'driver_search_indicator.dart';
+import 'fiscal_profile_modal.dart';
 import 'service_areas.dart';
 import 'trip_lifecycle.dart';
 import 'notification_alerts.dart';
@@ -13523,6 +13524,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> _showBankTransfer(
       BuildContext context, Map<String, dynamic> order) async {
+    final confirmed = await showFiscalProfileModal(context,
+        load: () =>
+            api.call('GET', '/v1/driver/fiscal-profile', token: widget.s.token),
+        save: (data) => api.call('PUT', '/v1/driver/fiscal-profile',
+            token: widget.s.token, body: data));
+    if (!context.mounted || !confirmed) return;
     Map<String, dynamic>? account;
     String? accountError;
     try {
