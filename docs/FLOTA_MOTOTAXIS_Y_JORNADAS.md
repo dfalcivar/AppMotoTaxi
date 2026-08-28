@@ -260,7 +260,9 @@ En la raíz: `node node_modules/typescript/bin/tsc -p apps/api/tsconfig.json --n
 
 Fixture de navegador, explícitamente local y fuera del bundle principal: `FLEET_UI_QA=true` al ejecutar el caso `local browser fixture`, API 127.0.0.1:3313; compilar panel con `test/vite.fleet.config.ts` y servir `fleet-preview.html` en 3315. Los datos sintéticos y credenciales de prueba existen solo en la base efímera. No son pantallas ni datos de producción.
 
-El runner histórico `test:flow` se adapta a confirmar jornadas y conservar evidencia en vez de borrarla. Exige BD local desechable con test/e2e en el nombre y `E2E_DATABASE_CONFIRMED=true`. **No se ejecutó contra PostGIS en esta entrega**.
+El runner histórico `test:flow` se adapta a confirmar jornadas y conservar evidencia en vez de borrarla. Exige BD local desechable con test/e2e en el nombre y `E2E_DATABASE_CONFIRMED=true`.
+
+Validación adicional para la publicación 0.17.0 (52): las 74 migraciones se ejecutaron correctamente sobre PostgreSQL 16/PostGIS 3.4 local aislado. También pasó `test:flow`: autenticación, confirmación de jornadas, disponibilidad, solicitud, aceptación concurrente con un solo ganador, chat, llegada, inicio, finalización y calificaciones. Se usó `E2E_ROUTE_FIXTURE=true` (ruta sintética de 750 m, sin consumir proveedores externos) y cuentas sin tokens FCM; no equivale a una prueba física de notificaciones ni a migrar una copia de producción. El fixture prepara correo verificado, roles móviles y acceso CUENCA_TEST exclusivamente para sus cuentas sintéticas.
 
 ## 11. Publicación futura: coordinación obligatoria
 

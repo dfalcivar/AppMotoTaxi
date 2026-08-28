@@ -64,6 +64,13 @@ async function prepareAccounts(): Promise<void> {
       select driver_id,id,'AUTHORIZED_DRIVER','APPROVED','LEGACY_MIGRATION' from vehicles
       where driver_id in (${e2eDriverId},${e2eDriver2Id}) and merged_into is null
       on conflict(user_id,vehicle_id,relation_type) do update set status='APPROVED'`;
+    await tx`insert into mobile_account_roles(user_id,role)
+      select id,role::text from users where id in (${e2ePassengerId},${e2eDriverId},${e2eDriver2Id})
+      on conflict do nothing`;
+    await tx`insert into user_service_area_access(user_id,service_area_id)
+      select u.id,a.id from users u cross join service_areas a
+      where u.id in (${e2ePassengerId},${e2eDriverId},${e2eDriver2Id}) and a.code='CUENCA_TEST'
+      on conflict(user_id,service_area_id) do update set expires_at=null`;
   });
 }
 
@@ -101,7 +108,26 @@ async function main(): Promise<void> {
   if(process.env.E2E_DATABASE_CONFIRMED!=='true'||!['localhost','127.0.0.1','[::1]'].includes(target.hostname)||!/test|e2e/i.test(target.pathname)){
     throw new Error('test:flow requiere una BD local desechable con test/e2e en su nombre y E2E_DATABASE_CONFIRMED=true. No ejecutar sobre producción.');
   }
+  const originalFetch = globalThis.fetch;
+  const originalMapsKey = process.env.GOOGLE_MAPS_SERVER_API_KEY;
+  if (process.env.E2E_ROUTE_FIXTURE === 'true') {
+    // Explicit synthetic routing response only in this isolated test runner.
+    // No network call, API charge or production routing override is involved.
+    process.env.GOOGLE_MAPS_SERVER_API_KEY = 'local-e2e-fixture';
+    globalThis.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url !== 'https://routes.googleapis.com/directions/v2:computeRoutes') {
+        throw new Error('E2E fixture forbids external network calls');
+      }
+      return Response.json({routes:[{distanceMeters:750,duration:'180s',
+        legs:[{distanceMeters:750,duration:'180s'}]}]});
+    };
+    console.log('ℹ Ruta sintética local de 750 m; proveedor externo no ejercitado.');
+  }
   await prepareAccounts();
+  // Synthetic accounts are pre-verified; the runner never sends real emails.
+  await database()`update users set email_verified_at=now() where id in
+    (${e2ePassengerId},${e2eDriverId},${e2eDriver2Id})`;
   const app = await buildApp();
   let tripId: string | undefined;
   let driverToken: string | undefined;
@@ -232,6 +258,9 @@ async function main(): Promise<void> {
     await cleanup(tripId);
     await app.close();
     await closeDatabase();
+    globalThis.fetch = originalFetch;
+    if (originalMapsKey === undefined) delete process.env.GOOGLE_MAPS_SERVER_API_KEY;
+    else process.env.GOOGLE_MAPS_SERVER_API_KEY = originalMapsKey;
   }
 }
 
