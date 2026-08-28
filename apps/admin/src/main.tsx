@@ -16,6 +16,7 @@ import "./fare-audit.css";
 import { MobileAccountActions } from "./mobile-account-actions.js";
 import { MembershipAdmin } from "./memberships-admin.js";
 import {FleetAdmin} from './fleet-admin.js';
+import {MototaxiIcon} from './mototaxi-icon.js';
 import { SupportAdmin } from "./support-admin.js";
 import { CoverageZones } from "./service-area-admin.js";
 import { FareTerritories } from "./fare-admin.js";
@@ -812,7 +813,7 @@ function App() {
         <button className="menu-toggle" type="button" aria-label={sidebarOpen ? "Cerrar menú" : "Abrir menú"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(value => !value)}>☰</button>
         <div className="brand"><img className="brand-logo" src="/costa-go-emblem.png" alt="" /><div><strong><span>Costa-</span>Go</strong><small>Centro de control</small></div></div>
       </div>
-      <nav>{visible.map(item => <button key={item} title={!sidebarOpen ? labels[item] : undefined} className={currentModule === item ? "active" : ""} onClick={() => selectModule(item)}><span>{icons[item]}</span><span className="nav-label">{labels[item]}</span></button>)}</nav>
+      <nav>{visible.map(item => <button key={item} title={!sidebarOpen ? labels[item] : undefined} className={currentModule === item ? "active" : ""} onClick={() => selectModule(item)}><span>{item==='fleet'?<MototaxiIcon size={20}/>:icons[item]}</span><span className="nav-label">{labels[item]}</span></button>)}</nav>
       <div className="profile"><strong>{session.user.name}</strong><small>{roleLabels[session.user.role] ?? session.user.role.replaceAll("_", " ")}</small><button onClick={logout}>Cerrar sesión</button></div>
     </aside>
     {sidebarOpen && <button className="sidebar-scrim" aria-label="Cerrar menú" onClick={() => setSidebarOpen(false)} />}

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mototaxi_atacames/fleet.dart';
 import 'package:mototaxi_atacames/fleet_report.dart';
+import 'package:mototaxi_atacames/mototaxi_icon.dart';
 
 final vehicles = List.generate(
     3,
@@ -60,11 +61,26 @@ Future<void> screenshot(WidgetTester tester, String name) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  late Uint8List testPhoto;
   setUpAll(() async {
     WidgetController.hitTestWarningShouldBeFatal = true;
     final icons = FontLoader('MaterialIcons')
       ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
     await icons.load();
+    // Deliberately synthetic color fixture: never presented as a user's vehicle.
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawRect(
+        const Rect.fromLTWH(0, 0, 120, 90), Paint()..color = Colors.blue);
+    canvas.drawRect(
+        const Rect.fromLTWH(60, 0, 60, 90), Paint()..color = Colors.amber);
+    final picture = recorder.endRecording();
+    final photo = await picture.toImage(120, 90);
+    testPhoto = (await photo.toByteData(format: ui.ImageByteFormat.png))!
+        .buffer
+        .asUint8List();
+    photo.dispose();
+    picture.dispose();
     final path = Platform.environment['FLEET_QA_FONT'];
     if (path != null) {
       final loader = FontLoader('Roboto')
@@ -88,6 +104,324 @@ void main() {
     }
   });
   for (final brightness in Brightness.values) {
+    testWidgets(
+        'mototaxi silhouette stays legible at small sizes in ${brightness.name}',
+        (tester) async {
+      await tester.pumpWidget(RepaintBoundary(
+          child: MaterialApp(
+              theme: theme(brightness),
+              home: Scaffold(
+                  body: Center(
+                      child: Wrap(
+                          spacing: 20,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                    for (final size in [12.0, 16.0, 20.0, 24.0, 48.0, 96.0])
+                      Column(mainAxisSize: MainAxisSize.min, children: [
+                        MototaxiIcon(
+                            size: size,
+                            color: theme(brightness).colorScheme.primary),
+                        Text('$size px')
+                      ])
+                  ]))))));
+      await tester.pumpAndSettle();
+      expect(find.byType(MototaxiIcon), findsNWidgets(6));
+      expect(tester.takeException(), isNull);
+      await screenshot(tester, 'mototaxi-icon-${brightness.name}');
+    });
+    testWidgets(
+        'real photo takes precedence and changes with photo ID in ${brightness.name}',
+        (tester) async {
+      final requested = <String>[];
+      final gateway = FleetGateway((a, b, c) async => null, (id) async {
+        requested.add(id);
+        if (id == 'broken') return Uint8List(3);
+        return testPhoto;
+      });
+      Future<void> show(String? id) async {
+        await tester.pumpWidget(MaterialApp(
+            theme: theme(brightness),
+            home: Scaffold(body: FleetPhoto(gateway: gateway, id: id))));
+        await tester.pumpAndSettle();
+      }
+
+      await show(null);
+      expect(find.byType(MototaxiIcon), findsOneWidget);
+      await show('real-photo');
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.byType(MototaxiIcon), findsNothing);
+      await show('replacement-photo');
+      expect(requested, ['real-photo', 'replacement-photo']);
+      await show('broken');
+      expect(find.byType(MototaxiIcon), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await show(null);
+      expect(find.byType(MototaxiIcon), findsOneWidget);
+    });
+    for (final largeText in [false, true]) {
+      testWidgets(
+          'unit confirmation and pause outcomes in ${brightness.name}, large=$largeText',
+          (tester) async {
+        tester.view.physicalSize =
+            largeText ? const Size(320, 480) : const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final gateway = FleetGateway(
+            (a, b, c) async =>
+                throw StateError('Visual dialog must not mutate the API'),
+            (_) async => testPhoto);
+        final vehicle = {
+          ...vehicles.first,
+          'identifier': 'MT-2',
+          'photoId': 'real-photo',
+          'unitNumber': '023'
+        };
+        bool? confirmed;
+        String? outcome;
+        await tester.pumpWidget(RepaintBoundary(
+            child: MaterialApp(
+                debugShowCheckedModeBanner: false,
+                theme: theme(brightness),
+                builder: (c, child) => MediaQuery(
+                    data: MediaQuery.of(c).copyWith(
+                        textScaler: TextScaler.linear(largeText ? 1.8 : 1)),
+                    child: child!),
+                home: Builder(
+                    builder: (c) => Scaffold(
+                            body: Column(children: [
+                          TextButton(
+                              onPressed: () async {
+                                confirmed = await fleetConfirm(c,
+                                    title: 'Hoy conducirás MT-2',
+                                    text:
+                                        'Confirma que esta es la mototaxi que conducirás.',
+                                    action: 'Usar mototaxi',
+                                    gateway: gateway,
+                                    vehicle: vehicle);
+                              },
+                              child: const Text('Confirmar unidad')),
+                          TextButton(
+                              onPressed: () async {
+                                outcome = await fleetPauseDialog(c,
+                                    gateway: gateway, vehicle: vehicle);
+                              },
+                              child: const Text('Pausar unidad')),
+                        ]))))));
+        await tester.tap(find.text('Confirmar unidad'));
+        await tester.pumpAndSettle();
+        expect(find.byType(Image), findsOneWidget);
+        expect(find.text('Azul · Unidad 023'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        if (!largeText) {
+          await screenshot(tester, 'confirm-unit-${brightness.name}');
+        }
+        await tester.ensureVisible(find.text('Volver'));
+        await tester.tap(find.text('Volver'));
+        await tester.pumpAndSettle();
+        expect(confirmed, false);
+        await tester.tap(find.text('Confirmar unidad'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Usar mototaxi'));
+        await tester.tap(find.text('Usar mototaxi'));
+        await tester.pumpAndSettle();
+        expect(confirmed, true);
+        for (final action in ['Volver', 'Pausar', 'Finalizar jornada']) {
+          await tester.tap(find.text('Pausar unidad'));
+          await tester.pumpAndSettle();
+          expect(find.byType(Image), findsOneWidget);
+          expect(find.text('Activa'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          if (!largeText && action == 'Volver') {
+            await screenshot(tester, 'pause-unit-${brightness.name}');
+          }
+          await tester.ensureVisible(find.text(action));
+          await tester.tap(find.text(action));
+          await tester.pumpAndSettle();
+          expect(
+              outcome,
+              action == 'Volver'
+                  ? null
+                  : action == 'Pausar'
+                      ? 'PAUSE'
+                      : 'FINISH');
+        }
+      });
+    }
+    testWidgets('profile keeps capabilities independent in ${brightness.name}',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final driver in [false, true]) {
+        for (final owner in [false, true]) {
+          final gateway = FleetGateway((method, path, body) async {
+            expect(method, 'GET');
+            expect(path, contains('managed=true'));
+            return {
+              'items': owner
+                  ? [
+                      {...vehicles.first, 'totalCount': '42'}
+                    ]
+                  : []
+            };
+          }, (_) async => Uint8List(0));
+          await tester.pumpWidget(MaterialApp(
+              theme: theme(brightness),
+              home: Scaffold(
+                  body: FleetProfileEntries(
+                      key: ValueKey('$driver/$owner'),
+                      gateway: gateway,
+                      hasDriverCapability: driver))));
+          await tester.pumpAndSettle();
+          expect(find.text('Mis mototaxis'),
+              driver ? findsOneWidget : findsNothing);
+          expect(find.text('Mi flota'), owner ? findsOneWidget : findsNothing);
+          expect(
+              find.text('42 mototaxis'), owner ? findsOneWidget : findsNothing);
+          expect(find.text('Registrar o reclamar una mototaxi'),
+              owner ? findsNothing : findsOneWidget);
+          expect(tester.takeException(), isNull);
+          if (driver && owner) {
+            await screenshot(tester, 'profile-capabilities-${brightness.name}');
+          }
+        }
+      }
+    });
+    testWidgets(
+        'passenger requests ownership without driver enrollment in ${brightness.name}',
+        (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var writes = 0;
+      final pending = Completer<dynamic>();
+      final gateway = FleetGateway((method, path, body) async {
+        if (method == 'GET') {
+          return {
+            'items': writes == 0
+                ? []
+                : [
+                    {
+                      ...vehicles.first,
+                      'totalCount': 1,
+                      'relations': [
+                        {'type': 'OWNER_MANAGER', 'status': 'PENDING'}
+                      ]
+                    }
+                  ]
+          };
+        }
+        expect(method, 'POST');
+        expect(path, '/v1/fleet/vehicles/link');
+        expect(body, {'identifier': 'MT-2', 'relationType': 'OWNER_MANAGER'});
+        writes++;
+        return pending.future;
+      }, (_) async => Uint8List(0));
+      await tester.pumpWidget(RepaintBoundary(
+          child: MaterialApp(
+              theme: theme(brightness),
+              home: Scaffold(
+                  body: FleetProfileEntries(
+                      gateway: gateway, hasDriverCapability: false)))));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Registrar o reclamar una mototaxi'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mi relación con la unidad'), findsNothing);
+      expect(find.textContaining('No habilita la conducción'), findsOneWidget);
+      await tester.tap(find.text('Vincular existente'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField).first, 'MT-2');
+      await tester.pumpAndSettle();
+      await screenshot(tester, 'owner-request-${brightness.name}');
+      await tester.tap(find.text('Guardar'));
+      await tester.pump();
+      await tester.tap(find.text('Guardando…'));
+      await tester.pump();
+      expect(writes, 1);
+      pending.complete({'id': 'unit-0'});
+      await tester.pumpAndSettle();
+      expect(find.text('Mi flota'), findsOneWidget);
+      expect(find.text('1 mototaxi'), findsOneWidget);
+      expect(find.text('Mis mototaxis'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets(
+        'old API mixed list is separated by relationship in ${brightness.name}',
+        (tester) async {
+      final requests = <String>[];
+      final mixed = [
+        {
+          ...vehicles[0],
+          'relations': [
+            {'type': 'OWNER_MANAGER', 'status': 'APPROVED'}
+          ]
+        },
+        vehicles[1],
+        {
+          ...vehicles[2],
+          'relations': [
+            {'type': 'AUTHORIZED_DRIVER', 'status': 'PENDING'}
+          ]
+        },
+      ];
+      final gateway = FleetGateway((method, path, body) async {
+        requests.add(path);
+        return {'items': mixed};
+      }, (_) async => Uint8List(0));
+      for (final mode in ['driver', 'owner', 'select']) {
+        await tester.pumpWidget(MaterialApp(
+            theme: theme(brightness),
+            home: FleetScreen(
+                key: ValueKey(mode),
+                gateway: gateway,
+                ownerOnly: mode == 'owner',
+                select: mode == 'select')));
+        await tester.pumpAndSettle();
+        expect(
+            find.text('MT-1'), mode == 'owner' ? findsOneWidget : findsNothing);
+        expect(
+            find.text('MT-2'), mode == 'owner' ? findsNothing : findsOneWidget);
+        expect(find.text('MT-3'),
+            mode == 'driver' ? findsOneWidget : findsNothing);
+        expect(
+            requests.last,
+            contains(
+                'relationType=${mode == 'owner' ? 'OWNER_MANAGER' : 'AUTHORIZED_DRIVER'}'));
+        if (mode == 'select') {
+          expect(requests.last, contains('authorizedOnly=true'));
+        }
+        expect(tester.takeException(), isNull);
+      }
+    });
+    testWidgets(
+        'fleet count can retry after an API error in ${brightness.name}',
+        (tester) async {
+      var fail = true;
+      final gateway = FleetGateway((method, path, body) async {
+        if (fail) throw Exception('offline');
+        return {
+          'items': [
+            {...vehicles.first, 'totalCount': 3}
+          ]
+        };
+      }, (_) async => Uint8List(0));
+      await tester.pumpWidget(MaterialApp(
+          theme: theme(brightness),
+          home: Scaffold(
+              body: FleetProfileEntries(
+                  gateway: gateway, hasDriverCapability: false))));
+      await tester.pumpAndSettle();
+      expect(find.text('Registrar o reclamar una mototaxi'), findsNothing);
+      fail = false;
+      await tester.tap(find.text('Reintentar consulta de flota'));
+      await tester.pumpAndSettle();
+      expect(find.text('3 mototaxis'), findsOneWidget);
+      expect(find.text('Reintentar consulta de flota'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
     testWidgets('owner report filters real driver IDs in ${brightness.name}',
         (tester) async {
       tester.view.physicalSize = const Size(360, 800);

@@ -65,7 +65,8 @@ export async function saveFleetSettings(actor: FleetActor, input: unknown) {
     return p;
   });
 }
-export async function listVehicles(actor: FleetActor, search = '', page = 0, status = '', managedOnly = false) {
+export async function listVehicles(actor: FleetActor, search = '', page = 0, status = '', managedOnly = false,
+  relationType: 'AUTHORIZED_DRIVER'|'OWNER_MANAGER'|'' = '', authorizedOnly = false) {
   const sql=database();
   return sql`select v.id,v.identifier,v.brand,v.model,v.color,v.unit_number as "unitNumber",
     v.fleet_status as status,v.photo_id as "photoId",v.cooperative_id as "cooperativeId",c.name as cooperative,
@@ -81,7 +82,9 @@ export async function listVehicles(actor: FleetActor, search = '', page = 0, sta
     where v.merged_into is null
       and (${actor.admin === true} or exists(select 1 from user_vehicle_relations r where r.vehicle_id=v.id
         and r.user_id=${actor.id} and r.status in ('APPROVED','PENDING')
-        and (${!managedOnly} or r.relation_type='OWNER_MANAGER')))
+        and (${!managedOnly} or r.relation_type='OWNER_MANAGER')
+        and (${!relationType} or r.relation_type=${relationType})
+        and (${!authorizedOnly} or (r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED'))))
       and (${!actor.cooperativeId} or v.cooperative_id=${actor.cooperativeId ?? null}::uuid)
       and (${!status} or v.fleet_status=${status})
       and (v.identifier ilike ${`%${search}%`} or coalesce(v.unit_number,'') ilike ${`%${search}%`}

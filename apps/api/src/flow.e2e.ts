@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, InjectOptions } from "fastify";
 import { buildApp } from "./app.js";
 import { closeDatabase, database } from "./database.js";
-import { startSession, releaseSession } from "./fleet/service.js";
+import { startSession, releaseSession, setRelation } from "./fleet/service.js";
 
 interface SessionBody {
   token: string;
@@ -66,6 +66,9 @@ async function prepareAccounts(): Promise<void> {
       on conflict(user_id,vehicle_id,relation_type) do update set status='APPROVED'`;
     await tx`insert into mobile_account_roles(user_id,role)
       select id,role::text from users where id in (${e2ePassengerId},${e2eDriverId},${e2eDriver2Id})
+      on conflict do nothing`;
+    await tx`insert into mobile_account_roles(user_id,role)
+      select id,'PASSENGER' from users where id in (${e2eDriverId},${e2eDriver2Id})
       on conflict do nothing`;
     await tx`insert into user_service_area_access(user_id,service_area_id)
       select u.id,a.id from users u cross join service_areas a
@@ -156,7 +159,24 @@ async function main(): Promise<void> {
       throw new Error("Las cuentas de prueba tienen un viaje activo. Finalízalo o cancélalo antes de ejecutar test:flow.");
     }
 
-    const units=await database()`select id,driver_id from vehicles where identifier in ('E2E-TEST','E2E-TEST-2') and merged_into is null`;
+    const units=await database()`select id,driver_id from vehicles where identifier in ('E2E-TEST','E2E-TEST-2') and merged_into is null order by identifier`;
+    const [administrator]=await database()`select id from users where role='ADMIN' and status='ACTIVE' and deleted_at is null limit 1`;
+    if(!administrator||units.length!==2)throw new Error('Faltan fixtures locales de administrador/unidades');
+    const ownedId=String(units[0]!.id);
+    await request(app,{method:'POST',url:'/v1/fleet/vehicles/link',headers:auth(passenger.token),
+      payload:{identifier:'E2E-TEST',relationType:'OWNER_MANAGER'}});
+    await setRelation({id:String(administrator.id),admin:true},ownedId,e2ePassengerId,'OWNER_MANAGER','APPROVED','Propiedad validada en fixture local E2E');
+    const ownerDetail=await request<{canManage:boolean}>(app,{method:'GET',url:`/v1/fleet/vehicles/${ownedId}`,headers:auth(passenger.token)});
+    if(!ownerDetail.canManage)throw new Error('El pasajero propietario no puede administrar su unidad');
+    await request(app,{method:'GET',url:`/v1/fleet/vehicles/${units[1]!.id}`,headers:auth(passenger.token)},403);
+    await request(app,{method:'POST',url:'/v1/fleet/session',headers:auth(passenger.token),payload:{vehicleId:ownedId}},403);
+    const ownerProfile=await request<{roles:string[]}>(app,{method:'GET',url:'/v1/profile',headers:auth(passenger.token)});
+    if(ownerProfile.roles.length!==1||ownerProfile.roles[0]!=='PASSENGER')throw new Error('La propiedad alteró las capacidades móviles');
+    await request(app,{method:'POST',url:'/v1/auth/session',payload:{email:'e2e.pasajero@mototaxi.local',password:'E2ePasajero2026!',role:'DRIVER'}},403);
+    const driverProfile=await request<{roles:string[]}>(app,{method:'GET',url:'/v1/profile',headers:auth(driver.token)});
+    if(!driverProfile.roles.includes('PASSENGER')||!driverProfile.roles.includes('DRIVER'))throw new Error('Las capacidades pasajero/conductor no coexisten');
+    console.log('✓ Pasajero propietario con sesión real: administra su unidad, no la ajena, no conduce y conserva PASSENGER');
+
     for(const unit of units)await startSession({id:String(unit.driver_id)},String(unit.id),'MANUAL_SELECTION');
     console.log('✓ Conductores con unidad autorizada y jornada confirmada');
 

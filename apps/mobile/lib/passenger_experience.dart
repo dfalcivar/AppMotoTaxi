@@ -659,7 +659,7 @@ class _CompactTripTile extends StatelessWidget {
                 decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primaryContainer,
                     borderRadius: BorderRadius.circular(16)),
-                child: const Icon(Icons.electric_rickshaw_outlined)),
+                child: const MototaxiIcon()),
             const SizedBox(width: 12),
             Expanded(
                 child: Column(
@@ -1127,7 +1127,7 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
                   children: [
                     _participant(context, item),
                     const SizedBox(height:12),
-                    TripVehicleBadge(gateway:fleetFor(widget.session),vehicle:item['vehicleDetails']),
+                    TripVehicleBadge(gateway:fleetFor(widget.session),vehicle:item['vehicleDetails'],historical:true),
                     const SizedBox(height: 22),
                     _routeInfo(context, item),
                     const Divider(height: 36),

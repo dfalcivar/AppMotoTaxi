@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'realtime_service.dart';
+import 'mototaxi_icon.dart';
 
 Future<void> showTripChat({
   required BuildContext context,
@@ -66,7 +67,7 @@ class _TripChatState extends State<_TripChat> {
       ? const [
           _QuickReply('Ya llegué', Icons.location_on_outlined),
           _QuickReply('Estoy en la entrada', Icons.door_front_door_outlined),
-          _QuickReply('Voy en camino', Icons.electric_rickshaw_outlined),
+          _QuickReply('Voy en camino', null),
         ]
       : const [
           _QuickReply('Salgo ahora', Icons.directions_walk_outlined),
@@ -224,7 +225,9 @@ class _TripChatState extends State<_TripChat> {
               itemBuilder: (_, index) {
                 final reply = quickReplies[index];
                 return ActionChip(
-                  avatar: Icon(reply.icon, size: 16),
+                  avatar: reply.icon == null
+                      ? const MototaxiIcon(size: 16)
+                      : Icon(reply.icon, size: 16),
                   visualDensity: VisualDensity.compact,
                   label: Text(reply.label),
                   onPressed: sending ? null : () => _send(reply.label),
@@ -395,5 +398,5 @@ class _TripChatState extends State<_TripChat> {
 class _QuickReply {
   const _QuickReply(this.label, this.icon);
   final String label;
-  final IconData icon;
+  final IconData? icon;
 }

@@ -6,6 +6,35 @@ import { authorizeVehicle, FleetError, type FleetActor } from './service.js';
 
 const fileSchema=z.object({kind:z.enum(['PHOTO','REGISTRATION','OPERATING_PERMIT','OWNERSHIP_EVIDENCE']),
   mimeType:z.enum(['image/jpeg','image/png','application/pdf']),data:z.string().max(7_000_000)});
+// No subject synthesis/removal: preserve the entire real vehicle and its markings.
+export async function vehicleDisplayImage(bytes:Buffer){
+  return sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'}).rotate()
+    .normalise({lower:1,upper:99})
+    .resize(800,600,{fit:'contain',background:{r:0,g:0,b:0,alpha:0}})
+    .webp({quality:82,effort:4}).toBuffer();
+}
+const webp=(b:Buffer)=>b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WEBP';
+// Legacy immutable files are normalized on read, never overwritten. Bounded process-local cache.
+const legacyDisplayCache=new Map<string,Buffer>();
+let legacyDisplayBytes=0;
+// Serialize legacy decoding so a page of old 20 MP photos cannot exhaust API memory.
+let legacyDisplayQueue:Promise<unknown>=Promise.resolve();
+async function legacyDisplay(id:string,original:Buffer){
+  const key=`${id}:${createHash('sha256').update(original).digest('hex')}`;
+  const cached=legacyDisplayCache.get(key);if(cached)return cached;
+  const work=legacyDisplayQueue.then(async()=>{
+    const existing=legacyDisplayCache.get(key);if(existing)return existing;
+    const display=await vehicleDisplayImage(original);
+    while(legacyDisplayCache.size>=16||legacyDisplayBytes+display.length>8*1024*1024){
+      const oldest=legacyDisplayCache.keys().next().value;if(!oldest)break;
+      legacyDisplayBytes-=legacyDisplayCache.get(oldest)!.length;legacyDisplayCache.delete(oldest);
+    }
+    if(display.length<=8*1024*1024){legacyDisplayCache.set(key,display);legacyDisplayBytes+=display.length;}
+    return display;
+  });
+  legacyDisplayQueue=work.catch(()=>{});
+  return work;
+}
 export async function prepareVehicleFile(input:unknown){
   const f=fileSchema.parse(input);const bytes=Buffer.from(f.data,'base64');
   if(!bytes.length||bytes.length>5*1024*1024)throw new FleetError('FILE_TOO_LARGE',400);
@@ -19,7 +48,7 @@ export async function prepareVehicleFile(input:unknown){
       if(meta.format!==(f.mimeType==='image/png'?'png':'jpeg')||!meta.width||!meta.height)throw new Error('format');
     }catch{throw new FleetError('INVALID_IMAGE',400);}
     // A valid original remains usable even if the optional display conversion fails.
-    try {display=await sharp(bytes,{limitInputPixels:20_000_000}).rotate().resize(800,600,{fit:'contain',background:'#eef2f5'}).jpeg({quality:88}).toBuffer();}
+    try {display=f.kind==='PHOTO'?await vehicleDisplayImage(bytes):await sharp(bytes,{limitInputPixels:20_000_000}).rotate().resize(800,600,{fit:'inside',withoutEnlargement:true}).jpeg({quality:88}).toBuffer();}
     catch {display=null;}
   }
   return {kind:f.kind,mimeType:f.mimeType,bytes,display,hash:createHash('sha256').update(bytes).digest('hex')};
@@ -58,6 +87,18 @@ export async function readVehicleFile(actor:FleetActor,id:string,original=false)
     const [trip]=!original&&f.kind==='PHOTO'?await database()`select 1 from trips t where
       (t.passenger_id=${actor.id} or t.driver_id=${actor.id}) and t.vehicle_snapshot->>'photoId'=${id} limit 1`:[];
     if(!trip&&f.uploaded_by!==actor.id)throw error;
+  }
+  if(!original&&f.kind==='PHOTO'){
+    const display=f.display_bytes?Buffer.from(f.display_bytes):null;
+    if(display&&webp(display)){
+      try {
+        const meta=await sharp(display,{limitInputPixels:20_000_000}).metadata();
+        if(meta.width&&meta.height)return {bytes:display,mimeType:'image/webp'};
+      }catch{/* Invalid stored preview: recover from the untouched original below. */}
+    }
+    try{return {bytes:await legacyDisplay(id,Buffer.from(f.original_bytes)),mimeType:'image/webp'};}
+    catch{/* A failed optional conversion must not hide the real original. */}
+    return {bytes:f.original_bytes,mimeType:String(f.mime_type)};
   }
   return {bytes:!original&&f.display_bytes?f.display_bytes:f.original_bytes,
     mimeType:!original&&f.display_bytes?'image/jpeg':String(f.mime_type)};

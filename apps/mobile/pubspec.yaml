@@ -1,7 +1,7 @@
 name: mototaxi_atacames
 description: Aplicación móvil de movilidad Costa-Go.
 publish_to: "none"
-version: 0.17.0+52
+version: 0.17.1+53
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

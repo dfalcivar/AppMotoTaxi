@@ -279,3 +279,95 @@ Antes de autorizar publicación:
 7. Monitorear conflictos controlados, jornadas sin heartbeat, colas de avisos y consultas de flota. El aviso al propietario está apagado inicialmente; habilitarlo después de probar el canal.
 
 No ejecutar un rollback destructivo de tablas/auditoría si aparecen incidencias. Conservar evidencia y corregir hacia adelante; restaurar una copia solo mediante procedimiento operativo explícito.
+
+## 12. Auditoría de capacidades simultáneas — 28 de agosto de 2026
+
+Base revisada: `e0b8184`, versión 0.17.0 (52). **No se rehízo el módulo ni se añadió una migración.**
+
+### Modelo confirmado
+
+- `users.role` permanece como dato legado compatible. Las capacidades móviles reales están en `mobile_account_roles`: una cuenta puede tener `PASSENGER` y `DRIVER`. El rol de la sesión indica el modo activo, no elimina las otras capacidades.
+- `OWNER_MANAGER` no es un tercer tipo exclusivo de cuenta ni un permiso global: es una relación de `user_vehicle_relations` para un `user_id` y `vehicle_id`. Solo una relación aprobada permite administrar esa unidad.
+- Registrar o vincular una unidad crea una solicitud pendiente de relación, no aprueba propiedad ni crea un conductor. Se conservan la validación administrativa y el procedimiento de reclamación con evidencia.
+- Conducir exige el registro independiente de conductor aprobado, cuenta activa, autorización `AUTHORIZED_DRIVER` aprobada, unidad verificada y jornada válida; la propiedad por sí sola no satisface estas condiciones. El proceso de documentos, fotografía, licencia y verificación no cambia.
+- Administradores mantienen alcance global; Analista de Cooperativa conserva el filtro obligatorio por su cooperativa. Propietarios no pueden conceder propiedad por su cuenta ni gestionar unidades ajenas. La membresía y sus contadores siguen perteneciendo al conductor.
+
+### Ajustes necesarios realizados
+
+1. **Mi perfil:** `Mis mototaxis` depende de la capacidad DRIVER, incluso con modo pasajero activo; `Mi flota` aparece cuando hay unidades propias asociadas y muestra su cantidad. Ambas pueden coexistir.
+2. Sin unidades administradas se ofrece únicamente el acceso discreto **Registrar o reclamar una mototaxi**. Abre el formulario existente como propietario/responsable, permite nueva unidad o vincular una existente, sin cambiar de cuenta ni solicitar el alta de conductor. La relación pendiente no otorga permisos de administración; se informa como pendiente en la lista.
+3. **Mis mototaxis** muestra relaciones `AUTHORIZED_DRIVER`; **Mi flota** muestra `OWNER_MANAGER`. La selección para iniciar jornada solo muestra autorizaciones aprobadas sobre unidades verificadas. El detalle, jornadas, autorizaciones y estadísticas existentes se reutilizan.
+4. Filtros opcionales `relationType` y `authorizedOnly` en el listado existente. Se aplican antes de paginar y no amplían permisos. Las peticiones antiguas sin filtros mantienen la respuesta combinada original.
+5. El móvil también filtra por relación localmente al hablar con la API anterior. La cantidad de flota se actualiza al regresar del formulario/detalle o reanudar la app; ante un fallo se ofrece reintento sin confundirlo con una flota vacía.
+
+### Evidencia de pruebas
+
+| Caso requerido | Comprobación |
+|---|---|
+| 1. Pasajero normal | Sin listas de conductor/flota vacía; rol PASSENGER intacto. |
+| 2. Pasajero registra unidad | Solicitud OWNER_MANAGER pendiente; tras revisión administra solo esa unidad; sin fila en `drivers`. |
+| 3. Propietario que no conduce | Administración permitida, inicio de jornada e ingreso en modo DRIVER denegados. |
+| 4. Pasajero + conductor | Ambas capacidades persisten; listado autorizado e inicio de jornada según verificaciones existentes. |
+| 5. Conductor + propietario | Permisos independientes sobre la unidad, sin autoasignación de propiedad. |
+| 6. Pasajero + conductor + propietario | Ambas entradas del perfil; rol móvil activo no elimina la otra capacidad ni la relación de propiedad. |
+| 7. Varias motos/choferes | Listados propios de varias unidades, múltiples autorizados, detalle y reporte por conductor sin duplicar unidades. |
+| 8. Propietario sobre moto ajena | Lectura/gestión denegadas; filtros no amplían el alcance. |
+| 9. Conductor intenta ser propietario | Solicitud pendiente no habilita administración; autoaprobación denegada. |
+| 10. Cuenta existente | Contrato anterior sin filtros preservado; migración legacy conserva identidades/historial y nunca infiere propiedad. |
+
+Resultados locales:
+
+- API: **293 pruebas aprobadas**, 2 fixtures manuales omitidos; TypeScript sin errores.
+- Flota SQL/HTTP: **57 aprobadas**, 1 fixture de navegador omitido, incluidas en la suite API. Los tests de rutas de esta suite aíslan el autenticador; la autorización por unidad y SQL son reales.
+- Flutter: **95 pruebas aprobadas**; 17 de flota incluyen claro/oscuro, pantalla pequeña, solicitud de propietario, doble toque, filtros contra API anterior y reintento.
+- PostGIS local: runner completo con autenticación real. Pasajero reclama una unidad, administrador valida la relación, el pasajero consulta su flota, no accede a la unidad ajena, no inicia jornada ni obtiene DRIVER y luego solicita/completa un viaje con aceptación concurrente, chat y calificación.
+- La ruta del runner es sintética, no consume Google; las cuentas no tienen tokens FCM. No se afirma prueba física de GPS/notificaciones por esta auditoría.
+
+Estos ajustes mantienen compatibilidad con la **versión 52 ya instalada** y no requieren transformación de datos. No confundir con la coordinación requerida al introducir por primera vez jornadas obligatorias (sección 11). Para ver los nuevos accesos/listas en teléfonos será necesaria una próxima compilación móvil; en esta revisión no se generó APK/AAB ni se desplegó a producción.
+
+## 13. Iconografía y fotografías de unidades — 28 de agosto de 2026
+
+Revisión visual sobre el módulo existente, conservando los cambios de capacidades de la sección 12. Sin migraciones nuevas, cambios en membresías, QR, reglas de jornada, relevo, heartbeat ni permisos.
+
+### Recurso centralizado y componentes
+
+- Se sustituyó `Icons.electric_rickshaw_outlined` y los símbolos genéricos del panel por una tricimoto lateral de líneas simples. No se reemplazó el logo oficial de Costa-Go ni los recursos de identidad de mapas/notificaciones.
+- Fuente única: `packages/brand/mototaxi-icon.json`. `node scripts/generate-mototaxi-icon.mjs` genera `apps/mobile/lib/mototaxi_icon.dart` y `apps/admin/src/mototaxi-icon.tsx`. `--check` comprueba que ambos coincidan. No editar por separado los archivos generados.
+- Flutter: `MototaxiIcon`, `FleetPhoto`, `FleetUnitSummary`, `TripVehicleBadge` y diálogo común de decisiones de flota. Web: `MototaxiIcon` y `VehicleThumbnail`.
+- El icono representa el concepto de mototaxi o ausencia de fotografía; la unidad específica usa siempre su `photoId`. Cambiar de unidad descarta la imagen anterior y carga la correspondiente. Carga, ausencia o error no muestran imágenes rotas.
+
+### Original y versión de visualización
+
+Se reutilizan `vehicle_files.original_bytes`, `display_bytes`, `sha256` y el identificador de archivo existente; no se crean columnas duplicadas. Original y hash permanecen intactos. Al reemplazar la foto se inserta otro archivo, conservando la foto referenciada por snapshots históricos.
+
+La presentación de fotografías se genera con Sharp: orientación EXIF, contraste moderado (percentiles 1–99), encuadre centrado de **800 × 600**, proporción conservada y WebP optimizado. El espacio sobrante es transparente para integrarse con el fondo del tema. No se publican metadatos EXIF en la miniatura. Los documentos conservan su tratamiento anterior, sin ajuste de contraste.
+
+**Límite deliberado:** no existe detección automática fiable del vehículo principal ni recorte/eliminación de su fondo. Se contiene la fotografía completa para no quitar ruedas, techo, accesorios o adhesivos. El fondo de la foto real permanece; solo el marco externo es neutro. No se usó IA generativa ni se inventó ninguna mototaxi. Una foto tomada desde muy lejos seguirá mostrando el entorno: conviene subir una fotografía cercana y bien encuadrada.
+
+Prioridad resuelta por el endpoint autorizado existente: miniatura válida → normalización del original si es legacy/falta miniatura → original si falla el procesamiento opcional → icono en UI si no hay imagen utilizable. Las miniaturas antiguas se adaptan al leerlas sin sobrescribir archivos históricos. Caché local limitada a 16 imágenes/8 MB y decodificación legacy serializada para evitar picos de memoria y duplicación simultánea de trabajo. Una miniatura con cabecera dañada se recupera desde el original.
+
+Los endpoints, JSON y autorización no cambian. Flutter recibe bytes y el panel usa el MIME de la respuesta. Los pasajeros siguen accediendo únicamente a la foto histórica de su viaje, sin obtener permisos para descargar documentación privada.
+
+### Pantallas actualizadas
+
+- Mi perfil: Mis mototaxis/Mi flota; estados vacíos y campos conceptuales de mototaxi.
+- Listas y selector: foto uniforme, datos reales disponibles, indicador de selección y sin líneas de marca/color inventadas.
+- Confirmar unidad, pausa/final de jornada, recuperación de jornada y cierre de sesión: tarjeta compacta con unidad real, manteniendo los resultados de las acciones existentes.
+- Indicador Mototaxi activa: icono pequeño, identificador y acción Cambiar, sin foto grande.
+- Pasajero y detalle histórico: miniatura de la unidad; el histórico indica «Mototaxi usada» y no repite el aviso de seguridad previo a abordar.
+- Panel: menú, listado, detalle, fotografías y placeholders. Se muestran propietario/responsable, conductor actual, estado de unidad/jornada, disponibilidad y última actividad como datos distintos.
+- Respuesta rápida «Voy en camino»: mismo icono, sin cambios en envío del chat.
+
+Flutter usa `ColorScheme`/`IconTheme`, mismos tamaños y estructura en ambos temas. El módulo de flota web utiliza variables CSS basadas en la marca y adapta su tema a la preferencia del sistema; el selector explícito de tema pertenece solo al fixture QA. El QR imprimible conserva su formato de impresión existente.
+
+### Validación local
+
+- API completa: **297 aprobadas**, 2 fixtures manuales omitidos. Flota: **61 aprobadas**, 1 fixture omitido, incluidas en el total.
+- Pruebas nuevas de orientación EXIF, proporción/alpha, originales intactos, adaptación legacy, peticiones concurrentes, vista previa dañada, fallback e identidad de foto histórica tras reemplazo.
+- Flutter completa: **103 aprobadas**. Tras los ajustes finales se repitieron las **25 pruebas de flota**, todas aprobadas. Análisis Flutter y comprobación TypeScript API/panel sin errores.
+- Compilación web de producción aprobada. Vite conserva una advertencia no bloqueante por el tamaño del paquete principal (aprox. 523 kB minificado); no se modificó el empaquetado ajeno a este pedido.
+- Icono inspeccionado a 12/16/20/24/48/96 px, claro/oscuro. Modales comprobados en 390 × 844 y 320 × 480 con texto ampliado hasta 1,8; acciones de confirmar, volver, pausar y finalizar conservan sus valores y no escriben por sí mismas en la API.
+- Panel comprobado en navegador local con datos efímeros: listado claro/oscuro, detalle de ambas unidades y ancho 390 px. Las tablas mantienen desplazamiento horizontal en teléfonos; los modales ajustan contenido y botones.
+- Capturas Flutter reproducibles en `apps/mobile/build/fleet-qa/` mediante `FLEET_SCREENSHOTS=true` y, opcionalmente, `FLEET_QA_FONT`. Los cuadros de colores de las pruebas son fixtures sintéticos para verificar carga/encuadre, **no fotografías de usuarios ni una recreación de vehículos**.
+
+No se ha probado esta presentación en teléfonos físicos ni con fotografías de producción durante esta revisión. No se desplegó, no se generó APK/AAB y no se hizo commit en este pedido.

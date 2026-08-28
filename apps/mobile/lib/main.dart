@@ -35,6 +35,7 @@ import 'cancellation_feedback_dialog.dart';
 import 'driver_search_indicator.dart';
 import 'fiscal_profile_modal.dart';
 import 'fleet.dart';
+import 'mototaxi_icon.dart';
 import 'service_areas.dart';
 import 'trip_lifecycle.dart';
 import 'notification_alerts.dart';
@@ -4367,21 +4368,8 @@ class _ProfileState extends State<Profile> {
                 title: const Text('Teléfono'),
                 subtitle: Text(p['phone'] ?? 'Sin teléfono registrado'),
               ),
-              if (isDriver) ...[
-                const Divider(height: 1),
-                ListTile(
-                  contentPadding: rowPadding,
-                  leading: leadingIcon(Icons.electric_rickshaw_outlined),
-                  title: const Text('Mis mototaxis'),
-                  subtitle: const Text('Administra las mototaxis que puedes usar'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap:()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>FleetScreen(gateway:fleetFor(widget.s)))),
-                ),
-              ],
-              const Divider(height:1),
-              ListTile(contentPadding:rowPadding,leading:leadingIcon(Icons.garage_outlined),
-                title:const Text('Mi flota'),subtitle:const Text('Unidades a mi cargo y actividad'),trailing:const Icon(Icons.chevron_right),
-                onTap:()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>FleetScreen(gateway:fleetFor(widget.s),ownerOnly:true)))),
+              FleetProfileEntries(key: ValueKey(widget.s.id), gateway: fleetFor(widget.s),
+                hasDriverCapability: (p['roles'] as List? ?? widget.s.availableRoles).contains('DRIVER')),
               if (isDriver) ...[
                 const Divider(height: 1),
                 SwitchListTile(
@@ -5203,7 +5191,7 @@ class _AccountHubState extends State<AccountHub> {
         }
         if (unit != null && unit['hasActiveTrip'] != true &&
             !await fleetConfirm(c, title:'¿Cerrar sesión y liberar ${unit['identifier']}?',
-              text:'Tu jornada finalizará y otro conductor autorizado podrá utilizar esta mototaxi.',action:'Cerrar sesión')) { return; }
+              text:'Tu jornada finalizará y otro conductor autorizado podrá utilizar esta mototaxi.',action:'Cerrar sesión',gateway:fleetFor(widget.s),vehicle:unit)) { return; }
       } catch (_) {
         if (!c.mounted) return;
         if (!await fleetConfirm(c,title:'¿Cerrar sesión?',text:'No pudimos comprobar la jornada. Si no hay conexión, la unidad se liberará al vencer el tiempo de inactividad; una carrera activa permanecerá protegida.',action:'Cerrar sesión')) return;
@@ -10707,12 +10695,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if(fleetChanging||active!=null)return false;
     fleetChanging=true;
     try{
-      final all=await fleetFor(widget.s).get('/vehicles?status=VERIFIED');
+      final all=await fleetFor(widget.s).get('/vehicles?status=VERIFIED&relationType=AUTHORIZED_DRIVER&authorizedOnly=true');
       if(!mounted)return false;
       final units=(all['items'] as List).where((v)=>(v['relations'] as List).any((r)=>r['type']=='AUTHORIZED_DRIVER'&&r['status']=='APPROVED')).toList();
       if(units.length==1){
         final v=units.first;
-        if(!await fleetConfirm(context,title:'Hoy conducirás ${v['identifier']}',text:'${v['color']??''} · Unidad ${v['unitNumber']??'—'}\nConfirma que tienes la mototaxi contigo.',action:'Usar mototaxi',gateway:fleetFor(widget.s),photoId:v['photoId']?.toString()))return false;
+        if(!await fleetConfirm(context,title:'Hoy conducirás ${v['identifier']}',text:'Confirma que esta es la mototaxi que conducirás.',action:'Usar mototaxi',gateway:fleetFor(widget.s),vehicle:v))return false;
         try{await fleetFor(widget.s).post('/session',{'vehicleId':v['id'],'method':'MANUAL_SELECTION'});}
         catch(e){if(e is! ApiException||e.code!='VEHICLE_TAKEOVER_CONFIRMATION_REQUIRED'||!mounted)rethrow;
           if(!await fleetConfirm(context,title:'Confirmar relevo',text:'El conductor anterior está desconectado. ¿Tienes físicamente esta unidad?',action:'Sí, tomar unidad'))return false;
@@ -10733,7 +10721,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       if(!mounted)return;
       if(v['authorized']!=true){if(await fleetConfirm(context,title:'Solicitar autorización',text:'Esta mototaxi no está asociada a tu perfil.',action:'Solicitar')){await fleetFor(widget.s).post('/qr/request',{'token':token});if(mounted)setState(()=>driverMessage='Solicitud de autorización registrada.');}return;}
       if(active!=null){setState(()=>driverMessage='Termina tu viaje antes de cambiar de mototaxi.');return;}
-      if(await fleetConfirm(context,title:'Usar ${v['identifier']}',text:'Confirma que esta es la unidad que conducirás.',action:'Usar mototaxi')){
+      if(await fleetConfirm(context,title:'Usar ${v['identifier']}',text:'Confirma que esta es la unidad que conducirás.',action:'Usar mototaxi',gateway:fleetFor(widget.s),vehicle:v)){
         try{await fleetFor(widget.s).post('/session',{'vehicleId':v['id'],'method':'QR_SCAN'});}
         catch(e){if(e is! ApiException||e.code!='VEHICLE_TAKEOVER_CONFIRMATION_REQUIRED'||!mounted)rethrow;
           if(!await fleetConfirm(context,title:'Confirmar relevo',text:'La jornada anterior está sin conexión. ¿Tienes físicamente esta mototaxi?',action:'Sí, tomar unidad'))return;
@@ -11527,7 +11515,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (!mounted) return;
     if(values[1]['session']!=null&&!fleetRecoveryOffered&&values[0]==null){
       fleetRecoveryOffered=true;
-      final keep=await fleetConfirm(context,title:'¿Sigues conduciendo ${values[1]['session']['identifier']}?',text:'Puedes continuar la jornada o liberar la mototaxi para otro conductor.',action:'Continuar jornada');
+      final keep=await fleetConfirm(context,title:'¿Sigues conduciendo ${values[1]['session']['identifier']}?',text:'Puedes continuar la jornada o liberar la mototaxi para otro conductor.',action:'Continuar jornada',gateway:fleetFor(widget.s),vehicle:values[1]['session']);
       if(!mounted)return;
       if(keep){await fleetFor(widget.s).post('/sessions/${values[1]['session']['id']}/heartbeat',{});}
       else{await fleetFor(widget.s).post('/sessions/${values[1]['session']['id']}/release',{'reason':'MANUAL_RELEASE'});}
@@ -11591,7 +11579,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         if(fleetSession!=null)await fleetFor(widget.s).post('/sessions/${fleetSession['id']}/heartbeat',{});
         await startGpsTracking(markAvailable: true);
       } else {
-        final action=await showDialog<String>(context:context,builder:(c)=>AlertDialog(title:const Text('Dejar de recibir viajes'),content:const Text('Puedes pausar y conservar la mototaxi o finalizar la jornada y liberarla.'),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('Volver')),TextButton(onPressed:()=>Navigator.pop(c,'PAUSE'),child:const Text('Pausar')),FilledButton(onPressed:()=>Navigator.pop(c,'FINISH'),child:const Text('Finalizar jornada'))]));
+        final action=await fleetPauseDialog(context,gateway:fleetFor(widget.s),vehicle:fleetSession);
         if(action==null)return;
         if(action=='FINISH'&&fleetSession!=null){await fleetFor(widget.s).post('/sessions/${fleetSession['id']}/release',{'reason':'MANUAL_RELEASE'});await configureFleet(await fleetFor(widget.s).get('/session'));}
         await api.available(widget.s.token, false);
@@ -14730,11 +14718,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ),
       ]),
       const SizedBox(height: 7),
-      if(active==null)ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:const Icon(Icons.electric_rickshaw_outlined,size:22),
+      if(active==null)ListTile(dense:true,contentPadding:EdgeInsets.zero,leading:MototaxiIcon(size:22,color:Theme.of(context).colorScheme.primary),
         title:Text(fleetSession==null?'Selecciona tu mototaxi':'Mototaxi activa: ${fleetSession['identifier']}'),
         trailing:TextButton(onPressed:fleetChanging?null:()async{await chooseFleet();},child:Text(fleetSession==null?'Seleccionar':'Cambiar'))),
       if(active==null&&fleetSession!=null&&!available)Align(alignment:Alignment.centerRight,child:TextButton(onPressed:()async{
-        if(!await fleetConfirm(context,title:'Finalizar jornada',text:'La mototaxi quedará libre para otro conductor autorizado.',action:'Finalizar'))return;
+        if(!await fleetConfirm(context,title:'Finalizar jornada',text:'La mototaxi quedará libre para otro conductor autorizado.',action:'Finalizar',gateway:fleetFor(widget.s),vehicle:fleetSession))return;
         try{await fleetFor(widget.s).post('/sessions/${fleetSession['id']}/release',{'reason':'MANUAL_RELEASE'});await configureFleet(await fleetFor(widget.s).get('/session'));}catch(e){if(mounted)setState(()=>driverMessage=e.toString());}
       },child:const Text('Finalizar jornada'))),
       if (active == null) ...[
@@ -14817,7 +14805,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               const SizedBox(width: 10),
               Expanded(
                 child: Row(children: [
-                  Icon(Icons.electric_rickshaw_outlined,
+                  MototaxiIcon(
                       color: colors.primary, size: 22),
                   const SizedBox(width: 7),
                   Expanded(

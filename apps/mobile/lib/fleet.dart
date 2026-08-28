@@ -7,6 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'fleet_report.dart';
+import 'mototaxi_icon.dart';
 
 typedef FleetRequest = Future<dynamic> Function(
     String method, String path, Object? body);
@@ -123,24 +124,105 @@ class _FleetPhotoState extends State<FleetPhoto> {
   }
 
   @override
-  Widget build(BuildContext context) => ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: SizedBox(
-          width: widget.size,
-          height: widget.size,
-          child: FutureBuilder<Uint8List>(
-              future: photo,
-              builder: (context, s) => s.hasData
-                  ? Image.memory(s.data!, fit: BoxFit.contain)
-                  : Icon(Icons.electric_rickshaw_outlined,
-                      color: Theme.of(context).colorScheme.primary))));
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    Widget fallback() => Semantics(
+        label: 'Mototaxi sin fotografía disponible',
+        child: Center(
+            child:
+                MototaxiIcon(size: widget.size * .48, color: colors.primary)));
+    return Container(
+        width: widget.size,
+        height: widget.size * .75,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+            color: colors.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: colors.outlineVariant.withValues(alpha: .55))),
+        child: FutureBuilder<Uint8List>(
+            future: photo,
+            builder: (context, s) {
+              if (s.hasData) {
+                return Image.memory(s.data!,
+                    fit: BoxFit.contain,
+                    semanticLabel: 'Fotografía real de la mototaxi',
+                    errorBuilder: (_, __, ___) => fallback());
+              }
+              if (s.connectionState == ConnectionState.waiting) {
+                return Center(
+                    child: SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: colors.primary)));
+              }
+              return fallback();
+            }));
+  }
+}
+
+class FleetUnitSummary extends StatelessWidget {
+  const FleetUnitSummary(
+      {super.key,
+      required this.gateway,
+      required this.vehicle,
+      this.active = false});
+  final FleetGateway gateway;
+  final dynamic vehicle;
+  final bool active;
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final info = [
+      vehicle['color'],
+      if ('${vehicle['unitNumber'] ?? ''}'.trim().isNotEmpty)
+        'Unidad ${vehicle['unitNumber']}'
+    ].whereType<String>().where((s) => s.trim().isNotEmpty).join(' · ');
+    return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: colors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: colors.outlineVariant)),
+        child: Row(children: [
+          FleetPhoto(
+              gateway: gateway, id: vehicle['photoId']?.toString(), size: 82),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text('${vehicle['identifier'] ?? 'Mototaxi'}',
+                    style: Theme.of(context).textTheme.titleSmall),
+                if (info.isNotEmpty)
+                  Text(info,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: colors.onSurfaceVariant)),
+                if (active)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Text('Activa',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(color: colors.primary))),
+              ]))
+        ]));
+  }
 }
 
 class TripVehicleBadge extends StatelessWidget {
   const TripVehicleBadge(
-      {super.key, required this.gateway, required this.vehicle});
+      {super.key,
+      required this.gateway,
+      required this.vehicle,
+      this.historical = false,
+      this.showSafety = true});
   final FleetGateway gateway;
   final dynamic vehicle;
+  final bool historical, showSafety;
   @override
   Widget build(BuildContext context) {
     if (vehicle is! Map) return const SizedBox.shrink();
@@ -153,13 +235,14 @@ class TripVehicleBadge extends StatelessWidget {
             border: Border.all(color: s.outlineVariant)),
         child: Row(children: [
           FleetPhoto(
-              gateway: gateway, id: vehicle['photoId']?.toString(), size: 48),
+              gateway: gateway, id: vehicle['photoId']?.toString(), size: 64),
           const SizedBox(width: 10),
           Expanded(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                Text('Mototaxi ${vehicle['identifier'] ?? ''}',
+                Text(
+                    '${historical ? 'Mototaxi usada:' : 'Mototaxi'} ${vehicle['identifier'] ?? ''}',
                     style: Theme.of(context).textTheme.titleSmall),
                 Text(
                     [
@@ -168,8 +251,10 @@ class TripVehicleBadge extends StatelessWidget {
                         'Unidad ${vehicle['unitNumber']}'
                     ].whereType<String>().join(' · '),
                     style: Theme.of(context).textTheme.bodySmall),
-                const Text('Verifica que la mototaxi coincida antes de subir.',
-                    style: TextStyle(fontSize: 11)),
+                if (showSafety && !historical)
+                  const Text(
+                      'Verifica que la mototaxi coincida antes de subir.',
+                      style: TextStyle(fontSize: 11)),
               ])),
           Icon(Icons.verified_user_outlined, size: 19, color: s.primary)
         ]));
@@ -181,27 +266,110 @@ Future<bool> fleetConfirm(BuildContext context,
         required String text,
         String action = 'Confirmar',
         FleetGateway? gateway,
-        String? photoId}) async =>
+        String? photoId,
+        dynamic vehicle}) async =>
     await showDialog<bool>(
         context: context,
-        builder: (c) => AlertDialog(
-                icon: gateway != null
-                    ? Center(
-                        child:
-                            FleetPhoto(gateway: gateway, id: photoId, size: 80))
-                    : Icon(Icons.electric_rickshaw_outlined,
-                        color: Theme.of(c).colorScheme.primary),
-                title: Text(title, textAlign: TextAlign.center),
-                content: Text(text),
+        builder: (c) => _FleetDecisionDialog(
+                title: title,
+                text: text,
+                unit: gateway == null
+                    ? null
+                    : vehicle != null
+                        ? FleetUnitSummary(gateway: gateway, vehicle: vehicle)
+                        : Center(
+                            child: FleetPhoto(
+                                gateway: gateway, id: photoId, size: 100)),
                 actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(c, false),
-                      child: const Text('Volver')),
                   FilledButton(
                       onPressed: () => Navigator.pop(c, true),
-                      child: Text(action))
+                      child: Text(action, textAlign: TextAlign.center)),
+                  TextButton(
+                      onPressed: () => Navigator.pop(c, false),
+                      child: const Text('Volver'))
                 ])) ??
     false;
+
+Future<String?> fleetPauseDialog(BuildContext context,
+        {required FleetGateway gateway, dynamic vehicle}) =>
+    showDialog<String>(
+        context: context,
+        builder: (c) => _FleetDecisionDialog(
+                title: 'Dejar de recibir viajes',
+                text:
+                    'Puedes pausar tu disponibilidad y conservar la mototaxi activa, o finalizar tu jornada y liberarla para otro conductor.',
+                pause: true,
+                unit: vehicle == null
+                    ? null
+                    : FleetUnitSummary(
+                        gateway: gateway, vehicle: vehicle, active: true),
+                actions: [
+                  OutlinedButton(
+                      onPressed: () => Navigator.pop(c, 'PAUSE'),
+                      child: const Text('Pausar')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(c, 'FINISH'),
+                      child: const Text('Finalizar jornada')),
+                  TextButton(
+                      onPressed: () => Navigator.pop(c),
+                      child: const Text('Volver'))
+                ]));
+
+class _FleetDecisionDialog extends StatelessWidget {
+  const _FleetDecisionDialog(
+      {required this.title,
+      required this.text,
+      required this.actions,
+      this.unit,
+      this.pause = false});
+  final String title, text;
+  final List<Widget> actions;
+  final Widget? unit;
+  final bool pause;
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Dialog(
+        backgroundColor: colors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxWidth: 380,
+                maxHeight: MediaQuery.sizeOf(context).height * .85),
+            child: SingleChildScrollView(
+                padding: const EdgeInsets.all(22),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                          color: colors.primary.withValues(alpha: .09),
+                          shape: BoxShape.circle),
+                      child: pause
+                          ? Icon(Icons.pause_rounded,
+                              size: 26, color: colors.primary)
+                          : MototaxiIcon(size: 28, color: colors.primary)),
+                  const SizedBox(height: 16),
+                  Text(title,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 10),
+                  Text(text,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: colors.onSurfaceVariant, height: 1.45)),
+                  if (unit != null) ...[const SizedBox(height: 18), unit!],
+                  const SizedBox(height: 18),
+                  for (final action in actions)
+                    Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: SizedBox(width: double.infinity, child: action)),
+                ]))));
+  }
+}
 
 Future<String?> scanVehicle(BuildContext context) => Navigator.push<String>(
     context, MaterialPageRoute(builder: (_) => const _FleetScanner()));
@@ -254,6 +422,136 @@ class _FleetScannerState extends State<_FleetScanner> {
       ]));
 }
 
+/// Ownership is scoped to units, independently of the active passenger/driver mode.
+/// Uses the existing managed list so this entry also works with the installed API.
+class FleetProfileEntries extends StatefulWidget {
+  const FleetProfileEntries(
+      {super.key, required this.gateway, required this.hasDriverCapability});
+  final FleetGateway gateway;
+  final bool hasDriverCapability;
+  @override
+  State<FleetProfileEntries> createState() => _FleetProfileEntriesState();
+}
+
+class _FleetProfileEntriesState extends State<FleetProfileEntries>
+    with WidgetsBindingObserver {
+  int count = 0;
+  bool loading = true, failed = false, opening = false;
+  int revision = 0;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(load());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !opening) unawaited(load());
+  }
+
+  Future<void> load() async {
+    final request = ++revision;
+    try {
+      final result = await widget.gateway.get('/vehicles?managed=true&page=0');
+      final items = result['items'] as List;
+      final total = items.isEmpty
+          ? 0
+          : int.tryParse('${items.first['totalCount']}') ?? items.length;
+      if (mounted && request == revision) {
+        setState(() {
+          count = total;
+          failed = false;
+          loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted && request == revision) {
+        setState(() {
+          failed = true;
+          loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> open({bool owner = false, bool firstUnit = false}) async {
+    if (opening) return;
+    setState(() => opening = true);
+    try {
+      if (firstUnit) {
+        await showModalBottomSheet<bool>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            builder: (_) => _VehicleForm(gateway: widget.gateway, owner: true));
+      } else {
+        await Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) =>
+                    FleetScreen(gateway: widget.gateway, ownerOnly: owner)));
+      }
+      if (mounted) await load();
+    } finally {
+      if (mounted) setState(() => opening = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    Widget leading() => Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: .10),
+            borderRadius: BorderRadius.circular(12)),
+        child: MototaxiIcon(color: scheme.primary, size: 22));
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      if (widget.hasDriverCapability) ...[
+        const Divider(height: 1),
+        ListTile(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+            leading: leading(),
+            title: const Text('Mis mototaxis'),
+            subtitle: const Text('Unidades que puedes conducir'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: opening ? null : () => open()),
+      ],
+      if (!loading && count > 0) ...[
+        const Divider(height: 1),
+        ListTile(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+            leading: leading(),
+            title: const Text('Mi flota'),
+            subtitle: Text('$count ${count == 1 ? 'mototaxi' : 'mototaxis'}'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: opening ? null : () => open(owner: true)),
+      ] else if (!loading && !failed)
+        Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+                onPressed:
+                    opening ? null : () => open(owner: true, firstUnit: true),
+                child: const Text('Registrar o reclamar una mototaxi'))),
+      if (failed)
+        TextButton.icon(
+            onPressed: opening ? null : load,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('Reintentar consulta de flota')),
+    ]);
+  }
+}
+
 class FleetScreen extends StatefulWidget {
   const FleetScreen(
       {super.key,
@@ -268,7 +566,7 @@ class FleetScreen extends StatefulWidget {
 
 class _FleetScreenState extends State<FleetScreen> {
   List<dynamic> rows = [];
-  bool loading = true, busy = false;
+  bool loading = true, busy = false, hasNextPage = false;
   String? error;
   int page = 0;
   final search = TextEditingController();
@@ -285,11 +583,34 @@ class _FleetScreenState extends State<FleetScreen> {
   }
 
   Future<void> load() async {
-    setState(() => loading = true);
+    setState(() {
+      loading = true;
+      error = null;
+    });
     try {
       final data = await widget.gateway.get(
-          '/vehicles?page=$page&search=${Uri.encodeQueryComponent(search.text.trim())}&managed=${widget.ownerOnly}');
-      if (mounted) setState(() => rows = data['items'] as List);
+          '/vehicles?page=$page&search=${Uri.encodeQueryComponent(search.text.trim())}&managed=${widget.ownerOnly}'
+          '&relationType=${widget.ownerOnly ? 'OWNER_MANAGER' : 'AUTHORIZED_DRIVER'}'
+          '${widget.select ? '&authorizedOnly=true&status=VERIFIED' : ''}');
+      final items = data['items'] as List;
+      // Also separate lists when talking to the previous API, which ignores new filters.
+      final filtered = items
+          .where((v) =>
+              (v['relations'] as List? ?? []).any((r) =>
+                  r['type'] ==
+                      (widget.ownerOnly
+                          ? 'OWNER_MANAGER'
+                          : 'AUTHORIZED_DRIVER') &&
+                  (r['status'] == 'APPROVED' ||
+                      (!widget.select && r['status'] == 'PENDING'))) &&
+              (!widget.select || v['status'] == 'VERIFIED'))
+          .toList();
+      if (mounted) {
+        setState(() {
+          rows = filtered;
+          hasNextPage = items.length == 30;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     } finally {
@@ -301,11 +622,10 @@ class _FleetScreenState extends State<FleetScreen> {
     if (busy) return;
     if (!await fleetConfirm(context,
             title: 'Hoy conducirás ${v['identifier']}',
-            text:
-                'Confirma que esta es la mototaxi que usarás. Tu membresía y contador de viajes siguen asociados a tu cuenta.',
+            text: 'Confirma que esta es la mototaxi que conducirás.',
             action: 'Usar mototaxi',
             gateway: widget.gateway,
-            photoId: v['photoId']?.toString()) ||
+            vehicle: v) ||
         !mounted) {
       return;
     }
@@ -322,7 +642,9 @@ class _FleetScreenState extends State<FleetScreen> {
             title: '¿Tienes físicamente esta mototaxi?',
             text:
                 'La jornada anterior está sin conexión. Solo puedes tomar la unidad si no tiene una carrera activa. El relevo quedará registrado.',
-            action: 'Confirmar relevo');
+            action: 'Confirmar relevo',
+            gateway: widget.gateway,
+            vehicle: v);
         if (yes) {
           try {
             final result = await widget.gateway.post('/session',
@@ -397,7 +719,9 @@ class _FleetScreenState extends State<FleetScreen> {
                 Text(
                     widget.select
                         ? 'Selecciona la unidad que conducirás hoy.'
-                        : 'Administra las mototaxis que puedes usar y tus unidades a cargo.',
+                        : widget.ownerOnly
+                            ? 'Unidades que administras como propietario o responsable.'
+                            : 'Unidades que puedes conducir y solicitudes de autorización.',
                     style: Theme.of(context).textTheme.bodyMedium),
                 const SizedBox(height: 12),
                 TextField(
@@ -428,8 +752,7 @@ class _FleetScreenState extends State<FleetScreen> {
                   child: rows.isEmpty && !loading
                       ? ListView(children: [
                           const SizedBox(height: 56),
-                          Icon(Icons.electric_rickshaw_outlined,
-                              size: 48, color: scheme.primary),
+                          MototaxiIcon(size: 48, color: scheme.primary),
                           const Padding(
                               padding: EdgeInsets.all(20),
                               child: Text(
@@ -443,6 +766,18 @@ class _FleetScreenState extends State<FleetScreen> {
                               const SizedBox(height: 12),
                           itemBuilder: (c, i) {
                             final v = rows[i];
+                            final model = [v['brand'], v['model']]
+                                .where((x) =>
+                                    x != null && x.toString().trim().isNotEmpty)
+                                .join(' ');
+                            final details = [
+                              if ((v['color']?.toString().trim() ?? '')
+                                  .isNotEmpty)
+                                v['color'],
+                              if ((v['unitNumber']?.toString().trim() ?? '')
+                                  .isNotEmpty)
+                                'Unidad ${v['unitNumber']}',
+                            ].join(' · ');
                             return Card(
                                 margin: EdgeInsets.zero,
                                 child: InkWell(
@@ -472,16 +807,16 @@ class _FleetScreenState extends State<FleetScreen> {
                                                             fontWeight:
                                                                 FontWeight
                                                                     .w700)),
-                                                Text(
-                                                    '${v['brand'] ?? ''} ${v['model'] ?? ''}',
-                                                    style: Theme.of(c)
-                                                        .textTheme
-                                                        .bodySmall),
-                                                Text(
-                                                    '${v['color'] ?? ''} · Unidad ${v['unitNumber'] ?? '—'}',
-                                                    style: Theme.of(c)
-                                                        .textTheme
-                                                        .bodySmall),
+                                                if (model.isNotEmpty)
+                                                  Text(model,
+                                                      style: Theme.of(c)
+                                                          .textTheme
+                                                          .bodySmall),
+                                                if (details.isNotEmpty)
+                                                  Text(details,
+                                                      style: Theme.of(c)
+                                                          .textTheme
+                                                          .bodySmall),
                                                 Text(fleetLabel(v['status']),
                                                     style: TextStyle(
                                                         color: scheme.primary,
@@ -492,9 +827,29 @@ class _FleetScreenState extends State<FleetScreen> {
                                                           'Sin conductor conectado',
                                                       style: Theme.of(c)
                                                           .textTheme
-                                                          .bodySmall)
+                                                          .bodySmall),
+                                                if ((v['relations'] as List? ??
+                                                        [])
+                                                    .any((r) =>
+                                                        r['type'] ==
+                                                            (widget
+                                                                    .ownerOnly
+                                                                ? 'OWNER_MANAGER'
+                                                                : 'AUTHORIZED_DRIVER') &&
+                                                        r['status'] ==
+                                                            'PENDING'))
+                                                  Text(
+                                                      'Relación pendiente de validación',
+                                                      style: TextStyle(
+                                                          color: scheme
+                                                              .onSurfaceVariant,
+                                                          fontSize: 12))
                                               ])),
-                                          const Icon(Icons.chevron_right)
+                                          Icon(
+                                              widget.select
+                                                  ? Icons.radio_button_unchecked
+                                                  : Icons.chevron_right,
+                                              color: scheme.primary)
                                         ]))));
                           }))),
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -508,7 +863,7 @@ class _FleetScreenState extends State<FleetScreen> {
                 icon: const Icon(Icons.chevron_left)),
             Text('Página ${page + 1}'),
             IconButton(
-                onPressed: rows.length == 30 && !loading
+                onPressed: hasNextPage && !loading
                     ? () {
                         page++;
                         unawaited(load());
@@ -679,6 +1034,9 @@ class _VehicleFormState extends State<_VehicleForm> {
                     style: Theme.of(context).textTheme.bodySmall,
                     textAlign: TextAlign.center),
                 const SizedBox(height: 14),
+                if (widget.vehicle == null && widget.owner)
+                  const Text(
+                      'Propietario / responsable · Requiere validación. No habilita la conducción.'),
                 if (widget.vehicle == null)
                   Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -712,13 +1070,9 @@ class _VehicleFormState extends State<_VehicleForm> {
                 field('identifier', 'Placa o registro', Icons.badge_outlined),
                 if (!linkExisting) ...[
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Expanded(
-                        child: field('brand', 'Marca',
-                            Icons.electric_rickshaw_outlined)),
+                    Expanded(child: field('brand', 'Marca', null)),
                     const SizedBox(width: 10),
-                    Expanded(
-                        child: field('model', 'Modelo',
-                            Icons.electric_rickshaw_outlined))
+                    Expanded(child: field('model', 'Modelo', null))
                   ]),
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Expanded(
@@ -730,7 +1084,7 @@ class _VehicleFormState extends State<_VehicleForm> {
                   field('declaredOwnerName', 'Propietario declarado',
                       Icons.person_outline),
                 ],
-                if (widget.vehicle == null)
+                if (widget.vehicle == null && !widget.owner)
                   DropdownButtonFormField<String>(
                       initialValue: relation,
                       isExpanded: true,
@@ -774,7 +1128,7 @@ class _VehicleFormState extends State<_VehicleForm> {
                           child: Text(busy ? 'Guardando…' : 'Guardar')))
                 ]),
               ]))));
-  Widget field(String key, String title, IconData icon) => Padding(
+  Widget field(String key, String title, IconData? icon) => Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
           controller: fields[key],
@@ -785,7 +1139,11 @@ class _VehicleFormState extends State<_VehicleForm> {
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
               labelText: title,
-              prefixIcon: Icon(icon, size: 20)),
+              prefixIcon: icon == null
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: MototaxiIcon(size: 20))
+                  : Icon(icon, size: 20)),
           validator: (v) => key != 'unitNumber' && (v?.trim().isEmpty ?? true)
               ? 'Completa este campo'
               : null));
@@ -835,7 +1193,8 @@ class _VehicleDetailState extends State<VehicleDetail> {
           if (error != null)
             Text(error!, style: TextStyle(color: scheme.error)),
           if (v != null) ...[
-            TripVehicleBadge(gateway: widget.gateway, vehicle: v),
+            TripVehicleBadge(
+                gateway: widget.gateway, vehicle: v, showSafety: false),
             const SizedBox(height: 12),
             Text('Estado: ${fleetLabel(v['status'])}'),
             if (notice != null)

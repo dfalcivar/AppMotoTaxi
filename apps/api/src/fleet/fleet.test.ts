@@ -34,7 +34,8 @@ function sqlFor(client:any):any{
 beforeAll(async()=>{
   pg=new PGlite();state.sql=sqlFor(pg);
   await pg.exec(`create table cooperatives(id uuid primary key,name text);
-    create table users(id uuid primary key,full_name text,email text,cooperative_id uuid references cooperatives(id),status text default 'ACTIVE',deleted_at timestamptz);
+    create table users(id uuid primary key,full_name text,email text,role text default 'PASSENGER',cooperative_id uuid references cooperatives(id),status text default 'ACTIVE',deleted_at timestamptz);
+    create table mobile_account_roles(user_id uuid references users(id),role text,primary key(user_id,role));
     create table drivers(user_id uuid primary key references users(id),is_available boolean default false,approval_status text default 'APROBADO');
     create table vehicles(id uuid primary key default gen_random_uuid(),driver_id uuid not null references drivers(user_id),identifier text unique not null,
       maximum_passengers smallint not null,status text default 'PENDING',created_at timestamptz default now(),brand text,model text,model_year integer,notes text);
@@ -52,6 +53,7 @@ beforeEach(async()=>{
   await pg.query('insert into cooperatives values($1,$2),($3,$4)',[ids.coop,'Cooperativa uno',ids.coop2,'Cooperativa dos']);
   for(const [name,id]of Object.entries(ids).filter(([key])=>!key.startsWith('coop')))await pg.query('insert into users(id,full_name,email,cooperative_id) values($1,$2,$3,$4)',[id,name,`${name}@example.test`,ids.coop]);
   await pg.query('insert into drivers(user_id) values($1),($2)',[ids.driver,ids.other]);
+  await pg.exec("insert into mobile_account_roles select id,'PASSENGER' from users; insert into mobile_account_roles select user_id,'DRIVER' from drivers");
   await pg.exec('update fleet_settings set heartbeat_seconds=30,offline_seconds=180,auto_release_seconds=900,owner_notifications=false');
 });
 afterAll(async()=>{await pg.close();});
@@ -69,6 +71,74 @@ async function trip(driverId=ids.driver){
   return row.rows[0];
 }
 describe('fleet real SQL integration',()=>{
+  it.each([
+    ['passenger only',false,false,'PASSENGER'],
+    ['passenger and driver',true,false,'PASSENGER'],
+    ['passenger and owner',false,true,'PASSENGER'],
+    ['owner who does not drive',false,true,'PASSENGER'],
+    ['driver and owner',true,true,'DRIVER'],
+    ['passenger driver and owner in passenger mode',true,true,'PASSENGER'],
+  ] as const)('preserves independent capabilities: %s',async(_name,canDrive,owns,activeRole)=>{
+    if(canDrive){await pg.query('insert into drivers(user_id) values($1)',[ids.owner]);await pg.query("insert into mobile_account_roles values($1,'DRIVER')",[ids.owner]);}
+    const id=await unit();
+    if(owns)await fleet.setRelation(admin,id,ids.owner,'OWNER_MANAGER','APPROVED','Responsable verificado');
+    if(canDrive)await fleet.setRelation(admin,id,ids.owner,'AUTHORIZED_DRIVER','APPROVED','Conductor independiente verificado');
+    const accountBefore=(await pg.query('select * from users where id=$1',[ids.owner])).rows;
+    const rolesBefore=(await pg.query('select * from mobile_account_roles where user_id=$1 order by role',[ids.owner])).rows;
+    const app=Fastify();await registerFleetRoutes(app,async()=>({id:ids.owner,email:'owner@example.test',name:'Owner',role:activeRole}));
+    try {
+      const managed=await app.inject({url:'/v1/fleet/vehicles?managed=true'});
+      expect(managed.statusCode).toBe(200);expect(managed.json().items).toHaveLength(owns?1:0);
+      const driving=await app.inject({url:'/v1/fleet/vehicles?relationType=AUTHORIZED_DRIVER&authorizedOnly=true'});
+      expect(driving.json().items).toHaveLength(canDrive?1:0);
+      const start=await app.inject({method:'POST',url:'/v1/fleet/session',payload:{vehicleId:id}});
+      expect(start.statusCode).toBe(canDrive?200:403);
+      if(owns)expect((await fleet.fleetDetail(owner,id)).canManage).toBe(true);
+      else if(canDrive)expect((await fleet.fleetDetail(owner,id)).canManage).toBe(false);
+      expect((await pg.query('select * from users where id=$1',[ids.owner])).rows).toEqual(accountBefore);
+      expect((await pg.query('select * from mobile_account_roles where user_id=$1 order by role',[ids.owner])).rows).toEqual(rolesBefore);
+    } finally {await app.close();}
+  });
+  it('passenger registration and ownership approval never grant DRIVER or global ownership',async()=>{
+    const app=Fastify();await registerFleetRoutes(app,async()=>({id:ids.owner,email:'owner@example.test',name:'Owner',role:'PASSENGER'}));
+    try{
+      const request={...input,relationType:'OWNER_MANAGER'};
+      const created=await app.inject({method:'POST',url:'/v1/fleet/vehicles',payload:request});
+      expect(created.statusCode).toBe(200);const id=created.json().id;
+      expect((await fleet.fleetDetail(owner,id)).canManage).toBe(false);
+      expect((await app.inject({method:'PUT',url:`/v1/fleet/vehicles/${id}`,payload:request})).statusCode).toBe(403);
+      await fleet.setRelation(admin,id,ids.owner,'OWNER_MANAGER','APPROVED','Propiedad revisada documentalmente');
+      expect((await app.inject({method:'PUT',url:`/v1/fleet/vehicles/${id}`,payload:request})).statusCode).toBe(200);
+      expect((await app.inject({method:'POST',url:'/v1/fleet/session',payload:{vehicleId:id}})).statusCode).toBe(403);
+      const alien=await unit('ALIEN-21');
+      expect((await app.inject({method:'PUT',url:`/v1/fleet/vehicles/${alien}`,payload:request})).statusCode).toBe(403);
+      expect((await pg.query('select role from users where id=$1',[ids.owner])).rows).toEqual([{role:'PASSENGER'}]);
+      expect((await pg.query('select role from mobile_account_roles where user_id=$1',[ids.owner])).rows).toEqual([{role:'PASSENGER'}]);
+      expect((await pg.query('select * from drivers where user_id=$1',[ids.owner])).rows).toHaveLength(0);
+    }finally{await app.close();}
+  });
+  it('driver cannot self-approve ownership and filters do not broaden authorization',async()=>{
+    const id=await unit();
+    await fleet.requestExistingVehicle(driver,{identifier:'MT-20',relationType:'OWNER_MANAGER'});
+    await expect(fleet.setRelation(driver,id,ids.driver,'OWNER_MANAGER','APPROVED','Intento de autoasignación')).rejects.toThrow('VEHICLE_FORBIDDEN');
+    expect((await fleet.fleetDetail(driver,id)).canManage).toBe(false);
+    await fleet.setRelation(admin,id,ids.owner,'OWNER_MANAGER','APPROVED','Responsable validado');
+    await expect(fleet.setRelation(owner,id,ids.driver,'OWNER_MANAGER','APPROVED','Intento de otorgar propiedad')).rejects.toThrow('FORBIDDEN');
+    expect(await fleet.listVehicles(other,'',0,'',true,'AUTHORIZED_DRIVER')).toHaveLength(0);
+    expect(await fleet.listVehicles({...admin,cooperativeId:ids.coop2},'',0,'',false,'OWNER_MANAGER')).toHaveLength(0);
+    expect(await fleet.listVehicles(admin)).toHaveLength(1);
+  });
+  it('old list contracts keep the same combined response and paginate filtered relations',async()=>{
+    const id=await unit();await fleet.setRelation(admin,id,ids.owner,'OWNER_MANAGER','APPROVED','Responsable validado');
+    const second=await unit('MT-21');await fleet.setRelation(admin,second,ids.owner,'OWNER_MANAGER','APPROVED','Responsable validado');
+    await fleet.setRelation(admin,second,ids.driver,'OWNER_MANAGER','APPROVED','Conductor también responsable');
+    expect(await fleet.listVehicles(owner)).toHaveLength(2);
+    expect(await fleet.listVehicles(owner,'',0,'',false,'AUTHORIZED_DRIVER')).toHaveLength(0);
+    expect(await fleet.listVehicles(driver,'',0,'',true)).toHaveLength(1);
+    expect(await fleet.listVehicles(driver,'',0,'',false,'AUTHORIZED_DRIVER')).toHaveLength(2);
+    expect((await fleet.fleetDetail(owner,id)).relations.filter((r:any)=>r.type==='AUTHORIZED_DRIVER')).toHaveLength(2);
+    expect((await fleet.listVehicles(owner,'MT-21',0,'',true))[0]!.totalCount).toBe(1);
+  });
   it('links an existing identifier idempotently without requiring invented vehicle data',async()=>{
     const {id}=await fleet.requestVehicle(driver,input);
     for(let n=0;n<2;n++)expect((await fleet.requestExistingVehicle(other,{identifier:'mt 20',relationType:'AUTHORIZED_DRIVER'})).id).toBe(id);
@@ -109,6 +179,8 @@ describe('fleet real SQL integration',()=>{
   });
   it.runIf(process.env.FLEET_UI_QA==='true')('local browser fixture',async()=>{
     const id=await unit();await unit('MT-21');await fleet.setRelation(admin,id,ids.owner,'OWNER_MANAGER','APPROVED','Responsable validado');
+    const photo=await sharp({create:{width:320,height:240,channels:3,background:'#1978ac'}}).png().toBuffer();
+    await uploadVehicleFile(admin,id,{kind:'PHOTO',mimeType:'image/png',data:photo.toString('base64')});
     await fleet.startSession(driver,id);await trip();
     const app=Fastify();await app.register(cors,{origin:['http://127.0.0.1:3314','http://localhost:3314','http://127.0.0.1:3315'],methods:['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']});
     await registerFleetRoutes(app,async()=>({id:ids.driver,email:'driver@example.test',name:'Conductor de prueba',role:'DRIVER'}));
@@ -217,7 +289,7 @@ describe('fleet real SQL integration',()=>{
     await expect(readVehicleFile(other,String(photo.id),true)).rejects.toThrow();
     await fleet.startSession(driver,id);const t=await trip();
     expect(t.vehicle_snapshot.photoId).toBe(photo.id);
-    expect((await readVehicleFile(owner,String(photo.id))).mimeType).toBe('image/jpeg');
+    expect((await readVehicleFile(owner,String(photo.id))).mimeType).toBe('image/webp');
     await pg.query("update trips set status='COMPLETED' where id=$1",[t.id]);
     await uploadVehicleFile(admin,id,{kind:'PHOTO',mimeType:'image/png',data:bytes.toString('base64')});
     expect((await pg.query<any>('select vehicle_snapshot from trips where id=$1',[t.id])).rows[0].vehicle_snapshot.photoId).toBe(photo.id);
@@ -418,7 +490,53 @@ describe('fleet real SQL integration',()=>{
     const bytes=await sharp({create:{width:20,height:10,channels:3,background:'blue'}}).png().toBuffer();
     const prepared=await prepareVehicleFile({kind:'PHOTO',mimeType:'image/png',data:bytes.toString('base64')});
     expect(prepared.bytes.equals(bytes)).toBe(true);
-    expect(await sharp(prepared.display!).metadata()).toMatchObject({width:800,height:600,format:'jpeg'});
+    expect(await sharp(prepared.display!).metadata()).toMatchObject({width:800,height:600,format:'webp'});
     await expect(prepareVehicleFile({kind:'PHOTO',mimeType:'image/png',data:Buffer.from('not a png').toString('base64')})).rejects.toThrow('INVALID_IMAGE');
+  });
+  it('rotates EXIF safely and uses transparent framing without cropping the real photo',async()=>{
+    const original=await sharp({create:{width:120,height:60,channels:3,background:'#0864a4'}}).jpeg().withMetadata({orientation:6}).toBuffer();
+    const file=await prepareVehicleFile({kind:'PHOTO',mimeType:'image/jpeg',data:original.toString('base64')});
+    expect(file.bytes.equals(original)).toBe(true);
+    const metadata=await sharp(file.display!).metadata();
+    expect(metadata).toMatchObject({width:800,height:600,format:'webp',hasAlpha:true});
+    expect(metadata.orientation).toBeUndefined();expect(metadata.exif).toBeUndefined();
+    const {data,info}=await sharp(file.display!).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+    const alpha=(x:number,y:number)=>data[(y*info.width+x)*4+3];
+    expect(alpha(0,300)).toBe(0);expect(alpha(400,300)).toBe(255);expect(alpha(600,300)).toBe(0);
+  });
+  it('normalizes legacy previews on read without altering original or historical file rows',async()=>{
+    const id=await unit();
+    const original=await sharp({create:{width:160,height:120,channels:3,background:'blue'}}).png().toBuffer();
+    const oldDisplay=await sharp(original).jpeg().toBuffer();
+    const result=await pg.query<any>(`insert into vehicle_files(vehicle_id,kind,mime_type,original_bytes,display_bytes,sha256,uploaded_by)
+      values($1,'PHOTO','image/png',$2,$3,'legacy-test',$4) returning id`,[id,original,oldDisplay,ids.driver]);
+    const fileId=String(result.rows[0].id);
+    const [display,concurrent]=await Promise.all([readVehicleFile(driver,fileId),readVehicleFile(driver,fileId)]);
+    expect(Buffer.from(concurrent.bytes).equals(Buffer.from(display.bytes))).toBe(true);
+    expect(display.mimeType).toBe('image/webp');
+    expect(await sharp(display.bytes).metadata()).toMatchObject({width:800,height:600,format:'webp'});
+    expect(Buffer.from((await readVehicleFile(driver,fileId)).bytes).equals(Buffer.from(display.bytes))).toBe(true);
+    expect(Buffer.from((await readVehicleFile(driver,fileId,true)).bytes).equals(original)).toBe(true);
+    const [unchanged]=(await pg.query<any>('select original_bytes,display_bytes from vehicle_files where id=$1',[fileId])).rows;
+    expect(Buffer.from(unchanged.original_bytes).equals(original)).toBe(true);
+    expect(Buffer.from(unchanged.display_bytes).equals(oldDisplay)).toBe(true);
+  });
+  it('falls back to the stored original when optional display conversion is unavailable',async()=>{
+    const id=await unit();const damagedLegacy=Buffer.from('legacy-not-decodable');
+    const result=await pg.query<any>(`insert into vehicle_files(vehicle_id,kind,mime_type,original_bytes,sha256,uploaded_by)
+      values($1,'PHOTO','image/png',$2,'legacy-damaged',$3) returning id`,[id,damagedLegacy,ids.driver]);
+    const response=await readVehicleFile(driver,String(result.rows[0].id));
+    expect(response.mimeType).toBe('image/png');expect(Buffer.from(response.bytes).equals(damagedLegacy)).toBe(true);
+  });
+  it('recovers a damaged stored preview using the real original',async()=>{
+    const id=await unit();
+    const original=await sharp({create:{width:20,height:30,channels:3,background:'blue'}}).png().toBuffer();
+    const broken=Buffer.from('RIFF0000WEBPbroken');
+    const result=await pg.query<any>(`insert into vehicle_files(vehicle_id,kind,mime_type,original_bytes,display_bytes,sha256,uploaded_by)
+      values($1,'PHOTO','image/png',$2,$3,'bad-preview',$4) returning id`,[id,original,broken,ids.driver]);
+    const response=await readVehicleFile(driver,String(result.rows[0].id));
+    expect(response.mimeType).toBe('image/webp');
+    expect(await sharp(response.bytes).metadata()).toMatchObject({width:800,height:600,format:'webp'});
+    expect(Buffer.from((await readVehicleFile(driver,String(result.rows[0].id),true)).bytes).equals(original)).toBe(true);
   });
 });
