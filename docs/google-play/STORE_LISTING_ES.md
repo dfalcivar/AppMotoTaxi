@@ -1,10 +1,12 @@
-# Ficha principal en español
+# Ficha principal de Google Play - español
 
-## Nombre de la aplicación
+Actualizada el 29 de agosto de 2026. Las imágenes se regenerarán después de validar visualmente la versión final.
+
+## Nombre
 
 `Costa-Go`
 
-## Descripción corta — 67/80 caracteres
+## Descripción corta
 
 `Solicita mototaxis, programa viajes y sigue tu ruta en tiempo real.`
 
@@ -12,46 +14,30 @@
 
 Costa-Go conecta pasajeros con conductores de mototaxi verificados dentro de las zonas de cobertura habilitadas.
 
-Solicita un viaje inmediato o prográmalo con anticipación. Selecciona el origen y los destinos directamente en el mapa, consulta la ruta, el tiempo y la tarifa estimada antes de confirmar, y sigue el avance del conductor durante el servicio.
+Como pasajero puedes solicitar o programar viajes, elegir origen, paradas y destino, revisar la ruta y el total antes de confirmar, seleccionar efectivo o transferencia, comunicarte durante el servicio y seguir el avance del conductor. También puedes compartir un enlace temporal de seguimiento, consultar historial, calificar y solicitar soporte.
 
-Con Costa-Go puedes:
+Como conductor puedes completar tu verificación, administrar documentos y membresía, seleccionar una mototaxi autorizada, iniciar o finalizar jornada, recibir solicitudes compatibles con tus formas de pago, aceptar viajes inmediatos o programados y utilizar navegación externa.
 
-• Solicitar viajes de mototaxi en zonas habilitadas.
-• Programar viajes y consultar tus próximas solicitudes.
-• Agregar paradas antes de confirmar el viaje.
-• Ver una estimación de distancia, duración y tarifa.
-• Seguir al conductor y el estado del viaje en tiempo real.
-• Comunicarte mediante llamada o chat durante el servicio.
-• Recibir avisos sobre aceptación, llegada, inicio y finalización.
-• Guardar lugares favoritos y consultar viajes anteriores.
-• Compartir información del viaje y acceder a Ayuda y soporte.
-• Calificar la experiencia al finalizar.
+Una cuenta puede mantener varias capacidades: pasajero, conductor y propietario o gestor de flota. Los propietarios administran únicamente sus unidades y conductores autorizados; ser propietario no concede permiso para conducir. Cada mototaxi verificada dispone de fotografía normalizada, documentos, QR e historial de jornadas.
 
-Los conductores registrados pasan por un proceso de revisión de identidad, vehículo y documentos antes de poder recibir solicitudes. Durante un viaje, la aplicación ofrece herramientas de ruta y navegación para facilitar la recogida y el recorrido.
+La disponibilidad depende de cobertura, GPS, conexión y conductores elegibles. El cálculo prioriza el tarifario territorial; cuando no existe una regla aplicable puede usar distancia real o un valor local sugerido según la configuración vigente. Costa-Go muestra el total antes de solicitar.
 
-La disponibilidad depende de la zona de operación, la conexión a internet, el GPS y la presencia de conductores conectados. Las tarifas mostradas son estimaciones o valores sugeridos conforme a la configuración vigente; revisa el resumen antes de solicitar. Costa-Go no es un servicio de emergencias.
+Costa-Go incluye anuncios de comercios afiliados administrados por la plataforma. No es un servicio de emergencias.
 
 Tu viaje, nuestra prioridad.
 
-## Configuración recomendada de la ficha
+## Declaraciones y contacto
 
-- Tipo: aplicación.
-- Precio: gratuita.
-- Categoría propuesta: Viajes y guías locales. Validar si Google muestra una categoría local equivalente más apropiada.
-- País inicial: Ecuador.
-- Contiene anuncios: **Sí**. La app presenta campañas de comercios afiliados administradas por Costa-Go.
-- Público objetivo recomendado: adultos. No declarar la aplicación como dirigida a niños.
+- Tipo: aplicación gratuita.
+- Categoría: Viajes y guías locales (validar etiqueta disponible en Play Console).
+- Contiene anuncios: **Sí**.
+- Público: adultos; no dirigida a niños.
+- Soporte: `soporte@costa-go.com`
+- Sitio: `https://costa-go.com`
+- Privacidad: `https://costa-go.com/privacy.html`
+- Términos: `https://costa-go.com/terms.html`
+- Eliminación: `https://costa-go.com/account-deletion.html`
 
-## Datos de contacto
+## Pendiente de recursos
 
-- Correo de soporte: `soporte@costa-go.com` — recepción verificada mediante Cloudflare Email Routing.
-- Sitio web: `https://costa-go.com` — publicar únicamente después de comprobar DNS, HTTPS y contenido público.
-- Política de privacidad actual: `https://costa-go.com/privacy.html`
-- Términos actuales: `https://costa-go.com/terms.html`
-- Eliminación de cuenta actual: `https://costa-go.com/account-deletion.html`
-
-Cuando el dominio esté listo, se recomienda servir las mismas páginas en:
-
-- `https://costa-go.com/privacy.html`
-- `https://costa-go.com/terms.html`
-- `https://costa-go.com/account-deletion.html`
+No reutilizar capturas históricas. Generar un set nuevo después de validar la versión final: pasajero, búsqueda, resumen, seguimiento, cuenta, conductor/jornada, flota y soporte.

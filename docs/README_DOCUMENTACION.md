@@ -1,11 +1,10 @@
 # Documentación Costa-Go
 
-Generada el 21 de agosto de 2026 desde la rama `main` del repositorio.
+Generada el 29 de agosto de 2026 desde la rama `main` del repositorio.
 
 ## Contenido
 
-- `docs/CLIENTES_FISCALES_Y_FACTURACION.md`: arquitectura fiscal, flujos de captura, permisos, pruebas y publicación coordinada (28/08/2026).
-- `docs/manuales_usuario/`: índice general y 15 manuales funcionales del ecosistema web.
+- `docs/manuales_usuario/`: índice general y 21 manuales funcionales vigentes del ecosistema completo.
 - `docs/tecnica/`: arquitectura, datos, API, reglas, seguridad, despliegue y trazabilidad.
 - `docs/fuentes/html/`: fuentes HTML editables utilizadas para los PDF.
 - `docs/fuentes/diagramas/`: diagramas Mermaid editables.
@@ -22,4 +21,4 @@ El script de PDF busca Google Chrome o Microsoft Edge instalados. Los PDF se gen
 
 ## Criterio documental
 
-La documentación describe funciones verificadas en código. Los códigos internos permanecen intactos; las etiquetas visibles se presentan en español. Funciones no verificadas se identifican como pendientes. Los manuales funcionales cubren únicamente superficies web; la aplicación móvil se incluye solo como dependencia del sistema en documentación técnica.
+La documentación describe funciones verificadas en código. Los códigos internos permanecen intactos; las etiquetas visibles se presentan en español. Funciones no habilitadas, como la emisión fiscal productiva, se identifican expresamente. El paquete cubre sitio, panel, aplicación móvil, flota, seguimiento, pagos, soporte y operación.

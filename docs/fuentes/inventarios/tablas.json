@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-21T05:09:45.628Z",
-  "total": 72,
+  "generatedAt": "2026-08-29T19:20:30.436Z",
+  "total": 95,
   "tables": [
     {
       "name": "account_deletion_requests",
@@ -485,11 +485,16 @@
         {
           "name": "submission_key",
           "definition": "text"
+        },
+        {
+          "name": "conversation_status",
+          "definition": "text NOT NULL DEFAULT 'IN_PROGRESS'"
         }
       ],
       "sources": [
         "apps/api/migrations/045_commercial_advertising.sql",
-        "apps/api/migrations/047_commercial_chat_idempotency.sql"
+        "apps/api/migrations/047_commercial_chat_idempotency.sql",
+        "apps/api/migrations/049_commercial_chat_finalization.sql"
       ]
     },
     {
@@ -562,11 +567,21 @@
         {
           "name": "invitation_id",
           "definition": "uuid REFERENCES advertising_invitations(id) ON DELETE SET NULL"
+        },
+        {
+          "name": "renewal_of_campaign_id",
+          "definition": "uuid REFERENCES affiliate_banners(id) ON DELETE SET NULL, ADD COLUMN IF NOT EXISTS content_reused boolean NOT NULL DEFAULT false"
+        },
+        {
+          "name": "fiscal_client_id",
+          "definition": "uuid REFERENCES fiscal_clients(id)"
         }
       ],
       "sources": [
         "apps/api/migrations/045_commercial_advertising.sql",
-        "apps/api/migrations/047_commercial_chat_idempotency.sql"
+        "apps/api/migrations/047_commercial_chat_idempotency.sql",
+        "apps/api/migrations/053_advertising_renewals_and_institutional_alliances.sql",
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
       ]
     },
     {
@@ -615,6 +630,58 @@
       ],
       "sources": [
         "apps/api/migrations/045_commercial_advertising.sql"
+      ]
+    },
+    {
+      "name": "advertising_payment_upload_tokens",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "order_id",
+          "definition": "uuid NOT NULL UNIQUE REFERENCES advertising_orders(id) ON DELETE CASCADE"
+        },
+        {
+          "name": "payment_id",
+          "definition": "uuid NOT NULL UNIQUE REFERENCES advertising_payments(id) ON DELETE CASCADE"
+        },
+        {
+          "name": "token_hash",
+          "definition": "text NOT NULL UNIQUE"
+        },
+        {
+          "name": "status",
+          "definition": "text NOT NULL DEFAULT 'CREATED' CHECK (status IN ('CREATED','OPENED','SUBMITTED','EXPIRED','REVOKED'))"
+        },
+        {
+          "name": "expires_at",
+          "definition": "timestamptz NOT NULL"
+        },
+        {
+          "name": "opened_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "submitted_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "email_sent_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/049_commercial_chat_finalization.sql"
       ]
     },
     {
@@ -687,11 +754,20 @@
         {
           "name": "cash_closure_id",
           "definition": "uuid REFERENCES advertising_cash_closures(id) ON DELETE SET NULL"
+        },
+        {
+          "name": "fiscal_client_id",
+          "definition": "uuid REFERENCES fiscal_clients(id)"
+        },
+        {
+          "name": "fiscal_profile_id",
+          "definition": "uuid REFERENCES fiscal_profiles(id) ON DELETE SET NULL"
         }
       ],
       "sources": [
         "apps/api/migrations/045_commercial_advertising.sql",
-        "apps/api/migrations/048_commercial_cash_reconciliation.sql"
+        "apps/api/migrations/048_commercial_cash_reconciliation.sql",
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
       ]
     },
     {
@@ -817,12 +893,22 @@
         {
           "name": "order_id",
           "definition": "uuid REFERENCES advertising_orders(id) ON DELETE SET NULL, ADD COLUMN IF NOT EXISTS rejection_reason text, ADD COLUMN IF NOT EXISTS correction_note text, ADD COLUMN IF NOT EXISTS submitted_at timestamptz, ADD COLUMN IF NOT EXISTS review_req"
+        },
+        {
+          "name": "internal_campaign_type",
+          "definition": "text, ADD COLUMN IF NOT EXISTS internal_partner_name text, ADD COLUMN IF NOT EXISTS internal_reason text, ADD COLUMN IF NOT EXISTS internal_reference text, ADD COLUMN IF NOT EXISTS internal_authorized_by uuid REFERENCES users(id) ON DELETE "
+        },
+        {
+          "name": "action_message",
+          "definition": "text"
         }
       ],
       "sources": [
         "apps/api/migrations/011_affiliate_banners.sql",
         "apps/api/migrations/041_memberships_navigation_collection.sql",
-        "apps/api/migrations/045_commercial_advertising.sql"
+        "apps/api/migrations/045_commercial_advertising.sql",
+        "apps/api/migrations/053_advertising_renewals_and_institutional_alliances.sql",
+        "apps/api/migrations/061_whatsapp_campaign_message.sql"
       ]
     },
     {
@@ -1178,6 +1264,46 @@
       ]
     },
     {
+      "name": "collection_point_schedules",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "collection_point_id",
+          "definition": "uuid NOT NULL REFERENCES collection_points(id) ON DELETE CASCADE"
+        },
+        {
+          "name": "day_of_week",
+          "definition": "smallint NOT NULL CHECK (day_of_week BETWEEN 0 AND 6)"
+        },
+        {
+          "name": "opens_at",
+          "definition": "time"
+        },
+        {
+          "name": "closes_at",
+          "definition": "time"
+        },
+        {
+          "name": "closed",
+          "definition": "boolean NOT NULL DEFAULT false"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/062_collection_point_directory.sql"
+      ]
+    },
+    {
       "name": "collection_point_settlements",
       "columns": [
         {
@@ -1319,10 +1445,15 @@
         {
           "name": "updated_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "reference",
+          "definition": "text, ADD COLUMN IF NOT EXISTS phone text, ADD COLUMN IF NOT EXISTS whatsapp text, ADD COLUMN IF NOT EXISTS email text, ADD COLUMN IF NOT EXISTS latitude numeric(10,7), ADD COLUMN IF NOT EXISTS longitude numeric(10,7), ADD COLUMN IF NOT EXI"
         }
       ],
       "sources": [
-        "apps/api/migrations/041_memberships_navigation_collection.sql"
+        "apps/api/migrations/041_memberships_navigation_collection.sql",
+        "apps/api/migrations/062_collection_point_directory.sql"
       ]
     },
     {
@@ -1459,10 +1590,15 @@
         {
           "name": "updated_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "account_identifier_public",
+          "definition": "text, ADD COLUMN IF NOT EXISTS holder_identification_public text, ADD COLUMN IF NOT EXISTS support_email text"
         }
       ],
       "sources": [
-        "apps/api/migrations/041_memberships_navigation_collection.sql"
+        "apps/api/migrations/041_memberships_navigation_collection.sql",
+        "apps/api/migrations/062_collection_point_directory.sql"
       ]
     },
     {
@@ -1491,10 +1627,15 @@
         {
           "name": "created_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "notification_protocol",
+          "definition": "smallint not null default 1"
         }
       ],
       "sources": [
-        "apps/api/migrations/006_device_tokens.sql"
+        "apps/api/migrations/006_device_tokens.sql",
+        "apps/api/migrations/069_passenger_cancellations_and_trip_integrity.sql"
       ]
     },
     {
@@ -1980,10 +2121,77 @@
         {
           "name": "accepted",
           "definition": "boolean"
+        },
+        {
+          "name": "search_round",
+          "definition": "integer NOT NULL DEFAULT 1, ADD COLUMN IF NOT EXISTS distance_meters integer, ADD COLUMN IF NOT EXISTS notification_sent_at timestamptz"
+        },
+        {
+          "name": "response_reason",
+          "definition": "text"
+        },
+        {
+          "name": "vehicle_session_id",
+          "definition": "uuid REFERENCES driver_vehicle_sessions(id)"
         }
       ],
       "sources": [
-        "apps/api/migrations/001_initial.sql"
+        "apps/api/migrations/001_initial.sql",
+        "apps/api/migrations/051_progressive_driver_search.sql",
+        "apps/api/migrations/055_trip_request_safety_driver_cancellation.sql",
+        "apps/api/migrations/074_vehicle_session_integrity.sql"
+      ]
+    },
+    {
+      "name": "driver_vehicle_sessions",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "driver_id",
+          "definition": "uuid NOT NULL REFERENCES drivers(user_id)"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid NOT NULL REFERENCES vehicles(id)"
+        },
+        {
+          "name": "started_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "ended_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "last_heartbeat",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "status",
+          "definition": "text NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','ENDED'))"
+        },
+        {
+          "name": "start_method",
+          "definition": "text NOT NULL CHECK(start_method IN ('MANUAL_SELECTION','QR_SCAN','RECOVERY','ADMIN_ASSIGNED'))"
+        },
+        {
+          "name": "end_reason",
+          "definition": "text CHECK(end_reason IN ('MANUAL_RELEASE','LOGOUT','AUTO_RELEASE','TAKEOVER','VEHICLE_CHANGE','ADMIN_RELEASE'))"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
       ]
     },
     {
@@ -2147,10 +2355,15 @@
         {
           "name": "updated_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "priority",
+          "definition": "integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS source_code text"
         }
       ],
       "sources": [
-        "apps/api/migrations/036_territorial_fare_engine.sql"
+        "apps/api/migrations/036_territorial_fare_engine.sql",
+        "apps/api/migrations/050_atacames_official_territorial_fares.sql"
       ]
     },
     {
@@ -2243,6 +2456,506 @@
       ],
       "sources": [
         "apps/api/migrations/013_security_favorite_places.sql"
+      ]
+    },
+    {
+      "name": "fiscal_audit",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
+        },
+        {
+          "name": "client_id",
+          "definition": "uuid REFERENCES fiscal_clients(id)"
+        },
+        {
+          "name": "entity_type",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "entity_id",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "event_type",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "actor_id",
+          "definition": "uuid REFERENCES users(id)"
+        },
+        {
+          "name": "actor_process",
+          "definition": "text"
+        },
+        {
+          "name": "result",
+          "definition": "text NOT NULL DEFAULT 'SUCCESS'"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
+      ]
+    },
+    {
+      "name": "fiscal_billing_outbox",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "source",
+          "definition": "text NOT NULL CHECK(source IN ('MEMBRESIA','PUBLICIDAD','PUNTO_VENTA','OTRO'))"
+        },
+        {
+          "name": "payment_id",
+          "definition": "uuid NOT NULL"
+        },
+        {
+          "name": "document_type",
+          "definition": "text NOT NULL DEFAULT 'FACTURA'"
+        },
+        {
+          "name": "client_id",
+          "definition": "uuid REFERENCES fiscal_clients(id)"
+        },
+        {
+          "name": "fiscal_snapshot",
+          "definition": "jsonb"
+        },
+        {
+          "name": "amount",
+          "definition": "numeric(14,2) NOT NULL"
+        },
+        {
+          "name": "currency",
+          "definition": "text NOT NULL DEFAULT 'USD'"
+        },
+        {
+          "name": "concept",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "zone_id",
+          "definition": "uuid REFERENCES service_areas(id)"
+        },
+        {
+          "name": "service_type",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "paid_at",
+          "definition": "timestamptz NOT NULL"
+        },
+        {
+          "name": "payment_reversed",
+          "definition": "boolean NOT NULL DEFAULT false"
+        },
+        {
+          "name": "processed_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
+      ]
+    },
+    {
+      "name": "fiscal_client_links",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "client_id",
+          "definition": "uuid NOT NULL REFERENCES fiscal_clients(id)"
+        },
+        {
+          "name": "link_type",
+          "definition": "text NOT NULL CHECK(link_type IN ('CONDUCTOR','COMERCIO','COOPERATIVA','EMPRESA','OTRO'))"
+        },
+        {
+          "name": "entity_id",
+          "definition": "uuid NOT NULL"
+        },
+        {
+          "name": "user_id",
+          "definition": "uuid REFERENCES users(id)"
+        },
+        {
+          "name": "advertiser_id",
+          "definition": "uuid REFERENCES advertisers(id)"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
+      ]
+    },
+    {
+      "name": "fiscal_clients",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "active",
+          "definition": "boolean NOT NULL DEFAULT true"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "deleted_at",
+          "definition": "timestamptz"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
+      ]
+    },
+    {
+      "name": "fiscal_credit_notes",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "invoice_id",
+          "definition": "uuid NOT NULL REFERENCES fiscal_invoices(id)"
+        },
+        {
+          "name": "external_reference",
+          "definition": "text NOT NULL UNIQUE"
+        },
+        {
+          "name": "fiscal_snapshot",
+          "definition": "jsonb NOT NULL"
+        },
+        {
+          "name": "amount",
+          "definition": "numeric(14,2) NOT NULL"
+        },
+        {
+          "name": "status",
+          "definition": "text NOT NULL DEFAULT 'PENDIENTE_INTEGRACION'"
+        },
+        {
+          "name": "document_number",
+          "definition": "text"
+        },
+        {
+          "name": "authorization_number",
+          "definition": "text"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
+      ]
+    },
+    {
+      "name": "fiscal_invoices",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "external_reference",
+          "definition": "text NOT NULL UNIQUE"
+        },
+        {
+          "name": "source",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "service_type",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "zone_id",
+          "definition": "uuid REFERENCES service_areas(id)"
+        },
+        {
+          "name": "payment_id",
+          "definition": "uuid NOT NULL"
+        },
+        {
+          "name": "document_type",
+          "definition": "text NOT NULL DEFAULT 'FACTURA'"
+        },
+        {
+          "name": "client_id",
+          "definition": "uuid REFERENCES fiscal_clients(id)"
+        },
+        {
+          "name": "fiscal_snapshot",
+          "definition": "jsonb"
+        },
+        {
+          "name": "concept",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "subtotal",
+          "definition": "numeric(14,2)"
+        },
+        {
+          "name": "tax_amount",
+          "definition": "numeric(14,2)"
+        },
+        {
+          "name": "total",
+          "definition": "numeric(14,2) NOT NULL"
+        },
+        {
+          "name": "currency",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "status",
+          "definition": "text NOT NULL DEFAULT 'PENDIENTE_INTEGRACION' CHECK(status IN ('BORRADOR','PENDIENTE','PENDIENTE_INTEGRACION','ENVIANDO','RECIBIDA','AUTORIZADA','RECHAZADA','ERROR','PENDIENTE_REINTENTO','ANULADA'))"
+        },
+        {
+          "name": "provider",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "environment",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "document_number",
+          "definition": "text"
+        },
+        {
+          "name": "access_key",
+          "definition": "text"
+        },
+        {
+          "name": "authorization_number",
+          "definition": "text"
+        },
+        {
+          "name": "issued_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "authorized_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "xml_location",
+          "definition": "text"
+        },
+        {
+          "name": "ride_location",
+          "definition": "text"
+        },
+        {
+          "name": "email_to",
+          "definition": "text"
+        },
+        {
+          "name": "email_sent",
+          "definition": "boolean NOT NULL DEFAULT false"
+        },
+        {
+          "name": "email_sent_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "email_status",
+          "definition": "text NOT NULL DEFAULT 'NO_ENVIADO'"
+        },
+        {
+          "name": "paid_at",
+          "definition": "timestamptz NOT NULL"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
+      ]
+    },
+    {
+      "name": "fiscal_profiles",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "client_id",
+          "definition": "uuid NOT NULL UNIQUE REFERENCES fiscal_clients(id)"
+        },
+        {
+          "name": "identification_type",
+          "definition": "text NOT NULL CHECK(identification_type IN ('CEDULA','RUC'))"
+        },
+        {
+          "name": "identification",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "legal_name",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "address",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "billing_email",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "active",
+          "definition": "boolean NOT NULL DEFAULT true"
+        },
+        {
+          "name": "revision",
+          "definition": "integer NOT NULL DEFAULT 1"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
+      ]
+    },
+    {
+      "name": "fleet_entitlements",
+      "columns": [
+        {
+          "name": "user_id",
+          "definition": "uuid PRIMARY KEY REFERENCES users(id)"
+        },
+        {
+          "name": "tier",
+          "definition": "text NOT NULL DEFAULT 'BASIC' CHECK(tier IN ('BASIC','PRO'))"
+        },
+        {
+          "name": "capabilities",
+          "definition": "jsonb NOT NULL DEFAULT '{\"history\":true"
+        },
+        {
+          "name": "notification_events",
+          "definition": "text[] NOT NULL DEFAULT ARRAY['session_started'"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
+      ]
+    },
+    {
+      "name": "fleet_notification_outbox",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "audit_id",
+          "definition": "bigint NOT NULL REFERENCES vehicle_audit(id)"
+        },
+        {
+          "name": "user_id",
+          "definition": "uuid NOT NULL REFERENCES users(id)"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid NOT NULL REFERENCES vehicles(id)"
+        },
+        {
+          "name": "event",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "status",
+          "definition": "text NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','SENDING','SENT','FAILED'))"
+        },
+        {
+          "name": "attempts",
+          "definition": "integer NOT NULL DEFAULT 0"
+        },
+        {
+          "name": "updated_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
+      ]
+    },
+    {
+      "name": "fleet_settings",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "boolean PRIMARY KEY DEFAULT true CHECK(id)"
+        },
+        {
+          "name": "heartbeat_seconds",
+          "definition": "integer NOT NULL DEFAULT 30 CHECK(heartbeat_seconds BETWEEN 10 AND 120)"
+        },
+        {
+          "name": "offline_seconds",
+          "definition": "integer NOT NULL DEFAULT 180 CHECK(offline_seconds BETWEEN 30 AND 1800)"
+        },
+        {
+          "name": "auto_release_seconds",
+          "definition": "integer NOT NULL DEFAULT 900 CHECK(auto_release_seconds BETWEEN 60 AND 86400)"
+        },
+        {
+          "name": "owner_notifications",
+          "definition": "boolean NOT NULL DEFAULT false"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
       ]
     },
     {
@@ -2412,10 +3125,19 @@
         {
           "name": "created_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "accepted_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "reversed_by",
+          "definition": "uuid references users(id)"
         }
       ],
       "sources": [
-        "apps/api/migrations/041_memberships_navigation_collection.sql"
+        "apps/api/migrations/041_memberships_navigation_collection.sql",
+        "apps/api/migrations/070_membership_usage_passenger_reversal.sql"
       ]
     },
     {
@@ -2604,10 +3326,20 @@
         {
           "name": "updated_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "cancellation_reason_code",
+          "definition": "text, ADD COLUMN IF NOT EXISTS cancellation_observation text, ADD COLUMN IF NOT EXISTS cancelled_by uuid REFERENCES users(id), ADD COLUMN IF NOT EXISTS cancellation_channel text, ADD COLUMN IF NOT EXISTS cancellation_idempotency_key text"
+        },
+        {
+          "name": "fiscal_required",
+          "definition": "boolean NOT NULL DEFAULT false"
         }
       ],
       "sources": [
-        "apps/api/migrations/041_memberships_navigation_collection.sql"
+        "apps/api/migrations/041_memberships_navigation_collection.sql",
+        "apps/api/migrations/056_membership_payment_order_cancellation.sql",
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
       ]
     },
     {
@@ -2704,10 +3436,20 @@
         {
           "name": "created_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "reference_display",
+          "definition": "text"
+        },
+        {
+          "name": "fiscal_profile_id",
+          "definition": "uuid REFERENCES fiscal_profiles(id) ON DELETE SET NULL"
         }
       ],
       "sources": [
-        "apps/api/migrations/041_memberships_navigation_collection.sql"
+        "apps/api/migrations/041_memberships_navigation_collection.sql",
+        "apps/api/migrations/064_membership_transfer_reference_display.sql",
+        "apps/api/migrations/072_fiscal_clients_and_invoicing.sql"
       ]
     },
     {
@@ -2857,10 +3599,15 @@
         {
           "name": "created_at",
           "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "reference_display",
+          "definition": "text"
         }
       ],
       "sources": [
-        "apps/api/migrations/041_memberships_navigation_collection.sql"
+        "apps/api/migrations/041_memberships_navigation_collection.sql",
+        "apps/api/migrations/064_membership_transfer_reference_display.sql"
       ]
     },
     {
@@ -2921,6 +3668,22 @@
         {
           "name": "advertising_invitation_days",
           "definition": "integer NOT NULL DEFAULT 7, ADD COLUMN IF NOT EXISTS advertising_max_image_bytes integer NOT NULL DEFAULT 1048576, ADD COLUMN IF NOT EXISTS advertising_banner_width integer NOT NULL DEFAULT 1200, ADD COLUMN IF NOT EXISTS advertising_banner_"
+        },
+        {
+          "name": "driver_search_initial_radius_meters",
+          "definition": "integer NOT NULL DEFAULT 1000, ADD COLUMN IF NOT EXISTS driver_search_radius_increment_meters integer NOT NULL DEFAULT 1000, ADD COLUMN IF NOT EXISTS driver_search_round_wait_seconds integer NOT NULL DEFAULT 15"
+        },
+        {
+          "name": "distance_fare_cents_per_km",
+          "definition": "integer NOT NULL DEFAULT 50, ADD COLUMN IF NOT EXISTS local_fare_max_distance_meters integer NOT NULL DEFAULT 2000, ADD COLUMN IF NOT EXISTS distance_fare_minimum_cents integer NOT NULL DEFAULT 0"
+        },
+        {
+          "name": "trip_tracking_grace_minutes",
+          "definition": "integer NOT NULL DEFAULT 45, ADD COLUMN IF NOT EXISTS support_whatsapp_country_code text NOT NULL DEFAULT '593', ADD COLUMN IF NOT EXISTS support_whatsapp_number text, ADD COLUMN IF NOT EXISTS support_whatsapp_enabled boolean NOT NULL DEFAU"
+        },
+        {
+          "name": "passenger_cancellation_policy",
+          "definition": "jsonb not null default '{\"enabled\":true,\"steps\":[{\"fromCount\":1,\"suspensionDays\":0},{\"fromCount\":3,\"suspensionDays\":2},{\"fromCount\":4,\"suspensionDays\":5},{\"fromCount\":5,\"suspensionDays\":7},{\"fromCount\":6,\"suspensionDays\":null}]}'"
         }
       ],
       "sources": [
@@ -2929,7 +3692,124 @@
         "apps/api/migrations/021_scheduled_trip_pricing_policy.sql",
         "apps/api/migrations/023_operations_alerts.sql",
         "apps/api/migrations/041_memberships_navigation_collection.sql",
-        "apps/api/migrations/045_commercial_advertising.sql"
+        "apps/api/migrations/045_commercial_advertising.sql",
+        "apps/api/migrations/051_progressive_driver_search.sql",
+        "apps/api/migrations/057_distance_fare_fallback.sql",
+        "apps/api/migrations/068_trip_public_tracking.sql",
+        "apps/api/migrations/069_passenger_cancellations_and_trip_integrity.sql"
+      ]
+    },
+    {
+      "name": "passenger_cancellation_cycles",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid primary key default gen_random_uuid()"
+        },
+        {
+          "name": "passenger_id",
+          "definition": "uuid not null references users(id)"
+        },
+        {
+          "name": "starts_at",
+          "definition": "timestamptz not null"
+        },
+        {
+          "name": "ends_at",
+          "definition": "timestamptz not null"
+        },
+        {
+          "name": "duration_days",
+          "definition": "integer not null check(duration_days>0)"
+        },
+        {
+          "name": "source",
+          "definition": "text not null default 'OPERATIONAL' check(source in ('OPERATIONAL','LEGACY'))"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz not null default now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/071_passenger_cancellation_cycles.sql"
+      ]
+    },
+    {
+      "name": "passenger_cancellations",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid primary key default gen_random_uuid()"
+        },
+        {
+          "name": "passenger_id",
+          "definition": "uuid not null references users(id)"
+        },
+        {
+          "name": "trip_id",
+          "definition": "uuid not null unique references trips(id)"
+        },
+        {
+          "name": "driver_id",
+          "definition": "uuid not null references users(id)"
+        },
+        {
+          "name": "occurred_at",
+          "definition": "timestamptz not null default now()"
+        },
+        {
+          "name": "consecutive_number",
+          "definition": "integer not null"
+        },
+        {
+          "name": "trip_status",
+          "definition": "text not null"
+        },
+        {
+          "name": "suspension_days",
+          "definition": "integer check (suspension_days >= 0)"
+        },
+        {
+          "name": "suspension_started_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "suspension_until",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "status",
+          "definition": "text not null check (status in ('RECORDED','SUSPENDED','EXPIRED','REACTIVATED'))"
+        },
+        {
+          "name": "policy_snapshot",
+          "definition": "jsonb not null"
+        },
+        {
+          "name": "reactivated_by",
+          "definition": "uuid references users(id)"
+        },
+        {
+          "name": "reactivated_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "cycle_id",
+          "definition": "uuid"
+        },
+        {
+          "name": "reason_code",
+          "definition": "text not null default 'PASSENGER_CANCELLED'"
+        },
+        {
+          "name": "originated_by",
+          "definition": "uuid references users(id)"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/069_passenger_cancellations_and_trip_integrity.sql",
+        "apps/api/migrations/071_passenger_cancellation_cycles.sql"
       ]
     },
     {
@@ -3509,6 +4389,46 @@
       ]
     },
     {
+      "name": "trip_driver_cancellations",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "trip_id",
+          "definition": "uuid NOT NULL REFERENCES trips(id)"
+        },
+        {
+          "name": "driver_id",
+          "definition": "uuid NOT NULL REFERENCES drivers(user_id)"
+        },
+        {
+          "name": "trip_status",
+          "definition": "trip_status NOT NULL"
+        },
+        {
+          "name": "reason_code",
+          "definition": "text NOT NULL CHECK (reason_code IN ( 'VEHICLE_PROBLEM','PERSONAL_EMERGENCY','CANNOT_REACH_PICKUP', 'PASSENGER_CONTACT_ISSUE','OTHER' ))"
+        },
+        {
+          "name": "observation",
+          "definition": "text"
+        },
+        {
+          "name": "idempotency_key",
+          "definition": "text NOT NULL UNIQUE"
+        },
+        {
+          "name": "cancelled_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/055_trip_request_safety_driver_cancellation.sql"
+      ]
+    },
+    {
       "name": "trip_events",
       "columns": [
         {
@@ -3673,6 +4593,42 @@
       ]
     },
     {
+      "name": "trip_share_links",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "trip_id",
+          "definition": "uuid NOT NULL UNIQUE REFERENCES trips(id) ON DELETE CASCADE"
+        },
+        {
+          "name": "public_reference",
+          "definition": "text NOT NULL UNIQUE"
+        },
+        {
+          "name": "access_token",
+          "definition": "text NOT NULL UNIQUE"
+        },
+        {
+          "name": "created_by",
+          "definition": "uuid NOT NULL REFERENCES users(id)"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "revoked_at",
+          "definition": "timestamptz"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/068_trip_public_tracking.sql"
+      ]
+    },
+    {
       "name": "trip_stops",
       "columns": [
         {
@@ -3822,6 +4778,18 @@
         {
           "name": "route_snapshot",
           "definition": "jsonb"
+        },
+        {
+          "name": "driver_search_round",
+          "definition": "integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS driver_search_lower_meters integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS driver_search_upper_meters integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS driver_search_next_round_at"
+        },
+        {
+          "name": "client_request_id",
+          "definition": "text"
+        },
+        {
+          "name": "vehicle_snapshot",
+          "definition": "jsonb, ADD COLUMN vehicle_session_id uuid REFERENCES driver_vehicle_sessions(id)"
         }
       ],
       "sources": [
@@ -3831,7 +4799,10 @@
         "apps/api/migrations/017_dashboard_analytics.sql",
         "apps/api/migrations/020_scheduled_trips_stops.sql",
         "apps/api/migrations/025_operational_service_areas.sql",
-        "apps/api/migrations/030_passenger_experience.sql"
+        "apps/api/migrations/030_passenger_experience.sql",
+        "apps/api/migrations/051_progressive_driver_search.sql",
+        "apps/api/migrations/055_trip_request_safety_driver_cancellation.sql",
+        "apps/api/migrations/073_vehicle_fleet.sql"
       ]
     },
     {
@@ -3920,6 +4891,54 @@
       ]
     },
     {
+      "name": "user_vehicle_relations",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "user_id",
+          "definition": "uuid NOT NULL REFERENCES users(id)"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid NOT NULL REFERENCES vehicles(id)"
+        },
+        {
+          "name": "relation_type",
+          "definition": "text NOT NULL CHECK (relation_type IN ('AUTHORIZED_DRIVER','OWNER_MANAGER'))"
+        },
+        {
+          "name": "status",
+          "definition": "text NOT NULL CHECK (status IN ('PENDING','APPROVED','REJECTED','REVOKED'))"
+        },
+        {
+          "name": "source",
+          "definition": "text NOT NULL CHECK (source IN ('LEGACY_MIGRATION','USER_REQUEST','ADMIN','MANAGER'))"
+        },
+        {
+          "name": "requested_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "reviewed_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "reviewed_by",
+          "definition": "uuid REFERENCES users(id)"
+        },
+        {
+          "name": "reason",
+          "definition": "text"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
+      ]
+    },
+    {
       "name": "users",
       "columns": [
         {
@@ -3989,6 +5008,26 @@
         {
           "name": "last_mobile_role",
           "definition": "text"
+        },
+        {
+          "name": "passenger_cancellation_count",
+          "definition": "integer not null default 0 check (passenger_cancellation_count >= 0)"
+        },
+        {
+          "name": "passenger_cancellation_suspended",
+          "definition": "boolean not null default false"
+        },
+        {
+          "name": "passenger_suspended_until",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "passenger_cancellation_total",
+          "definition": "bigint not null default 0 check(passenger_cancellation_total>=0)"
+        },
+        {
+          "name": "passenger_cancellation_cycle_id",
+          "definition": "uuid"
         }
       ],
       "sources": [
@@ -4000,7 +5039,241 @@
         "apps/api/migrations/016_rbac_cooperatives.sql",
         "apps/api/migrations/031_privacy_account_recovery.sql",
         "apps/api/migrations/032_email_verification.sql",
-        "apps/api/migrations/034_mobile_account_roles.sql"
+        "apps/api/migrations/034_mobile_account_roles.sql",
+        "apps/api/migrations/069_passenger_cancellations_and_trip_integrity.sql",
+        "apps/api/migrations/071_passenger_cancellation_cycles.sql"
+      ]
+    },
+    {
+      "name": "vehicle_audit",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid REFERENCES vehicles(id)"
+        },
+        {
+          "name": "driver_id",
+          "definition": "uuid REFERENCES users(id)"
+        },
+        {
+          "name": "actor_id",
+          "definition": "uuid REFERENCES users(id)"
+        },
+        {
+          "name": "action",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "reason",
+          "definition": "text"
+        },
+        {
+          "name": "previous_value",
+          "definition": "jsonb"
+        },
+        {
+          "name": "next_value",
+          "definition": "jsonb"
+        },
+        {
+          "name": "source_ip",
+          "definition": "text"
+        },
+        {
+          "name": "occurred_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
+      ]
+    },
+    {
+      "name": "vehicle_files",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid NOT NULL REFERENCES vehicles(id)"
+        },
+        {
+          "name": "kind",
+          "definition": "text NOT NULL CHECK(kind IN ('PHOTO','REGISTRATION','OPERATING_PERMIT','OWNERSHIP_EVIDENCE'))"
+        },
+        {
+          "name": "mime_type",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "original_bytes",
+          "definition": "bytea NOT NULL"
+        },
+        {
+          "name": "display_bytes",
+          "definition": "bytea"
+        },
+        {
+          "name": "sha256",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "uploaded_by",
+          "definition": "uuid NOT NULL REFERENCES users(id)"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
+      ]
+    },
+    {
+      "name": "vehicle_ownership_claims",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid NOT NULL REFERENCES vehicles(id)"
+        },
+        {
+          "name": "claimant_id",
+          "definition": "uuid NOT NULL REFERENCES users(id)"
+        },
+        {
+          "name": "evidence_id",
+          "definition": "uuid NOT NULL REFERENCES vehicle_files(id)"
+        },
+        {
+          "name": "status",
+          "definition": "text NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','APPROVED','REJECTED'))"
+        },
+        {
+          "name": "reason",
+          "definition": "text NOT NULL"
+        },
+        {
+          "name": "review_note",
+          "definition": "text"
+        },
+        {
+          "name": "reviewed_by",
+          "definition": "uuid REFERENCES users(id)"
+        },
+        {
+          "name": "reviewed_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
+      ]
+    },
+    {
+      "name": "vehicle_qr_tokens",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid NOT NULL REFERENCES vehicles(id)"
+        },
+        {
+          "name": "token",
+          "definition": "text NOT NULL UNIQUE"
+        },
+        {
+          "name": "created_by",
+          "definition": "uuid NOT NULL REFERENCES users(id)"
+        },
+        {
+          "name": "created_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "revoked_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "revoked_by",
+          "definition": "uuid REFERENCES users(id)"
+        },
+        {
+          "name": "reason",
+          "definition": "text"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
+      ]
+    },
+    {
+      "name": "vehicle_session_assignments",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "uuid PRIMARY KEY DEFAULT gen_random_uuid()"
+        },
+        {
+          "name": "session_id",
+          "definition": "uuid NOT NULL REFERENCES driver_vehicle_sessions(id)"
+        },
+        {
+          "name": "trip_id",
+          "definition": "uuid NOT NULL REFERENCES trips(id)"
+        },
+        {
+          "name": "driver_id",
+          "definition": "uuid NOT NULL REFERENCES drivers(user_id)"
+        },
+        {
+          "name": "vehicle_id",
+          "definition": "uuid NOT NULL REFERENCES vehicles(id)"
+        },
+        {
+          "name": "vehicle_snapshot",
+          "definition": "jsonb NOT NULL"
+        },
+        {
+          "name": "accepted_at",
+          "definition": "timestamptz NOT NULL DEFAULT now()"
+        },
+        {
+          "name": "ended_at",
+          "definition": "timestamptz"
+        },
+        {
+          "name": "outcome",
+          "definition": "text CHECK(outcome IN ('COMPLETED','DRIVER_CANCELLED','PASSENGER_CANCELLED','CANCELLED','REASSIGNED','INCIDENT'))"
+        },
+        {
+          "name": "distance_meters",
+          "definition": "numeric NOT NULL DEFAULT 0"
+        },
+        {
+          "name": "total_cents",
+          "definition": "integer NOT NULL DEFAULT 0"
+        }
+      ],
+      "sources": [
+        "apps/api/migrations/073_vehicle_fleet.sql"
       ]
     },
     {
@@ -4033,11 +5306,20 @@
         {
           "name": "brand",
           "definition": "text, ADD COLUMN IF NOT EXISTS model text, ADD COLUMN IF NOT EXISTS model_year integer, ADD COLUMN IF NOT EXISTS notes text"
+        },
+        {
+          "name": "cooperative_id",
+          "definition": "uuid REFERENCES cooperatives(id), ADD COLUMN color text, ADD COLUMN unit_number text, ADD COLUMN declared_owner_name text, ADD COLUMN created_by uuid REFERENCES users(id), ADD COLUMN fleet_status text NOT NULL DEFAULT 'PENDING' CHECK (fleet"
+        },
+        {
+          "name": "photo_id",
+          "definition": "uuid REFERENCES vehicle_files(id)"
         }
       ],
       "sources": [
         "apps/api/migrations/001_initial.sql",
-        "apps/api/migrations/041_memberships_navigation_collection.sql"
+        "apps/api/migrations/041_memberships_navigation_collection.sql",
+        "apps/api/migrations/073_vehicle_fleet.sql"
       ]
     }
   ]

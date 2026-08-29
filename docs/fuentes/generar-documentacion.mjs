@@ -16,7 +16,7 @@ for (const dir of [outManuals, outTech, htmlDir, diagramDir, inventoryDir, asset
 
 const now = new Date();
 const dateText = new Intl.DateTimeFormat("es-EC", { dateStyle: "long", timeZone: "America/Guayaquil" }).format(now);
-const version = "1.0";
+const version = "2.0";
 
 const logoSource = path.join(root, "apps/admin/public/costa-go-emblem.png");
 const logoTarget = path.join(assetsDir, "costa-go-emblem.png");
@@ -102,11 +102,11 @@ const roles = [
   ["COLLECTOR", "Portal de recaudación y cierres de caja de puntos autorizados."],
   ["FINANCE", "Revisión, conciliación y liquidación de pagos/cierres."],
   ["COMMERCIAL", "Leads, anunciantes, órdenes y seguimiento comercial."],
-  ["DRIVER / PASSENGER", "Roles de aplicación móvil; aparecen en documentos técnicos, no como manual móvil."]
+  ["PASSENGER / DRIVER / OWNER_MANAGER", "Capacidades móviles acumulables; propietario y conductor se autorizan de forma independiente."]
 ];
 
 const statusLabels = {
-  SEARCHING: "Buscando conductor", ASSIGNED: "Asignado", DRIVER_EN_ROUTE: "Conductor en camino", DRIVER_ARRIVED: "Conductor llegó", IN_PROGRESS: "En curso", COMPLETED: "Completado", CANCELLED: "Cancelado",
+  SEARCHING: "Buscando conductor", ASSIGNED: "Asignado", DRIVER_EN_ROUTE: "Conductor en camino", DRIVER_ARRIVED: "Conductor llegó", IN_PROGRESS: "En curso", COMPLETED: "Completado", CANCELLED: "Cancelado", NO_DRIVER: "Sin conductor disponible",
   SCHEDULED: "Programado", SCHEDULED_ASSIGNED: "Programado con conductor", SCHEDULED_READY: "Próximo a iniciar", ACTIVATED: "Activado",
   PENDING: "Pendiente", ACTIVE: "Activo", EXPIRING: "Próximo a vencer", GRACE_PERIOD: "Período de gracia", PAYMENT_DUE: "Pago pendiente", SUSPENSION_PENDING_ACTIVE_TRIP: "Suspensión al finalizar viaje", SUSPENDED_NON_PAYMENT: "Suspendido por falta de pago", SUSPENDED: "Suspendido", CLOSED: "Cerrado",
   NEW: "Nuevo", IN_REVIEW: "En revisión", RESOLVED: "Resuelto", REJECTED: "Rechazado", APPROVED: "Aprobado", PAUSED: "Pausado", EXPIRED: "Expirado", DRAFT: "Borrador", PENDING_REVIEW: "Pendiente de revisión", PENDING_PAYMENT: "Pendiente de pago", PAYMENT_REVIEW: "Pago en revisión",
@@ -144,7 +144,8 @@ const manuals = [
     ui: ["Filtros por tipo, estado, pasajero, conductor y fecha", "Listado paginado", "Origen, paradas y destino final", "Total y estado", "Detalle/eventos del viaje"],
     actions: ["Filtrar y localizar un viaje.", "Revisar asignación, itinerario y estado real.", "Distinguir viaje inmediato de programado.", "Usar la trazabilidad para soporte, no editar un viaje activo sin validación."],
     workflow: ["Solicitud", "Búsqueda", "Asignación", "Conductor en camino", "Llegada", "Viaje en curso", "Paradas", "Completado o cancelado"],
-    states: ["SEARCHING", "ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "SCHEDULED", "SCHEDULED_ASSIGNED", "SCHEDULED_READY", "ACTIVATED"]
+    states: ["SEARCHING", "ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_DRIVER", "SCHEDULED", "SCHEDULED_ASSIGNED", "SCHEDULED_READY", "ACTIVATED"],
+    notes: ["Nunca se muestra conductor en camino sin un conductor válido asignado.", "La búsqueda termina en NO_DRIVER al agotar el radio máximo sin aceptación.", "Un viaje programado se reserva al conductor; la unidad se confirma por su jornada activa al activarse."]
   },
   {
     id: "05", file: "05_Conductores_Aprobacion_Documentos", title: "Conductores, aprobación y documentos", audience: "Administración y operaciones autorizadas", access: "Panel → Conductores",
@@ -153,7 +154,7 @@ const manuals = [
     actions: ["Revisar identidad y datos.", "Abrir cada documento mediante acceso protegido.", "Aprobar/rechazar documentos con observación.", "Aprobar al conductor cuando los requisitos estén completos.", "Importar datos masivos sin documentos ni foto."],
     workflow: ["Registro", "Carga de datos y documentos", "Pendiente de revisión", "Revisión documental", "Aprobación/observación", "Notificación al conductor", "Alta operativa sujeta a membresía"],
     states: ["PENDIENTE_DOCUMENTOS", "PENDIENTE_REVISION", "OBSERVADO", "APROBADO", "RECHAZADO", "SUSPENDIDO"],
-    notes: ["Los documentos no se exponen mediante URL pública permanente.", "Aprobar una cuenta no omite la política de membresía si el enforcement está activo."]
+    notes: ["Los documentos no se exponen mediante URL pública permanente.", "Identidad, licencia, fotografía y documentos obligatorios se revisan; Anexos es opcional.", "Aprobar una cuenta no omite membresía, unidad autorizada ni jornada activa."]
   },
   {
     id: "06", file: "06_Pasajeros_Cooperativas", title: "Pasajeros y cooperativas", audience: "Administración y soporte según alcance", access: "Panel → Pasajeros / Cooperativas",
@@ -176,7 +177,7 @@ const manuals = [
     id: "08", file: "08_Recaudacion_Membresias", title: "Recaudación de membresías y cierres de caja", audience: "Recaudadores, finanzas y administración", access: "Portal de recaudación / Panel → Membresías → Recaudación",
     objective: "Validar órdenes de membresía, registrar cobros, cerrar caja y conciliar valores con segregación de funciones.",
     ui: ["Búsqueda por QR, código, placa o correo", "Punto asignado", "Orden y conductor", "Método de pago", "Comprobante", "Recaudación abierta", "Cierres", "Conciliación financiera"],
-    actions: ["Escanear o buscar una orden vigente.", "Confirmar efectivo, Deuna o transferencia.", "Adjuntar comprobante cuando corresponde.", "Cerrar únicamente pagos aún no incluidos.", "Conciliar o rechazar desde Finanzas con referencia."],
+    actions: ["Escanear o buscar una orden vigente.", "Confirmar efectivo o transferencia.", "Adjuntar comprobante cuando corresponde.", "Cerrar únicamente pagos aún no incluidos.", "Conciliar o rechazar desde Finanzas con referencia."],
     workflow: ["Orden pendiente", "Cobro en punto", "Pago pendiente de liquidación", "Cierre de caja", "Conciliación financiera", "Pago verificado", "Membresía activada"],
     notes: ["No se crean cierres en cero.", "Un pago solo puede pertenecer a un cierre.", "Los pagos de días anteriores pendientes pueden incluirse en el siguiente cierre autorizado." ]
   },
@@ -186,7 +187,7 @@ const manuals = [
     ui: ["Versiones tarifarias", "Tarifa urbana, nocturna y extendida", "Recargo por parada", "Comisión interna por tramo", "Reglas por zonas tarifarias", "Etapas de radio y tiempos"],
     actions: ["Publicar una nueva versión tarifaria.", "Mantener valores históricos sin editar retroactivamente.", "Configurar recargo por parada y comisión.", "Configurar radios progresivos de asignación."],
     workflow: ["Origen/destinos", "Clasificación tarifaria de cada tramo", "Suma de tramos", "Adicionales por paradas", "Comisión interna por tramo", "Total estimado", "Snapshot en el viaje"],
-    notes: ["Zona tarifaria, zona operativa y radio de búsqueda son conceptos diferentes.", "El valor sugerido debe ser la suma exacta de conceptos aplicables; la comisión interna se integra al total sin desglose al pasajero."]
+    notes: ["Prioridad: regla territorial exacta; sin regla, distancia real para recorrido considerable; trayecto corto sin regla, valor local sugerido.", "Zona tarifaria, cobertura y radio de búsqueda son conceptos diferentes.", "El total suma tramos, paradas, horario, tarifa mínima y componente operativo parametrizados."]
   },
   {
     id: "10", file: "10_Zonas_Cobertura", title: "Zonas de cobertura", audience: "Superadministración y gestores territoriales autorizados", access: "Panel → Zonas de cobertura",
@@ -254,6 +255,58 @@ const manuals = [
     actions: ["Filtrar eventos críticos.", "Relacionar cambios de zonas, roles, membresías, pagos y campañas.", "Comprobar disponibilidad de base.", "Modificar parámetros mediante formularios validados."],
     workflow: ["Acción sensible", "Validación de permiso", "Transacción", "Registro de auditoría", "Consulta/seguimiento"],
     notes: ["No registrar claves, tokens ni documentos en texto de auditoría.", "No ejecutar SQL arbitrario desde la interfaz operativa." ]
+  },
+  {
+    id: "16", file: "16_Flota_Mototaxis_Jornadas_QR", title: "Flota, mototaxis, autorizaciones, jornadas y QR", audience: "Propietarios, conductores, analistas de cooperativa y administración", access: "Aplicación → Mi perfil / Mi flota / Mis mototaxis; Panel → Mototaxis",
+    objective: "Administrar unidades, responsables, conductores autorizados, documentos, QR y jornadas sin mezclar propiedad con permiso para conducir.",
+    ui: ["Mis mototaxis: unidades que puedo conducir", "Mi flota: unidades que administro", "Ficha y fotografía normalizada 4:3", "Autorizaciones", "Documentos", "QR de unidad", "Jornadas e historial"],
+    actions: ["Registrar o reclamar una unidad.", "Revisar y verificar información/documentos.", "Autorizar o revocar conductores.", "Seleccionar unidad y comenzar/finalizar jornada.", "Escanear QR y validar unidad/autorización."],
+    workflow: ["Registro o solicitud", "Revisión de información", "Relación OWNER_MANAGER o AUTHORIZED_DRIVER", "Verificación de unidad", "Autorización", "Selección por conductor", "Jornada activa", "Liberación"],
+    states: ["PENDING_REVIEW", "APPROVED", "SUSPENDED", "ACTIVE", "CLOSED"],
+    notes: ["Una cuenta puede ser pasajero, conductor y propietario a la vez.", "OWNER_MANAGER administra solo sus unidades y no habilita conducción.", "Solo una jornada activa puede usar una unidad; el QR identifica, no concede permisos.", "Se conserva la foto original y la interfaz usa la versión display normalizada."]
+  },
+  {
+    id: "17", file: "17_Clientes_Fiscales_Facturacion", title: "Clientes fiscales y facturación", audience: "Administración, finanzas, miembros y anunciantes", access: "Flujos de pago y Panel → Finanzas / configuración fiscal",
+    objective: "Mantener identidad fiscal reutilizable y trazabilidad contable sin inventar autorizaciones tributarias.",
+    ui: ["Cliente fiscal", "Perfil fiscal", "Relaciones con conductor o anunciante", "Snapshot al pago", "Outbox fiscal", "Comprobantes y notas de crédito"],
+    actions: ["Registrar y validar datos fiscales.", "Vincular el cliente al pagador.", "Capturar snapshot al confirmar pago.", "Consultar cola y auditoría.", "Emitir solo cuando la integración fiscal esté habilitada."],
+    workflow: ["Datos fiscales", "Validación", "Vinculación", "Pago confirmado", "Snapshot inmutable", "Outbox", "Emisión habilitada o pendiente"],
+    notes: ["La emisión fiscal permanece deshabilitada hasta autorización expresa y configuración productiva.", "Nunca marcar AUTORIZADA sin respuesta válida del proveedor/SRI.", "Los soportes fiscales se conservan al menos siete años conforme a la normativa aplicable."]
+  },
+  {
+    id: "18", file: "18_Cancelaciones_Suspensiones_Seguridad", title: "Cancelaciones, suspensiones y seguridad", audience: "Pasajeros, conductores, soporte y administración", access: "Aplicación y Panel → Configuración operativa / Pasajeros",
+    objective: "Aplicar cancelaciones idempotentes, ciclos de penalización y suspensiones auditables sin avanzar estados incompletos.",
+    ui: ["Confirmación de cancelación", "Motivo del conductor", "Política parametrizable", "Detalle del ciclo", "Historial permanente", "Aviso de suspensión"],
+    actions: ["Cancelar antes de iniciar.", "Registrar origen y motivo.", "Liberar conductor o reanudar búsqueda.", "Aplicar advertencia/suspensión.", "Revisar historial sin eliminarlo."],
+    workflow: ["Cancelación", "Validar actor y estado", "Idempotencia por viaje", "Actualizar viaje", "Ajustar consumo si cancela pasajero", "Actualizar ciclo", "Notificar y auditar"],
+    states: ["CANCELLED", "SEARCHING", "SUSPENDED"],
+    notes: ["El ciclo inicia con la primera cancelación penalizable y su duración es configurable.", "El vencimiento reinicia el contador operativo, no la suspensión vigente ni el historial.", "La cancelación del pasajero después de aceptación revierte una sola vez el consumo; la del conductor no."]
+  },
+  {
+    id: "19", file: "19_Seguimiento_Publico_Compartir_Viaje", title: "Seguimiento público y compartir viaje", audience: "Pasajeros y contactos de confianza", access: "Aplicación → Seguridad y compartir viaje; enlace temporal costa-go.com",
+    objective: "Compartir estado y ubicación del viaje mediante un enlace temporal sin exponer identificadores internos ni datos de contacto.",
+    ui: ["Acción Compartir viaje", "Enlace temporal", "Estado del viaje", "Mapa en vivo", "Última actualización", "Fallback a Google Maps"],
+    actions: ["Generar enlace seguro.", "Compartirlo con un contacto.", "Consultar estado y ubicación recibida.", "Centrar el mapa.", "Cerrar acceso al caducar."],
+    workflow: ["Pasajero comparte", "API genera token", "Contacto abre web", "Web consulta estado", "Conductor actualiza ubicación", "Mapa se refresca", "Viaje termina y enlace caduca"],
+    notes: ["El enlace debe tratarse como confidencial.", "No muestra teléfono, correo ni IDs internos.", "Caduca al finalizar el viaje más el período de gracia configurado."]
+  },
+  {
+    id: "20", file: "20_Aplicacion_Pasajero", title: "Aplicación móvil: pasajero", audience: "Pasajeros", access: "Aplicación Costa-Go",
+    objective: "Crear cuenta, solicitar o programar viajes, pagar, comunicarse, gestionar seguridad y consultar actividad.",
+    ui: ["Inicio y mapa", "Origen, destinos y paradas", "Tarifa y forma de pago", "Búsqueda progresiva", "Seguimiento del viaje", "Chat y seguridad", "Historial, soporte y privacidad"],
+    actions: ["Confirmar ubicación y ruta.", "Elegir Efectivo o Transferencia.", "Solicitar/programar.", "Cancelar antes de iniciar.", "Compartir seguimiento.", "Calificar y consultar soporte."],
+    workflow: ["Registro/verificación", "Preparar viaje", "Confirmar total", "Buscar", "Asignación", "Recogida", "Viaje", "Finalización", "Calificación"],
+    states: ["SEARCHING", "ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_DRIVER"],
+    notes: ["La cuenta puede incorporar después capacidad de conductor o gestor sin perder su perfil pasajero.", "El total visible antes de solicitar es la suma de conceptos aplicables.", "La eliminación de cuenta está disponible dentro y fuera de la aplicación."]
+  },
+  {
+    id: "21", file: "21_Aplicacion_Conductor", title: "Aplicación móvil: conductor", audience: "Conductores aprobados", access: "Aplicación Costa-Go → modo Conductor",
+    objective: "Completar verificación, seleccionar unidad, iniciar jornada, recibir solicitudes y ejecutar viajes de forma segura.",
+    ui: ["Perfil y documentos", "Mis mototaxis", "Selección/QR", "Disponibilidad y jornada", "Solicitudes inmediatas/programadas", "Ruta externa", "Chat, notificaciones y membresía"],
+    actions: ["Subir requisitos.", "Seleccionar unidad autorizada.", "Iniciar o finalizar jornada.", "Habilitar Transferencia.", "Aceptar/rechazar.", "Actualizar estados y navegar."],
+    workflow: ["Aprobación", "Membresía", "Unidad verificada", "Jornada", "Disponibilidad", "Oferta", "Aceptación", "Recogida", "Viaje", "Cierre"],
+    states: ["ACTIVE", "PAUSED", "ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED"],
+    notes: ["Aceptar incrementa el ciclo de membresía; solo la cancelación posterior del pasajero lo revierte.", "Una oferta rechazada, expirada, tomada o cancelada detiene sonido y vibración.", "Los viajes programados pertenecen al conductor; la unidad se valida al activarlos."]
   }
 ];
 
@@ -264,13 +317,13 @@ function table(headers, rows) { return `<div class="table"><table><thead><tr>${h
 
 const css = `
 @page { size: A4; margin: 18mm 15mm 18mm; }
-*{box-sizing:border-box} body{font-family:Arial,"Segoe UI",sans-serif;color:#0a3344;margin:0;font-size:10.5pt;line-height:1.48;background:white} h1,h2,h3{color:#073a5d;page-break-after:avoid} h1{font-size:29pt;margin:10px 0} h2{font-size:18pt;border-bottom:2px solid #0aaee6;padding-bottom:5px;margin-top:28px} h3{font-size:13pt;margin-top:19px} p{margin:7px 0} a{color:#047cad} ul{padding-left:20px} li{margin:4px 0}.cover{min-height:245mm;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;background:linear-gradient(135deg,#032a4b 0%,#07598b 60%,#05b9ec 100%);color:white;margin:-18mm -15mm;padding:28mm;page-break-after:always}.cover h1,.cover h2{color:white;border:0}.cover .logo{width:110px;height:110px;object-fit:contain;margin-bottom:24px}.cover .kind{letter-spacing:2px;text-transform:uppercase;font-weight:700;color:#8de3ff}.cover .meta{margin-top:30px;border-left:4px solid #25cef5;padding-left:15px}.toc{page-break-after:always}.toc a{text-decoration:none}.notice{border-left:5px solid #0aaee6;background:#eaf8fc;padding:12px 14px;margin:12px 0;border-radius:6px}.warning{border-left-color:#efaa22;background:#fff7e7}.pending{border-left-color:#d94b4b;background:#fff0f0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{border:1px solid #cfe0e7;border-radius:10px;padding:13px;background:#fbfdfe;page-break-inside:avoid}.card strong{color:#006f95}.flow{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}.flow-step{display:flex;align-items:center;gap:7px;border:1px solid #b9d7e1;background:#f4fbfd;border-radius:22px;padding:7px 11px}.flow-step b{display:grid;place-items:center;background:#078fbd;color:white;border-radius:50%;min-width:22px;height:22px}.table{overflow:hidden;border:1px solid #cbdde4;border-radius:8px;margin:10px 0}table{width:100%;border-collapse:collapse;font-size:8.8pt}th{background:#073a5d;color:white;text-align:left}th,td{padding:7px 8px;border-bottom:1px solid #dbe7ec;vertical-align:top}tr:nth-child(even) td{background:#f5fafc}.screenshot{display:block;max-width:100%;max-height:170mm;margin:12px auto;border:1px solid #cbdde4;border-radius:10px;object-fit:contain}.caption{font-size:8.5pt;text-align:center;color:#55717c}.footer{position:fixed;bottom:-12mm;left:0;right:0;text-align:center;color:#67808a;font-size:8pt}.footer::after{content:" · Página " counter(page)}.badge{display:inline-block;border-radius:12px;padding:3px 8px;background:#e2f4f8;color:#07556f;font-size:8.5pt;margin:2px}.code{font-family:Consolas,monospace;background:#edf3f5;border-radius:4px;padding:2px 5px}.page-break{page-break-before:always}.diagram{border:1px solid #b9d7e1;border-radius:10px;padding:18px;text-align:center;background:#f7fcfe;page-break-inside:avoid}.diagram .row{display:flex;justify-content:center;align-items:stretch;gap:10px;flex-wrap:wrap}.diagram .node{border:2px solid #078fbd;border-radius:9px;padding:10px;background:white;min-width:120px}.diagram .arrow{align-self:center;color:#078fbd;font-weight:bold;font-size:18px}@media print{.no-print{display:none}}
+*{box-sizing:border-box} body{font-family:Arial,"Segoe UI",sans-serif;color:#0a3344;margin:0;font-size:10.5pt;line-height:1.48;background:white} h1,h2,h3{color:#073a5d;page-break-after:avoid} h1{font-size:29pt;margin:10px 0} h2{font-size:18pt;border-bottom:2px solid #0aaee6;padding-bottom:5px;margin-top:28px} h3{font-size:13pt;margin-top:19px} p{margin:7px 0} a{color:#047cad} ul{padding-left:20px} li{margin:4px 0}.cover{min-height:245mm;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;background:linear-gradient(135deg,#032a4b 0%,#07598b 60%,#05b9ec 100%);color:white;margin:-18mm -15mm;padding:28mm;page-break-after:always}.cover h1,.cover h2{color:white;border:0}.cover .logo{width:110px;height:110px;object-fit:contain;margin-bottom:24px}.cover .kind{letter-spacing:2px;text-transform:uppercase;font-weight:700;color:#8de3ff}.cover .meta{margin-top:30px;border-left:4px solid #25cef5;padding-left:15px}.toc{page-break-after:always}.toc a{text-decoration:none}.notice{border-left:5px solid #0aaee6;background:#eaf8fc;padding:12px 14px;margin:12px 0;border-radius:6px}.warning{border-left-color:#efaa22;background:#fff7e7}.pending{border-left-color:#d94b4b;background:#fff0f0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{border:1px solid #cfe0e7;border-radius:10px;padding:13px;background:#fbfdfe;page-break-inside:avoid}.card strong{color:#006f95}.flow{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}.flow-step{display:flex;align-items:center;gap:7px;border:1px solid #b9d7e1;background:#f4fbfd;border-radius:22px;padding:7px 11px}.flow-step b{display:grid;place-items:center;background:#078fbd;color:white;border-radius:50%;min-width:22px;height:22px}.table{overflow:hidden;border:1px solid #cbdde4;border-radius:8px;margin:10px 0}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.8pt}th{background:#073a5d;color:white;text-align:left}th,td{padding:7px 8px;border-bottom:1px solid #dbe7ec;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#f5fafc}.screenshot{display:block;max-width:100%;max-height:170mm;margin:12px auto;border:1px solid #cbdde4;border-radius:10px;object-fit:contain}.caption{font-size:8.5pt;text-align:center;color:#55717c}.footer{position:fixed;bottom:-12mm;left:0;right:0;text-align:center;color:#67808a;font-size:8pt}.badge{display:inline-block;border-radius:12px;padding:3px 8px;background:#e2f4f8;color:#07556f;font-size:8.5pt;margin:2px}.code{font-family:Consolas,monospace;background:#edf3f5;border-radius:4px;padding:2px 5px}.page-break{page-break-before:always}.diagram{border:1px solid #b9d7e1;border-radius:10px;padding:18px;text-align:center;background:#f7fcfe;page-break-inside:avoid}.diagram .row{display:flex;justify-content:center;align-items:stretch;gap:10px;flex-wrap:wrap}.diagram .node{border:2px solid #078fbd;border-radius:9px;padding:10px;background:white;min-width:120px}.diagram .arrow{align-self:center;color:#078fbd;font-weight:bold;font-size:18px}@media print{.no-print{display:none}}
 `;
 
 function pageShell(title, kind, content, toc = []) {
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${css}</style></head><body>
   <div class="footer">Costa-Go · ${esc(title)} · Documento controlado v${version}</div>
-  <header class="cover"><img class="logo" src="../assets/costa-go-emblem.png"><div class="kind">${esc(kind)}</div><h1>${esc(title)}</h1><p>Documentación oficial del ecosistema web Costa-Go</p><div class="meta"><b>Versión:</b> ${version}<br><b>Actualizado:</b> ${esc(dateText)}<br><b>Fuente:</b> repositorio <span class="code">main</span></div></header>
+  <header class="cover"><img class="logo" src="../assets/costa-go-emblem.png"><div class="kind">${esc(kind)}</div><h1>${esc(title)}</h1><p>Documentación oficial del ecosistema Costa-Go</p><div class="meta"><b>Versión:</b> ${version}<br><b>Actualizado:</b> ${esc(dateText)}<br><b>Fuente:</b> repositorio <span class="code">main</span></div></header>
   ${toc.length ? `<nav class="toc"><h2>Contenido</h2><ol>${toc.map(item => `<li><a href="#${esc(item.id)}">${esc(item.title)}</a></li>`).join("")}</ol><div class="notice">Este documento describe únicamente funciones verificadas en el código fuente actual. Toda limitación se identifica de forma expresa.</div></nav>` : ""}
   ${content}</body></html>`;
 }
@@ -295,17 +348,17 @@ for (const manual of manuals) {
     (manual.details ? section("Procedimiento detallado", manual.details.map(detail => `<div class="card"><h3>${esc(detail.title)}</h3>${list(detail.items)}</div>`).join("")) : "") +
     section("Controles y recomendaciones", list(manual.notes ?? ["Confirmar el resultado antes de abandonar la pantalla.", "No compartir credenciales ni documentos descargados."])) +
     (manual.screenshot && fs.existsSync(path.join(captureDir, manual.screenshot)) ? section("Referencia visual", `<img class="screenshot" src="../capturas/${esc(manual.screenshot)}"><p class="caption">Captura real obtenida de la versión web publicada, sin datos privados.</p>`) : "");
-  manualOutputs.push({ html: writeHtml(manual.file, manual.title, "Manual funcional web", content, toc), pdf: path.join(outManuals, `${manual.file}.pdf`) });
+  manualOutputs.push({ html: writeHtml(manual.file, manual.title, "Manual funcional", content, toc), pdf: path.join(outManuals, `${manual.file}.pdf`) });
 }
 
 const indexToc = ["Propósito", "Mapa del ecosistema", "Catálogo de manuales", "Roles", "Convenciones", "Alcance y pendientes"].map(title => ({ title, id: slug(title) }));
 const indexContent =
-  section("Propósito", `<p>Este índice organiza los manuales funcionales del ecosistema web Costa-Go. No es un manual de uso de la aplicación móvil.</p>`) +
+  section("Propósito", `<p>Este índice organiza los manuales funcionales vigentes del ecosistema Costa-Go: sitio, panel, aplicación móvil, flota, operación, finanzas y soporte.</p>`) +
   section("Mapa del ecosistema", `<div class="diagram"><div class="row"><div class="node"><b>costa-go.com</b><br>Sitio y chat comercial</div><div class="arrow">→</div><div class="node"><b>API Costa-Go</b><br>Reglas y permisos</div><div class="arrow">↔</div><div class="node"><b>PostgreSQL/PostGIS</b><br>Fuente transaccional</div></div><br><div class="row"><div class="node"><b>Panel administrativo</b><br>Operación y gestión</div><div class="arrow">↗</div><div class="node"><b>Servicios externos</b><br>Google, FCM, Resend, Sentry</div></div></div>`) +
   section("Catálogo de manuales", table(["Documento", "Contenido", "Audiencia"], manuals.map(m => [`${m.id}. ${esc(m.title)}`, esc(m.objective), esc(m.audience)]))) +
   section("Roles", table(["Rol", "Responsabilidad"], roles.map(([role, desc]) => [esc(role), esc(desc)]))) +
   section("Convenciones", list(["Los códigos internos se muestran en tipografía monoespaciada y su etiqueta visual en español.", "Una acción administrativa requiere el permiso indicado por el backend.", "Los estados históricos no se reescriben para simular un estado actual.", "Las capturas evitan credenciales y datos personales."])) +
-  section("Alcance y pendientes", `<div class="notice">Incluye sitio público, panel administrativo, portal de recaudación y chat comercial. La aplicación móvil solo se menciona como sistema relacionado en documentos técnicos.</div><div class="pending"><b>Pendiente operativo:</b> ampliar capturas autenticadas por módulo cuando se disponga de una sesión de documentación sin datos reales sensibles. Los procedimientos y controles sí se documentan a partir del código actual.</div>`);
+  section("Alcance y pendientes", `<div class="notice">Incluye sitio público, panel, aplicación móvil, flota, recaudación, facturación preparada, seguimiento público y chat comercial.</div><div class="pending"><b>Pendiente editorial:</b> generar un nuevo paquete de capturas para Google Play después de validar la versión final. Las imágenes antiguas no forman parte del manual vigente.</div>`);
 const indexOutput = { html: writeHtml("00_Indice_General_Manuales_Web", "Índice general de manuales web", "Catálogo funcional", indexContent, indexToc), pdf: path.join(outManuals, "00_Indice_General_Manuales_Web.pdf") };
 
 const architectureMermaid = `flowchart TB
@@ -330,7 +383,12 @@ fs.writeFileSync(path.join(diagramDir, "arquitectura-costa-go.mmd"), architectur
 
 const erMermaid = `erDiagram
   USERS ||--o| DRIVERS : "perfil conductor"
+  USERS ||--o{ MOBILE_ACCOUNT_ROLES : "capacidades"
   USERS ||--o{ TRIPS : "solicita o conduce"
+  USERS ||--o{ USER_VEHICLE_RELATIONS : "administra o conduce"
+  VEHICLES ||--o{ USER_VEHICLE_RELATIONS : autoriza
+  VEHICLES ||--o{ DRIVER_VEHICLE_SESSIONS : jornadas
+  VEHICLES ||--o{ VEHICLE_FILES : documentos
   COOPERATIVES ||--o{ USERS : agrupa
   TRIPS ||--o{ TRIP_STOPS : contiene
   TRIPS ||--o{ TRIP_EVENTS : registra
@@ -345,6 +403,10 @@ const erMermaid = `erDiagram
   ADVERTISING_ORDERS ||--o{ ADVERTISING_PAYMENTS : recibe
   ADVERTISING_ORDERS ||--o{ ADVERTISING_CAMPAIGNS : habilita
   ADVERTISING_CAMPAIGNS ||--o{ AFFILIATE_BANNERS : publica
+  USERS ||--o{ PASSENGER_CANCELLATION_CYCLES : acumula
+  PASSENGER_CANCELLATION_CYCLES ||--o{ PASSENGER_CANCELLATIONS : registra
+  FISCAL_CLIENTS ||--o{ FISCAL_PROFILES : identifica
+  FISCAL_CLIENTS ||--o{ FISCAL_BILLING_OUTBOX : factura
   USERS ||--o{ AUDIT_LOG : ejecuta`;
 fs.writeFileSync(path.join(diagramDir, "modelo-datos-costa-go.mmd"), erMermaid);
 
@@ -355,9 +417,11 @@ fs.writeFileSync(path.join(diagramDir, "estados-viaje.mmd"), `stateDiagram-v2
   DRIVER_EN_ROUTE --> DRIVER_ARRIVED
   DRIVER_ARRIVED --> IN_PROGRESS
   IN_PROGRESS --> COMPLETED
+  SEARCHING --> NO_DRIVER
   SEARCHING --> CANCELLED
   ASSIGNED --> CANCELLED
-  DRIVER_EN_ROUTE --> CANCELLED`);
+  DRIVER_EN_ROUTE --> CANCELLED
+  DRIVER_EN_ROUTE --> SEARCHING : cancela conductor`);
 fs.writeFileSync(path.join(diagramDir, "flujo-comercial.mmd"), `flowchart LR
   CHAT[Chat web/app] --> LEAD[Lead]
   LEAD --> ADV[Anunciante]
@@ -394,7 +458,7 @@ addTech("02_Modelo_Base_Datos", "Modelo de datos Costa-Go",
   ["Principios", "Dominios", "Relaciones principales", "Diagrama editable", "Migraciones"],
   section("Principios", list(["PostgreSQL es la fuente transaccional.", "PostGIS soporta zonas Polygon/MultiPolygon y validación espacial.", "Los cambios se aplican mediante migraciones idempotentes.", "Entidades históricas se archivan o desactivan cuando corresponde; no se destruyen para ocultarlas."])) +
   section("Dominios", table(["Dominio", "Tablas detectadas"], Object.entries(groupedTables).map(([prefix, items]) => [esc(prefix), esc(items.map(i => i.name).join(", "))]))) +
-  section("Relaciones principales", `<p>Usuarios se relacionan con roles de aplicación, conductores, cooperativas y viajes. Los viajes conservan paradas y eventos. Membresías y publicidad separan órdenes, pagos, cierres/conciliaciones y vigencia. Zonas conservan versiones y autorizaciones.</p>`) +
+  section("Relaciones principales", `<p>Usuarios mantienen capacidades móviles acumulables. Las relaciones por mototaxi separan OWNER_MANAGER de AUTHORIZED_DRIVER y las jornadas determinan qué unidad conduce cada persona. Viajes conservan paradas, eventos y cancelaciones; membresías, fiscalidad y publicidad separan órdenes, pagos, conciliación y documentos históricos.</p>`) +
   section("Diagrama editable", `<pre>${esc(erMermaid)}</pre><p>Fuente editable: <span class="code">docs/fuentes/diagramas/modelo-datos-costa-go.mmd</span></p>`) +
   section("Migraciones", `<p>Se detectaron ${migrations.length} archivos SQL bajo <span class="code">apps/api/migrations</span>. El inventario generado registra ${tableInventory.length} tablas. No debe alterarse producción fuera del mecanismo de migraciones.</p>`));
 
@@ -417,7 +481,7 @@ addTech("04_API_Servicios", "API y servicios Costa-Go",
 
 addTech("05_Reglas_Negocio_Estados", "Reglas de negocio y estados Costa-Go",
   ["Viajes", "Membresías", "Comercial y publicidad", "Soporte", "Zonas"],
-  section("Viajes", table(["Código", "Etiqueta"], ["SEARCHING","ASSIGNED","DRIVER_EN_ROUTE","DRIVER_ARRIVED","IN_PROGRESS","COMPLETED","CANCELLED","SCHEDULED","SCHEDULED_ASSIGNED","SCHEDULED_READY","ACTIVATED"].map(s => [s, statusLabels[s] ?? s]))) +
+  section("Viajes", table(["Código", "Etiqueta"], ["SEARCHING","ASSIGNED","DRIVER_EN_ROUTE","DRIVER_ARRIVED","IN_PROGRESS","COMPLETED","CANCELLED","NO_DRIVER","SCHEDULED","SCHEDULED_ASSIGNED","SCHEDULED_READY","ACTIVATED"].map(s => [s, statusLabels[s] ?? s]))) +
   section("Membresías", `<p>La elegibilidad depende de aprobación, documentos y estado del ciclo. Una suspensión por falta de pago nunca interrumpe un viaje activo.</p>${table(["Código", "Etiqueta"], ["PENDING","ACTIVE","EXPIRING","GRACE_PERIOD","PAYMENT_DUE","SUSPENSION_PENDING_ACTIVE_TRIP","SUSPENDED_NON_PAYMENT","SUSPENDED","CLOSED"].map(s => [s, statusLabels[s] ?? s]))}`) +
   section("Comercial y publicidad", `<p>Un cobro registrado queda pendiente de conciliación. Solo Finanzas confirma y permite que la orden quede pagada y la campaña pase a revisión.</p>${steps(["Lead", "Anunciante", "Orden", "Pago", "Conciliación", "Revisión", "Campaña activa"])}`) +
   section("Soporte", steps(["Nuevo", "Asignado", "En revisión", "Esperando usuario", "Resuelto", "Cerrado"])) +
@@ -427,8 +491,8 @@ addTech("06_Seguridad_Privacidad", "Seguridad y privacidad Costa-Go",
   ["Modelo de amenazas", "Controles", "Datos personales", "Archivos", "Auditoría", "Respuesta a incidentes"],
   section("Modelo de amenazas", list(["Suplantación de sesión/rol.", "Acceso entre cooperativas.", "Aceptación concurrente de viajes.", "Exposición de documentos o comprobantes.", "Manipulación de pagos, zonas o campañas.", "Abuso de tokens push o secretos."])) +
   section("Controles", table(["Control", "Aplicación"], [["RBAC", "Permisos validados por endpoint"], ["Alcance", "Cooperativa y audiencias de zona"], ["Transacciones", "Aceptación, pagos y cierres con bloqueo/condiciones"], ["Sesiones", "Sesión activa y revocación al restablecer clave"], ["Transporte", "HTTPS/TLS"], ["Secretos", "Variables de entorno; nunca documentados"], ["Observabilidad", "Sentry/logs sin PII innecesaria"]])) +
-  section("Datos personales", `<p>Aplicar minimización: soporte y comercial solo acceden a datos necesarios. La eliminación de cuenta se gestiona desde la URL pública y conserva únicamente información requerida por integridad, seguridad o retención publicada.</p>`) +
-  section("Archivos", list(["Validar MIME, tamaño y extensión.", "No confiar en el nombre de archivo.", "Servir mediante endpoint autorizado o URL temporal.", "Permitir imagen/PDF donde el flujo lo admite."])) +
+  section("Datos personales", `<p>Aplicar minimización y separación por capacidad. La eliminación revoca acceso, jornadas y relaciones, anonimiza identidad y conserva solo historia operativa anonimizada o soportes fiscales durante el plazo publicado de hasta siete años.</p>`) +
+  section("Archivos", list(["Validar MIME, tamaño y extensión.", "No confiar en el nombre de archivo.", "Servir documentos mediante endpoint autorizado o URL temporal.", "Fotos de mototaxi conservan original privado y display normalizado 4:3 sin EXIF público.", "No aplicar normalización de vehículos a personas, documentos, comprobantes o publicidad."])) +
   section("Auditoría", `<p>Roles, zonas, documentos, membresías, pagos, conciliaciones y campañas generan eventos relevantes con actor, entidad, acción, fecha y motivo.</p>`) +
   section("Respuesta a incidentes", steps(["Detectar", "Contener", "Preservar evidencia", "Corregir", "Notificar si corresponde", "Revisar controles"])));
 
@@ -457,7 +521,7 @@ Generada el ${dateText} desde la rama \`main\` del repositorio.
 
 ## Contenido
 
-- \`docs/manuales_usuario/\`: índice general y ${manuals.length} manuales funcionales del ecosistema web.
+- \`docs/manuales_usuario/\`: índice general y ${manuals.length} manuales funcionales vigentes del ecosistema completo.
 - \`docs/tecnica/\`: arquitectura, datos, API, reglas, seguridad, despliegue y trazabilidad.
 - \`docs/fuentes/html/\`: fuentes HTML editables utilizadas para los PDF.
 - \`docs/fuentes/diagramas/\`: diagramas Mermaid editables.
@@ -474,7 +538,7 @@ El script de PDF busca Google Chrome o Microsoft Edge instalados. Los PDF se gen
 
 ## Criterio documental
 
-La documentación describe funciones verificadas en código. Los códigos internos permanecen intactos; las etiquetas visibles se presentan en español. Funciones no verificadas se identifican como pendientes. Los manuales funcionales cubren únicamente superficies web; la aplicación móvil se incluye solo como dependencia del sistema en documentación técnica.
+La documentación describe funciones verificadas en código. Los códigos internos permanecen intactos; las etiquetas visibles se presentan en español. Funciones no habilitadas, como la emisión fiscal productiva, se identifican expresamente. El paquete cubre sitio, panel, aplicación móvil, flota, seguimiento, pagos, soporte y operación.
 `;
 fs.writeFileSync(path.join(root, "docs/README_DOCUMENTACION.md"), readme);
 

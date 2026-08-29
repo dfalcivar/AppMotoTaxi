@@ -1,5 +1,7 @@
 # Seguimiento de viajes en la web
 
+Estado funcional revisado al 29 de agosto de 2026. El enlace temporal muestra en costa-go.com el estado y la ubicación más reciente recibida del conductor, sin exponer teléfonos, correos ni identificadores internos.
+
 ## Comportamiento
 
 El enlace existente `https://costa-go.com/viaje/<token>` conserva su encabezado,

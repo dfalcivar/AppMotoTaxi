@@ -1,43 +1,44 @@
-# Borrador — Seguridad de los datos
+# Seguridad de los datos - inventario vigente
 
-Este inventario debe trasladarse al formulario de Play Console y revisarse contra el artefacto AAB final. Google considera “recopilado” un dato enviado fuera del dispositivo, aunque se conserve poco tiempo.
+Actualizado el 29 de agosto de 2026. Debe contrastarse con el AAB final y con el formulario vigente de Play Console antes de enviar.
 
-## Datos recopilados por Costa-Go
+## Datos recopilados
 
-| Categoría de Play | Datos | Finalidad principal | Obligatorio |
-|---|---|---|---|
-| Información personal | Nombre, correo, teléfono, identificador de usuario | Crear y administrar la cuenta, seguridad, soporte y operación del viaje | Sí |
-| Fotos y videos | Foto de perfil; para conductores, fotografía y documentos habilitantes; adjuntos de soporte | Verificación, seguridad, cuenta y soporte | Foto de pasajero opcional; documentos de conductor obligatorios |
-| Ubicación | Ubicación aproximada y precisa, origen, destinos, ruta y seguimiento del conductor | Cobertura, búsqueda y asignación, rutas, navegación, seguridad y seguimiento | Necesaria para solicitar o prestar viajes |
-| Actividad de la aplicación | Solicitudes, viajes, estados, favoritos, calificaciones, chat e incidentes | Funciones de la aplicación, seguridad, soporte y mejora operativa | Según la función usada |
-| Información financiera | Importe del viaje y método de pago declarado | Resumen, historial y operación del viaje | Sí para un viaje |
-| Identificadores del dispositivo | Token FCM e información de sesión/dispositivo | Notificaciones, seguridad de sesión y prevención de duplicados | Sí para notificaciones y sesión |
-| Rendimiento y diagnóstico | Errores, versión y métricas técnicas mediante Sentry cuando está configurado | Estabilidad, diagnóstico y seguridad | Automático en versiones configuradas |
+| Categoría Play | Datos Costa-Go | Finalidad |
+|---|---|---|
+| Información personal | Nombre, correo, teléfono, ID interno, fotografía y capacidades de cuenta | Cuenta, autenticación, soporte, seguridad y operación |
+| Fotos y documentos | Perfil; identidad/licencia del conductor; fotos original y normalizada, matrícula y anexos de mototaxi; comprobantes y soporte | Verificación, flota, pagos y soporte |
+| Ubicación | Aproximada y precisa, origen, paradas, destino, ruta y tracking del conductor | Cobertura, tarifa, búsqueda, navegación, seguridad y seguimiento |
+| Actividad de la aplicación | Solicitudes, viajes, estados, chat, favoritos, calificaciones, cancelaciones, jornadas, QR y soporte | Funcionalidad, seguridad, auditoría y mejora operativa |
+| Información financiera | Importe, forma de pago, referencia, comprobante, orden y conciliación | Operación y comprobación de pagos |
+| Información fiscal | Identificación, razón social, dirección y correo de facturación cuando se proporcionan | Preparación contable/fiscal; la emisión productiva continúa deshabilitada |
+| Dispositivo y diagnóstico | Sesión, token FCM, versión, fallos y rendimiento | Notificaciones, seguridad y estabilidad |
 
-Costa-Go no procesa actualmente números de tarjeta ni credenciales bancarias. El método de pago registrado es información operativa del viaje.
+No se almacenan números de tarjeta ni credenciales bancarias. Costa-Go muestra publicidad propia o de comercios afiliados, pero no usa ubicación ni ID publicitario para personalizarla.
 
-## Uso y tratamiento
+## Tratamiento y proveedores
 
-- Los datos se transmiten cifrados mediante HTTPS/TLS.
-- Las contraseñas no se almacenan en texto legible.
-- Pasajero y conductor reciben los datos necesarios de la contraparte para completar el viaje: nombre, fotografía, calificación, vehículo/placa, teléfono de contacto y ubicación de seguimiento cuando corresponda.
-- Render/PostgreSQL, Google Maps Platform, Firebase, Sentry y Resend actúan como proveedores técnicos según la función habilitada.
-- Los banners de comercios se sirven desde la infraestructura de Costa-Go. No se declara uso de ubicación para personalizar publicidad.
-- No se vende información personal.
+- HTTPS/TLS en tránsito; contraseñas mediante hash.
+- Render/PostgreSQL, Google Maps Platform, Firebase, Sentry y Resend procesan lo necesario para su función.
+- Durante el viaje se comparte con la contraparte nombre, foto, calificación, mototaxi, teléfono y ubicación necesarios.
+- Un enlace temporal compartido muestra estado y ubicación a quien lo posea hasta su caducidad.
+- No se venden datos personales.
 
-## Eliminación
+## Eliminación y conservación
 
-- Solicitud dentro de la app: `Mi cuenta → Privacidad y datos → Eliminar mi cuenta`.
-- Solicitud web: `https://costa-go.com/account-deletion.html`.
-- La eliminación cubre datos personales, fotos, documentos, favoritos, mensajes, tokens y ubicaciones precisas.
-- Registros mínimos necesarios por seguridad, prevención de fraude, reclamos o cumplimiento pueden conservarse anonimizados.
+- En app: `Mi cuenta -> Privacidad y datos -> Eliminar mi cuenta`.
+- Web: `https://costa-go.com/account-deletion.html`.
+- Identidad, credenciales, fotos personales, documentos, mensajes, tokens y ubicación precisa se eliminan o anonimizan; sesiones, jornadas y relaciones se revocan.
+- Historia operativa anonimizada puede conservarse hasta 7 años para seguridad, reclamos, fraude, contabilidad o cumplimiento.
+- Soportes fiscales: plazo legal aplicable, actualmente al menos 7 años.
 
-## Respuestas que deben confirmarse al llenar Play Console
+## Respuestas a confirmar
 
-1. Marcar que la aplicación recopila y comparte datos conforme a la definición de Google.
-2. Marcar cifrado en tránsito: **Sí**.
-3. Marcar mecanismo de eliminación de cuenta: **Sí**, dentro y fuera de la app.
-4. Declarar ubicación aproximada y precisa; para el conductor, uso en segundo plano.
-5. Declarar mensajes de chat como “Otros contenidos generados por el usuario” si así aparece en el formulario vigente.
-6. Revisar la lista automática de SDK del AAB antes de enviar; sus prácticas deben coincidir con Firebase, Google Maps y Sentry realmente incluidos.
-7. No marcar publicidad personalizada ni recopilación del identificador publicitario salvo que una versión futura incorpore un SDK que lo haga.
+1. Recopila datos: **Sí**. Compartir debe declararse según la definición/exenciones vigentes para proveedores y contraparte.
+2. Cifrado en tránsito: **Sí**.
+3. Creación y eliminación de cuenta: **Sí**, dentro y fuera de la app.
+4. Ubicación aproximada y precisa; segundo plano para conductor disponible o en viaje.
+5. Otros mensajes; fotos; archivos/documentos; actividad; fallos/diagnósticos; IDs de dispositivo.
+6. Anuncios: **Sí**, administrados por Costa-Go; no personalizados.
+7. ID de publicidad: **No**, salvo que el inventario automático del AAB muestre un SDK que lo use.
+8. Revisar siempre la lista automática de SDK del AAB publicado.

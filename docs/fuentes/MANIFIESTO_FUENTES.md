@@ -12,13 +12,13 @@ Este paquete fue contrastado con el código vigente del monorepo. Las fuentes pr
 | Membresías y recaudación | `apps/api/src/memberships.ts`, `apps/admin/src/memberships-admin.tsx` |
 | Publicidad y comercial | rutas/componentes de advertising/commercial en API, panel y sitio |
 | Sitio público | `apps/site/src` y su generador de build |
-| Datos | 48 migraciones bajo `apps/api/migrations` |
+| Datos | 75 migraciones bajo `apps/api/migrations` |
 | Infraestructura | `render.yaml`, Dockerfiles y scripts de paquetes |
 
 Inventarios reproducibles:
 
-- `inventarios/endpoints.json`: 218 endpoints detectados, con archivo y línea.
-- `inventarios/tablas.json`: 72 tablas detectadas, columnas y migración fuente.
+- `inventarios/endpoints.json`: 297 endpoints detectados, con archivo y línea.
+- `inventarios/tablas.json`: 95 tablas detectadas, columnas y migración fuente.
 - `inventarios/documentos.json`: relación entre cada fuente HTML y su PDF.
 
 Las capturas se limitaron a superficies públicas accesibles sin credenciales. Las capturas autenticadas adicionales figuran como pendiente para evitar incorporar datos reales o secretos en el repositorio.

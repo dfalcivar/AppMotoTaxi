@@ -15,7 +15,7 @@ Configuración recomendada:
 
 Resend puede seguir enviando correos automáticos desde `Costa-Go <notificaciones@costa-go.com>`; soporte y notificaciones cumplen funciones diferentes.
 
-## Sitio web
+## Sitio web - operativo
 
 `costa-go.com` debe mostrar una página pública, no el inicio de sesión del panel administrativo. Debe incluir como mínimo:
 
@@ -26,13 +26,11 @@ Resend puede seguir enviando correos automáticos desde `Costa-Go <notificacione
 - enlaces a política de privacidad, términos, tarifas y eliminación de cuenta;
 - enlace a Google Play cuando la ficha exista.
 
-Arquitectura recomendada:
+Arquitectura vigente:
 
 - `https://costa-go.com`: sitio público.
 - `https://admin.costa-go.com`: panel administrativo.
-- `https://api.costa-go.com`: API, si posteriormente se configura un dominio propio.
-
-Mientras se realiza esa separación, las páginas legales de Render siguen siendo válidas si permanecen públicas, estables y disponibles por HTTPS.
+- API productiva desplegada en Render y consumida mediante HTTPS; el dominio público no expone el panel.
 
 ## Validación antes de enviar a Google
 

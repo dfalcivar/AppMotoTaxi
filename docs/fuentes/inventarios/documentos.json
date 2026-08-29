@@ -64,6 +64,30 @@
     "pdf": "docs/manuales_usuario/15_Auditoria_Base_Datos_Configuracion.pdf"
   },
   {
+    "source": "docs/fuentes/html/16_Flota_Mototaxis_Jornadas_QR.html",
+    "pdf": "docs/manuales_usuario/16_Flota_Mototaxis_Jornadas_QR.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/17_Clientes_Fiscales_Facturacion.html",
+    "pdf": "docs/manuales_usuario/17_Clientes_Fiscales_Facturacion.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/18_Cancelaciones_Suspensiones_Seguridad.html",
+    "pdf": "docs/manuales_usuario/18_Cancelaciones_Suspensiones_Seguridad.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/19_Seguimiento_Publico_Compartir_Viaje.html",
+    "pdf": "docs/manuales_usuario/19_Seguimiento_Publico_Compartir_Viaje.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/20_Aplicacion_Pasajero.html",
+    "pdf": "docs/manuales_usuario/20_Aplicacion_Pasajero.pdf"
+  },
+  {
+    "source": "docs/fuentes/html/21_Aplicacion_Conductor.html",
+    "pdf": "docs/manuales_usuario/21_Aplicacion_Conductor.pdf"
+  },
+  {
     "source": "docs/fuentes/html/01_Arquitectura_Costa_Go.html",
     "pdf": "docs/tecnica/01_Arquitectura_Costa_Go.pdf"
   },

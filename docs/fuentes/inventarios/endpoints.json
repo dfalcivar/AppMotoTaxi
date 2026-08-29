@@ -1,1371 +1,1840 @@
 {
-  "generatedAt": "2026-08-21T05:09:45.628Z",
-  "total": 218,
+  "generatedAt": "2026-08-29T19:20:30.436Z",
+  "total": 297,
   "endpoints": [
     {
       "method": "GET",
       "route": "/health",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 443
+      "line": 486
+    },
+    {
+      "method": "POST",
+      "route": "/qa/finish",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/fleet.test.ts",
+      "line": 198
+    },
+    {
+      "method": "GET",
+      "route": "/qa/session",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fiscal/fiscal.test.ts",
+      "line": 55
+    },
+    {
+      "method": "GET",
+      "route": "/qa/session",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/fleet.test.ts",
+      "line": 196
+    },
+    {
+      "method": "POST",
+      "route": "/qa/stop",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fiscal/fiscal.test.ts",
+      "line": 58
     },
     {
       "method": "POST",
       "route": "/v1/account-deletion/confirm",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 899
+      "line": 1160
     },
     {
       "method": "POST",
       "route": "/v1/account-deletion/request",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 875
+      "line": 1136
     },
     {
       "method": "GET",
       "route": "/v1/activity",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2032
+      "line": 2330
     },
     {
       "method": "GET",
       "route": "/v1/admin/access/roles",
       "permission": "roles:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 361
+      "line": 457
     },
     {
       "method": "GET",
       "route": "/v1/admin/access/users",
       "permission": "roles:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 365
+      "line": 461
     },
     {
       "method": "POST",
       "route": "/v1/admin/access/users",
       "permission": "roles:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 382
+      "line": 480
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/access/users/:id",
       "permission": "roles:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 420
+      "line": 518
     },
     {
       "method": "GET",
       "route": "/v1/admin/alerts",
       "permission": "alerts:view",
       "source": "apps/api/src/admin.ts",
-      "line": 630
+      "line": 757
     },
     {
       "method": "GET",
       "route": "/v1/admin/api-usage",
       "permission": "api_usage:view",
       "source": "apps/api/src/memberships.ts",
-      "line": 1082
+      "line": 1256
     },
     {
       "method": "GET",
       "route": "/v1/admin/audit",
       "permission": "audit:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1487
+      "line": 1780
     },
     {
       "method": "GET",
       "route": "/v1/admin/banners",
       "permission": "advertising:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1373
+      "line": 1641
     },
     {
       "method": "POST",
       "route": "/v1/admin/banners",
       "permission": "advertising:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1394
+      "line": 1667
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/banners/:id",
       "permission": "advertising:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1420
+      "line": 1697
+    },
+    {
+      "method": "POST",
+      "route": "/v1/admin/change-password",
+      "permission": "admin",
+      "source": "apps/api/src/admin.ts",
+      "line": 424
     },
     {
       "method": "GET",
       "route": "/v1/admin/collection-closures",
       "permission": "cash_closures:review",
       "source": "apps/api/src/memberships.ts",
-      "line": 1185
+      "line": 1359
     },
     {
       "method": "POST",
       "route": "/v1/admin/collection-closures/:closureId/settle",
       "permission": "settlements:review",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 81
+      "line": 124
     },
     {
       "method": "GET",
       "route": "/v1/admin/collection-points",
       "permission": "collection_points:manage",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 22
+      "line": 65
     },
     {
       "method": "POST",
       "route": "/v1/admin/collection-points",
       "permission": "collection_points:manage",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 31
+      "line": 74
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/collection-points/:pointId",
       "permission": "collection_points:manage",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 42
+      "line": 85
     },
     {
       "method": "POST",
       "route": "/v1/admin/collection-points/:pointId/collectors",
       "permission": "collection_points:manage",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 54
+      "line": 97
     },
     {
       "method": "DELETE",
       "route": "/v1/admin/collection-points/:pointId/collectors/:collectorId",
       "permission": "collection_points:manage",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 70
+      "line": 113
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/advertisers",
       "permission": "commercial:advertisers:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 401
+      "line": 634
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/campaigns",
       "permission": "commercial:campaigns:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 494
+      "line": 749
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/campaigns/:id/action",
       "permission": "commercial:campaigns:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 495
+      "line": 778
+    },
+    {
+      "method": "PATCH",
+      "route": "/v1/admin/commercial/campaigns/:id/action-config",
+      "permission": "commercial:campaigns:manage",
+      "source": "apps/api/src/commercial.ts",
+      "line": 750
+    },
+    {
+      "method": "POST",
+      "route": "/v1/admin/commercial/campaigns/:id/renew",
+      "permission": "commercial:campaigns:manage",
+      "source": "apps/api/src/commercial.ts",
+      "line": 759
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/cash-closures",
       "permission": "commercial:payments:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 427
+      "line": 682
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/cash-closures",
       "permission": "commercial:orders:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 433
+      "line": 688
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/cash-closures/:id/review",
       "permission": "commercial:payments:review",
       "source": "apps/api/src/commercial.ts",
-      "line": 448
+      "line": 703
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/dashboard",
       "permission": "commercial:dashboard",
       "source": "apps/api/src/commercial.ts",
-      "line": 371
+      "line": 552
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/invitations",
       "permission": "commercial:leads:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 395
+      "line": 626
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/leads",
       "permission": "commercial:leads:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 382
+      "line": 575
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/leads",
       "permission": "commercial:leads:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 385
+      "line": 595
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/commercial/leads/:id",
       "permission": "commercial:leads:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 393
+      "line": 603
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/leads/:id/claim",
       "permission": "commercial:leads:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 394
+      "line": 604
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/orders",
       "permission": "commercial:orders:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 402
+      "line": 635
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/orders/:id/payments",
       "permission": "commercial:orders:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 403
+      "line": 636
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/commercial/payment-methods/:id",
       "permission": "commercial:plans:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 501
+      "line": 784
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/payments",
       "permission": "commercial:payments:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 426
+      "line": 660
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/payments/:id/proof",
       "permission": "commercial:payments:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 469
+      "line": 724
+    },
+    {
+      "method": "POST",
+      "route": "/v1/admin/commercial/payments/:id/remind",
+      "permission": "commercial:payments:review",
+      "source": "apps/api/src/commercial.ts",
+      "line": 661
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/payments/:id/review",
       "permission": "commercial:payments:review",
       "source": "apps/api/src/commercial.ts",
-      "line": 470
+      "line": 725
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/plans",
       "permission": "commercial:campaigns:view",
       "source": "apps/api/src/commercial.ts",
-      "line": 496
+      "line": 779
     },
     {
       "method": "POST",
       "route": "/v1/admin/commercial/plans",
       "permission": "commercial:plans:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 497
+      "line": 780
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/commercial/plans/:id",
       "permission": "commercial:plans:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 498
+      "line": 781
     },
     {
       "method": "GET",
       "route": "/v1/admin/commercial/settings",
       "permission": "commercial:plans:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 499
+      "line": 782
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/commercial/settings",
       "permission": "commercial:plans:manage",
       "source": "apps/api/src/commercial.ts",
-      "line": 500
+      "line": 783
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/console/search",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/admin-console.ts",
+      "line": 15
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/cooperative-dashboard/overview",
+      "permission": "cooperative_dashboard:view",
+      "source": "apps/api/src/admin.ts",
+      "line": 628
     },
     {
       "method": "GET",
       "route": "/v1/admin/cooperative-dashboard/summary",
       "permission": "cooperative_dashboard:view",
       "source": "apps/api/src/admin.ts",
-      "line": 509
+      "line": 608
     },
     {
       "method": "GET",
       "route": "/v1/admin/cooperatives",
       "permission": "cooperatives:view",
       "source": "apps/api/src/admin.ts",
-      "line": 460
+      "line": 558
     },
     {
       "method": "POST",
       "route": "/v1/admin/cooperatives",
       "permission": "cooperatives:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 473
+      "line": 572
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/cooperatives/:id",
       "permission": "cooperatives:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 488
+      "line": 587
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/cooperatives/:id/overview",
+      "permission": "cooperatives:view",
+      "source": "apps/api/src/admin.ts",
+      "line": 635
     },
     {
       "method": "GET",
       "route": "/v1/admin/dashboard",
       "permission": "dashboard:view",
       "source": "apps/api/src/admin.ts",
-      "line": 562
+      "line": 677
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/dashboard/details/:metric",
+      "permission": "dashboard:view",
+      "source": "apps/api/src/admin.ts",
+      "line": 697
     },
     {
       "method": "GET",
       "route": "/v1/admin/dashboard/drivers/:id",
       "permission": "dashboard:view",
       "source": "apps/api/src/admin.ts",
-      "line": 571
+      "line": 686
     },
     {
       "method": "GET",
       "route": "/v1/admin/database",
       "permission": "database:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1498
+      "line": 1791
     },
     {
       "method": "GET",
       "route": "/v1/admin/driver-approval-settings",
       "permission": "settings:view",
       "source": "apps/api/src/admin.ts",
-      "line": 805
+      "line": 940
     },
     {
       "method": "PUT",
       "route": "/v1/admin/driver-approval-settings",
       "permission": "settings:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 811
+      "line": 946
     },
     {
       "method": "GET",
       "route": "/v1/admin/driver-approvals",
       "permission": "drivers:approve",
       "source": "apps/api/src/admin.ts",
-      "line": 735
+      "line": 868
     },
     {
       "method": "POST",
       "route": "/v1/admin/driver-approvals/:id/decision",
       "permission": "drivers:approve",
       "source": "apps/api/src/admin.ts",
-      "line": 757
+      "line": 894
     },
     {
       "method": "GET",
       "route": "/v1/admin/driver-approvals/:id/history",
       "permission": "drivers:approve",
       "source": "apps/api/src/admin.ts",
-      "line": 800
+      "line": 935
     },
     {
       "method": "GET",
       "route": "/v1/admin/drivers",
       "permission": "drivers:view",
       "source": "apps/api/src/admin.ts",
-      "line": 714
+      "line": 841
     },
     {
       "method": "DELETE",
       "route": "/v1/admin/drivers/:driverId/documents/:documentId",
       "permission": "drivers:documents:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 851
+      "line": 986
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/drivers/:driverId/documents/:documentId",
       "permission": "drivers:documents:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 862
+      "line": 997
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/drivers/:id",
       "permission": "drivers:approve",
       "source": "apps/api/src/admin.ts",
-      "line": 876
+      "line": 1011
     },
     {
       "method": "GET",
       "route": "/v1/admin/drivers/:id/documents",
       "permission": "drivers:documents:view",
       "source": "apps/api/src/admin.ts",
-      "line": 821
+      "line": 956
     },
     {
       "method": "POST",
       "route": "/v1/admin/drivers/:id/documents",
       "permission": "drivers:documents:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 833
+      "line": 968
     },
     {
       "method": "POST",
       "route": "/v1/admin/drivers/import/:batchId/confirm",
       "permission": "membership_import:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 1054
+      "line": 1219
     },
     {
       "method": "GET",
       "route": "/v1/admin/drivers/import/template",
       "permission": "membership_import:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 1002
+      "line": 1168
     },
     {
       "method": "POST",
       "route": "/v1/admin/drivers/import/validate",
       "permission": "membership_import:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 1008
+      "line": 1174
     },
     {
       "method": "GET",
       "route": "/v1/admin/faqs",
       "permission": "faq:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1309
+      "line": 1457
     },
     {
       "method": "POST",
       "route": "/v1/admin/faqs",
       "permission": "faq:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1313
+      "line": 1461
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/faqs/:id",
       "permission": "faq:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1318
+      "line": 1466
     },
     {
       "method": "GET",
       "route": "/v1/admin/fare-rules",
       "permission": "pricing:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1269
+      "line": 1415
     },
     {
       "method": "POST",
       "route": "/v1/admin/fare-rules",
       "permission": "pricing:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1278
+      "line": 1424
     },
     {
       "method": "GET",
       "route": "/v1/admin/fare-sectors",
       "permission": "pricing:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1242
+      "line": 1388
     },
     {
       "method": "POST",
       "route": "/v1/admin/fare-sectors",
       "permission": "pricing:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1250
+      "line": 1396
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/clients",
+      "permission": "CLIENTES_FISCALES_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 110
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/clients/:id",
+      "permission": "CLIENTES_FISCALES_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 123
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/clients/:id/profile",
+      "permission": "CLIENTES_FISCALES_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 91
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/admin/fiscal/clients/:id/profile",
+      "permission": "CLIENTES_FISCALES_EDITAR",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 134
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/config",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 108
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/context/:kind/:id",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 94
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/admin/fiscal/context/:kind/:id",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 95
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/dashboard",
+      "permission": "FACTURACION_DASHBOARD_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 182
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/invoices",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 138
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/invoices/:id",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 153
+    },
+    {
+      "method": "POST",
+      "route": "/v1/admin/fiscal/invoices/:id/:action",
+      "permission": "FACTURACION_ADMINISTRAR",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 160
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/options",
+      "permission": "FACTURACION_DASHBOARD_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 90
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fiscal/payments",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 165
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fleet/options",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 96
+    },
+    {
+      "method": "POST",
+      "route": "/v1/admin/fleet/ownership-claims/:id/review",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 93
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/fleet/settings",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 115
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/admin/fleet/settings",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 116
+    },
+    {
+      "method": "DELETE",
+      "route": "/v1/admin/fleet/vehicles/:id/qr",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 112
+    },
+    {
+      "method": "POST",
+      "route": "/v1/admin/fleet/vehicles/:id/qr",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 106
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/admin/fleet/vehicles/:id/status",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 103
     },
     {
       "method": "GET",
       "route": "/v1/admin/incidents",
       "permission": "incidents:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1164
+      "line": 1310
     },
     {
       "method": "GET",
       "route": "/v1/admin/incidents/:id",
       "permission": "incidents:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1181
+      "line": 1327
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/incidents/:id",
       "permission": "incidents:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1216
+      "line": 1362
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/incidents/:id/persist",
       "permission": "incidents:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1295
+      "line": 1443
     },
     {
       "method": "GET",
       "route": "/v1/admin/incidents/:incidentId/attachments/:attachmentId",
       "permission": "incidents:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1208
+      "line": 1354
     },
     {
       "method": "GET",
       "route": "/v1/admin/me",
       "permission": "roles:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 360
+      "line": 456
     },
     {
       "method": "GET",
       "route": "/v1/admin/membership-grace-policies",
       "permission": "memberships:view",
       "source": "apps/api/src/memberships.ts",
-      "line": 1076
+      "line": 1250
     },
     {
       "method": "POST",
       "route": "/v1/admin/membership-grace-policies",
       "permission": "membership_grace:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 1080
+      "line": 1254
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/membership-grace-policies/:policyId/status",
       "permission": "membership_grace:manage",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 102
+      "line": 145
     },
     {
       "method": "POST",
       "route": "/v1/admin/membership-grace-policies/preview",
       "permission": "membership_grace:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 1078
+      "line": 1252
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/membership-payment-account",
+      "permission": "settings:view",
+      "source": "apps/api/src/collection-admin.ts",
+      "line": 37
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/admin/membership-payment-account",
+      "permission": "settings:manage",
+      "source": "apps/api/src/collection-admin.ts",
+      "line": 45
     },
     {
       "method": "POST",
       "route": "/v1/admin/membership-payments/:proofId/approve",
       "permission": "payments:transfer_review",
       "source": "apps/api/src/memberships.ts",
-      "line": 1189
+      "line": 1363
     },
     {
       "method": "GET",
       "route": "/v1/admin/membership-payments/:proofId/proof",
       "permission": "payments:transfer_review",
       "source": "apps/api/src/collection-admin.ts",
-      "line": 114
+      "line": 157
     },
     {
       "method": "POST",
       "route": "/v1/admin/membership-payments/:proofId/reject",
       "permission": "payments:transfer_review",
       "source": "apps/api/src/memberships.ts",
-      "line": 1191
+      "line": 1365
     },
     {
       "method": "GET",
       "route": "/v1/admin/membership-payments/pending",
       "permission": "payments:transfer_review",
       "source": "apps/api/src/memberships.ts",
-      "line": 1187
+      "line": 1361
     },
     {
       "method": "GET",
       "route": "/v1/admin/membership-plans",
       "permission": "memberships:view",
       "source": "apps/api/src/memberships.ts",
-      "line": 894
+      "line": 1059
     },
     {
       "method": "POST",
       "route": "/v1/admin/membership-plans",
       "permission": "membership_plans:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 899
+      "line": 1064
     },
     {
       "method": "POST",
       "route": "/v1/admin/membership-plans/:planId/deactivate",
       "permission": "membership_plans:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 928
+      "line": 1093
     },
     {
       "method": "POST",
       "route": "/v1/admin/membership-plans/:planId/versions",
       "permission": "membership_plans:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 910
+      "line": 1075
     },
     {
       "method": "GET",
       "route": "/v1/admin/memberships",
       "permission": "memberships:view",
       "source": "apps/api/src/memberships.ts",
-      "line": 938
+      "line": 1103
     },
     {
       "method": "POST",
       "route": "/v1/admin/memberships/:driverId/action",
       "permission": "memberships:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 960
+      "line": 1126
     },
     {
       "method": "GET",
       "route": "/v1/admin/memberships/:driverId/history",
       "permission": "memberships:view",
       "source": "apps/api/src/memberships.ts",
-      "line": 953
+      "line": 1118
     },
     {
       "method": "GET",
       "route": "/v1/admin/memberships/dashboard",
       "permission": "memberships:view",
       "source": "apps/api/src/memberships.ts",
-      "line": 946
+      "line": 1111
+    },
+    {
+      "method": "POST",
+      "route": "/v1/admin/mobile-accounts/:id/delete-incomplete",
+      "permission": "mobile_accounts:delete_incomplete",
+      "source": "apps/api/src/mobile-account-admin.ts",
+      "line": 26
+    },
+    {
+      "method": "PATCH",
+      "route": "/v1/admin/mobile-accounts/:id/identity",
+      "permission": "mobile_accounts:edit",
+      "source": "apps/api/src/mobile-account-admin.ts",
+      "line": 17
     },
     {
       "method": "GET",
       "route": "/v1/admin/notifications",
       "permission": "dashboard:view",
       "source": "apps/api/src/admin.ts",
-      "line": 817
+      "line": 952
     },
     {
       "method": "GET",
       "route": "/v1/admin/operations",
       "permission": "operations:view",
       "source": "apps/api/src/admin.ts",
-      "line": 582
+      "line": 709
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/operations/details/:metric",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/admin-console.ts",
+      "line": 35
     },
     {
       "method": "GET",
       "route": "/v1/admin/passengers",
       "permission": "passengers:view",
       "source": "apps/api/src/admin.ts",
-      "line": 911
+      "line": 1045
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/passengers/:id",
       "permission": "passengers:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 923
+      "line": 1063
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/passengers/:id/cancellation-summary",
+      "permission": "passengers:view",
+      "source": "apps/api/src/passenger-cancellations.ts",
+      "line": 123
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/passengers/:id/cancellations",
+      "permission": "passengers:view",
+      "source": "apps/api/src/passenger-cancellations.ts",
+      "line": 130
     },
     {
       "method": "GET",
       "route": "/v1/admin/platform-settings",
       "permission": "settings:view",
       "source": "apps/api/src/memberships.ts",
-      "line": 858
+      "line": 1023
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/platform-settings",
       "permission": "settings:manage",
       "source": "apps/api/src/memberships.ts",
-      "line": 864
+      "line": 1029
     },
     {
       "method": "GET",
       "route": "/v1/admin/pricing",
       "permission": "pricing:view",
       "source": "apps/api/src/admin.ts",
-      "line": 934
+      "line": 1080
     },
     {
       "method": "POST",
       "route": "/v1/admin/pricing",
       "permission": "pricing:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 956
+      "line": 1102
     },
     {
       "method": "POST",
       "route": "/v1/admin/pricing/persist",
       "permission": "pricing:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1217
+      "line": 1363
     },
     {
       "method": "GET",
       "route": "/v1/admin/push-deliveries",
       "permission": "alerts:view",
       "source": "apps/api/src/admin.ts",
-      "line": 682
+      "line": 809
     },
     {
       "method": "POST",
       "route": "/v1/admin/session",
       "permission": "público/validación propia",
       "source": "apps/api/src/admin.ts",
-      "line": 318
+      "line": 369
     },
     {
       "method": "GET",
       "route": "/v1/admin/settings",
       "permission": "settings:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1356
+      "line": 1579
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/settings",
       "permission": "settings:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1361
+      "line": 1595
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/settings/passenger-cancellations",
+      "permission": "settings:view",
+      "source": "apps/api/src/passenger-cancellations.ts",
+      "line": 101
+    },
+    {
+      "method": "PATCH",
+      "route": "/v1/admin/settings/passenger-cancellations",
+      "permission": "settings:manage",
+      "source": "apps/api/src/passenger-cancellations.ts",
+      "line": 107
     },
     {
       "method": "GET",
       "route": "/v1/admin/trips",
       "permission": "trips:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1323
+      "line": 1471
     },
     {
       "method": "POST",
       "route": "/v1/admin/trips/:id/action",
       "permission": "trips:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 1463
+      "line": 1755
+    },
+    {
+      "method": "GET",
+      "route": "/v1/admin/trips/:id/fare-audit",
+      "permission": "trips:view",
+      "source": "apps/api/src/admin.ts",
+      "line": 1507
     },
     {
       "method": "POST",
       "route": "/v1/admin/users/:id/reset-password",
       "permission": "users:manage",
       "source": "apps/api/src/admin.ts",
-      "line": 529
+      "line": 642
     },
     {
       "method": "GET",
       "route": "/v1/admin/zones",
       "permission": "service_areas:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1001
+      "line": 1147
     },
     {
       "method": "POST",
       "route": "/v1/admin/zones",
       "permission": "público/validación propia",
       "source": "apps/api/src/admin.ts",
-      "line": 1064
+      "line": 1210
     },
     {
       "method": "DELETE",
       "route": "/v1/admin/zones/:id",
       "permission": "service_areas:archive",
       "source": "apps/api/src/admin.ts",
-      "line": 1155
+      "line": 1301
     },
     {
       "method": "GET",
       "route": "/v1/admin/zones/:id/access",
       "permission": "service_areas:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1111
+      "line": 1257
     },
     {
       "method": "POST",
       "route": "/v1/admin/zones/:id/access",
       "permission": "service_areas:edit",
       "source": "apps/api/src/admin.ts",
-      "line": 1119
+      "line": 1265
     },
     {
       "method": "DELETE",
       "route": "/v1/admin/zones/:id/access/:userId",
       "permission": "service_areas:edit",
       "source": "apps/api/src/admin.ts",
-      "line": 1135
+      "line": 1281
     },
     {
       "method": "GET",
       "route": "/v1/admin/zones/:id/export",
       "permission": "service_areas:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1053
+      "line": 1199
     },
     {
       "method": "GET",
       "route": "/v1/admin/zones/:id/history",
       "permission": "service_areas:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1045
+      "line": 1191
     },
     {
       "method": "GET",
       "route": "/v1/admin/zones/:id/roles",
       "permission": "service_areas:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1142
+      "line": 1288
     },
     {
       "method": "PUT",
       "route": "/v1/admin/zones/:id/roles",
       "permission": "service_areas:edit",
       "source": "apps/api/src/admin.ts",
-      "line": 1146
+      "line": 1292
     },
     {
       "method": "PATCH",
       "route": "/v1/admin/zones/:id/status",
       "permission": "service_areas:activate",
       "source": "apps/api/src/admin.ts",
-      "line": 1102
+      "line": 1248
     },
     {
       "method": "POST",
       "route": "/v1/admin/zones/validate",
       "permission": "service_areas:view",
       "source": "apps/api/src/admin.ts",
-      "line": 1021
+      "line": 1167
     },
     {
       "method": "POST",
       "route": "/v1/advertising/events",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 481
+      "line": 534
     },
     {
       "method": "DELETE",
       "route": "/v1/auth/biometric",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 966
+      "line": 1230
     },
     {
       "method": "POST",
       "route": "/v1/auth/biometric/enroll",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 955
+      "line": 1219
     },
     {
       "method": "POST",
       "route": "/v1/auth/biometric/session",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 972
+      "line": 1236
     },
     {
       "method": "POST",
       "route": "/v1/auth/change-password",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1009
+      "line": 1275
     },
     {
       "method": "POST",
       "route": "/v1/auth/email-verification/confirm",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 754
+      "line": 998
     },
     {
       "method": "POST",
       "route": "/v1/auth/email-verification/request",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 740
+      "line": 984
     },
     {
       "method": "POST",
       "route": "/v1/auth/lock",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1182
+      "line": 1445
     },
     {
       "method": "POST",
       "route": "/v1/auth/logout",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1172
+      "line": 1429
     },
     {
       "method": "POST",
       "route": "/v1/auth/password-reset/confirm",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 838
+      "line": 1092
     },
     {
       "method": "POST",
       "route": "/v1/auth/password-reset/request",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 800
+      "line": 1054
     },
     {
       "method": "POST",
       "route": "/v1/auth/register",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1032
+      "line": 1298
     },
     {
       "method": "POST",
       "route": "/v1/auth/session",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 919
+      "line": 1181
     },
     {
       "method": "POST",
       "route": "/v1/auth/switch-role",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1115
+      "line": 1375
     },
     {
       "method": "GET",
       "route": "/v1/banners",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 460
+      "line": 503
     },
     {
       "method": "GET",
       "route": "/v1/banners/:id/image",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 490
+      "line": 543
     },
     {
       "method": "GET",
       "route": "/v1/collector/closures",
       "permission": "settlements:view_own_point",
       "source": "apps/api/src/memberships.ts",
-      "line": 1144
+      "line": 1318
     },
     {
       "method": "POST",
       "route": "/v1/collector/closures",
       "permission": "cash_closures:create",
       "source": "apps/api/src/memberships.ts",
-      "line": 1146
+      "line": 1320
     },
     {
       "method": "GET",
       "route": "/v1/collector/me",
       "permission": "payments:view_own_point",
       "source": "apps/api/src/memberships.ts",
-      "line": 1142
+      "line": 1316
     },
     {
       "method": "POST",
       "route": "/v1/collector/payment-orders/:id/confirm",
       "permission": "payments:collect",
       "source": "apps/api/src/memberships.ts",
-      "line": 1118
+      "line": 1292
     },
     {
       "method": "GET",
       "route": "/v1/collector/payment-orders/search",
       "permission": "payments:collect",
       "source": "apps/api/src/memberships.ts",
-      "line": 1086
+      "line": 1260
     },
     {
       "method": "GET",
       "route": "/v1/collector/payment-orders/token/:token",
       "permission": "payments:collect",
       "source": "apps/api/src/memberships.ts",
-      "line": 1084
+      "line": 1258
     },
     {
       "method": "POST",
       "route": "/v1/collector/payment-orders/token/:token/confirm",
       "permission": "payments:collect",
       "source": "apps/api/src/memberships.ts",
-      "line": 1120
+      "line": 1294
     },
     {
       "method": "GET",
       "route": "/v1/collector/payments/pending-closure",
       "permission": "payments:view_own_point",
       "source": "apps/api/src/memberships.ts",
-      "line": 1124
+      "line": 1298
     },
     {
       "method": "GET",
       "route": "/v1/collector/payments/today",
       "permission": "payments:view_own_point",
       "source": "apps/api/src/memberships.ts",
-      "line": 1122
+      "line": 1296
     },
     {
       "method": "GET",
       "route": "/v1/cooperatives",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 455
+      "line": 498
     },
     {
       "method": "PUT",
       "route": "/v1/devices/fcm-token",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1190
+      "line": 1453
     },
     {
       "method": "POST",
       "route": "/v1/devices/test-push",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1225
+      "line": 1488
     },
     {
       "method": "PUT",
       "route": "/v1/driver/availability",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1419
+      "line": 1683
     },
     {
       "method": "GET",
       "route": "/v1/driver/documents",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1340
+      "line": 1604
     },
     {
       "method": "POST",
       "route": "/v1/driver/documents",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1351
+      "line": 1615
+    },
+    {
+      "method": "GET",
+      "route": "/v1/driver/fiscal-profile",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 92
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/driver/fiscal-profile",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 93
     },
     {
       "method": "GET",
       "route": "/v1/driver/membership",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 797
+      "line": 908
+    },
+    {
+      "method": "GET",
+      "route": "/v1/driver/membership/collection-points",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/memberships.ts",
+      "line": 919
     },
     {
       "method": "GET",
       "route": "/v1/driver/membership/history",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 808
+      "line": 942
+    },
+    {
+      "method": "GET",
+      "route": "/v1/driver/membership/payment-account",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/memberships.ts",
+      "line": 935
+    },
+    {
+      "method": "GET",
+      "route": "/v1/driver/membership/payment-orders",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/memberships.ts",
+      "line": 952
     },
     {
       "method": "POST",
       "route": "/v1/driver/membership/payment-orders",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 818
+      "line": 968
     },
     {
       "method": "GET",
       "route": "/v1/driver/membership/payment-orders/:id",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 826
+      "line": 976
+    },
+    {
+      "method": "POST",
+      "route": "/v1/driver/membership/payment-orders/:id/cancel",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/memberships.ts",
+      "line": 984
     },
     {
       "method": "POST",
       "route": "/v1/driver/membership/payment-orders/:id/transfer-proof",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 834
+      "line": 993
     },
     {
       "method": "GET",
       "route": "/v1/driver/membership/payments",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 813
+      "line": 947
     },
     {
       "method": "GET",
       "route": "/v1/driver/offers",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2192
+      "line": 2539
     },
     {
       "method": "POST",
       "route": "/v1/driver/offers/:offerId/respond",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2255
+      "line": 2606
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/driver/payment-settings",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/app.ts",
+      "line": 1707
     },
     {
       "method": "GET",
       "route": "/v1/driver/scheduled-offers",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1867
+      "line": 2164
     },
     {
       "method": "POST",
       "route": "/v1/driver/scheduled-offers/:tripId/respond",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1908
+      "line": 2205
     },
     {
       "method": "POST",
       "route": "/v1/driver/scheduled-trips/:tripId/release",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1962
+      "line": 2260
     },
     {
       "method": "GET",
       "route": "/v1/driver/state",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2248
+      "line": 2598
+    },
+    {
+      "method": "POST",
+      "route": "/v1/driver/trips/:tripId/cancel",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/app.ts",
+      "line": 2491
     },
     {
       "method": "GET",
       "route": "/v1/drivers/nearby",
       "permission": "público/validación propia",
       "source": "apps/api/src/realtime.ts",
-      "line": 342
+      "line": 390
     },
     {
       "method": "GET",
       "route": "/v1/favorite-places",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1376
+      "line": 1640
     },
     {
       "method": "POST",
       "route": "/v1/favorite-places",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1390
+      "line": 1654
     },
     {
       "method": "DELETE",
       "route": "/v1/favorite-places/:id",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1410
+      "line": 1674
+    },
+    {
+      "method": "GET",
+      "route": "/v1/fleet/notification-preferences",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 88
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/fleet/notification-preferences",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 89
+    },
+    {
+      "method": "POST",
+      "route": "/v1/fleet/qr/request",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 87
+    },
+    {
+      "method": "POST",
+      "route": "/v1/fleet/qr/resolve",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 86
+    },
+    {
+      "method": "GET",
+      "route": "/v1/fleet/session",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 79
+    },
+    {
+      "method": "POST",
+      "route": "/v1/fleet/session",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 81
+    },
+    {
+      "method": "POST",
+      "route": "/v1/fleet/sessions/:id/heartbeat",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 85
+    },
+    {
+      "method": "POST",
+      "route": "/v1/fleet/vehicles/:id/ownership-claims",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 90
+    },
+    {
+      "method": "POST",
+      "route": "/v1/fleet/vehicles/link",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 80
     },
     {
       "method": "GET",
       "route": "/v1/locations/reverse",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2239
+      "line": 2589
     },
     {
       "method": "GET",
       "route": "/v1/locations/search",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 634
+      "line": 878
     },
     {
       "method": "GET",
       "route": "/v1/mobile/config",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 761
+      "line": 872
     },
     {
       "method": "GET",
       "route": "/v1/notifications",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2077
+      "line": 2375
     },
     {
       "method": "PATCH",
       "route": "/v1/notifications/:notificationId/read",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2096
+      "line": 2394
     },
     {
       "method": "POST",
       "route": "/v1/notifications/read-all",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2105
+      "line": 2403
+    },
+    {
+      "method": "GET",
+      "route": "/v1/passenger/cancellation-policy",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/app.ts",
+      "line": 1911
     },
     {
       "method": "GET",
       "route": "/v1/pricing/config",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 453
+      "line": 496
     },
     {
       "method": "GET",
       "route": "/v1/profile",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1238
+      "line": 1501
     },
     {
       "method": "DELETE",
       "route": "/v1/profile/account",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1294
+      "line": 1558
     },
     {
       "method": "POST",
       "route": "/v1/profile/driver-enrollment",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1138
+      "line": 1398
     },
     {
       "method": "DELETE",
       "route": "/v1/profile/photo",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1286
+      "line": 1550
     },
     {
       "method": "PUT",
       "route": "/v1/profile/photo",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1263
+      "line": 1527
     },
     {
       "method": "GET",
       "route": "/v1/public/advertising/active",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 243
+      "line": 419
+    },
+    {
+      "method": "POST",
+      "route": "/v1/public/advertising/chat/submit",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/commercial.ts",
+      "line": 328
     },
     {
       "method": "POST",
       "route": "/v1/public/advertising/events",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 248
+      "line": 427
     },
     {
       "method": "GET",
       "route": "/v1/public/advertising/invitations/:token",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 283
+      "line": 462
     },
     {
       "method": "PATCH",
       "route": "/v1/public/advertising/invitations/:token",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 291
+      "line": 470
     },
     {
       "method": "POST",
       "route": "/v1/public/advertising/invitations/:token/submit",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 300
+      "line": 479
     },
     {
       "method": "POST",
       "route": "/v1/public/advertising/leads",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 253
+      "line": 432
     },
     {
       "method": "GET",
       "route": "/v1/public/advertising/leads/status",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 278
+      "line": 457
     },
     {
       "method": "GET",
       "route": "/v1/public/advertising/payment-methods",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 242
+      "line": 327
+    },
+    {
+      "method": "GET",
+      "route": "/v1/public/advertising/payment-proof/:token",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/commercial.ts",
+      "line": 391
+    },
+    {
+      "method": "GET",
+      "route": "/v1/public/advertising/payment-proof/:token",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fiscal/fiscal.test.ts",
+      "line": 57
+    },
+    {
+      "method": "POST",
+      "route": "/v1/public/advertising/payment-proof/:token",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/commercial.ts",
+      "line": 402
+    },
+    {
+      "method": "GET",
+      "route": "/v1/public/advertising/payment-proof/:token/fiscal-profile",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 98
+    },
+    {
+      "method": "PUT",
+      "route": "/v1/public/advertising/payment-proof/:token/fiscal-profile",
+      "permission": "FACTURACION_VER",
+      "source": "apps/api/src/fiscal/routes.ts",
+      "line": 101
     },
     {
       "method": "GET",
       "route": "/v1/public/advertising/plans",
       "permission": "público/validación propia",
       "source": "apps/api/src/commercial.ts",
-      "line": 241
+      "line": 326
+    },
+    {
+      "method": "GET",
+      "route": "/v1/public/trips/:token",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/trip-sharing.ts",
+      "line": 172
     },
     {
       "method": "POST",
       "route": "/v1/quotes",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2339
+      "line": 2700
     },
     {
       "method": "GET",
       "route": "/v1/realtime",
       "permission": "público/validación propia",
       "source": "apps/api/src/realtime.ts",
-      "line": 201
+      "line": 238
     },
     {
       "method": "POST",
       "route": "/v1/routes",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 709
+      "line": 953
     },
     {
       "method": "GET",
       "route": "/v1/service-areas",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 691
+      "line": 935
     },
     {
       "method": "POST",
       "route": "/v1/service-areas/resolve",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 698
+      "line": 942
     },
     {
       "method": "GET",
@@ -1414,119 +1883,203 @@
       "route": "/v1/trips",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1503
+      "line": 1794
     },
     {
       "method": "GET",
       "route": "/v1/trips/:tripId",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1651
+      "line": 1945
     },
     {
       "method": "POST",
       "route": "/v1/trips/:tripId/action",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2111
+      "line": 2409
     },
     {
       "method": "POST",
       "route": "/v1/trips/:tripId/cancel",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1611
+      "line": 1922
     },
     {
       "method": "GET",
       "route": "/v1/trips/:tripId/messages",
       "permission": "público/validación propia",
       "source": "apps/api/src/realtime.ts",
-      "line": 352
+      "line": 407
     },
     {
       "method": "POST",
       "route": "/v1/trips/:tripId/messages",
       "permission": "público/validación propia",
       "source": "apps/api/src/realtime.ts",
-      "line": 369
+      "line": 424
     },
     {
       "method": "POST",
       "route": "/v1/trips/:tripId/ratings",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2173
+      "line": 2472
     },
     {
       "method": "PUT",
       "route": "/v1/trips/:tripId/scheduled",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1798
+      "line": 2090
+    },
+    {
+      "method": "POST",
+      "route": "/v1/trips/:tripId/share",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/trip-sharing.ts",
+      "line": 137
     },
     {
       "method": "POST",
       "route": "/v1/trips/:tripId/stops/:stopId/complete",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1992
+      "line": 2290
     },
     {
       "method": "GET",
       "route": "/v1/trips/active",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1692
+      "line": 1986
     },
     {
       "method": "GET",
       "route": "/v1/trips/mine",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1727
+      "line": 2022
     },
     {
       "method": "GET",
       "route": "/v1/trips/pending-rating",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 2019
+      "line": 2317
     },
     {
       "method": "POST",
       "route": "/v1/trips/preview",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1443
+      "line": 1726
     },
     {
       "method": "GET",
       "route": "/v1/trips/scheduled",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1763
+      "line": 2057
     },
     {
       "method": "GET",
       "route": "/v1/trips/scheduling-settings",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1438
+      "line": 1721
     },
     {
       "method": "POST",
       "route": "/v1/usage-events",
       "permission": "público/validación propia",
       "source": "apps/api/src/memberships.ts",
-      "line": 781
+      "line": 892
     },
     {
       "method": "GET",
       "route": "/v1/users/:id/profile-photo",
       "permission": "público/validación propia",
       "source": "apps/api/src/app.ts",
-      "line": 1312
+      "line": 1576
+    },
+    {
+      "method": "GET",
+      "route": "${base}/files/:id",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 70
+    },
+    {
+      "method": "GET",
+      "route": "${base}/report",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 53
+    },
+    {
+      "method": "GET",
+      "route": "${base}/report/options",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 52
+    },
+    {
+      "method": "POST",
+      "route": "${base}/sessions/:id/release",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 74
+    },
+    {
+      "method": "GET",
+      "route": "${base}/vehicles",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 54
+    },
+    {
+      "method": "POST",
+      "route": "${base}/vehicles",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 58
+    },
+    {
+      "method": "GET",
+      "route": "${base}/vehicles/:id",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 59
+    },
+    {
+      "method": "PUT",
+      "route": "${base}/vehicles/:id",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 60
+    },
+    {
+      "method": "POST",
+      "route": "${base}/vehicles/:id/drivers",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 65
+    },
+    {
+      "method": "POST",
+      "route": "${base}/vehicles/:id/files",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 69
+    },
+    {
+      "method": "PUT",
+      "route": "${base}/vehicles/:id/relations",
+      "permission": "público/validación propia",
+      "source": "apps/api/src/fleet/routes.ts",
+      "line": 61
     }
   ]
 }

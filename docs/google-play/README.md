@@ -2,7 +2,7 @@
 
 Este directorio contiene los recursos y borradores preparados para Play Console.
 
-## Recursos listos
+## Recursos vigentes
 
 - `assets/costa-go-play-icon-512.png`: icono PNG de 512 × 512.
 - `assets/costa-go-feature-graphic-1024x500.png`: imagen destacada PNG de 1024 × 500.
@@ -13,13 +13,14 @@ Este directorio contiene los recursos y borradores preparados para Play Console.
 - `SCREENSHOTS_AND_VIDEO.md`: tomas reales requeridas.
 - `APP_ACCESS_REVIEW.md`: acceso para el equipo revisor.
 - `PLAY_SUBMISSION_CHECKLIST.md`: orden recomendado de publicación.
+- `RELEASE_ACTUAL.md`: versión de referencia y estado documental.
 
 ## Pendientes que requieren una decisión o acción externa
 
-1. Apuntar `costa-go.com` al sitio público y comprobar HTTPS.
-2. Capturar pantallas desde la APK real, sin domicilios, teléfonos ni nombres personales.
-3. Grabar el video real de ubicación en segundo plano y publicarlo como no listado.
-4. Crear cuentas de revisión de pasajero y conductor aprobado. Las credenciales se escriben exclusivamente en Play Console, nunca en Git.
-5. Cuando Google habilite la cuenta, completar la prueba cerrada exigida para cuentas personales nuevas.
+1. Generar un set nuevo de capturas desde el AAB final; las anteriores fueron retiradas.
+2. Mantener actualizadas las cuentas de revisión de pasajero y conductor/flota; las credenciales van solo en Play Console.
+3. Confirmar que el video de ubicación sigue representando el comportamiento del AAB final.
+4. Comparar permisos, SDK y Seguridad de los datos contra el explorador del AAB.
+5. Completar la prueba cerrada exigida y documentar retroalimentación.
 
-Los archivos son borradores operativos. Las respuestas definitivas deben coincidir con la versión enviada a Google Play y con los proveedores habilitados en producción.
+Las respuestas definitivas deben coincidir con el AAB enviado y con los proveedores realmente habilitados en producción.

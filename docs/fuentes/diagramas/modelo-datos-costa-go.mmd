@@ -1,6 +1,11 @@
 erDiagram
   USERS ||--o| DRIVERS : "perfil conductor"
+  USERS ||--o{ MOBILE_ACCOUNT_ROLES : "capacidades"
   USERS ||--o{ TRIPS : "solicita o conduce"
+  USERS ||--o{ USER_VEHICLE_RELATIONS : "administra o conduce"
+  VEHICLES ||--o{ USER_VEHICLE_RELATIONS : autoriza
+  VEHICLES ||--o{ DRIVER_VEHICLE_SESSIONS : jornadas
+  VEHICLES ||--o{ VEHICLE_FILES : documentos
   COOPERATIVES ||--o{ USERS : agrupa
   TRIPS ||--o{ TRIP_STOPS : contiene
   TRIPS ||--o{ TRIP_EVENTS : registra
@@ -15,4 +20,8 @@ erDiagram
   ADVERTISING_ORDERS ||--o{ ADVERTISING_PAYMENTS : recibe
   ADVERTISING_ORDERS ||--o{ ADVERTISING_CAMPAIGNS : habilita
   ADVERTISING_CAMPAIGNS ||--o{ AFFILIATE_BANNERS : publica
+  USERS ||--o{ PASSENGER_CANCELLATION_CYCLES : acumula
+  PASSENGER_CANCELLATION_CYCLES ||--o{ PASSENGER_CANCELLATIONS : registra
+  FISCAL_CLIENTS ||--o{ FISCAL_PROFILES : identifica
+  FISCAL_CLIENTS ||--o{ FISCAL_BILLING_OUTBOX : factura
   USERS ||--o{ AUDIT_LOG : ejecuta

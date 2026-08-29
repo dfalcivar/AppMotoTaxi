@@ -2,12 +2,13 @@
 
 ## Pendiente acordado — actualizar ficha y documentación tras las mejoras (28/08/2026)
 
-Estado: **pendiente de ejecución**, registrado a petición del usuario. Base actual: Costa-Go **0.17.1 (53)**, commit `19d1490`. No modificar todavía la ficha, recursos ni páginas publicadas. Revisar contra la versión finalmente validada en pruebas cerradas, no contra diseños propuestos.
+Estado documental: **actualizado el 29 de agosto de 2026**. Base móvil de referencia: Costa-Go **0.17.2 (54)**. Las políticas y textos fuente ya fueron revisados; las capturas quedan pendientes hasta validar el siguiente AAB final en pruebas cerradas.
 
-- [ ] Revisar nombre/descripciones corta y completa para reflejar las funciones reales: pasajero, conductor, propietario/gestor de flota, mototaxis, jornadas, membresías y seguimiento web del viaje compartido. No anunciar funciones deshabilitadas, especialmente emisión fiscal.
+- [x] Texto base actualizado al 29 de agosto de 2026 con pasajero, conductor, propietario/gestor, flota, jornadas, membresías y seguimiento. No anunciar emisión fiscal mientras permanezca deshabilitada.
 - [ ] Renovar capturas reales de la app: solicitud y búsqueda, viaje activo/chat/seguridad, perfil, selección de mototaxi y jornadas, Mi flota y membresías. Elegir las más representativas; conservar logo oficial y coherencia claro/oscuro, ocultando datos personales, placas reales, ubicaciones privadas, credenciales y QR/tokens utilizables.
 - [ ] Revisar icono de tienda e imagen destacada; actualizar solo si quedaron desalineados con la identidad o experiencia vigente. El nuevo icono funcional de mototaxi no sustituye automáticamente al logo oficial de Costa-Go.
-- [ ] Auditar declaraciones de Play Console frente al comportamiento del AAB y backend: anuncios, Seguridad de los datos, acceso del revisor, audiencia/clasificación y ubicación en segundo plano. Revisar especialmente datos de propietarios, documentos/fotos de unidades, relaciones, jornadas, datos fiscales, conservación histórica y enlaces públicos de seguimiento. Ajustar credenciales/instrucciones y video demostrativo únicamente si el flujo actual lo requiere; no guardar credenciales en Git.
+- [ ] Auditar el AAB final frente al inventario actualizado: anuncios, datos, propietarios, fotos original/display, jornadas, fiscalidad preparada, cancelaciones, conservación y seguimiento público. No guardar credenciales en Git.
+- [ ] Regenerar todas las capturas de Play Store después de validar la versión final; no reutilizar el set histórico.
 - [ ] Revisar documentación pública de costa-go.com: descripción de servicios, ayuda/FAQ, privacidad, términos/políticas de uso, membresías, publicidad, tarifario y eliminación de cuenta. Contrastar permisos, datos visibles por cada rol, retención y vigencia/revocación de enlaces con la implementación; no inventar plazos ni condiciones.
 - [ ] Actualizar manuales de pasajero/conductor, propietario/flota, administración y recaudación/comercial donde los cambios los afecten; sincronizar también documentación técnica y sus fuentes antes de regenerar PDF/HTML.
 - [ ] Conciliar estados de estos checklists antiguos con Play Console y el sitio actuales: varias tareas iniciales ya se realizaron y no deben repetirse por figurar aún pendientes.

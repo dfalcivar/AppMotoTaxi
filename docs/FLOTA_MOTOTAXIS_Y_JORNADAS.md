@@ -1,6 +1,6 @@
 # Mototaxis, propietarios, jornadas y QR
 
-Implementación del pedido de 65 apartados del 28 de agosto de 2026. Esta entrega se conserva en Git local: no implica migración de producción, publicación en Render ni distribución de una app.
+Estado funcional revisado al 29 de agosto de 2026. Describe la implementación vigente de unidades, relaciones, capacidades, fotografías normalizadas, QR y jornadas; la publicación concreta se controla mediante Git, Render y el canal de distribución móvil.
 
 ## 1. Modelo y reglas
 

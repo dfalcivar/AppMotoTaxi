@@ -1,5 +1,7 @@
 # Capturas y video para Play Console
 
+Estado al 29 de agosto de 2026: el set histórico fue retirado. No generar ni subir nuevas capturas hasta completar la validación funcional y visual de la versión final.
+
 Las capturas deben provenir de la APK/AAB real. No utilizar mockups que presenten funciones inexistentes.
 
 ## Formato recomendado
@@ -10,7 +12,7 @@ Las capturas deben provenir de la APK/AAB real. No utilizar mockups que presente
 - Recortar barra del navegador o herramientas de depuración; se puede conservar la barra real del sistema.
 - Usar datos de demostración: nombres genéricos, teléfonos ficticios reservados y lugares públicos. No mostrar domicilios particulares.
 
-## Secuencia propuesta
+## Secuencia propuesta para el nuevo set
 
 1. **Inicio del pasajero**: mapa Costa-Go, zonas y formulario de origen/destino.
 2. **Elige tu recorrido**: autocomplete, pin y ruta con puntos legibles.
@@ -20,10 +22,10 @@ Las capturas deben provenir de la APK/AAB real. No utilizar mockups que presente
 6. **Seguimiento en tiempo real**: ruta, conductor aproximándose y estado del viaje.
 7. **Programa tu viaje**: fecha, hora y tarjeta de viaje programado.
 8. **Historial y soporte**: viajes anteriores o Ayuda y soporte.
-9. **Oferta del conductor**: tarjeta con origen, destinos, tiempo y tarifa.
-10. **Navegación del conductor**: guía hacia el pasajero o destino, sin distraer ni exponer datos privados.
+9. **Conductor y jornada**: unidad activa, disponibilidad y viaje programado.
+10. **Mi flota/Mis mototaxis**: capacidades separadas, foto real normalizada y estado de la unidad.
 
-Las ocho primeras pueden usarse en la ficha principal; las dos últimas sirven para explicar el rol conductor y para la revisión interna.
+Seleccionar de 6 a 8 capturas finales sin intentar cubrir toda la aplicación. Validar modo claro/oscuro, tamaño legible y ausencia de datos reales.
 
 ## Textos opcionales sobre las capturas
 

@@ -1,6 +1,6 @@
 # Clientes fiscales y preparación de facturación — Costa-Go
 
-Implementación local del 28 de agosto de 2026. No implica despliegue ni emisión fiscal real.
+Estado funcional revisado al 29 de agosto de 2026. La arquitectura está implementada y versionada; la emisión fiscal productiva continúa deshabilitada hasta configurar y autorizar expresamente el proveedor correspondiente.
 
 ## Qué funciona ahora
 
