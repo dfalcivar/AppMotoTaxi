@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,9 @@ const googleMapsWebApiKey = (
   process.env.VITE_GOOGLE_MAPS_WEB_API_KEY ??
   ""
 ).trim();
+const publicConfigVersion = (process.env.RENDER_GIT_COMMIT ?? Date.now().toString(36))
+  .replace(/[^a-zA-Z0-9_-]/g, "")
+  .slice(0, 16);
 
 if (!googleMapsWebApiKey) {
   console.warn(
@@ -30,6 +33,14 @@ await writeFile(
   })};\n`,
   "utf8"
 );
+
+// Render/Cloudflare can cache config.js longer than HTML. Version every reference so
+// a new deploy never combines a fresh page with stale environment configuration.
+for (const page of ["viaje/index.html", "anunciarme/index.html", "anunciarme/comprobante/index.html"]) {
+  const file = resolve(output, page);
+  const html = await readFile(file, "utf8");
+  await writeFile(file, html.replaceAll('/config.js', `/config.js?v=${publicConfigVersion}`), "utf8");
+}
 
 for (const page of ["privacy.html", "terms.html", "account-deletion.html", "fares.html"]) {
   await cp(resolve(root, "apps/admin/public", page), resolve(output, page));
