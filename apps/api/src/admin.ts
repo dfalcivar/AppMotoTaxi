@@ -1047,6 +1047,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (!process.env.DATABASE_URL) return passengers;
     return await database()`
       select u.id, u.full_name as name, u.email, u.phone_e164 as phone, u.status,u.email_verified_at as "emailVerifiedAt",
+        encode(u.profile_photo_data,'base64') as "profilePhotoBase64", u.profile_photo_mime as "profilePhotoMime",
+        u.created_at as "createdAt",
         case when cy.ends_at>now() then u.passenger_cancellation_count else 0 end as "cancellationCount",
         u.passenger_cancellation_total::int as "historicalCancellationTotal", u.passenger_suspended_until as "suspendedUntil",
         u.passenger_cancellation_suspended as "cancellationSuspended",

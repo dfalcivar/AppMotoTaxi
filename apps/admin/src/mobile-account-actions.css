@@ -1,5 +1,93 @@
-.mobile-account-dialog { gap: 14px; }
+.control-panel .mobile-account-dialog {
+  width: min(900px, calc(100vw - 32px));
+  gap: 16px;
+  padding: 24px;
+  color: var(--cg-ink);
+  background: var(--cg-surface);
+  border-color: var(--cg-border);
+  border-radius: 22px;
+}
 .mobile-account-dialog p { margin: 0; line-height: 1.45; }
-.mobile-account-dialog .panel-dialog-heading p { margin-top: 6px; }
+.mobile-account-dialog .panel-dialog-heading {
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--cg-border);
+}
+.mobile-account-dialog .panel-dialog-heading h2 { margin: 3px 0 0; color: var(--cg-ink); font-size: 1.25rem; }
+.mobile-account-dialog .panel-dialog-heading p { margin-top: 4px; color: var(--cg-muted); font-weight: 650; }
 .mobile-account-dialog .panel-dialog-fields { gap: 12px; }
-.mobile-account-dialog .note { padding: 10px 12px; }
+.mobile-account-dialog-pasajero .panel-dialog-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-template-areas:
+    "note note"
+    "status status"
+    "name phone"
+    "email reason";
+  align-items: start;
+}
+.mobile-account-system-note {
+  grid-area: note;
+  display: flex;
+  align-items: flex-start;
+  min-height: 48px;
+  padding: 11px 13px !important;
+  color: var(--cg-primary);
+  border: 1px solid color-mix(in srgb, var(--cg-primary) 16%, var(--cg-border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--cg-soft) 72%, var(--cg-surface));
+}
+.mobile-account-email-status { grid-area: status; color: var(--cg-muted); font-size: 0.78rem; }
+.mobile-account-email-status strong { color: var(--cg-ink); }
+.mobile-account-email-status.verified strong { color: var(--cg-positive); }
+.mobile-account-email-status.pending strong { color: var(--cg-warning); }
+.mobile-account-name { grid-area: name; }
+.mobile-account-email { grid-area: email; }
+.mobile-account-phone { grid-area: phone; }
+.mobile-account-reason { grid-area: reason; }
+.mobile-account-dialog label {
+  display: grid;
+  gap: 7px;
+  color: var(--cg-ink);
+  font-size: 0.76rem;
+  font-weight: 720;
+}
+.control-panel .mobile-account-dialog input,
+.control-panel .mobile-account-dialog textarea {
+  width: 100%;
+  min-height: 42px;
+  color: var(--cg-ink);
+  background: var(--cg-bg);
+  border: 1px solid var(--cg-border);
+  border-radius: 10px;
+}
+.control-panel .mobile-account-dialog textarea { min-height: 92px; resize: vertical; }
+.control-panel .mobile-account-dialog input:focus,
+.control-panel .mobile-account-dialog textarea:focus {
+  border-color: var(--cg-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cg-primary) 13%, transparent);
+  outline: none;
+}
+.control-panel .mobile-account-dialog .panel-dialog-actions {
+  justify-content: flex-end;
+  padding-top: 14px;
+  border-top: 1px solid var(--cg-border);
+}
+.control-panel .mobile-account-dialog .panel-dialog-actions button { min-width: 126px; }
+@media (max-width: 680px) {
+  .control-panel .mobile-account-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 12px);
+    padding: 19px 15px max(15px, env(safe-area-inset-bottom));
+    border-radius: 22px 22px 0 0;
+  }
+  .mobile-account-dialog-pasajero .panel-dialog-fields {
+    grid-template-columns: 1fr !important;
+    grid-template-areas: "note" "status" "name" "phone" "email" "reason";
+  }
+  .control-panel .mobile-account-dialog .panel-dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .control-panel .mobile-account-dialog .panel-dialog-actions button { width: 100%; }
+}

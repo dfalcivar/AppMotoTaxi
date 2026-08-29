@@ -1,6 +1,6 @@
 import {describe,it,expect,vi} from 'vitest';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {ConsoleContext,DataTable,ManagedTable,MetricStrip,cellText,compareCells} from './console-ui';
+import {ConsoleContext,ConsoleModal,DataTable,ManagedTable,MetricStrip,cellText,compareCells} from './console-ui';
 import {consoleGroups,csvCell,dateRange,ecuDate,normalizeSearch,subNavigation} from './console-model';
 
 describe('sistema de presentación del panel',()=>{
@@ -15,5 +15,7 @@ describe('sistema de presentación del panel',()=>{
   it('permite exportar solo desde contexto autorizado',()=>{const html=renderToStaticMarkup(<ConsoleContext.Provider value={{userId:'test',module:'trips',canExport:true}}><DataTable headers={['Nombre']} rows={[['Prueba']]}/></ConsoleContext.Provider>);expect(html).toContain('Exportar');});
   it('mantiene botones de las tablas heredadas y no duplica filas',()=>{const html=renderToStaticMarkup(<ManagedTable><thead><tr><th>Nombre</th><th>Acción</th></tr></thead><tbody>{['A','B'].map(v=><tr key={v}><td>{v}</td><td><button>Ver {v}</button></td></tr>)}</tbody></ManagedTable>);expect(html).toContain('2 resultados');expect(html.match(/Ver A/g)?.length).toBe(1);});
   it('muestra vacío explícito, no registros de ejemplo',()=>{const html=renderToStaticMarkup(<DataTable headers={['Nombre']} rows={[]}/>);expect(html).toContain('Todavía no hay registros');expect(html).toContain('0 resultados');});
+  it('permite un directorio compacto sin perder búsqueda, columnas ni acciones',()=>{const html=renderToStaticMarkup(<DataTable variant="directory" headers={['Persona','Estado','Acciones']} rows={[[<strong>Juan Pérez</strong>,'Activo',<button>Ver detalle</button>]]}/>);expect(html).toContain('cg-directory-table');expect(html).toContain('Buscar en el listado');expect(html).toContain('Columnas');expect(html).toContain('Ver detalle');});
+  it('permite jerarquía y variante visual en los modales de detalle',()=>{const html=renderToStaticMarkup(<ConsoleModal title="Detalle del conductor" subtitle="Información completa" className="cg-driver-detail-modal" onClose={vi.fn()}><span>Contenido</span></ConsoleModal>);expect(html).toContain('Detalle del conductor');expect(html).toContain('Información completa');expect(html).toContain('cg-driver-detail-modal');expect(html).toContain('aria-label="Cerrar"');});
   it('no convierte métricas sin acción en botones activos',()=>{const html=renderToStaticMarkup(<MetricStrip items={[{label:'Recaudación',value:'$0,00'}]}/>);expect(html).toContain('disabled');expect(html).not.toContain('Consultar registros');});
 });

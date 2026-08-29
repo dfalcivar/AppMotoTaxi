@@ -1,7 +1,7 @@
 import {ConsoleMap} from './console-map';
 import {ConsoleLayout} from './console-layout';
 import {ConsoleHome} from './console-home';
-import {ConsoleContext,DataTable,MetricStrip,useConsoleState,ErrorState,LoadingState,ConsoleModal} from './console-ui';
+import {ConsoleContext,ConsoleIcon,DataTable,MetricStrip,useConsoleState,ErrorState,LoadingState,ConsoleModal} from './console-ui';
 import {ecuDate,normalizeSearch,routeQuery,navigateConsole,usd} from './console-model';
 import { driverDocumentProgress } from "./driver-document-progress";
 import { StrictMode, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
@@ -135,7 +135,21 @@ Object.assign(Badge,{toTableText:({value}:{value:string})=>stateLabels[value]??v
 const pricingStatusLabels: Record<string, string> = { ACTIVE: "Activa", SCHEDULED: "Programada", FINALIZED: "Finalizada" };
 function PricingBadge({ value }: { value: string }) { return <span className={`badge ${value.toLowerCase()}`}>{pricingStatusLabels[value] ?? value}</span>; }
 function Header({ eyebrow, title, action }: { eyebrow: string; title: string; action?: string }) { return <div className="section-title"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div>{action && <span className="muted-pill">{action}</span>}</div>; }
-function Table({headers,rows}: {headers:string[];rows:React.ReactNode[][]}) {return <DataTable headers={headers} rows={rows}/>;}
+function Table({headers,rows,directory=false}: {headers:string[];rows:React.ReactNode[][];directory?:boolean}) {return <DataTable headers={headers} rows={rows} variant={directory?'directory':'default'}/>;}
+function PersonIdentity({name,email,phone}:{name:string;email?:string|null;phone?:string|null}) {
+  const initials=name.split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]).join('').toUpperCase()||'?';
+  return <div className="cg-person-cell"><span className="cg-person-initials" aria-hidden="true">{initials}</span><span className="cg-person-copy"><strong>{name}</strong><small>{email??'Sin correo'}</small><small>{phone??'Sin teléfono'}</small></span></div>;
+}
+function DriverRating({value}:{value:number}) {
+  const rating=Math.max(0,Math.min(5,Number(value)||0)),filled=Math.round(rating);
+  return <div className="cg-driver-rating" aria-label={`Calificación ${rating.toFixed(2)} de 5`}><strong>{rating.toFixed(2)}</strong><span aria-hidden="true">{[0,1,2,3,4].map(index=><i className={index<filled?'filled':''} key={index}>★</i>)}</span></div>;
+}
+function DriverDetailItem({icon,label,children,className=''}:{icon:string;label:string;children:React.ReactNode;className?:string}) {
+  return <div className={`cg-driver-detail-item ${className}`.trim()}><span className="cg-driver-detail-icon"><ConsoleIcon name={icon}/></span><div><small>{label}</small>{children}</div></div>;
+}
+function PassengerDetailItem({icon,label,children,className=''}:{icon:string;label:string;children:React.ReactNode;className?:string}) {
+  return <div className={`cg-passenger-detail-item ${className}`.trim()}><span className="cg-passenger-detail-icon"><ConsoleIcon name={icon}/></span><div><small>{label}</small>{children}</div></div>;
+}
 function Empty({ text }: { text: string }) { return <div className="empty">{text}</div>; }
 function Notice({ error, success }: { error?: string; success?: string }) { return <>{error && <div className="alert error">{error}</div>}{success && <div className="alert success">{success}</div>}</>; }
 
@@ -450,7 +464,7 @@ function Trips({ token, admin }: { token: string; admin: boolean }) {
   </>;
 }
 
-function PasswordReset({ token, userId, userName }: { token: string; userId: string; userName: string }) {
+function PasswordReset({ token, userId, userName, buttonClassName="link" }: { token: string; userId: string; userName: string; buttonClassName?: string }) {
   const [open, setOpen] = useState(false); const [password, setPassword] = useState(""); const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [success, setSuccess] = useState(false); const [showPassword,setShowPassword]=useState(false);
   function close() { if (!busy) { setOpen(false); setPassword(""); setConfirmation(""); setError(""); } }
@@ -463,7 +477,7 @@ function PasswordReset({ token, userId, userName }: { token: string; userId: str
     try { await apiFetch(`/v1/admin/users/${userId}/reset-password`, token, { method: "POST", body: JSON.stringify({ password }) }); setSuccess(true); setOpen(false); setPassword(""); setConfirmation(""); }
     catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
   }
-  return <><button className="link" type="button" onClick={() => { setSuccess(false); setOpen(true); }}>Restablecer clave</button>{success && <small className="inline-success">Clave temporal actualizada</small>}{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><form className="modal-card" role="dialog" aria-modal="true" aria-label={`Restablecer contraseña de ${userName}`} onSubmit={submit}><Header eyebrow="SEGURIDAD" title="Restablecer contraseña" /><p>Define una clave temporal para <strong>{userName}</strong>. Se cerrarán sus sesiones activas y deberá crear una contraseña personal en su próximo ingreso.</p><button className="secondary" type="button" onClick={generatePassword}>Generar clave temporal segura</button><label>Nueva contraseña temporal<input autoFocus autoComplete="new-password" type={showPassword?"text":"password"} minLength={10} maxLength={100} required value={password} onChange={event => setPassword(event.target.value)} /></label><small>10+ caracteres con mayúscula, minúscula, número y símbolo.</small><label>Confirmar contraseña<input autoComplete="new-password" type={showPassword?"text":"password"} minLength={10} maxLength={100} required value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label><label className="inline-check"><input type="checkbox" checked={showPassword} onChange={event=>setShowPassword(event.target.checked)}/> Mostrar temporalmente la clave</label><Notice error={error} /><div className="modal-actions"><button className="secondary" type="button" disabled={busy} onClick={close}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Guardando…" : "Restablecer y cerrar sesiones"}</button></div></form></div>}</>;
+  return <><button className={buttonClassName} type="button" onClick={() => { setSuccess(false); setOpen(true); }}>Restablecer clave</button>{success && <small className="inline-success">Clave temporal actualizada</small>}{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><form className="modal-card" role="dialog" aria-modal="true" aria-label={`Restablecer contraseña de ${userName}`} onSubmit={submit}><Header eyebrow="SEGURIDAD" title="Restablecer contraseña" /><p>Define una clave temporal para <strong>{userName}</strong>. Se cerrarán sus sesiones activas y deberá crear una contraseña personal en su próximo ingreso.</p><button className="secondary" type="button" onClick={generatePassword}>Generar clave temporal segura</button><label>Nueva contraseña temporal<input autoFocus autoComplete="new-password" type={showPassword?"text":"password"} minLength={10} maxLength={100} required value={password} onChange={event => setPassword(event.target.value)} /></label><small>10+ caracteres con mayúscula, minúscula, número y símbolo.</small><label>Confirmar contraseña<input autoComplete="new-password" type={showPassword?"text":"password"} minLength={10} maxLength={100} required value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label><label className="inline-check"><input type="checkbox" checked={showPassword} onChange={event=>setShowPassword(event.target.checked)}/> Mostrar temporalmente la clave</label><Notice error={error} /><div className="modal-actions"><button className="secondary" type="button" disabled={busy} onClick={close}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Guardando…" : "Restablecer y cerrar sesiones"}</button></div></form></div>}</>;
 }
 
 function DriverDocuments({ token, driver, canManage, onChanged }: { token: string; driver: any; canManage: boolean; onChanged?: () => void }) {
@@ -533,12 +547,47 @@ function Drivers({token,canApprove,canViewDocuments,canManageDocuments,canResetP
     {error&&<ErrorState message={error} onRetry={()=>void load()}/>}
     {canApprove&&<details className="cg-insights"><summary>Revisar solicitudes de aprobación y documentos pendientes</summary><DriverApprovalInbox token={token} canManageDocuments={canManageDocuments} onChanged={()=>void load()}/></details>}
     <section className="card"><Header eyebrow="DIRECTORIO" title="Conductores" action={list.length+' registros'}/><div className="cg-directory-filters"><label>Estado<select value={filters.status} onChange={e=>choose(e.target.value)}><option value="">Todos</option>{['APROBADO','OBSERVADO','PENDIENTE_REVISION','PENDIENTE_DOCUMENTOS','SUSPENDED'].map(s=><option key={s} value={s}>{stateLabels[s]}</option>)}</select></label><label>Cooperativa<select value={filters.cooperative} onChange={e=>setFilters({...filters,cooperative:e.target.value})}><option value="">Todas</option>{Array.from(new Map(data.filter(d=>d.cooperativeId).map(d=>[d.cooperativeId,d.cooperativeName])).entries()).map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label><button className="link" onClick={()=>setFilters({status:'',cooperative:'',documents:''})}>Limpiar filtros</button></div><Notice success={accountMessage}/>
-    <Table headers={['Conductor','Correo','Teléfono','Mototaxis autorizadas','Cooperativa','Documentos','Aprobación','Transferencia','Acciones']} rows={list.map(driver=>[
-      <strong>{driver.name}</strong>,driver.email??'Sin correo',driver.phone,driver.vehicle,driver.cooperativeName??'Independiente',
+    <Table directory headers={['Conductor','Operación','Documentos','Estado','Acciones']} rows={list.map(driver=>[
+      <PersonIdentity name={driver.name} email={driver.email} phone={driver.phone}/>,
+      <div className="cg-directory-stack"><strong>{driver.vehicle||'Sin mototaxi autorizada'}</strong><small>{driver.cooperativeName??'Independiente'}</small></div>,
       <div><span>{driverDocumentProgress(driver).label}</span><progress className="cg-driver-document-progress" max={driver.requiredDocumentCount??5} value={driver.approvedRequiredDocuments??driver.approvedDocuments??0}/>{canViewDocuments&&<DriverDocuments token={token} driver={driver} canManage={canManageDocuments}/>}</div>,
-      <Badge value={driver.approvalStatus??driver.status}/>,driver.deunaEnabled?'Habilitada':'No habilitada',<button className="secondary" onClick={()=>setSelected(driver)}>Ver detalle</button>
+      <div className="cg-directory-stack"><Badge value={driver.approvalStatus??driver.status}/><small>Transferencia: {driver.deunaEnabled?'habilitada':'no habilitada'}</small></div>,
+      <button className="secondary" onClick={()=>setSelected(driver)}>Ver detalle</button>
     ])}/></section>
-    {selected&&<ConsoleModal title={selected.name} onClose={()=>setSelected(undefined)}><div className="access-detail-grid"><div><span>Correo</span><strong>{selected.email??'Sin correo'}</strong></div><div><span>Teléfono</span><strong>{selected.phone}</strong></div><div><span>Estado</span><Badge value={selected.approvalStatus??selected.status}/></div><div><span>Mototaxis</span><strong>{selected.vehicle}</strong></div><div><span>Calificación</span><strong>{Number(selected.rating??0).toFixed(2)}</strong></div><div><span>Registro</span><strong>{ecuDate(selected.createdAt)}</strong></div></div>{canApprove&&<><label>Cooperativa<select value={selected.cooperativeId??''} disabled={busy===selected.id} onChange={e=>void update(selected,selected.status,Boolean(selected.deunaEnabled),e.target.value||null)}><option value="">Sin cooperativa</option>{cooperatives.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label className="checkbox"><input type="checkbox" checked={Boolean(selected.deunaEnabled)} disabled={busy===selected.id} onChange={e=>void update(selected,selected.status,e.target.checked)}/>Recibe solicitudes pagadas con Transferencia</label></>}<Notice error={error} success={accountMessage}/><div className="modal-actions"><MobileAccountActions token={token} account={selected} canEdit={canEditAccounts} canDelete={canDeleteIncomplete} onChanged={async message=>{setAccountMessage(message);setSelected(undefined);await load();}}/>{canResetPasswords&&<PasswordReset token={token} userId={selected.id} userName={selected.name}/>}</div></ConsoleModal>}
+    {selected&&<ConsoleModal title="Detalle del conductor" subtitle="Información completa del conductor" className="cg-driver-detail-modal" onClose={()=>setSelected(undefined)}>
+      <div className="cg-driver-detail-layout">
+        <aside className="cg-driver-profile-card">
+          <div className="cg-driver-photo-wrap">
+            {selected.profilePhotoBase64?<img src={`data:${selected.profilePhotoMime??'image/jpeg'};base64,${selected.profilePhotoBase64}`} alt={`Foto de ${selected.name}`}/>:<span className="cg-driver-photo-fallback" aria-label="Sin fotografía">{selected.name?.trim()?.[0]?.toUpperCase()??'?'}</span>}
+            {(selected.approvalStatus==='APROBADO'||selected.status==='ACTIVE')&&<span className="cg-driver-verified-mark" title="Conductor verificado"><ConsoleIcon name="check" size={18}/></span>}
+          </div>
+          <h3>{selected.name}</h3>
+          <span className={`cg-driver-verification ${selected.approvalStatus==='APROBADO'||selected.status==='ACTIVE'?'verified':'pending'}`}><ConsoleIcon name="shield" size={16}/>{selected.approvalStatus==='APROBADO'||selected.status==='ACTIVE'?'Conductor verificado':'Verificación pendiente'}</span>
+          <div className="cg-driver-score-card"><DriverRating value={Number(selected.rating??0)}/><small>Calificación promedio</small></div>
+        </aside>
+        <section className="cg-driver-information-card">
+          <div className="cg-driver-detail-grid">
+            <DriverDetailItem icon="mail" label="Correo"><strong>{selected.email??'Sin correo'}</strong></DriverDetailItem>
+            <DriverDetailItem icon="phone" label="Teléfono"><strong>{selected.phone??'Sin teléfono'}</strong></DriverDetailItem>
+            <DriverDetailItem icon="shield" label="Estado" className="positive"><Badge value={selected.approvalStatus??selected.status}/></DriverDetailItem>
+            <DriverDetailItem icon="vehicle" label="Mototaxis"><strong>{selected.vehicle||'Sin mototaxi autorizada'}</strong></DriverDetailItem>
+            <DriverDetailItem icon="star" label="Calificación"><DriverRating value={Number(selected.rating??0)}/></DriverDetailItem>
+            <DriverDetailItem icon="calendar" label="Fecha de registro"><strong>{ecuDate(selected.createdAt)}</strong></DriverDetailItem>
+          </div>
+          <div className="cg-driver-cooperative-card">
+            <span className="cg-driver-detail-icon"><ConsoleIcon name="users"/></span>
+            <div className="cg-driver-cooperative-content">
+              <small>Cooperativa</small>
+              {canApprove?<select aria-label="Cooperativa" value={selected.cooperativeId??''} disabled={busy===selected.id} onChange={e=>void update(selected,selected.status,Boolean(selected.deunaEnabled),e.target.value||null)}><option value="">Sin cooperativa</option>{cooperatives.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>:<strong>{selected.cooperativeName??'Sin cooperativa'}</strong>}
+              <span>Solicitudes pagadas con Transferencia</span>
+            </div>
+            <label className="cg-driver-transfer-toggle"><input type="checkbox" checked={Boolean(selected.deunaEnabled)} disabled={!canApprove||busy===selected.id} onChange={e=>void update(selected,selected.status,e.target.checked)}/><span>Recibe solicitudes</span></label>
+          </div>
+        </section>
+      </div>
+      <Notice error={error} success={accountMessage}/>
+      <div className="modal-actions cg-driver-detail-actions"><MobileAccountActions token={token} account={selected} canEdit={canEditAccounts} canDelete={canDeleteIncomplete} editButtonClassName="secondary" entityLabel="conductor" onChanged={async message=>{setAccountMessage(message);setSelected(undefined);await load();}}/>{canResetPasswords&&<PasswordReset token={token} userId={selected.id} userName={selected.name} buttonClassName="primary"/>}</div>
+    </ConsoleModal>}
   </>;
 }
 
@@ -561,8 +610,35 @@ function Passengers({token,canManage,canResetPasswords,canEditAccounts}:{token:s
     {label:'Con cancelaciones del ciclo',value:data.filter(p=>Number(p.cancellationCount)>0).length,tone:'warning',onClick:()=>setSegment('CANCELLATIONS')}
   ]}/>}
   {error&&<ErrorState message={error} onRetry={()=>void load()}/>}<section className="card"><Header eyebrow="DIRECTORIO" title="Pasajeros" action={list.length+' registros'}/><div className="cg-directory-filters"><label>Segmento<select value={segment} onChange={e=>setSegment(e.target.value)}>{[['ALL','Todos'],['ACTIVE','Activos'],['RECENT','Con viajes recientes'],['SUSPENDED','Suspendidos'],['NO_TRIPS','Sin viajes'],['CANCELLATIONS','Con cancelaciones del ciclo']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><button className="link" onClick={()=>setSegment('ALL')}>Limpiar filtros</button></div><Notice success={accountMessage}/>
-  <Table headers={['Nombre','Correo','Teléfono','Viajes','Último viaje','Estado','Cancelaciones del ciclo','Acciones']} rows={list.map(p=>[<strong>{p.name}</strong>,p.email??'Sin correo',p.phone,p.trips,p.lastTrip?ecuDate(p.lastTrip):'Sin viajes',<Badge value={suspended(p)?'SUSPENDED':p.status}/>,p.cancellationCount??0,<button className="secondary" onClick={()=>setSelected(p)}>Ver detalle</button>])}/></section>
-  {selected&&<ConsoleModal title={selected.name} onClose={()=>setSelected(undefined)}><div className="access-detail-grid"><div><span>Correo</span><strong>{selected.email??'Sin correo'}</strong></div><div><span>Teléfono</span><strong>{selected.phone}</strong></div><div><span>Estado</span><Badge value={suspended(selected)?'SUSPENDED':selected.status}/></div><div><span>Viajes</span><strong>{selected.trips}</strong></div><div><span>Último viaje</span><strong>{ecuDate(selected.lastTrip)}</strong></div></div><PassengerCancellationHistory token={token} passenger={selected}/><div className="modal-actions"><MobileAccountActions token={token} account={selected} canEdit={canEditAccounts} onChanged={async message=>{setAccountMessage(message);setSelected(undefined);await load();}}/>{canManage&&<button className="secondary danger" onClick={()=>{setSelected(undefined);setDecision(selected);}}>{!suspended(selected)?'Suspender':'Reactivar'}</button>}{canResetPasswords&&<PasswordReset token={token} userId={selected.id} userName={selected.name}/>}</div></ConsoleModal>}
+  <Table directory headers={['Pasajero','Actividad','Estado','Cancelaciones','Acciones']} rows={list.map(p=>[
+    <PersonIdentity name={p.name} email={p.email} phone={p.phone}/>,
+    <div className="cg-directory-stack"><strong>{p.trips??0} viajes</strong><small>{p.lastTrip?`Último: ${ecuDate(p.lastTrip)}`:'Sin viajes registrados'}</small></div>,
+    <Badge value={suspended(p)?'SUSPENDED':p.status}/>,
+    <div className="cg-directory-stack"><strong>{p.cancellationCount??0} en el ciclo</strong><small>{Number(p.cancellationCount)>0?'Revisar en el detalle':'Sin incidencias vigentes'}</small></div>,
+    <button className="secondary" onClick={()=>setSelected(p)}>Ver detalle</button>
+  ])}/></section>
+  {selected&&<ConsoleModal title="Detalle del pasajero" subtitle="Información general de la cuenta" className="cg-passenger-detail-modal" onClose={()=>setSelected(undefined)}>
+    <div className="cg-passenger-detail-layout">
+      <aside className="cg-passenger-profile-card">
+        <div className="cg-passenger-photo-wrap">{selected.profilePhotoBase64?<img src={`data:${selected.profilePhotoMime??'image/jpeg'};base64,${selected.profilePhotoBase64}`} alt={`Foto de ${selected.name}`}/>:<span>{selected.name?.trim()?.[0]?.toUpperCase()??'?'}</span>}<i className={suspended(selected)?'suspended':'active'}><ConsoleIcon name={suspended(selected)?'alert':'check'} size={15}/></i></div>
+        <h3>{selected.name}</h3>
+        <span className={`cg-passenger-account-state ${suspended(selected)?'suspended':'active'}`}>{suspended(selected)?'Cuenta suspendida':'Cuenta activa'}</span>
+        <div className="cg-passenger-last-trip"><span className="cg-passenger-detail-icon"><ConsoleIcon name="calendar"/></span><div><small>Último viaje</small><strong>{selected.lastTrip?ecuDate(selected.lastTrip):'—'}</strong><em>{selected.lastTrip?'Actividad más reciente':'Aún no ha realizado viajes'}</em></div></div>
+      </aside>
+      <section className="cg-passenger-information-card">
+        <div className="cg-passenger-detail-grid">
+          <PassengerDetailItem icon="mail" label="Correo"><strong>{selected.email??'Sin correo'}</strong></PassengerDetailItem>
+          <PassengerDetailItem icon="phone" label="Teléfono"><strong>{selected.phone??'Sin teléfono'}</strong></PassengerDetailItem>
+          <PassengerDetailItem icon="shield" label="Estado" className={suspended(selected)?'danger':'positive'}><Badge value={suspended(selected)?'SUSPENDED':selected.status}/></PassengerDetailItem>
+          <PassengerDetailItem icon="trips" label="Viajes realizados" className="metric"><strong>{selected.trips??0}</strong><span>viajes</span></PassengerDetailItem>
+        </div>
+        <PassengerCancellationHistory token={token} passenger={selected} triggerClassName="cg-passenger-info-trigger"/>
+        {selected.createdAt&&<p className="cg-passenger-registration"><ConsoleIcon name="calendar" size={14}/>Cuenta registrada el {ecuDate(selected.createdAt)}</p>}
+      </section>
+    </div>
+    <Notice error={error} success={accountMessage}/>
+    <div className="modal-actions cg-passenger-detail-actions"><MobileAccountActions token={token} account={selected} canEdit={canEditAccounts} editButtonClassName="secondary" entityLabel="pasajero" onChanged={async message=>{setAccountMessage(message);setSelected(undefined);await load();}}/>{canManage&&<button className="secondary danger cg-passenger-suspend-action" onClick={()=>{setSelected(undefined);setDecision(selected);}}>{!suspended(selected)?'Suspender':'Reactivar'}</button>}{canResetPasswords&&<PasswordReset token={token} userId={selected.id} userName={selected.name} buttonClassName="secondary cg-passenger-key-action"/>}</div>
+  </ConsoleModal>}
   {decision&&<DecisionDialog title={!suspended(decision)?'Suspender pasajero':'Reactivar pasajero'} description={!suspended(decision)?'La cuenta dejará de poder solicitar viajes. Se conservará su historial.':'La reactivación elimina la suspensión vigente. El historial de cancelaciones se conserva.'} required confirmLabel="Confirmar cambio" dangerous busy={busy} error={error} onCancel={()=>setDecision(undefined)} onConfirm={update}/>}
   </>;
 }

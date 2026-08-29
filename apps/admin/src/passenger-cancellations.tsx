@@ -1,4 +1,4 @@
-import {ManagedTable} from './console-ui';
+import {ConsoleIcon,ManagedTable} from './console-ui';
 import {ecuDate} from './console-model';
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from './api.js';
@@ -70,7 +70,7 @@ export function PassengerCancellationSettings({token,canManage}:{token:string;ca
   </section>;
 }
 
-export function PassengerCancellationHistory({token,passenger}:{token:string;passenger:any}) {
+export function PassengerCancellationHistory({token,passenger,triggerClassName='link'}:{token:string;passenger:any;triggerClassName?:string}) {
   const [open,setOpen]=useState(false); const [page,setPage]=useState(1); const [rows,setRows]=useState<any[]>([]); const [loading,setLoading]=useState(false); const [error,setError]=useState('');
   const [summary,setSummary]=useState<CancellationSummary>(); const [history,setHistory]=useState(false); const [refresh,setRefresh]=useState(0);
   useEffect(()=>{
@@ -84,13 +84,14 @@ export function PassengerCancellationHistory({token,passenger}:{token:string;pas
   },[open,history,page,token,passenger.id,refresh]);
   useEffect(()=>{if(!open)return;const timer=setInterval(()=>setRefresh(n=>n+1),60_000);const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setOpen(false);};window.addEventListener('keydown',close);return()=>{clearInterval(timer);window.removeEventListener('keydown',close);};},[open]);
   const statuses:Record<string,string>={RECORDED:'Advertencia registrada',SUSPENDED:'Suspensión aplicada',EXPIRED:'Suspensión cumplida',REACTIVATED:'Reactivada por administración'};
-  return <><button className="link" onClick={()=>{setPage(1);setHistory(false);setSummary(undefined);setOpen(true);}}>Información del pasajero</button>
-    {open&&<div className="panel-dialog-backdrop"><section className="panel-dialog-card wide" role="dialog" aria-modal="true" aria-label="Información del pasajero">
-      <div className="panel-dialog-heading"><div><h2>{passenger.name}</h2><p className="muted">{passenger.email??'Sin correo'} · {passenger.phone}</p></div><button className="secondary" autoFocus onClick={()=>setOpen(false)} aria-label="Cerrar información">Cerrar</button></div>
-      <h3>Cancelaciones del pasajero</h3>
+  return <><button className={triggerClassName} onClick={()=>{setPage(1);setHistory(false);setSummary(undefined);setOpen(true);}}><span><strong>Información del pasajero</strong><small>Ver cancelaciones y actividad de la cuenta</small></span><ConsoleIcon name="arrow" size={18}/></button>
+    {open&&<div className="panel-dialog-backdrop"><section className="panel-dialog-card wide cg-passenger-info-modal" role="dialog" aria-modal="true" aria-label="Información del pasajero">
+      <div className="panel-dialog-heading cg-passenger-info-heading"><div><h2>Información del pasajero</h2><p>Cancelaciones y actividad de la cuenta</p></div><button className="modal-close-button" autoFocus onClick={()=>setOpen(false)} aria-label="Cerrar información">×</button></div>
+      <div className="cg-passenger-info-person">{passenger.profilePhotoBase64?<img src={`data:${passenger.profilePhotoMime??'image/jpeg'};base64,${passenger.profilePhotoBase64}`} alt={`Foto de ${passenger.name}`}/>:<span>{passenger.name?.trim()?.[0]?.toUpperCase()??'?'}</span>}<div><strong>{passenger.name}</strong><small>{passenger.email??'Sin correo'} <b>·</b> {passenger.phone??'Sin teléfono'}</small></div></div>
+      <h3 className="cg-passenger-cancellation-title"><ConsoleIcon name="refresh" size={18}/>Cancelaciones del pasajero</h3>
       {error&&<p role="alert">{error}</p>}{loading&&<p role="status">Actualizando información…</p>}
       {summary&&<PassengerCancellationSummaryCard summary={summary}/>}
-      <div className="row-actions"><button className="secondary" disabled={loading} onClick={()=>setRefresh(n=>n+1)}>Actualizar</button><button className="secondary" disabled={loading} aria-expanded={history} onClick={()=>{setPage(1);setHistory(!history);}}>{history?'Ocultar historial':'Ver historial de cancelaciones'}</button></div>
+      <div className="row-actions cg-passenger-info-actions"><button className="secondary" disabled={loading} onClick={()=>setRefresh(n=>n+1)}><ConsoleIcon name="refresh" size={16}/>Actualizar</button><button className="primary" disabled={loading} aria-expanded={history} onClick={()=>{setPage(1);setHistory(!history);}}><ConsoleIcon name="document" size={16}/>{history?'Ocultar historial':'Ver historial de cancelaciones'}</button></div>
       {history&&!loading&&!error&&<><h3>Historial permanente · todos los ciclos</h3><p className="note">Solo consulta. Los registros y las penalizaciones de ciclos anteriores no se eliminan.</p>
       {rows.length?<div className="table-wrap cancellation-history"><ManagedTable serverPaged><thead><tr><th>Ciclo / cancelación</th><th>Viaje y responsable</th><th>Penalización</th><th>Estado</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}>
         <td><strong>N.º {r.consecutive_number} del ciclo</strong><small className="table-line">Cancelación: {date(r.occurred_at)}</small><small className="table-line">Ciclo: {date(r.cycleStartsAt)} → {date(r.cycleEndsAt)}</small><small className="table-line">{r.cycleDurationDays} días{r.cycleSource==='LEGACY'?' · Historial previo al sistema de ciclos':''}</small><details><summary>Identificador del ciclo</summary>{r.cycle_id}</details></td>
@@ -110,11 +111,11 @@ export type CancellationSummary = {
 export function PassengerCancellationSummaryCard({summary:s}:{summary:CancellationSummary}) {
   const stateLabels:Record<string,string>={NORMAL:'Normal',WARNING:'Advertencia',SUSPENDED:'Suspendido',INDEFINITE:'Suspensión indefinida'};
   return <><dl className="cancellation-summary">
-    <div className="card"><dt>Cancelaciones del ciclo actual</dt><dd>{s.cycleCount}</dd></div>
-    <div className="card"><dt>Límite / umbral actual</dt><dd>{s.threshold??'Sin suspensión automática'}</dd>{s.nextThreshold&&<small>Siguiente penalización: n.º {s.nextThreshold}</small>}</div>
-    <div className="card"><dt>Inicio del ciclo</dt><dd>{s.cycleActive?date(s.cycleStartsAt):'Sin ciclo vigente'}</dd></div>
-    <div className="card"><dt>Fin estimado del ciclo</dt><dd>{s.cycleActive?date(s.cycleEndsAt):'—'}</dd></div>
-    <div className="card"><dt>Estado</dt><dd>{stateLabels[s.state]??s.state}</dd>{s.suspendedUntil&&<small>Fin de suspensión: {date(s.suspendedUntil)}</small>}</div>
-    <div className="card"><dt>Cancelaciones históricas totales</dt><dd>{s.historicalTotal}</dd><small>Este total nunca se reinicia.</small></div>
-  </dl><p className="note">{s.cycleActive?`Duración del ciclo actual: ${s.cycleDurationDays} días.`:`La próxima cancelación penalizable iniciará un ciclo de ${s.configuredDurationDays} días.`} El vencimiento del ciclo no levanta una suspensión vigente.</p></>;
+    <div className="card"><span className="cancellation-summary-icon"><ConsoleIcon name="refresh"/></span><div><dt>Cancelaciones del ciclo actual</dt><dd>{s.cycleCount}</dd><small>cancelaciones</small></div></div>
+    <div className="card"><span className="cancellation-summary-icon warning"><ConsoleIcon name="alert"/></span><div><dt>Límite / umbral actual</dt><dd>{s.threshold??'Sin suspensión automática'}</dd>{s.nextThreshold&&<small>Siguiente penalización: n.º {s.nextThreshold}</small>}</div></div>
+    <div className="card"><span className="cancellation-summary-icon"><ConsoleIcon name="calendar"/></span><div><dt>Inicio del ciclo</dt><dd>{s.cycleActive?date(s.cycleStartsAt):'Sin ciclo vigente'}</dd></div></div>
+    <div className="card"><span className="cancellation-summary-icon neutral"><ConsoleIcon name="calendar"/></span><div><dt>Fin estimado del ciclo</dt><dd>{s.cycleActive?date(s.cycleEndsAt):'—'}</dd></div></div>
+    <div className="card"><span className="cancellation-summary-icon positive"><ConsoleIcon name="shield"/></span><div><dt>Estado</dt><dd><span className={`cancellation-state ${s.state.toLowerCase()}`}>{stateLabels[s.state]??s.state}</span></dd>{s.suspendedUntil&&<small>Fin de suspensión: {date(s.suspendedUntil)}</small>}</div></div>
+    <div className="card"><span className="cancellation-summary-icon neutral"><ConsoleIcon name="chart"/></span><div><dt>Cancelaciones históricas totales</dt><dd>{s.historicalTotal}</dd><small>Este total nunca se reinicia.</small></div></div>
+  </dl><p className="note cancellation-summary-note"><ConsoleIcon name="alert" size={17}/><span>{s.cycleActive?`Duración del ciclo actual: ${s.cycleDurationDays} días.`:`La próxima cancelación penalizable iniciará un ciclo de ${s.configuredDurationDays} días.`} El vencimiento del ciclo no levanta una suspensión vigente.</span></p></>;
 }
