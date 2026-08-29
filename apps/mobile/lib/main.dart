@@ -14942,6 +14942,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   List<Widget> _driverSheetContent(BuildContext context, String? action) {
     final colors = Theme.of(context).colorScheme;
     final scheduledCount = scheduledOffers.length + scheduledTrips.length;
+    final hasScheduledTrips = scheduledCount > 0;
+    final scheduledAccent = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xff67d98a)
+        : const Color(0xff159447);
+    final scheduledSurface = Color.alphaBlend(
+      scheduledAccent.withValues(
+          alpha: Theme.of(context).brightness == Brightness.dark ? .12 : .06),
+      colors.surfaceContainerLow,
+    );
     final status = active?['status']?.toString();
     return [
       if (driverReviewArea?.reviewLocation != null) ...[
@@ -15082,28 +15091,115 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ),
       if (active == null) const SizedBox(height: 10),
       if (active == null) ...[
-        _PassengerSurface(
-          padding: EdgeInsets.zero,
+        Container(
+          decoration: BoxDecoration(
+            color: hasScheduledTrips
+                ? scheduledSurface
+                : colors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: hasScheduledTrips
+                  ? scheduledAccent.withValues(alpha: .34)
+                  : colors.outlineVariant.withValues(alpha: .75),
+            ),
+          ),
           child: InkWell(
             onTap: showDriverScheduledTrips,
             borderRadius: BorderRadius.circular(20),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
               child: Row(children: [
-                CircleAvatar(
-                  backgroundColor: colors.primaryContainer,
-                  foregroundColor: colors.primary,
-                  child: const Icon(Icons.calendar_month_outlined),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: hasScheduledTrips
+                        ? scheduledAccent.withValues(alpha: .14)
+                        : colors.primaryContainer,
+                  ),
+                  child: Icon(Icons.calendar_month_outlined,
+                      color:
+                          hasScheduledTrips ? scheduledAccent : colors.primary),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text('Viajes programados ($scheduledCount)',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Flexible(
+                          child: Text(
+                              hasScheduledTrips
+                                  ? 'Viajes programados'
+                                  : 'Viajes programados (0)',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w800)),
+                        ),
+                        if (hasScheduledTrips) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            constraints: const BoxConstraints(minWidth: 24),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: scheduledAccent,
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: Text('$scheduledCount',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelMedium
+                                    ?.copyWith(
+                                        color: colors.onPrimary,
+                                        fontWeight: FontWeight.w900)),
+                          ),
+                        ],
+                      ]),
+                      if (hasScheduledTrips) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          scheduledCount == 1
+                              ? 'Tienes un viaje programado pendiente'
+                              : 'Tienes $scheduledCount viajes programados pendientes',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: colors.onSurfaceVariant),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-                const Icon(Icons.chevron_right),
+                if (hasScheduledTrips) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: scheduledAccent.withValues(alpha: .15),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Text('Nuevo',
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelMedium
+                            ?.copyWith(
+                                color: scheduledAccent,
+                                fontWeight: FontWeight.w900)),
+                  ),
+                ],
+                Icon(Icons.chevron_right,
+                    color: hasScheduledTrips
+                        ? scheduledAccent
+                        : colors.onSurfaceVariant),
               ]),
             ),
           ),
@@ -15137,43 +15233,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       ?.copyWith(color: colors.onSurfaceVariant)),
             ),
           ]),
-          const SizedBox(height: 9),
-          _PassengerSurface(
-            padding: const EdgeInsets.all(11),
-            child: Row(children: [
-              Expanded(
-                child: InkWell(
-                  onTap: centerDriverCurrentLocation,
-                  child: Row(children: [
-                    CircleAvatar(
-                      backgroundColor: colors.primaryContainer,
-                      foregroundColor: colors.primary,
-                      child: const Icon(Icons.my_location_outlined),
-                    ),
-                    const SizedBox(width: 7),
-                    const Expanded(
-                        child: Text('Mi ubicación',
-                            style: TextStyle(fontWeight: FontWeight.w800))),
-                  ]),
-                ),
-              ),
-              Container(width: 1, height: 42, color: colors.outlineVariant),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Row(children: [
-                  MototaxiIcon(color: colors.primary, size: 22),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                        nearbyCountReliable
-                            ? '${nearbyDriverPositions.length} mototaxis cercanas'
-                            : 'Actualizando mototaxis cercanas…',
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
-                  ),
-                ]),
-              ),
-            ]),
-          ),
           const SizedBox(height: 9),
         ],
         if (available && offers.isEmpty)
