@@ -581,6 +581,32 @@ void main() {
       await screenshot(tester, 'empty-selection-${brightness.name}');
     });
     testWidgets(
+        'empty my mototaxis reuses coastal artwork in ${brightness.name}',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final gateway = FleetGateway(
+          (method, path, body) async => {'items': <dynamic>[]},
+          (_) async => Uint8List(0));
+      await tester.pumpWidget(MaterialApp(
+          theme: theme(brightness),
+          home: FleetScreen(gateway: gateway)));
+      await tester.pumpAndSettle();
+      expect(find.text('Mis mototaxis'), findsOneWidget);
+      expect(find.text('Aún no tienes mototaxis disponibles'), findsOneWidget);
+      expect(find.byKey(const ValueKey('fleet-coastal-empty-art')),
+          findsOneWidget);
+      expect(
+          find.byKey(ValueKey(brightness == Brightness.dark
+              ? 'fleet-empty-dark'
+              : 'fleet-empty-light')),
+          findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await screenshot(tester, 'empty-my-mototaxis-${brightness.name}');
+    });
+    testWidgets(
         'trip mototaxi opens a responsive identity preview in ${brightness.name}',
         (tester) async {
       tester.view.physicalSize = const Size(320, 640);

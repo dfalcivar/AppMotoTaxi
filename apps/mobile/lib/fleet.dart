@@ -1121,7 +1121,12 @@ class _FleetScreenState extends State<FleetScreen> {
                                   : 'Agrega una unidad o solicita autorización para empezar tu jornada.',
                               primaryLabel: 'Agregar mototaxi',
                               onPrimary: busy ? null : add,
-                              coastal: widget.select && !widget.ownerOnly,
+                              // Driver-facing empty states share the same Costa-Go
+                              // coastal identity in both entry points: selecting the
+                              // unit for a shift and managing "Mis mototaxis".
+                              // "Mi flota" remains visually distinct because it is
+                              // an owner/manager workspace rather than a driving list.
+                              coastal: !widget.ownerOnly,
                               secondaryLabel: widget.ownerOnly
                                   ? null
                                   : 'Solicitar autorización',
