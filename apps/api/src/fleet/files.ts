@@ -6,12 +6,29 @@ import { authorizeVehicle, FleetError, type FleetActor } from './service.js';
 
 const fileSchema=z.object({kind:z.enum(['PHOTO','REGISTRATION','OPERATING_PERMIT','OWNERSHIP_EVIDENCE']),
   mimeType:z.enum(['image/jpeg','image/png','application/pdf']),data:z.string().max(7_000_000)});
-// No subject synthesis/removal: preserve the entire real vehicle and its markings.
+const VEHICLE_DISPLAY_WIDTH=1200;
+const VEHICLE_DISPLAY_HEIGHT=900;
+const VEHICLE_DISPLAY_MARGIN=36;
+const VEHICLE_DISPLAY_VERSION='v2';
+// No subject synthesis/removal: the complete real photograph remains as the foreground.
+// The blurred backdrop is derived only from that same photograph and fills the 4:3 frame.
 export async function vehicleDisplayImage(bytes:Buffer){
-  return sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'}).rotate()
-    .normalise({lower:1,upper:99})
-    .resize(800,600,{fit:'contain',background:{r:0,g:0,b:0,alpha:0}})
-    .webp({quality:82,effort:4}).toBuffer();
+  const oriented=await sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'}).rotate().toBuffer();
+  const background=await sharp(oriented,{limitInputPixels:20_000_000,failOn:'error'})
+    .flatten({background:'#dbe6ec'})
+    .resize(VEHICLE_DISPLAY_WIDTH,VEHICLE_DISPLAY_HEIGHT,{fit:'cover',position:'attention'})
+    .blur(30)
+    .modulate({brightness:.86,saturation:.78})
+    .toBuffer();
+  const foreground=await sharp(oriented,{limitInputPixels:20_000_000,failOn:'error'})
+    .resize(VEHICLE_DISPLAY_WIDTH-VEHICLE_DISPLAY_MARGIN*2,VEHICLE_DISPLAY_HEIGHT-VEHICLE_DISPLAY_MARGIN*2,
+      {fit:'inside',withoutEnlargement:true})
+    .toBuffer({resolveWithObject:true});
+  return sharp(background,{limitInputPixels:20_000_000,failOn:'error'})
+    .composite([{input:foreground.data,
+      left:Math.floor((VEHICLE_DISPLAY_WIDTH-foreground.info.width)/2),
+      top:Math.floor((VEHICLE_DISPLAY_HEIGHT-foreground.info.height)/2)}])
+    .webp({quality:85,effort:5}).toBuffer();
 }
 const webp=(b:Buffer)=>b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WEBP';
 // Legacy immutable files are normalized on read, never overwritten. Bounded process-local cache.
@@ -20,7 +37,7 @@ let legacyDisplayBytes=0;
 // Serialize legacy decoding so a page of old 20 MP photos cannot exhaust API memory.
 let legacyDisplayQueue:Promise<unknown>=Promise.resolve();
 async function legacyDisplay(id:string,original:Buffer){
-  const key=`${id}:${createHash('sha256').update(original).digest('hex')}`;
+  const key=`${VEHICLE_DISPLAY_VERSION}:${id}:${createHash('sha256').update(original).digest('hex')}`;
   const cached=legacyDisplayCache.get(key);if(cached)return cached;
   const work=legacyDisplayQueue.then(async()=>{
     const existing=legacyDisplayCache.get(key);if(existing)return existing;
@@ -47,9 +64,14 @@ export async function prepareVehicleFile(input:unknown){
       const meta=await image.metadata();
       if(meta.format!==(f.mimeType==='image/png'?'png':'jpeg')||!meta.width||!meta.height)throw new Error('format');
     }catch{throw new FleetError('INVALID_IMAGE',400);}
-    // A valid original remains usable even if the optional display conversion fails.
-    try {display=f.kind==='PHOTO'?await vehicleDisplayImage(bytes):await sharp(bytes,{limitInputPixels:20_000_000}).rotate().resize(800,600,{fit:'inside',withoutEnlargement:true}).jpeg({quality:88}).toBuffer();}
-    catch {display=null;}
+    if(f.kind==='PHOTO'){
+      // Vehicle photos require a normalized public version. Other image/document flows
+      // deliberately keep their previous processing unchanged.
+      try {display=await vehicleDisplayImage(bytes);}catch{throw new FleetError('INVALID_IMAGE',400);}
+    }else{
+      try {display=await sharp(bytes,{limitInputPixels:20_000_000}).rotate().resize(800,600,{fit:'inside',withoutEnlargement:true}).jpeg({quality:88}).toBuffer();}
+      catch {display=null;}
+    }
   }
   return {kind:f.kind,mimeType:f.mimeType,bytes,display,hash:createHash('sha256').update(bytes).digest('hex')};
 }
@@ -93,7 +115,7 @@ export async function readVehicleFile(actor:FleetActor,id:string,original=false)
     if(display&&webp(display)){
       try {
         const meta=await sharp(display,{limitInputPixels:20_000_000}).metadata();
-        if(meta.width&&meta.height)return {bytes:display,mimeType:'image/webp'};
+        if(meta.width===VEHICLE_DISPLAY_WIDTH&&meta.height===VEHICLE_DISPLAY_HEIGHT)return {bytes:display,mimeType:'image/webp'};
       }catch{/* Invalid stored preview: recover from the untouched original below. */}
     }
     try{return {bytes:await legacyDisplay(id,Buffer.from(f.original_bytes)),mimeType:'image/webp'};}

@@ -490,31 +490,43 @@ describe('fleet real SQL integration',()=>{
     const bytes=await sharp({create:{width:20,height:10,channels:3,background:'blue'}}).png().toBuffer();
     const prepared=await prepareVehicleFile({kind:'PHOTO',mimeType:'image/png',data:bytes.toString('base64')});
     expect(prepared.bytes.equals(bytes)).toBe(true);
-    expect(await sharp(prepared.display!).metadata()).toMatchObject({width:800,height:600,format:'webp'});
+    expect(await sharp(prepared.display!).metadata()).toMatchObject({width:1200,height:900,format:'webp'});
     await expect(prepareVehicleFile({kind:'PHOTO',mimeType:'image/png',data:Buffer.from('not a png').toString('base64')})).rejects.toThrow('INVALID_IMAGE');
   });
-  it('rotates EXIF safely and uses transparent framing without cropping the real photo',async()=>{
+  it('does not apply vehicle-photo normalization to documents',async()=>{
+    const bytes=await sharp({create:{width:640,height:960,channels:3,background:'#d8e3ea'}}).jpeg().toBuffer();
+    const prepared=await prepareVehicleFile({kind:'REGISTRATION',mimeType:'image/jpeg',data:bytes.toString('base64')});
+    expect(prepared.bytes.equals(bytes)).toBe(true);
+    const metadata=await sharp(prepared.display!).metadata();
+    expect(metadata.format).toBe('jpeg');
+    expect(metadata.width).toBeLessThanOrEqual(800);expect(metadata.height).toBeLessThanOrEqual(600);
+    expect(metadata).not.toMatchObject({width:1200,height:900,format:'webp'});
+  });
+  it('rotates EXIF safely and uses an opaque blurred frame without cropping the real photo',async()=>{
     const original=await sharp({create:{width:120,height:60,channels:3,background:'#0864a4'}}).jpeg().withMetadata({orientation:6}).toBuffer();
     const file=await prepareVehicleFile({kind:'PHOTO',mimeType:'image/jpeg',data:original.toString('base64')});
     expect(file.bytes.equals(original)).toBe(true);
     const metadata=await sharp(file.display!).metadata();
-    expect(metadata).toMatchObject({width:800,height:600,format:'webp',hasAlpha:true});
+    expect(metadata).toMatchObject({width:1200,height:900,format:'webp',hasAlpha:false});
     expect(metadata.orientation).toBeUndefined();expect(metadata.exif).toBeUndefined();
-    const {data,info}=await sharp(file.display!).ensureAlpha().raw().toBuffer({resolveWithObject:true});
-    const alpha=(x:number,y:number)=>data[(y*info.width+x)*4+3];
-    expect(alpha(0,300)).toBe(0);expect(alpha(400,300)).toBe(255);expect(alpha(600,300)).toBe(0);
+    const {data,info}=await sharp(file.display!).raw().toBuffer({resolveWithObject:true});
+    const nonBlack=(x:number,y:number)=>{
+      const offset=(y*info.width+x)*info.channels;
+      return (data[offset]??0)+(data[offset+1]??0)+(data[offset+2]??0);
+    };
+    expect(nonBlack(0,450)).toBeGreaterThan(0);expect(nonBlack(600,450)).toBeGreaterThan(0);expect(nonBlack(1199,450)).toBeGreaterThan(0);
   });
   it('normalizes legacy previews on read without altering original or historical file rows',async()=>{
     const id=await unit();
     const original=await sharp({create:{width:160,height:120,channels:3,background:'blue'}}).png().toBuffer();
-    const oldDisplay=await sharp(original).jpeg().toBuffer();
+    const oldDisplay=await sharp(original).resize(800,600,{fit:'contain',background:{r:0,g:0,b:0,alpha:0}}).webp().toBuffer();
     const result=await pg.query<any>(`insert into vehicle_files(vehicle_id,kind,mime_type,original_bytes,display_bytes,sha256,uploaded_by)
       values($1,'PHOTO','image/png',$2,$3,'legacy-test',$4) returning id`,[id,original,oldDisplay,ids.driver]);
     const fileId=String(result.rows[0].id);
     const [display,concurrent]=await Promise.all([readVehicleFile(driver,fileId),readVehicleFile(driver,fileId)]);
     expect(Buffer.from(concurrent.bytes).equals(Buffer.from(display.bytes))).toBe(true);
     expect(display.mimeType).toBe('image/webp');
-    expect(await sharp(display.bytes).metadata()).toMatchObject({width:800,height:600,format:'webp'});
+    expect(await sharp(display.bytes).metadata()).toMatchObject({width:1200,height:900,format:'webp'});
     expect(Buffer.from((await readVehicleFile(driver,fileId)).bytes).equals(Buffer.from(display.bytes))).toBe(true);
     expect(Buffer.from((await readVehicleFile(driver,fileId,true)).bytes).equals(original)).toBe(true);
     const [unchanged]=(await pg.query<any>('select original_bytes,display_bytes from vehicle_files where id=$1',[fileId])).rows;
@@ -536,7 +548,7 @@ describe('fleet real SQL integration',()=>{
       values($1,'PHOTO','image/png',$2,$3,'bad-preview',$4) returning id`,[id,original,broken,ids.driver]);
     const response=await readVehicleFile(driver,String(result.rows[0].id));
     expect(response.mimeType).toBe('image/webp');
-    expect(await sharp(response.bytes).metadata()).toMatchObject({width:800,height:600,format:'webp'});
+    expect(await sharp(response.bytes).metadata()).toMatchObject({width:1200,height:900,format:'webp'});
     expect(Buffer.from((await readVehicleFile(driver,String(result.rows[0].id),true)).bytes).equals(original)).toBe(true);
   });
 });

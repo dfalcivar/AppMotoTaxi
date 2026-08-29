@@ -99,10 +99,12 @@ class FleetLinks {
 }
 
 class FleetPhoto extends StatefulWidget {
-  const FleetPhoto({super.key, required this.gateway, this.id, this.size = 68});
+  const FleetPhoto(
+      {super.key, required this.gateway, this.id, this.size = 68, this.height});
   final FleetGateway gateway;
   final String? id;
   final double size;
+  final double? height;
   @override
   State<FleetPhoto> createState() => _FleetPhotoState();
 }
@@ -133,7 +135,7 @@ class _FleetPhotoState extends State<FleetPhoto> {
                 MototaxiIcon(size: widget.size * .48, color: colors.primary)));
     return Container(
         width: widget.size,
-        height: widget.size * .75,
+        height: widget.height ?? widget.size * .75,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
             color: colors.surfaceContainerHighest,
@@ -145,7 +147,8 @@ class _FleetPhotoState extends State<FleetPhoto> {
             builder: (context, s) {
               if (s.hasData) {
                 return Image.memory(s.data!,
-                    fit: BoxFit.contain,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
                     semanticLabel: 'Fotografía real de la mototaxi',
                     errorBuilder: (_, __, ___) => fallback());
               }
@@ -173,6 +176,9 @@ class FleetUnitSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final model = [vehicle['brand'], vehicle['model']]
+        .where((value) => value != null && value.toString().trim().isNotEmpty)
+        .join(' ');
     final info = [
       vehicle['color'],
       if ('${vehicle['unitNumber'] ?? ''}'.trim().isNotEmpty)
@@ -186,14 +192,25 @@ class FleetUnitSummary extends StatelessWidget {
             border: Border.all(color: colors.outlineVariant)),
         child: Row(children: [
           FleetPhoto(
-              gateway: gateway, id: vehicle['photoId']?.toString(), size: 82),
+              gateway: gateway,
+              id: vehicle['photoId']?.toString(),
+              size: 96,
+              height: 76),
           const SizedBox(width: 12),
           Expanded(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                 Text('${vehicle['identifier'] ?? 'Mototaxi'}',
-                    style: Theme.of(context).textTheme.titleSmall),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w800)),
+                if (model.isNotEmpty)
+                  Text(model,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall),
                 if (info.isNotEmpty)
                   Text(info,
                       style: Theme.of(context)
@@ -208,9 +225,102 @@ class FleetUnitSummary extends StatelessWidget {
                               .textTheme
                               .labelSmall
                               ?.copyWith(color: colors.primary))),
+                if (!active && vehicle['status'] == 'VERIFIED')
+                  Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('Verificada',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(
+                                  color: colors.primary,
+                                  fontWeight: FontWeight.w700))),
               ]))
         ]));
   }
+}
+
+Future<void> showFleetVehiclePreview(BuildContext context,
+    {required FleetGateway gateway, required dynamic vehicle}) async {
+  if (vehicle is! Map) return;
+  final model = [vehicle['brand'], vehicle['model']]
+      .where((value) => value != null && value.toString().trim().isNotEmpty)
+      .join(' ');
+  final details = [
+    if ('${vehicle['color'] ?? ''}'.trim().isNotEmpty) vehicle['color'],
+    if ('${vehicle['unitNumber'] ?? ''}'.trim().isNotEmpty)
+      'Unidad ${vehicle['unitNumber']}'
+  ].join(' · ');
+  await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final colors = Theme.of(dialogContext).colorScheme;
+        return Dialog(
+            backgroundColor: colors.surface,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+            child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 390),
+                child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Align(
+                          alignment: Alignment.centerRight,
+                          child: IconButton(
+                              tooltip: 'Cerrar',
+                              onPressed: () => Navigator.pop(dialogContext),
+                              icon: const Icon(Icons.close))),
+                      LayoutBuilder(builder: (context, constraints) {
+                        final width =
+                            constraints.maxWidth.clamp(180.0, 300.0).toDouble();
+                        return Center(
+                            child: FleetPhoto(
+                                gateway: gateway,
+                                id: vehicle['photoId']?.toString(),
+                                size: width,
+                                height: width * .68));
+                      }),
+                      const SizedBox(height: 18),
+                      Text('Mototaxi ${vehicle['identifier'] ?? ''}',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(dialogContext)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800)),
+                      if (model.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(model,
+                            textAlign: TextAlign.center,
+                            style:
+                                Theme.of(dialogContext).textTheme.bodyMedium),
+                      ],
+                      if (details.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(details,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(dialogContext)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: colors.onSurfaceVariant)),
+                      ],
+                      if (vehicle['status'] == 'VERIFIED' ||
+                          vehicle['verified'] == true) ...[
+                        const SizedBox(height: 10),
+                        Chip(
+                            avatar: Icon(Icons.verified_outlined,
+                                size: 18, color: colors.primary),
+                            label: const Text('Verificada')),
+                      ],
+                      const SizedBox(height: 16),
+                      SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                              onPressed: () => Navigator.pop(dialogContext),
+                              child: const Text('Entendido')))
+                    ]))));
+      });
 }
 
 class TripVehicleBadge extends StatelessWidget {
@@ -227,37 +337,50 @@ class TripVehicleBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     if (vehicle is! Map) return const SizedBox.shrink();
     final s = Theme.of(context).colorScheme;
-    return Container(
-        padding: const EdgeInsets.all(9),
-        decoration: BoxDecoration(
-            color: s.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: s.outlineVariant)),
-        child: Row(children: [
-          FleetPhoto(
-              gateway: gateway, id: vehicle['photoId']?.toString(), size: 64),
-          const SizedBox(width: 10),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(
-                    '${historical ? 'Mototaxi usada:' : 'Mototaxi'} ${vehicle['identifier'] ?? ''}',
-                    style: Theme.of(context).textTheme.titleSmall),
-                Text(
-                    [
-                      vehicle['color'],
-                      if (vehicle['unitNumber'] != null)
-                        'Unidad ${vehicle['unitNumber']}'
-                    ].whereType<String>().join(' · '),
-                    style: Theme.of(context).textTheme.bodySmall),
-                if (showSafety && !historical)
-                  const Text(
-                      'Verifica que la mototaxi coincida antes de subir.',
-                      style: TextStyle(fontSize: 11)),
-              ])),
-          Icon(Icons.verified_user_outlined, size: 19, color: s.primary)
-        ]));
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          final preview = Map<String, dynamic>.from(vehicle as Map);
+          preview['verified'] = true;
+          showFleetVehiclePreview(context, gateway: gateway, vehicle: preview);
+        },
+        child: Container(
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+                color: s.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: s.outlineVariant)),
+            child: Row(children: [
+              FleetPhoto(
+                  gateway: gateway,
+                  id: vehicle['photoId']?.toString(),
+                  size: 64),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(
+                        '${historical ? 'Mototaxi usada:' : 'Mototaxi'} ${vehicle['identifier'] ?? ''}',
+                        style: Theme.of(context).textTheme.titleSmall),
+                    Text(
+                        [
+                          vehicle['color'],
+                          if (vehicle['unitNumber'] != null)
+                            'Unidad ${vehicle['unitNumber']}'
+                        ].whereType<String>().join(' · '),
+                        style: Theme.of(context).textTheme.bodySmall),
+                    if (showSafety && !historical)
+                      const Text(
+                          'Verifica que la mototaxi coincida antes de subir.',
+                          style: TextStyle(fontSize: 11)),
+                  ])),
+              Icon(Icons.chevron_right, size: 22, color: s.primary)
+            ])),
+      ),
+    );
   }
 }
 
@@ -564,12 +687,105 @@ class FleetScreen extends StatefulWidget {
   State<FleetScreen> createState() => _FleetScreenState();
 }
 
+class _FleetEmptyState extends StatelessWidget {
+  const _FleetEmptyState(
+      {required this.title,
+      required this.message,
+      required this.primaryLabel,
+      required this.onPrimary,
+      this.secondaryLabel,
+      this.onSecondary});
+  final String title, message, primaryLabel;
+  final VoidCallback? onPrimary, onSecondary;
+  final String? secondaryLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+        padding: const EdgeInsets.fromLTRB(22, 16, 22, 14),
+        child: Center(
+            child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                      width: 104,
+                      height: 90,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: colors.primaryContainer.withValues(alpha: .42),
+                          borderRadius: BorderRadius.circular(34)),
+                      child: MototaxiIcon(size: 54, color: colors.primary)),
+                  const SizedBox(height: 14),
+                  Text(title,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: colors.onSurfaceVariant, height: 1.4)),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                          onPressed: onPrimary,
+                          icon: const Icon(Icons.add),
+                          label: Text(primaryLabel))),
+                  if (secondaryLabel != null) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                            onPressed: onSecondary,
+                            icon: const Icon(Icons.verified_user_outlined),
+                            label: Text(secondaryLabel!)))
+                  ]
+                ]))));
+  }
+}
+
+class _FleetAlertBanner extends StatelessWidget {
+  const _FleetAlertBanner({required this.message});
+  final String message;
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final warning = colors.tertiary;
+    return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+            color: warning.withValues(alpha: .10),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: warning.withValues(alpha: .32))),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.warning_amber_rounded, size: 20, color: warning),
+          const SizedBox(width: 9),
+          Expanded(
+              child: Text(message,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(height: 1.35)))
+        ]));
+  }
+}
+
 class _FleetScreenState extends State<FleetScreen> {
   List<dynamic> rows = [];
   bool loading = true, busy = false, hasNextPage = false;
   String? error;
   int page = 0;
   final search = TextEditingController();
+  bool get vehicleInUse =>
+      (error ?? '').contains('VEHICLE_IN_USE') ||
+      (error ?? '').contains('continúa conectado') ||
+      (error ?? '').contains('utilizando esta mototaxi');
   @override
   void initState() {
     super.initState();
@@ -740,10 +956,14 @@ class _FleetScreenState extends State<FleetScreen> {
                       unawaited(load());
                     }),
                 if (error != null)
-                  Padding(
-                      padding: const EdgeInsets.all(10),
-                      child:
-                          Text(error!, style: TextStyle(color: scheme.error))),
+                  vehicleInUse
+                      ? const _FleetAlertBanner(
+                          message:
+                              'Esta mototaxi tiene una jornada activa con otro conductor. Elige otra unidad o inténtalo cuando quede disponible.')
+                      : Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Text(error!,
+                              style: TextStyle(color: scheme.error))),
               ])),
           if (loading) const LinearProgressIndicator(),
           Expanded(
@@ -751,13 +971,19 @@ class _FleetScreenState extends State<FleetScreen> {
                   onRefresh: load,
                   child: rows.isEmpty && !loading
                       ? ListView(children: [
-                          const SizedBox(height: 56),
-                          MototaxiIcon(size: 48, color: scheme.primary),
-                          const Padding(
-                              padding: EdgeInsets.all(20),
-                              child: Text(
-                                  'Todavía no hay mototaxis para mostrar. Agrega una unidad o solicita autorización.',
-                                  textAlign: TextAlign.center))
+                          _FleetEmptyState(
+                              title: widget.ownerOnly
+                                  ? 'Aún no tienes mototaxis en tu flota'
+                                  : 'Aún no tienes mototaxis disponibles',
+                              message: widget.ownerOnly
+                                  ? 'Registra o reclama una unidad para comenzar a administrar tu flota.'
+                                  : 'Agrega una unidad o solicita autorización para empezar tu jornada.',
+                              primaryLabel: 'Agregar mototaxi',
+                              onPrimary: busy ? null : add,
+                              secondaryLabel: widget.ownerOnly
+                                  ? null
+                                  : 'Solicitar autorización',
+                              onSecondary: busy ? null : scan)
                         ])
                       : ListView.separated(
                           padding: const EdgeInsets.all(16),
@@ -792,7 +1018,9 @@ class _FleetScreenState extends State<FleetScreen> {
                                         child: Row(children: [
                                           FleetPhoto(
                                               gateway: widget.gateway,
-                                              id: v['photoId']?.toString()),
+                                              id: v['photoId']?.toString(),
+                                              size: 92,
+                                              height: 72),
                                           const SizedBox(width: 12),
                                           Expanded(
                                               child: Column(
@@ -817,10 +1045,34 @@ class _FleetScreenState extends State<FleetScreen> {
                                                       style: Theme.of(c)
                                                           .textTheme
                                                           .bodySmall),
-                                                Text(fleetLabel(v['status']),
-                                                    style: TextStyle(
-                                                        color: scheme.primary,
-                                                        fontSize: 12)),
+                                                if (v['status'] == 'VERIFIED')
+                                                  Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                              top: 3),
+                                                      child: Row(children: [
+                                                        Icon(
+                                                            Icons
+                                                                .verified_outlined,
+                                                            size: 15,
+                                                            color:
+                                                                scheme.primary),
+                                                        const SizedBox(
+                                                            width: 4),
+                                                        Text('Verificada',
+                                                            style: TextStyle(
+                                                                color: scheme
+                                                                    .primary,
+                                                                fontSize: 12,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700))
+                                                      ]))
+                                                else
+                                                  Text(fleetLabel(v['status']),
+                                                      style: TextStyle(
+                                                          color: scheme.primary,
+                                                          fontSize: 12)),
                                                 if (widget.ownerOnly)
                                                   Text(
                                                       v['currentDriverName'] ??
@@ -845,33 +1097,45 @@ class _FleetScreenState extends State<FleetScreen> {
                                                               .onSurfaceVariant,
                                                           fontSize: 12))
                                               ])),
-                                          Icon(
-                                              widget.select
-                                                  ? Icons.radio_button_unchecked
-                                                  : Icons.chevron_right,
-                                              color: scheme.primary)
+                                          Container(
+                                              width: 34,
+                                              height: 34,
+                                              alignment: Alignment.center,
+                                              decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: widget.select
+                                                      ? scheme.primaryContainer
+                                                          .withValues(alpha: .5)
+                                                      : Colors.transparent),
+                                              child: Icon(
+                                                  widget.select
+                                                      ? Icons
+                                                          .radio_button_unchecked
+                                                      : Icons.chevron_right,
+                                                  color: scheme.primary))
                                         ]))));
                           }))),
-          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            IconButton(
-                onPressed: page > 0 && !loading
-                    ? () {
-                        page--;
-                        unawaited(load());
-                      }
-                    : null,
-                icon: const Icon(Icons.chevron_left)),
-            Text('Página ${page + 1}'),
-            IconButton(
-                onPressed: hasNextPage && !loading
-                    ? () {
-                        page++;
-                        unawaited(load());
-                      }
-                    : null,
-                icon: const Icon(Icons.chevron_right))
-          ]),
-          if (!widget.select)
+          if (rows.isNotEmpty || loading)
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              IconButton(
+                  onPressed: page > 0 && !loading
+                      ? () {
+                          page--;
+                          unawaited(load());
+                        }
+                      : null,
+                  icon: const Icon(Icons.chevron_left)),
+              Text('Página ${page + 1}'),
+              IconButton(
+                  onPressed: hasNextPage && !loading
+                      ? () {
+                          page++;
+                          unawaited(load());
+                        }
+                      : null,
+                  icon: const Icon(Icons.chevron_right))
+            ]),
+          if (!widget.select && (rows.isNotEmpty || loading))
             Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: SizedBox(

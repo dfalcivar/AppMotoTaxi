@@ -545,6 +545,54 @@ void main() {
       expect(tester.takeException(), isNull);
     });
     testWidgets(
+        'empty selection offers registration and authorization in ${brightness.name}',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final gateway = FleetGateway(
+          (method, path, body) async => {'items': <dynamic>[]},
+          (_) async => Uint8List(0));
+      await tester.pumpWidget(MaterialApp(
+          theme: theme(brightness),
+          home: FleetScreen(gateway: gateway, select: true)));
+      await tester.pumpAndSettle();
+      expect(find.text('Aún no tienes mototaxis disponibles'), findsOneWidget);
+      expect(find.text('Agregar mototaxi'), findsOneWidget);
+      expect(find.text('Solicitar autorización'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await screenshot(tester, 'empty-selection-${brightness.name}');
+    });
+    testWidgets(
+        'trip mototaxi opens a responsive identity preview in ${brightness.name}',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final gateway = FleetGateway(
+          (method, path, body) async => null, (_) async => testPhoto);
+      await tester.pumpWidget(MaterialApp(
+          theme: theme(brightness),
+          home: Scaffold(
+              body: SafeArea(
+                  child: TripVehicleBadge(
+                      gateway: gateway,
+                      vehicle: {...vehicles.first, 'photoId': 'photo'})))));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Mototaxi MT-1'));
+      await tester.pumpAndSettle();
+      expect(find.text('Bajaj RE Compact'), findsOneWidget);
+      expect(find.text('Azul · Unidad 101'), findsNWidgets(2));
+      expect(find.text('Verificada'), findsOneWidget);
+      expect(find.text('Entendido'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await screenshot(tester, 'trip-vehicle-preview-${brightness.name}');
+      await tester.tap(find.text('Entendido'));
+      await tester.pumpAndSettle();
+    });
+    testWidgets(
         'historical identity card fits long labels in ${brightness.name}',
         (tester) async {
       tester.view.physicalSize = const Size(320, 640);

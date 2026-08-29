@@ -4,8 +4,8 @@
 /* Fleet presentation uses the existing brand palette; dark changes colors only. */
 .fleet-admin{--fleet-surface:var(--surface,#fff);--fleet-soft:#f1f5f9;--fleet-line:#dce5ed;--fleet-ink:var(--costa-navy);--fleet-muted:#526878;--fleet-accent:var(--costa-blue);--fleet-live:#187c45;--fleet-live-bg:#e7f5eb;color:var(--fleet-ink)}
 .fleet-heading{display:flex;gap:10px;align-items:center;color:var(--fleet-accent)}
-.fleet-photo{display:inline-flex;align-items:center;justify-content:center;width:104px;height:78px;background:var(--fleet-soft);border:1px solid var(--fleet-line);border-radius:12px;overflow:hidden;flex:0 0 104px;color:var(--fleet-accent)}
-.fleet-photo img{display:block;width:100%;height:100%;object-fit:contain}
+.fleet-photo{display:inline-flex;align-items:center;justify-content:center;width:104px;height:78px;aspect-ratio:4/3;background:var(--fleet-soft);border:1px solid var(--fleet-line);border-radius:12px;overflow:hidden;flex:0 0 104px;color:var(--fleet-accent)}
+.fleet-photo img{display:block;width:100%;height:100%;object-fit:cover}
 .fleet-placeholder{display:grid;place-items:center;color:var(--fleet-accent)}
 .fleet-photo-loading{width:18px;height:18px;border:2px solid var(--fleet-line);border-top-color:var(--fleet-accent);border-radius:50%;animation:fleet-photo-spin .9s linear infinite}
 @keyframes fleet-photo-spin{to{transform:rotate(360deg)}}
@@ -21,4 +21,4 @@
 [data-fleet-theme='dark'] .fleet-admin{--fleet-surface:#18212a;--fleet-soft:#222f3b;--fleet-line:#354554;--fleet-ink:#e1eaf2;--fleet-muted:#afbdcb;--fleet-accent:#98cbff;--fleet-live:#8fdbb1;--fleet-live-bg:#173b2e}
 [data-fleet-theme='dark'] .fleet-admin .secondary{background:var(--fleet-soft);color:var(--fleet-accent)}
 [data-fleet-theme='light'] .fleet-admin{--fleet-surface:var(--surface,#fff);--fleet-soft:#f1f5f9;--fleet-line:#dce5ed;--fleet-ink:var(--costa-navy);--fleet-muted:#526878;--fleet-accent:var(--costa-blue);--fleet-live:#187c45;--fleet-live-bg:#e7f5eb}
-@media(max-width:600px){.fleet-photo{width:88px;height:66px;flex-basis:88px}.fleet-units-table td:first-child{min-width:250px}.fleet-identity{align-items:center;gap:10px}}
+@media(max-width:600px){.fleet-photo{width:88px;height:66px;aspect-ratio:4/3;flex-basis:88px}.fleet-units-table td:first-child{min-width:250px}.fleet-identity{align-items:center;gap:10px}}
