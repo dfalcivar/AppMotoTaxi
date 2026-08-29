@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTripMap } from '../src/trip-tracking-map.mjs';
+import { createTripMap, loadGoogleMaps } from '../src/trip-tracking-map.mjs';
+
+test('expone un diagnóstico seguro cuando falta la clave web', async () => {
+  let failure;
+  await assert.rejects(loadGoogleMaps('   ', error => { failure = error; }), /MAP_NOT_CONFIGURED/);
+  assert.equal(failure.message, 'MAP_NOT_CONFIGURED');
+});
 
 test('mapa único: actualiza marcador, tema, seguimiento y no conserva posición al terminar', async (t) => {
   class Element extends EventTarget {
@@ -50,4 +56,30 @@ test('una carga tardía de Google no restaura el mapa después de finalizar el v
   await tracker.clear('Seguimiento finalizado', 'Sin ubicación');
   finish({ Map: class { constructor() { instances++; } } }); await pending;
   assert.equal(instances, 0); assert.equal(elements.element.hidden, true); tracker.destroy();
+});
+
+test('registra una sola causa real antes de mostrar el fallback', async (t) => {
+  const original = { matchMedia: globalThis.matchMedia, cancelAnimationFrame: globalThis.cancelAnimationFrame };
+  globalThis.matchMedia = () => Object.assign(new EventTarget(), { matches: false });
+  globalThis.cancelAnimationFrame = () => {};
+  t.after(() => { for (const [key, value] of Object.entries(original)) value === undefined ? delete globalThis[key] : globalThis[key] = value; });
+  const elements = Object.fromEntries(['element', 'placeholder', 'message', 'hint', 'recenter'].map(key => [key, Object.assign(new EventTarget(), { hidden: false, disabled: false })]));
+  const reports = [];
+  const tracker = createTripMap({ ...elements, key: '', load: loadGoogleMaps, reportError: value => reports.push(value) });
+  await tracker.update({ position: { latitude: 0.87, longitude: -79.82 }, tone: 'live' });
+  assert.deepEqual(reports, [{ code: 'MAP_NOT_CONFIGURED', keyConfigured: false }]);
+  assert.equal(elements.message.textContent, 'No se pudo cargar el mapa');
+  assert.equal(elements.element.hidden, true);
+  tracker.destroy();
+});
+
+test('mantiene compatibilidad con el listener de tema de Safari anterior', (t) => {
+  const original = { matchMedia: globalThis.matchMedia, cancelAnimationFrame: globalThis.cancelAnimationFrame };
+  let added = 0, removed = 0;
+  globalThis.matchMedia = () => ({ matches: false, addListener() { added++; }, removeListener() { removed++; } });
+  globalThis.cancelAnimationFrame = () => {};
+  t.after(() => { for (const [key, value] of Object.entries(original)) value === undefined ? delete globalThis[key] : globalThis[key] = value; });
+  const elements = Object.fromEntries(['element', 'placeholder', 'message', 'hint', 'recenter'].map(key => [key, new EventTarget()]));
+  const tracker = createTripMap({ ...elements, key: 'prueba', load: async () => ({}) });
+  assert.equal(added, 1); tracker.destroy(); assert.equal(removed, 1);
 });

@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
+const missingMapKey = process.env.QA_MAP_MODE === 'missing-key';
 const cases = ['active', 'stale', 'waiting', 'ended', 'expired', 'offline', 'map-error'];
 const tokens = cases.map((name, index) => String.fromCharCode(97 + index).repeat(43));
 const server = http.createServer(async (req, res) => {
@@ -33,10 +34,10 @@ const server = http.createServer(async (req, res) => {
             updatedAt: new Date(now - (scenario === 'stale' ? 180000 : 0)).toISOString(),
           } } }), 'application/json');
     }
-    if (url.pathname === '/config.js') return send('window.COSTA_GO_PUBLIC_CONFIG={apiBaseUrl:"http://127.0.0.1:3312",googleMapsWebApiKey:"QA-LOCAL"};', 'text/javascript');
+    if (url.pathname === '/config.js') return send(`window.COSTA_GO_PUBLIC_CONFIG={apiBaseUrl:"http://127.0.0.1:3312",googleMapsWebApiKey:"${missingMapKey ? '' : 'QA-LOCAL'}",googleMapsConfigured:${!missingMapKey}};`, 'text/javascript');
     if (url.pathname === '/trip-tracking.js') {
       const entry = await readFile(resolve(root, 'src/trip-tracking.js'), 'utf8');
-      return send(`import { mockMaps } from '/qa-map.mjs';\n${entry.replace('key: config.googleMapsWebApiKey', "key: config.googleMapsWebApiKey, load: async () => { if(location.pathname.endsWith('g'.repeat(43))) throw new Error('QA'); return mockMaps; }")}`, 'text/javascript');
+      return send(missingMapKey ? entry : `import { mockMaps } from '/qa-map.mjs';\n${entry.replace('key: config.googleMapsWebApiKey', "key: config.googleMapsWebApiKey, load: async () => { if(location.pathname.endsWith('g'.repeat(43))) throw new Error('QA'); return mockMaps; }")}`, 'text/javascript');
     }
     if (url.pathname === '/qa-map.mjs') return send(`
       let current;

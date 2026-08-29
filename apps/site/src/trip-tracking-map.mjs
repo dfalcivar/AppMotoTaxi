@@ -10,31 +10,41 @@ const darkStyles = [
 
 // Only the Maps library is loaded: no Routes, Places or Navigation requests.
 export function loadGoogleMaps(key, onFailure) {
-  if (!key) return Promise.reject(new Error('MAP_NOT_CONFIGURED'));
+  const cleanKey = typeof key === 'string' ? key.trim() : '';
+  if (!cleanKey) {
+    const error = new Error('MAP_NOT_CONFIGURED');
+    onFailure?.(error);
+    return Promise.reject(error);
+  }
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    const timeout = setTimeout(() => fail(), 15_000);
-    function fail() {
+    let settled = false;
+    const timeout = setTimeout(() => fail(new Error('MAP_SCRIPT_TIMEOUT')), 15_000);
+    function fail(error = new Error('MAP_UNAVAILABLE')) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
-      onFailure();
-      reject(new Error('MAP_UNAVAILABLE'));
+      onFailure?.(error);
+      reject(error);
     }
     // Authentication can fail after the script callback; keep this handler active.
-    window.gm_authFailure = fail;
+    window.gm_authFailure = () => fail(new Error('MAP_AUTH_FAILURE'));
     window.costaGoTrackingMapReady = () => {
+      if (settled) return;
       clearTimeout(timeout);
-      if (!window.google?.maps?.Map) return fail();
+      if (!window.google?.maps?.Map) return fail(new Error('MAP_NAMESPACE_MISSING'));
+      settled = true;
       resolve(window.google.maps);
     };
-    script.onerror = fail;
-    script.src = `https://maps.googleapis.com/maps/api/js?${new URLSearchParams({ key, loading: 'async', callback: 'costaGoTrackingMapReady', v: 'quarterly', language: 'es', region: 'EC' })}`;
+    script.onerror = () => fail(new Error('MAP_SCRIPT_NETWORK_ERROR'));
+    script.src = `https://maps.googleapis.com/maps/api/js?${new URLSearchParams({ key: cleanKey, loading: 'async', callback: 'costaGoTrackingMapReady', v: 'quarterly', language: 'es', region: 'EC' })}`;
     script.async = true;
     script.referrerPolicy = 'strict-origin'; // Never send the bearer token in the page path.
     document.head.append(script);
   });
 }
 
-export function createTripMap({ element, placeholder, message, hint, recenter, key, load = loadGoogleMaps }) {
+export function createTripMap({ element, placeholder, message, hint, recenter, key, load = loadGoogleMaps, reportError }) {
   let mapsPromise, maps, map, marker, latest, revision = 0, failed = false, follow = true, frame;
   const theme = matchMedia('(prefers-color-scheme: dark)');
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -42,7 +52,9 @@ export function createTripMap({ element, placeholder, message, hint, recenter, k
     placeholder.hidden = false; element.hidden = true; recenter.disabled = true;
     message.textContent = title; hint.textContent = copy;
   }
-  function failure() {
+  function failure(error) {
+    const code = error instanceof Error ? error.message : 'MAP_UNAVAILABLE';
+    reportError?.({ code, keyConfigured: Boolean(typeof key === 'string' && key.trim()) });
     failed = true;
     cancelAnimationFrame(frame);
     if (!latest?.position) return;
@@ -79,7 +91,7 @@ export function createTripMap({ element, placeholder, message, hint, recenter, k
     if (!map) {
       empty('Cargando mapa…', 'Preparando la ubicación de la mototaxi.');
       mapsPromise ??= load(key, failure);
-      try { maps = await mapsPromise; } catch { if (latest?.position) failure(); return; }
+      try { maps = await mapsPromise; } catch (error) { if (latest?.position&&!failed) failure(error); return; }
       if (currentRevision !== revision || failed) return;
       element.hidden = false;
       // One map instance per page. Updates move the overlay, never recreate the map.
@@ -113,7 +125,11 @@ export function createTripMap({ element, placeholder, message, hint, recenter, k
   }
   function changeTheme() { map?.setOptions({ styles: theme.matches ? darkStyles : [] }); }
   recenter.addEventListener('click', center);
-  theme.addEventListener('change', changeTheme);
+  if (typeof theme.addEventListener === 'function') theme.addEventListener('change', changeTheme);
+  else theme.addListener?.(changeTheme); // Safari/iOS anterior.
   return { update, setTone, clear(title, copy) { return update({ title, copy, position: null }); },
-    destroy() { revision++; cancelAnimationFrame(frame); marker?.setMap(null); theme.removeEventListener('change', changeTheme); recenter.removeEventListener('click', center); } };
+    destroy() { revision++; cancelAnimationFrame(frame); marker?.setMap(null);
+      if (typeof theme.removeEventListener === 'function') theme.removeEventListener('change', changeTheme);
+      else theme.removeListener?.(changeTheme);
+      recenter.removeEventListener('click', center); } };
 }

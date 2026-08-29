@@ -5,6 +5,17 @@ import { fileURLToPath } from "node:url";
 const current = dirname(fileURLToPath(import.meta.url));
 const root = resolve(current, "../..");
 const output = resolve(current, "dist");
+const googleMapsWebApiKey = (
+  process.env.PUBLIC_GOOGLE_MAPS_WEB_API_KEY ??
+  process.env.VITE_GOOGLE_MAPS_WEB_API_KEY ??
+  ""
+).trim();
+
+if (!googleMapsWebApiKey) {
+  console.warn(
+    "[Costa-Go] PUBLIC_GOOGLE_MAPS_WEB_API_KEY no está configurada; el seguimiento público mostrará el respaldo sin mapa."
+  );
+}
 
 await rm(output, { recursive: true, force: true });
 await mkdir(resolve(output, "assets"), { recursive: true });
@@ -14,7 +25,8 @@ await writeFile(
   `window.COSTA_GO_PUBLIC_CONFIG=${JSON.stringify({
     apiBaseUrl: process.env.PUBLIC_API_BASE_URL ?? "https://mototaxi-atacames-api.onrender.com",
     // Browser-only, referrer-restricted key. Never use the server or Android key here.
-    googleMapsWebApiKey: process.env.PUBLIC_GOOGLE_MAPS_WEB_API_KEY ?? "",
+    googleMapsWebApiKey,
+    googleMapsConfigured: Boolean(googleMapsWebApiKey),
   })};\n`,
   "utf8"
 );
