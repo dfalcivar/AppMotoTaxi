@@ -139,6 +139,15 @@ describe('fleet real SQL integration',()=>{
     expect((await fleet.fleetDetail(owner,id)).relations.filter((r:any)=>r.type==='AUTHORIZED_DRIVER')).toHaveLength(2);
     expect((await fleet.listVehicles(owner,'MT-21',0,'',true))[0]!.totalCount).toBe(1);
   });
+  it('hides anonymized deleted units from operational fleet lists without deleting history',async()=>{
+    const active=await unit('MT-ACTIVE');
+    const deleted=await unit('MT-DELETED');
+    await pg.query("update vehicles set identifier='DELETED-e2ff2c19-45ef-4ccd-be77-8b6efc27fb0f' where id=$1",[deleted]);
+    const listed=await fleet.listVehicles(admin);
+    expect(listed.map((vehicle:any)=>vehicle.id)).toEqual([active]);
+    expect((await fleetReportOptions(admin)).vehicles.map((vehicle:any)=>vehicle.id)).toEqual([active]);
+    expect((await pg.query('select id from vehicles where id=$1',[deleted])).rows).toHaveLength(1);
+  });
   it('links an existing identifier idempotently without requiring invented vehicle data',async()=>{
     const {id}=await fleet.requestVehicle(driver,input);
     for(let n=0;n<2;n++)expect((await fleet.requestExistingVehicle(other,{identifier:'mt 20',relationType:'AUTHORIZED_DRIVER'})).id).toBe(id);
@@ -444,13 +453,18 @@ describe('fleet real SQL integration',()=>{
   });
   it('keeps QR tokens private, random and revocable without changing the asset',async()=>{
     const id=await unit();const qr=await fleet.generateQr(admin,id);
-    expect(qr.token).toMatch(/^[\w-]{43}$/);expect((await fleet.resolveQr(driver,qr.token)).id).toBe(id);
+    expect(qr.token).toMatch(/^[\w-]{43}$/);
+    const available=await fleet.resolveQr(driver,qr.token);
+    expect(available.id).toBe(id);expect(available.inUse).toBe(false);
+    await fleet.startSession(other,id,'QR_SCAN');
+    expect((await fleet.resolveQr(driver,qr.token)).inUse).toBe(true);
     await expect(fleet.generateQr(driver,id)).rejects.toThrow('FORBIDDEN');
     const replaced=await fleet.generateQr(admin,id,true,'Etiqueta de QR reemplazada');
     expect(replaced.token).not.toBe(qr.token);
-    await expect(fleet.resolveQr(driver,qr.token)).rejects.toThrow('VEHICLE_QR_INVALID');
+    await expect(fleet.resolveQr(driver,qr.token)).rejects.toThrow('VEHICLE_QR_EXPIRED');
     await fleet.revokeQr(admin,id,'QR extraviado en la unidad');
-    await expect(fleet.resolveQr(driver,replaced.token)).rejects.toThrow('VEHICLE_QR_INVALID');
+    await expect(fleet.resolveQr(driver,replaced.token)).rejects.toThrow('VEHICLE_QR_EXPIRED');
+    await expect(fleet.resolveQr(driver,'z'.repeat(43))).rejects.toThrow('VEHICLE_QR_INVALID');
   });
   it('limits cooperative analysts even when they know an external vehicle UUID',async()=>{
     const id=await unit();await pg.query('update vehicles set cooperative_id=$1 where id=$2',[ids.coop,id]);

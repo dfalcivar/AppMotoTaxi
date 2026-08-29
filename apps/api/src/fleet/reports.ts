@@ -9,7 +9,7 @@ export const fleetReportSchema=z.object({
 }).refine(v=>v.from<v.to);
 export async function fleetReportOptions(actor:FleetActor,search=''){
   z.string().max(80).parse(search);const sql=database();
-  const scope=sql`select v.id from vehicles v where v.merged_into is null
+  const scope=sql`select v.id from vehicles v where v.merged_into is null and upper(v.identifier) not like 'DELETED-%'
     and (${actor.admin===true} or exists(select 1 from user_vehicle_relations r where r.vehicle_id=v.id
       and r.user_id=${actor.id} and r.relation_type='OWNER_MANAGER' and r.status='APPROVED'))
     and (${!actor.cooperativeId} or v.cooperative_id=${actor.cooperativeId??null}::uuid)`;
@@ -25,7 +25,7 @@ export async function fleetReport(actor:FleetActor,input:unknown){
   const f=fleetReportSchema.parse(input),sql=database();
   const [cap]=await sql`select capabilities,tier from fleet_entitlements where user_id=${actor.id}`;
   if(!actor.admin&&cap?.capabilities?.reports===false)throw new FleetError('FORBIDDEN',403);
-  const scope=sql`select v.id from vehicles v where v.merged_into is null
+  const scope=sql`select v.id from vehicles v where v.merged_into is null and upper(v.identifier) not like 'DELETED-%'
     and (${actor.admin===true} or exists(select 1 from user_vehicle_relations r where r.vehicle_id=v.id
       and r.user_id=${actor.id} and r.relation_type='OWNER_MANAGER' and r.status='APPROVED'))
     and (${!actor.cooperativeId} or v.cooperative_id=${actor.cooperativeId??null}::uuid)

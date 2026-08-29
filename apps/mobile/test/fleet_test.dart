@@ -103,6 +103,15 @@ void main() {
       expect(fleetToken(Uri.parse(bad)), '');
     }
   });
+  test('empty selection has dedicated light and dark coastal artwork',
+      () async {
+    for (final asset in const [
+      'assets/images/fleet-empty-light.png',
+      'assets/images/fleet-empty-dark.png'
+    ]) {
+      expect((await rootBundle.load(asset)).lengthInBytes, greaterThan(100000));
+    }
+  });
   for (final brightness in Brightness.values) {
     testWidgets(
         'mototaxi silhouette stays legible at small sizes in ${brightness.name}',
@@ -561,6 +570,13 @@ void main() {
       expect(find.text('Aún no tienes mototaxis disponibles'), findsOneWidget);
       expect(find.text('Agregar mototaxi'), findsOneWidget);
       expect(find.text('Solicitar autorización'), findsOneWidget);
+      expect(find.byKey(const ValueKey('fleet-coastal-empty-art')),
+          findsOneWidget);
+      expect(
+          find.byKey(ValueKey(brightness == Brightness.dark
+              ? 'fleet-empty-dark'
+              : 'fleet-empty-light')),
+          findsOneWidget);
       expect(tester.takeException(), isNull);
       await screenshot(tester, 'empty-selection-${brightness.name}');
     });

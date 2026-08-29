@@ -4825,7 +4825,7 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
     ),
     'LICENSE': ('Licencia de conducir', Icons.badge_outlined),
     'REGISTRATION': ('Matrícula de la mototaxi', Icons.description_outlined),
-    'OPERATING_PERMIT': ('Permiso de operación', Icons.verified_outlined),
+    'OPERATING_PERMIT': ('Anexos', Icons.attach_file_outlined),
   };
 
   @override
@@ -4944,7 +4944,7 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
                           const SizedBox(width: 12),
                           const Expanded(
                               child: Text(
-                                  'Carga imágenes claras y completas. El permiso de operación también admite PDF, DOC o DOCX. Cada actualización vuelve a revisión administrativa.')),
+                                  'Carga imágenes claras y completas. Los anexos son opcionales y también admiten PDF, DOC o DOCX. Cada actualización vuelve a revisión administrativa.')),
                         ]))),
                 ...labels.entries.map((entry) {
                   final item = document(entry.key);
@@ -4954,7 +4954,9 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
                     leading: CircleAvatar(child: Icon(entry.value.$2)),
                     title: Text(entry.value.$1),
                     subtitle: Text(status == null
-                        ? 'Pendiente de cargar'
+                        ? entry.key == 'OPERATING_PERMIT'
+                            ? 'Opcional · Sin archivo'
+                            : 'Pendiente de cargar'
                         : status == 'ACTIVE'
                             ? 'Aprobado'
                             : status == 'REJECTED'
@@ -10885,8 +10887,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         positionSubscription = null;
         if (mounted) setState(() => available = false);
       }
-      await fleetFor(widget.s).post(
-          '/sessions/${fleetSession['id']}/release',
+      await fleetFor(widget.s).post('/sessions/${fleetSession['id']}/release',
           {'reason': 'MANUAL_RELEASE'});
       await configureFleet(await fleetFor(widget.s).get('/session'));
     } catch (e) {

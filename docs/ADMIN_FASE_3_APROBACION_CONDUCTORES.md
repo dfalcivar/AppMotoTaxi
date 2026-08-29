@@ -4,7 +4,7 @@
 
 1. El conductor crea su cuenta con foto frontal y vehículo.
 2. La cuenta queda restringida y puede acceder únicamente a su perfil, documentos, notificaciones y cierre de sesión.
-3. Debe cargar foto, identificación, licencia y matrícula. El permiso de operación del expediente del conductor es opcional.
+3. Debe cargar foto, identificación, licencia y matrícula. Los anexos del expediente del conductor son opcionales.
 4. Al completar los cuatro documentos obligatorios pasa automáticamente a `PENDIENTE_REVISION`.
 5. Se genera una notificación interna y, si está configurado, un correo administrativo.
 6. Administración revisa cada documento y después aprueba, observa, solicita correcciones, rechaza o suspende.
@@ -31,7 +31,7 @@ Estos estados están separados de `users.status`. El estado de usuario continúa
 
 La aprobación final se rechaza con `DRIVER_DOCUMENTS_NOT_APPROVED` si alguno no está aprobado individualmente.
 
-`OPERATING_PERMIT` permanece disponible como documento opcional. Su ausencia o estado no impide aprobar los cuatro obligatorios y tampoco sustituye ninguno de ellos. No se elimina ni renombra ningún archivo existente.
+`OPERATING_PERMIT` permanece como identificador interno compatible, pero se presenta al usuario como **Anexos** y es opcional. Su ausencia o estado no impide aprobar los cuatro obligatorios y tampoco sustituye ninguno de ellos. No se elimina ni renombra ningún archivo existente.
 
 Esta regla se refiere al expediente del conductor. Los documentos, revisión, autorización y jornada de la mototaxi mantienen su flujo independiente, documentado en [Flota y jornadas](FLOTA_MOTOTAXIS_Y_JORNADAS.md). Aprobar al conductor no aprueba automáticamente sus vehículos ni lo conecta para recibir viajes.
 
@@ -77,11 +77,11 @@ Próxima mejora, **no implementada en esta entrega**:
 
 - Administrar desde el panel el nombre visible y la obligatoriedad de los documentos, diferenciando conductor y vehículo.
 - Incorporar un catálogo servido por la API y consumido por la app, conservando identificadores internos, archivos e historial.
-- Permitir cambiar posteriormente «Permiso de operación» a «Anexos» sin cambiar su identificador `OPERATING_PERMIT`.
+- La interfaz muestra «Anexos» sin cambiar su identificador interno `OPERATING_PERMIT`.
 - Versionar/auditar cambios, restringirlos a administradores autorizados y definir su aplicación a expedientes existentes.
 - Ese soporte dinámico requerirá una primera actualización de la app; después los cambios de nombre/requisitos del catálogo no necesitarán nuevos AAB.
 
-El cambio actual de obligatoriedad es únicamente API/panel/migración: no requiere otro AAB. Las apps instaladas conservan la etiqueta y la opción de cargar «Permiso de operación», pero su ausencia no impide la aprobación en el servidor actualizado. El despliegue debe incluir primero API/migración y después el panel.
+La obligatoriedad se controla en API y la etiqueta se presenta como «Anexos» en las interfaces nuevas. Las apps anteriores pueden conservar temporalmente la etiqueta previa, pero su ausencia no impide la aprobación en el servidor actualizado.
 
 ## Prueba manual
 

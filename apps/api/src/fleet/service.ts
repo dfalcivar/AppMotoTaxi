@@ -79,7 +79,7 @@ export async function listVehicles(actor: FleetActor, search = '', page = 0, sta
     from vehicles v left join cooperatives c on c.id=v.cooperative_id
     left join driver_vehicle_sessions s on s.vehicle_id=v.id and s.status='ACTIVE'
     left join users u on u.id=s.driver_id left join drivers d on d.user_id=s.driver_id
-    where v.merged_into is null
+    where v.merged_into is null and upper(v.identifier) not like 'DELETED-%'
       and (${actor.admin === true} or exists(select 1 from user_vehicle_relations r where r.vehicle_id=v.id
         and r.user_id=${actor.id} and r.status in ('APPROVED','PENDING')
         and (${!managedOnly} or r.relation_type='OWNER_MANAGER')
@@ -309,13 +309,20 @@ export async function revokeQr(actor:FleetActor,vehicleId:string,reason:string){
 }
 export async function resolveQr(actor:FleetActor,token:string){
   z.string().regex(/^[A-Za-z0-9_-]{43}$/).parse(token);
-  const [row]=await database()`select vehicle_id from vehicle_qr_tokens where token=${token} and revoked_at is null`;
+  const [row]=await database()`select q.vehicle_id,q.revoked_at,v.fleet_status,
+    exists(select 1 from driver_vehicle_sessions s cross join fleet_settings p
+      where s.vehicle_id=q.vehicle_id and s.status='ACTIVE' and s.driver_id<>${actor.id}
+      and s.last_heartbeat>now()-make_interval(secs=>p.offline_seconds)) as in_use
+    from vehicle_qr_tokens q join vehicles v on v.id=q.vehicle_id where q.token=${token}`;
   if(!row)throw new FleetError('VEHICLE_QR_INVALID',404);
+  if(row.revoked_at)throw new FleetError('VEHICLE_QR_EXPIRED',410);
+  if(row.fleet_status!=='VERIFIED')throw new FleetError('VEHICLE_NOT_VERIFIED',409);
   try {
     const vehicle=await authorizeVehicle(database(),actor,String(row.vehicle_id));
     const [relation]=await database()`select 1 from user_vehicle_relations where user_id=${actor.id}
       and vehicle_id=${vehicle.id} and relation_type='AUTHORIZED_DRIVER' and status='APPROVED'`;
-    return {id:vehicle.id,identifier:vehicle.identifier,color:vehicle.color,unitNumber:vehicle.unit_number,photoId:vehicle.photo_id,authorized:Boolean(relation)};
+    return {id:vehicle.id,identifier:vehicle.identifier,color:vehicle.color,unitNumber:vehicle.unit_number,photoId:vehicle.photo_id,
+      authorized:Boolean(relation),inUse:Boolean(row.in_use)};
   } catch(error) {
     if(!(error instanceof FleetError)||error.code!=='VEHICLE_FORBIDDEN')throw error;
     return {authorized:false};

@@ -326,7 +326,7 @@ La importación incluye únicamente información estructurada. No incluye:
 - identificación escaneada;
 - licencia;
 - matrícula;
-- permiso de operación;
+- anexos opcionales;
 - demás documentos o archivos.
 
 Cada conductor debe ingresar posteriormente y cargar personalmente sus fotografías y documentos.

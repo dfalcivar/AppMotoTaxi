@@ -25,7 +25,7 @@ Si vas a registrarte como conductor, también necesitas:
 - documento de identificación;
 - licencia de conducir;
 - matrícula de la mototaxi;
-- permiso de operación;
+- anexos opcionales;
 - nombre de la cooperativa, si perteneces a una. También puedes registrarte como conductor independiente.
 
 ## 2. Reglas de la contraseña
@@ -89,9 +89,9 @@ La creación de la cuenta no habilita inmediatamente al conductor para recibir v
 2. documento de identificación;
 3. licencia de conducir;
 4. matrícula de la mototaxi;
-5. permiso de operación.
+5. anexos (opcionales).
 
-Para imágenes se admiten JPG, JPEG, PNG y WEBP. El permiso de operación también puede cargarse como PDF, DOC o DOCX, con un máximo de 5 MB.
+Para imágenes se admiten JPG, JPEG, PNG y WEBP. Los anexos opcionales también pueden cargarse como PDF, DOC o DOCX, con un máximo de 5 MB.
 
 Estados posibles:
 

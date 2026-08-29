@@ -18,6 +18,7 @@ const messages:Record<string,string>={
   DRIVER_NOT_AUTHORIZED:'Debes ser conductor aprobado y estar autorizado para esta mototaxi.',
   VEHICLE_SESSION_EXPIRED:'Tu jornada ya finalizó. Selecciona nuevamente una mototaxi.',
   VEHICLE_QR_INVALID:'Este QR no es válido o fue reemplazado. Solicita el QR vigente.',
+  VEHICLE_QR_EXPIRED:'Este QR venció, fue anulado o reemplazado. Solicita el QR vigente de la mototaxi.',
   OWNERSHIP_EVIDENCE_REQUIRED:'Adjunta un documento que permita validar tu relación con la unidad.',
   INVALID_IMAGE:'Selecciona una imagen JPG o PNG válida.',FILE_TOO_LARGE:'El archivo debe pesar como máximo 5 MB.'
   ,USER_NOT_ELIGIBLE:'No se encontró un conductor activo con ese correo. Verifica la dirección y su registro en Costa-Go.'

@@ -46,7 +46,7 @@ String fleetLabel(dynamic value) =>
       'ADMIN_RELEASE': 'Liberación administrativa',
       'PHOTO': 'Fotografía',
       'REGISTRATION': 'Matrícula',
-      'OPERATING_PERMIT': 'Permiso de operación',
+      'OPERATING_PERMIT': 'Anexos',
       'OWNERSHIP_EVIDENCE': 'Evidencia de propiedad',
       'CANCELLED': 'Cancelado',
       'REASSIGNED': 'Reasignado',
@@ -504,7 +504,10 @@ class _FleetScanner extends StatefulWidget {
 }
 
 class _FleetScannerState extends State<_FleetScanner> {
-  final controller = MobileScannerController();
+  final controller = MobileScannerController(
+      formats: const [BarcodeFormat.qrCode],
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      autoZoom: true);
   bool done = false;
   String? error;
   @override
@@ -513,9 +516,90 @@ class _FleetScannerState extends State<_FleetScanner> {
     super.dispose();
   }
 
+  Future<void> finish(String token) async {
+    if (done) return;
+    done = true;
+    try {
+      await controller.stop();
+    } catch (_) {
+      // The page may be closing while the native camera is stopping.
+    }
+    if (mounted) Navigator.pop(context, token);
+  }
+
+  void detect(BarcodeCapture capture) {
+    if (done) return;
+    for (final code in capture.barcodes) {
+      final uri = Uri.tryParse(code.rawValue?.trim() ?? '');
+      final token = uri == null ? '' : fleetToken(uri);
+      if (token.isNotEmpty) {
+        unawaited(finish(token));
+        return;
+      }
+    }
+    if (mounted && error != 'Este no es un QR de mototaxi Costa-Go.') {
+      setState(() => error = 'Este no es un QR de mototaxi Costa-Go.');
+    }
+  }
+
+  Widget cameraError(BuildContext context, MobileScannerException failure) {
+    final colors = Theme.of(context).colorScheme;
+    final permission =
+        failure.errorCode == MobileScannerErrorCode.permissionDenied;
+    final unsupported = failure.errorCode == MobileScannerErrorCode.unsupported;
+    return ColoredBox(
+        color: colors.surface,
+        child: Center(
+            child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(
+                      permission
+                          ? Icons.no_photography_outlined
+                          : unsupported
+                              ? Icons.camera_alt_outlined
+                              : Icons.error_outline,
+                      size: 52,
+                      color: colors.error),
+                  const SizedBox(height: 14),
+                  Text(
+                      permission
+                          ? 'Permiso de cámara necesario'
+                          : unsupported
+                              ? 'Cámara no disponible'
+                              : 'No se pudo iniciar la cámara',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Text(
+                      permission
+                          ? 'Autoriza la cámara para escanear el QR. Si la bloqueaste, habilítala desde los ajustes del teléfono.'
+                          : unsupported
+                              ? 'Este dispositivo no dispone de una cámara compatible con el lector QR.'
+                              : 'Cierra el lector e inténtalo nuevamente.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: colors.onSurfaceVariant)),
+                  if (!unsupported) ...[
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                        onPressed: () => controller.start(),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Reintentar'))
+                  ]
+                ]))));
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('Escanear mototaxi')),
+      appBar: AppBar(
+          title: const Text('Escanear mototaxi'),
+          leading: IconButton(
+              tooltip: 'Cerrar lector',
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close))),
       body: Column(children: [
         const Padding(
             padding: EdgeInsets.all(16),
@@ -524,24 +608,23 @@ class _FleetScannerState extends State<_FleetScanner> {
         if (error != null)
           Padding(padding: const EdgeInsets.all(12), child: Text(error!)),
         Expanded(
-            child: MobileScanner(
-                controller: controller,
-                onDetect: (capture) {
-                  if (done) return;
-                  for (final code in capture.barcodes) {
-                    final uri = Uri.tryParse(code.rawValue ?? '');
-                    final token = uri == null ? '' : fleetToken(uri);
-                    if (token.isNotEmpty) {
-                      done = true;
-                      Navigator.pop(context, token);
-                      return;
-                    }
-                  }
-                  if (mounted) {
-                    setState(
-                        () => error = 'Este no es un QR de mototaxi Costa-Go.');
-                  }
-                })),
+            child: ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+                child: MobileScanner(
+                    controller: controller,
+                    onDetect: detect,
+                    errorBuilder: cameraError,
+                    placeholderBuilder: (context) =>
+                        const Center(child: CircularProgressIndicator()),
+                    overlayBuilder: (context, constraints) => Center(
+                        child: Container(
+                            width: constraints.maxWidth * .68,
+                            height: constraints.maxWidth * .68,
+                            decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(26),
+                                border: Border.all(
+                                    color: Colors.white, width: 3))))))),
       ]));
 }
 
@@ -693,30 +776,71 @@ class _FleetEmptyState extends StatelessWidget {
       required this.message,
       required this.primaryLabel,
       required this.onPrimary,
+      this.coastal = false,
       this.secondaryLabel,
       this.onSecondary});
   final String title, message, primaryLabel;
   final VoidCallback? onPrimary, onSecondary;
   final String? secondaryLabel;
+  final bool coastal;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-        padding: const EdgeInsets.fromLTRB(22, 16, 22, 14),
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 16),
         child: Center(
             child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Container(
-                      width: 104,
-                      height: 90,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                          color: colors.primaryContainer.withValues(alpha: .42),
-                          borderRadius: BorderRadius.circular(34)),
-                      child: MototaxiIcon(size: 54, color: colors.primary)),
-                  const SizedBox(height: 14),
+                  if (coastal)
+                    Container(
+                        key: const ValueKey('fleet-coastal-empty-art'),
+                        width: double.infinity,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                            color: colors.primaryContainer
+                                .withValues(alpha: dark ? .18 : .28),
+                            borderRadius: BorderRadius.circular(26),
+                            border: Border.all(
+                                color: colors.outlineVariant
+                                    .withValues(alpha: .65))),
+                        child: AspectRatio(
+                            aspectRatio: 1.48,
+                            child: Image.asset(
+                                dark
+                                    ? 'assets/images/fleet-empty-dark.png'
+                                    : 'assets/images/fleet-empty-light.png',
+                                key: ValueKey(dark
+                                    ? 'fleet-empty-dark'
+                                    : 'fleet-empty-light'),
+                                fit: BoxFit.cover,
+                                alignment: Alignment.center,
+                                semanticLabel:
+                                    'Mototaxi Costa-Go frente al malecón y el mar')))
+                  else
+                    Container(
+                        width: 104,
+                        height: 90,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                            color:
+                                colors.primaryContainer.withValues(alpha: .42),
+                            borderRadius: BorderRadius.circular(34)),
+                        child: MototaxiIcon(size: 54, color: colors.primary)),
+                  SizedBox(height: coastal ? 16 : 14),
+                  if (coastal) ...[
+                    Container(
+                        width: 58,
+                        height: 58,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                            color: colors.primary.withValues(alpha: .09),
+                            shape: BoxShape.circle),
+                        child: MototaxiIcon(size: 30, color: colors.primary)),
+                    const SizedBox(height: 10),
+                  ],
                   Text(title,
                       textAlign: TextAlign.center,
                       style: Theme.of(context)
@@ -881,9 +1005,18 @@ class _FleetScreenState extends State<FleetScreen> {
   Future<void> scan() async {
     final token = await scanVehicle(context);
     if (token == null || !mounted) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
     try {
       final v = await widget.gateway.post('/qr/resolve', {'token': token});
       if (!mounted) return;
+      if (v['inUse'] == true) {
+        setState(() => error =
+            'Esta mototaxi tiene una jornada activa con otro conductor. Elige otra unidad o inténtalo cuando quede disponible.');
+        return;
+      }
       if (v['authorized'] != true) {
         if (await fleetConfirm(context,
             title: 'Solicitar autorización',
@@ -891,13 +1024,21 @@ class _FleetScreenState extends State<FleetScreen> {
                 'Esta mototaxi no está asociada a tu perfil. Solicita autorización para utilizarla.',
             action: 'Solicitar')) {
           await widget.gateway.post('/qr/request', {'token': token});
-          if (mounted) await load();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text(
+                    'Solicitud enviada. Podrás usar la mototaxi cuando sea autorizada.')));
+            await load();
+          }
         }
         return;
       }
+      setState(() => busy = false);
       await choose(v, method: 'QR_SCAN');
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -980,6 +1121,7 @@ class _FleetScreenState extends State<FleetScreen> {
                                   : 'Agrega una unidad o solicita autorización para empezar tu jornada.',
                               primaryLabel: 'Agregar mototaxi',
                               onPrimary: busy ? null : add,
+                              coastal: widget.select && !widget.ownerOnly,
                               secondaryLabel: widget.ownerOnly
                                   ? null
                                   : 'Solicitar autorización',
@@ -1547,7 +1689,7 @@ class _VehicleDetailState extends State<VehicleDetail> {
                           leading: const Icon(Icons.upload_file_outlined),
                           title: Text(kind == 'REGISTRATION'
                               ? 'Subir matrícula'
-                              : 'Subir permiso de operación'),
+                              : 'Subir anexos (opcional)'),
                           subtitle: const Text('Imagen o PDF · Máximo 5 MB'),
                           onTap: busy ? null : () => upload(kind)),
                     for (final f in data['files'])
