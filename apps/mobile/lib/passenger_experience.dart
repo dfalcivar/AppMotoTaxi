@@ -113,6 +113,31 @@ enum NotificationTarget {
   inbox
 }
 
+const _informationalTripNotificationTypes = {
+  'TRIP_ASSIGNED',
+  'ASSIGNED',
+  'DRIVER_EN_ROUTE',
+  'DRIVER_ARRIVED',
+  'IN_PROGRESS',
+  'DRIVER_CANCELLED_REASSIGNING',
+  'TRIP_CANCELLED',
+  'NO_DRIVER',
+};
+
+bool notificationOpensInformationalDetail(String? value) =>
+    _informationalTripNotificationTypes.contains(value?.toUpperCase());
+
+bool notificationNavigatesDirectly(String? value) {
+  final type = value?.toUpperCase();
+  if (type == 'COMPLETED') return true;
+  if (notificationOpensInformationalDetail(type)) return false;
+  return const {
+    NotificationTarget.chat,
+    NotificationTarget.support,
+    NotificationTarget.fleet,
+  }.contains(notificationTargetFor(type));
+}
+
 String formatSpanishLongDate(DateTime value) {
   const weekdays = [
     'lunes',
@@ -224,7 +249,9 @@ NotificationTarget notificationTargetFor(String? value) {
   if (type == 'SUPPORT') return NotificationTarget.support;
   if (type == 'TRIP_OFFERS') return NotificationTarget.offers;
   if (type == 'MEMBERSHIP') return NotificationTarget.membership;
-  if (type == 'FLEET' || type == 'FLEET_SESSION') return NotificationTarget.fleet;
+  if (type == 'FLEET' || type == 'FLEET_SESSION') {
+    return NotificationTarget.fleet;
+  }
   if (type == 'NOTIFICATIONS') return NotificationTarget.inbox;
   if (type == 'CHAT_MESSAGE') return NotificationTarget.chat;
   if (const {
@@ -842,8 +869,11 @@ class _ActivityTile extends StatelessWidget {
 }
 
 class NotificationCenterView extends StatefulWidget {
-  const NotificationCenterView(this.session, {super.key});
+  const NotificationCenterView(this.session,
+      {super.key, this.initialNotificationId, this.initialNotification});
   final Session session;
+  final String? initialNotificationId;
+  final Map<String, dynamic>? initialNotification;
   @override
   State<NotificationCenterView> createState() => _NotificationCenterViewState();
 }
@@ -851,7 +881,8 @@ class NotificationCenterView extends StatefulWidget {
 class _NotificationCenterViewState extends State<NotificationCenterView> {
   final items = <Map<String, dynamic>>[];
   String? cursor, error;
-  bool loading = true, more = false;
+  bool loading = true, more = false, readingAll = false;
+  bool initialNotificationOpened = false;
   @override
   void initState() {
     super.initState();
@@ -882,6 +913,7 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
         UserNotificationStore.instance.unread.value =
             (page['unreadCount'] as num?)?.toInt() ?? 0;
       });
+      _openInitialNotificationIfNeeded();
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -893,22 +925,85 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
     }
   }
 
-  Future<void> open(Map<String, dynamic> item) async {
-    if (item['readAt'] == null) {
-      await Api().markNotificationRead(widget.session.token, item['id']);
-      item['readAt'] = DateTime.now().toIso8601String();
+  void _openInitialNotificationIfNeeded() {
+    if (initialNotificationOpened || !mounted) return;
+    final requestedId = widget.initialNotificationId;
+    Map<String, dynamic>? initial;
+    if (requestedId != null) {
+      initial = items
+          .where((item) => item['id']?.toString() == requestedId)
+          .firstOrNull;
+    }
+    initial ??= widget.initialNotification == null
+        ? null
+        : Map<String, dynamic>.from(widget.initialNotification!);
+    if (initial == null ||
+        !notificationOpensInformationalDetail(initial['type']?.toString())) {
+      return;
+    }
+    final notificationToOpen = initial;
+    initialNotificationOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) open(notificationToOpen);
+    });
+  }
+
+  Future<void> markRead(Map<String, dynamic> item) async {
+    if (item['readAt'] != null) return;
+    final id = item['id']?.toString();
+    if (id != null && id.isNotEmpty) {
+      try {
+        await Api().markNotificationRead(widget.session.token, id);
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('No pudimos actualizar el estado de lectura.')));
+        }
+        return;
+      }
+    }
+    item['readAt'] = DateTime.now().toIso8601String();
+    if (id != null && id.isNotEmpty) {
       UserNotificationStore.instance.unread.value =
           math.max(0, UserNotificationStore.instance.unread.value - 1);
-      if (mounted) setState(() {});
     }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> open(Map<String, dynamic> item) async {
     final target = notificationTargetFor(item['type']?.toString());
     final data = item['data'] is Map
         ? Map<String, dynamic>.from(item['data'] as Map)
         : <String, dynamic>{};
     final id = (data['tripId'] ?? item['entityId'])?.toString();
     if (!mounted) return;
-    if(target==NotificationTarget.fleet&&data['vehicleId']!=null){
-      await Navigator.push(context,MaterialPageRoute(builder:(_)=>VehicleDetail(gateway:fleetFor(widget.session),id:data['vehicleId'].toString())));
+    if (notificationOpensInformationalDetail(item['type']?.toString())) {
+      final action = await _showNotificationDetailSheet(
+          context: context,
+          session: widget.session,
+          notification: item,
+          tripId: id);
+      if (action == null) return;
+      await markRead(item);
+      if (action == _NotificationDetailAction.viewActiveTrip &&
+          id != null &&
+          mounted) {
+        await Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => PassengerTripDetail(widget.session, id)));
+      }
+      return;
+    }
+    await markRead(item);
+    if (!mounted) return;
+    if (target == NotificationTarget.fleet && data['vehicleId'] != null) {
+      await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => VehicleDetail(
+                  gateway: fleetFor(widget.session),
+                  id: data['vehicleId'].toString())));
     } else if (target == NotificationTarget.chat && id != null) {
       await openNotificationChat(context, widget.session, id);
     } else if (target == NotificationTarget.support) {
@@ -923,10 +1018,8 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
     } else if (target == NotificationTarget.offers &&
         widget.session.role == 'DRIVER') {
       if (mounted) Navigator.pop(context);
-    } else if (const {
-          NotificationTarget.activeTrip,
-          NotificationTarget.tripDetail
-        }.contains(target) &&
+    } else if (target == NotificationTarget.tripDetail &&
+        item['type']?.toString().toUpperCase() == 'COMPLETED' &&
         id != null) {
       await Navigator.push(
           context,
@@ -936,21 +1029,34 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
   }
 
   Future<void> readAll() async {
-    await Api().markAllNotificationsRead(widget.session.token);
-    if (!mounted) return;
-    setState(() {
-      for (final item in items) {
-        item['readAt'] ??= DateTime.now().toIso8601String();
+    if (readingAll) return;
+    setState(() => readingAll = true);
+    try {
+      await Api().markAllNotificationsRead(widget.session.token);
+      if (!mounted) return;
+      setState(() {
+        for (final item in items) {
+          item['readAt'] ??= DateTime.now().toIso8601String();
+        }
+      });
+      UserNotificationStore.instance.unread.value = 0;
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No pudimos marcar todas como leídas.')));
       }
-    });
-    UserNotificationStore.instance.unread.value = 0;
+    } finally {
+      if (mounted) setState(() => readingAll = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: const Text('Notificaciones'), actions: [
         if (items.any((e) => e['readAt'] == null))
-          TextButton(onPressed: readAll, child: const Text('Leer todas'))
+          TextButton(
+              onPressed: readingAll ? null : readAll,
+              child: Text(readingAll ? 'Actualizando…' : 'Leer todas'))
       ]),
       body: RefreshIndicator(
           onRefresh: () => load(true),
@@ -987,6 +1093,7 @@ class _NotificationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final unread = item['readAt'] == null;
+    final navigates = notificationNavigatesDirectly(item['type']?.toString());
     return Card(
         elevation: unread ? 1 : 0,
         color: unread
@@ -1016,7 +1123,192 @@ class _NotificationTile extends StatelessWidget {
             subtitle: Text(
                 '${item['message'] ?? ''}\n${_shortDate(item['createdAt'])}'),
             isThreeLine: true,
-            trailing: const Icon(Icons.chevron_right)));
+            trailing: navigates ? const Icon(Icons.chevron_right) : null));
+  }
+}
+
+enum _NotificationDetailAction { understood, viewActiveTrip }
+
+const _activeTripStatuses = {
+  'SEARCHING',
+  'ASSIGNED',
+  'DRIVER_EN_ROUTE',
+  'DRIVER_ARRIVED',
+  'IN_PROGRESS',
+};
+
+Future<_NotificationDetailAction?> _showNotificationDetailSheet({
+  required BuildContext context,
+  required Session session,
+  required Map<String, dynamic> notification,
+  String? tripId,
+}) {
+  final tripFuture = tripId == null
+      ? Future<Map<String, dynamic>?>.value(null)
+      : Api().trip(session.token, tripId).then(
+            (value) => Map<String, dynamic>.from(value as Map),
+            onError: (_) => null,
+          );
+  return showModalBottomSheet<_NotificationDetailAction>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => FutureBuilder<Map<String, dynamic>?>(
+          future: tripFuture,
+          builder: (context, snapshot) {
+            final colors = Theme.of(context).colorScheme;
+            final trip = snapshot.data;
+            final type = notification['type']?.toString().toUpperCase();
+            final status =
+                trip == null ? null : trip['status']?.toString().toUpperCase();
+            final active =
+                status != null && _activeTripStatuses.contains(status);
+            final reference = type == 'IN_PROGRESS'
+                ? trip == null
+                    ? null
+                    : trip['destinationReference']
+                : trip == null
+                    ? null
+                    : trip['originReference'];
+            final referenceLabel =
+                type == 'IN_PROGRESS' ? 'Destino' : 'Punto de recogida';
+            final driver = trip == null ? null : trip['driverName']?.toString();
+            return Align(
+              alignment: Alignment.bottomCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(28)),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 24,
+                          offset: Offset(0, -4))
+                    ],
+                  ),
+                  padding: const EdgeInsets.fromLTRB(22, 10, 22, 24),
+                  child: SingleChildScrollView(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Container(
+                        width: 42,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(
+                            color: colors.outlineVariant,
+                            borderRadius: BorderRadius.circular(999)),
+                      ),
+                      Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                            color: colors.primaryContainer,
+                            shape: BoxShape.circle),
+                        child: Icon(Icons.notifications_active_rounded,
+                            color: colors.primary, size: 34),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(notification['title']?.toString() ?? 'Costa-Go',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 8),
+                      Text(notification['message']?.toString() ?? '',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyLarge
+                              ?.copyWith(
+                                  color: colors.onSurfaceVariant,
+                                  height: 1.35)),
+                      const SizedBox(height: 18),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                            color: colors.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: colors.outlineVariant)),
+                        child: Column(children: [
+                          if (reference != null &&
+                              reference.toString().trim().isNotEmpty)
+                            _NotificationContextRow(
+                                icon: Icons.location_on_outlined,
+                                label: referenceLabel,
+                                value: cleanAddressLabel(reference,
+                                    fallback: referenceLabel)),
+                          if (driver != null && driver.trim().isNotEmpty)
+                            _NotificationContextRow(
+                                icon: Icons.person_outline_rounded,
+                                label: 'Conductor',
+                                value: driver),
+                          _NotificationContextRow(
+                              icon: Icons.schedule_rounded,
+                              label: 'Fecha y hora',
+                              value: _shortDate(notification['createdAt'])),
+                        ]),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                            onPressed: () => Navigator.pop(sheetContext,
+                                _NotificationDetailAction.understood),
+                            child: const Text('Entendido')),
+                      ),
+                      if (snapshot.connectionState == ConnectionState.waiting)
+                        const Padding(
+                            padding: EdgeInsets.only(top: 14),
+                            child: LinearProgressIndicator())
+                      else if (active && tripId != null) ...[
+                        const SizedBox(height: 10),
+                        TextButton.icon(
+                            onPressed: () => Navigator.pop(sheetContext,
+                                _NotificationDetailAction.viewActiveTrip),
+                            icon: const Icon(Icons.visibility_outlined),
+                            label: const Text('Ver viaje en curso')),
+                      ]
+                    ]),
+                  ),
+                ),
+              ),
+            );
+          }));
+}
+
+class _NotificationContextRow extends StatelessWidget {
+  const _NotificationContextRow(
+      {required this.icon, required this.label, required this.value});
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, size: 22, color: colors.primary),
+        const SizedBox(width: 12),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium
+                  ?.copyWith(color: colors.primary)),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
+        ]))
+      ]),
+    );
   }
 }
 
@@ -1126,8 +1418,11 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _participant(context, item),
-                    const SizedBox(height:12),
-                    TripVehicleBadge(gateway:fleetFor(widget.session),vehicle:item['vehicleDetails'],historical:true),
+                    const SizedBox(height: 12),
+                    TripVehicleBadge(
+                        gateway: fleetFor(widget.session),
+                        vehicle: item['vehicleDetails'],
+                        historical: true),
                     const SizedBox(height: 22),
                     _routeInfo(context, item),
                     const Divider(height: 36),

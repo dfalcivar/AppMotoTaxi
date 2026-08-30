@@ -7589,17 +7589,34 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     final target = notificationTargetFor(
         push.data['notificationRoute'] ?? push.data['type']);
+    final notificationType = push.data['type']?.toString();
     final tripId = push.data['tripId']?.toString();
     if (target == NotificationTarget.chat) {
       unawaited(openPassengerChat(tripId,
           notificationId: push.data['internalNotificationId']));
     } else if (target == NotificationTarget.scheduledTrips) {
       unawaited(showScheduledTrips());
-    } else if (const {
-      NotificationTarget.activeTrip,
-      NotificationTarget.tripDetail,
-      NotificationTarget.offers
-    }.contains(target)) {
+    } else if (notificationOpensInformationalDetail(notificationType)) {
+      unawaited(Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => NotificationCenterView(
+                    widget.s,
+                    initialNotificationId:
+                        push.data['internalNotificationId']?.toString(),
+                    initialNotification: {
+                      'id': push.data['internalNotificationId'],
+                      'type': notificationType,
+                      'title': push.notification?.title ??
+                          push.data['title']?.toString(),
+                      'message': push.notification?.body ??
+                          push.data['body']?.toString(),
+                      'createdAt': DateTime.now().toIso8601String(),
+                      'data': Map<String, dynamic>.from(push.data),
+                    },
+                  ))));
+    } else if (target == NotificationTarget.tripDetail &&
+        notificationType?.toUpperCase() == 'COMPLETED') {
       unawaited(openPassengerTripDetail(tripId,
           notificationId: push.data['internalNotificationId']));
     } else if (target == NotificationTarget.support &&
@@ -7657,18 +7674,41 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final fallback = defaults[normalizedType] ??
         ['Actualización del viaje', 'Hay novedades en tu solicitud.'];
     final cancelled = normalizedType == 'TRIP_CANCELLED';
+    final informational = notificationOpensInformationalDetail(normalizedType);
+    final shownTitle = title ?? fallback[0];
+    final shownBody = body ??
+        (cancelled ? 'Solicitud cancelada correctamente.' : fallback[1]);
     final shown = InAppNotificationBanner.show(
       context,
       id: '$normalizedType-${tripId ?? 'active'}',
       sound: normalizedType != 'DRIVER_ARRIVED',
-      title: title ?? fallback[0],
-      message: body ??
-          (cancelled ? 'Solicitud cancelada correctamente.' : fallback[1]),
-      actionLabel: cancelled ? 'Cerrar' : 'Ver',
+      title: shownTitle,
+      message: shownBody,
+      actionLabel: cancelled
+          ? 'Cerrar'
+          : informational
+              ? 'Leer'
+              : 'Ver',
       onTap: cancelled
           ? null
-          : () =>
-              openPassengerTripDetail(tripId, notificationId: notificationId),
+          : informational
+              ? () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => NotificationCenterView(
+                            widget.s,
+                            initialNotificationId: notificationId,
+                            initialNotification: {
+                              'id': notificationId,
+                              'type': normalizedType,
+                              'title': shownTitle,
+                              'message': shownBody,
+                              'createdAt': DateTime.now().toIso8601String(),
+                              'data': {'tripId': tripId},
+                            },
+                          )))
+              : () => openPassengerTripDetail(tripId,
+                  notificationId: notificationId),
     );
     if (shown && normalizedType == 'DRIVER_ARRIVED' && !kIsWeb) {
       if (defaultTargetPlatform == TargetPlatform.android) {

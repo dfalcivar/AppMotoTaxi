@@ -38,6 +38,24 @@ void main() {
       expect(notificationTargetFor('SCHEDULED_TRIP_ASSIGNED'),
           NotificationTarget.scheduledTrips);
     });
+
+    test('solo el viaje finalizado navega directamente al detalle', () {
+      for (final type in [
+        'TRIP_ASSIGNED',
+        'DRIVER_EN_ROUTE',
+        'DRIVER_ARRIVED',
+        'IN_PROGRESS',
+        'DRIVER_CANCELLED_REASSIGNING',
+        'TRIP_CANCELLED',
+        'NO_DRIVER',
+      ]) {
+        expect(notificationOpensInformationalDetail(type), isTrue,
+            reason: type);
+        expect(notificationNavigatesDirectly(type), isFalse, reason: type);
+      }
+      expect(notificationOpensInformationalDetail('COMPLETED'), isFalse);
+      expect(notificationNavigatesDirectly('COMPLETED'), isTrue);
+    });
   });
 
   test('muestra fechas de membresía completamente en español', () {
@@ -84,8 +102,8 @@ void main() {
     expect(friendlyLocationFailure(Exception('stack interno')),
         'No pudimos confirmar tu ubicación. Reintenta o selecciona el origen en el mapa.');
     expect(
-        friendlyLocationFailure(
-            const ApiException('Activa la ubicación GPS del teléfono para continuar.')),
+        friendlyLocationFailure(const ApiException(
+            'Activa la ubicación GPS del teléfono para continuar.')),
         contains('Activa la ubicación'));
   });
 
@@ -233,8 +251,8 @@ void main() {
 
   test('formatea la vigencia de membresía en español y hora de Ecuador', () {
     final utc = DateTime.parse('2026-08-25T03:18:00Z');
-    expect(formatEcuadorLongDateTime(utc),
-        'lunes, 24 de agosto de 2026 · 22:18');
+    expect(
+        formatEcuadorLongDateTime(utc), 'lunes, 24 de agosto de 2026 · 22:18');
   });
 
   test('oculta Plus Codes en las direcciones visibles', () {
