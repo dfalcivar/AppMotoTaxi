@@ -34,7 +34,7 @@ function activateRole(role) {
     const roleContent = isDriver
       ? {
           welcome: 'Modo conductor',
-          greeting: 'Hola',
+          greeting: 'Conductor',
           question: 'Disponible para viajes',
           'search-copy': 'Mototaxi activa · MT-2',
           'state-icon': '✓',
@@ -42,8 +42,8 @@ function activateRole(role) {
           'state-copy': 'Ubicación activa y unidad verificada',
         }
       : {
-          welcome: 'Bienvenido',
-          greeting: 'Hola, usuario',
+          welcome: 'Costa-Go',
+          greeting: 'Hola',
           question: '¿A dónde vamos?',
           'search-copy': 'Busca tu destino',
           'state-icon': '⌖',
