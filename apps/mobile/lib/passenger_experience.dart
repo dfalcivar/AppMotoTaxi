@@ -983,11 +983,11 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
           session: widget.session,
           notification: item,
           tripId: id);
+      if (!mounted) return;
       if (action == null) return;
       await markRead(item);
-      if (action == _NotificationDetailAction.viewActiveTrip &&
-          id != null &&
-          mounted) {
+      if (!mounted) return;
+      if (action == _NotificationDetailAction.viewActiveTrip && id != null) {
         await Navigator.push(
             context,
             MaterialPageRoute(
