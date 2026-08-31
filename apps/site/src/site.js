@@ -13,23 +13,42 @@ document.querySelectorAll('.nav-links a').forEach(link => link.addEventListener(
   menu?.classList.remove('open');
 }));
 
-document.querySelectorAll('[data-role]').forEach(tab => tab.addEventListener('click', () => {
-  const role = tab.dataset.role;
+function activateRole(role) {
+  const tab = document.querySelector(`[data-role="${role}"]`);
+  if (!tab) return;
   document.querySelectorAll('[data-role]').forEach(item => item.setAttribute('aria-selected', String(item === tab)));
   document.querySelectorAll('.role-panel').forEach(panel => {
     const active = panel.id === `${role}-panel`;
     panel.hidden = !active;
     panel.classList.toggle('active', active);
   });
-}));
+  const screen = document.querySelector('#role-screen');
+  if (screen) {
+    screen.src = tab.dataset.screen;
+    screen.alt = role === 'driver'
+      ? 'Pantalla real de Costa-Go para conductor'
+      : 'Pantalla real de Costa-Go para pasajero';
+  }
+}
+
+document.querySelectorAll('[data-role]').forEach(tab => tab.addEventListener('click', () => activateRole(tab.dataset.role)));
+document.querySelectorAll('[data-open-role]').forEach(link => link.addEventListener('click', () => activateRole(link.dataset.openRole)));
 
 const savedTheme = localStorage.getItem('costa-go-theme');
-if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+document.documentElement.dataset.theme = savedTheme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+function updateThemeLabel() {
+  if (!themeButton) return;
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  themeButton.setAttribute('aria-label', isDark ? 'Activar tema claro' : 'Activar tema oscuro');
+  themeButton.setAttribute('title', isDark ? 'Activar tema claro' : 'Activar tema oscuro');
+}
+updateThemeLabel();
 themeButton?.addEventListener('click', () => {
   const current = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   const next = current === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   localStorage.setItem('costa-go-theme', next);
+  updateThemeLabel();
 });
 
 const observer = new IntersectionObserver(entries => entries.forEach(entry => {

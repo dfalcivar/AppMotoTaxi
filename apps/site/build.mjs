@@ -62,5 +62,29 @@ await cp(
   resolve(root, "docs/google-play/assets/costa-go-feature-graphic-1024x500.png"),
   resolve(output, "assets/og.png")
 );
+await cp(
+  resolve(root, "apps/mobile/assets/images/fleet-empty-light.png"),
+  resolve(output, "assets/costa-go-mototaxi.png")
+);
+await cp(
+  resolve(root, "apps/mobile/assets/images/advertising-placeholder.png"),
+  resolve(output, "assets/advertising-placeholder.png")
+);
+await cp(
+  resolve(root, "docs/google-play/screenshots-0.17.3/01-pasajero-solicitud-claro.png"),
+  resolve(output, "assets/passenger-home.png")
+);
+await cp(
+  resolve(root, "docs/google-play/screenshots-0.17.3/05-conductor-disponible-claro.png"),
+  resolve(output, "assets/driver-home.png")
+);
+await cp(
+  resolve(root, "docs/google-play/screenshots-0.17.3/06-conductor-mi-cuenta-claro.png"),
+  resolve(output, "assets/driver-account.png")
+);
+await cp(
+  resolve(root, "docs/google-play/screenshots-0.17.3/02-centro-notificaciones-oscuro.png"),
+  resolve(output, "assets/notifications-dark.png")
+);
 
 console.log(`Sitio Costa-Go generado en ${output}`);

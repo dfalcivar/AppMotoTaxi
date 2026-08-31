@@ -3,189 +3,113 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#032b49">
+  <meta name="theme-color" content="#063a67">
   <meta name="description" content="Costa-Go conecta pasajeros con conductores de mototaxi verificados para viajes seguros, programados y con seguimiento en tiempo real.">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Costa-Go · Tu viaje, nuestra prioridad">
-  <meta property="og:description" content="Solicita mototaxis, programa viajes y sigue tu ruta en tiempo real.">
+  <meta property="og:title" content="Costa-Go · Tu destino está más cerca">
+  <meta property="og:description" content="Movilidad local, conductores verificados y seguimiento en tiempo real en la costa ecuatoriana.">
   <meta property="og:image" content="/assets/og.png">
   <meta property="og:locale" content="es_EC">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Costa-Go · Tu viaje, nuestra prioridad">
-  <meta name="twitter:description" content="Movilidad local, conductores verificados y seguimiento en tiempo real.">
+  <meta name="twitter:title" content="Costa-Go · Tu destino está más cerca">
+  <meta name="twitter:description" content="Solicita una mototaxi, programa viajes y acompaña cada etapa del recorrido.">
   <meta name="twitter:image" content="/assets/og.png">
   <link rel="icon" href="/assets/costa-go-emblem.png">
-  <link rel="preload" as="image" href="/assets/costa-go-coast.png">
-    <link rel="stylesheet" href="/styles.css">
-    <link rel="stylesheet" href="/assistant-widget.css">
-  <title>Costa-Go · Movilidad inteligente</title>
+  <link rel="preload" as="image" href="/assets/costa-go-mototaxi.png">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/assistant-widget.css">
+  <title>Costa-Go · Movilidad local inteligente</title>
 </head>
 <body>
   <a class="skip-link" href="#contenido">Saltar al contenido</a>
   <header class="site-header" id="inicio">
     <nav class="nav-shell" aria-label="Navegación principal">
-      <a class="brand" href="#inicio" aria-label="Costa-Go, inicio">
-        <img src="/assets/costa-go-emblem.png" alt="" width="48" height="48">
-        <span>Costa-<b>Go</b></span>
-      </a>
-      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="main-menu" aria-label="Abrir menú">
-        <span></span><span></span><span></span>
-      </button>
+      <a class="brand" href="#inicio" aria-label="Costa-Go, inicio"><img src="/assets/costa-go-emblem.png" alt="" width="46" height="46"><span>Costa-<b>Go</b></span></a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="main-menu" aria-label="Abrir menú"><span></span><span></span><span></span></button>
       <div class="nav-links" id="main-menu">
-        <a href="#como-funciona">Cómo funciona</a>
-        <a href="#seguridad">Seguridad</a>
-        <a href="#cobertura">Cobertura</a>
-        <a href="#preguntas">Preguntas</a>
-        <a href="/anunciarme/">Anunciarme</a>
-        <a class="nav-cta" href="#descarga">Descargar app</a>
-        <button class="theme-toggle" type="button" aria-label="Cambiar tema" title="Cambiar tema">◐</button>
+        <a href="#como-funciona">Cómo funciona</a><a href="#seguridad">Seguridad</a><a href="#cobertura">Cobertura</a><a href="#preguntas">Preguntas</a><a href="/anunciarme/">Anunciarme</a>
+        <a class="nav-cta" href="#lanzamiento">Quiero probar Costa-Go</a>
+        <button class="theme-toggle" type="button" aria-label="Cambiar tema" title="Cambiar tema"><span aria-hidden="true">◐</span></button>
       </div>
     </nav>
   </header>
 
   <main id="contenido">
-    <section class="hero">
-      <div class="hero-backdrop" aria-hidden="true"></div>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-sky" aria-hidden="true"></div>
       <div class="hero-shell">
         <div class="hero-copy reveal">
-          <span class="eyebrow"><i></i> Movilidad local inteligente</span>
-          <h1>Tu destino está más cerca con <span>Costa-Go</span></h1>
-          <p>Solicita una mototaxi, programa tu recorrido y acompaña cada etapa del viaje desde una experiencia clara, segura y pensada para nuestra costa.</p>
-          <div class="hero-actions">
-            <a class="button primary" href="#descarga">Quiero viajar</a>
-            <a class="button ghost" href="#descarga">Quiero conducir</a>
-          </div>
-          <div class="trust-row" aria-label="Beneficios principales">
-            <span>✓ Conductores verificados</span>
-            <span>✓ Ruta en tiempo real</span>
-            <span>✓ Soporte cercano</span>
-          </div>
+          <span class="eyebrow"><i></i> Movilidad hecha para nuestra costa</span>
+          <h1 id="hero-title">Tu destino está más cerca con <span>Costa-Go.</span></h1>
+          <p>Solicita tu mototaxi, agenda recorridos y acompaña cada viaje con información clara, conductores verificados y soporte cercano.</p>
+          <div class="hero-actions"><a class="button primary" href="#como-funciona">Quiero viajar <span aria-hidden="true">→</span></a><a class="button secondary" href="#como-funciona" data-open-role="driver">Quiero conducir <span aria-hidden="true">→</span></a></div>
+          <div class="trust-row" aria-label="Beneficios principales"><span><b>✓</b> Conductores verificados</span><span><b>⌖</b> Ruta en tiempo real</span><span><b>◉</b> Soporte cercano</span></div>
         </div>
-        <div class="hero-visual reveal" aria-label="Costa-Go conecta la costa">
-          <div class="orbit orbit-one"></div>
-          <div class="orbit orbit-two"></div>
-          <div class="logo-stage">
-            <img src="/assets/costa-go-emblem.png" alt="Mototaxi Costa-Go junto al mar" width="360" height="360">
-          </div>
-          <div class="floating-card card-location"><span>●</span><div><small>Próximo destino</small><strong>Viaje confirmado</strong></div></div>
-          <div class="floating-card card-rating"><span>★</span><div><small>Experiencia</small><strong>Conductor verificado</strong></div></div>
+        <div class="hero-visual reveal" aria-label="La aplicación Costa-Go en funcionamiento">
+          <div class="coast-frame"><img class="hero-mototaxi" src="/assets/costa-go-mototaxi.png" alt="Mototaxi Costa-Go junto al malecón" width="1000" height="750" fetchpriority="high"></div>
+          <figure class="phone phone-passenger"><img src="/assets/passenger-home.png" alt="Pantalla real de solicitud de viaje para pasajeros" width="1080" height="1920"></figure>
+          <figure class="phone phone-driver"><img src="/assets/driver-home.png" alt="Pantalla real de disponibilidad para conductores" width="1080" height="1920"></figure>
+          <div class="hero-status"><span></span><strong>Servicio local</strong><small>Atacames · Tonsupa · Súa</small></div>
         </div>
       </div>
       <div class="hero-wave" aria-hidden="true"></div>
     </section>
 
-    <section class="quick-facts" aria-label="Características de Costa-Go">
-      <article><strong>Viajes inmediatos</strong><span>Solicita cuando lo necesitas</span></article>
-      <article><strong>Viajes programados</strong><span>Organiza con anticipación</span></article>
-      <article><strong>Múltiples paradas</strong><span>Define tu recorrido completo</span></article>
-      <article><strong>Seguimiento en vivo</strong><span>Conoce el avance del viaje</span></article>
+    <section class="quick-facts" aria-label="Ventajas de Costa-Go">
+      <article><span class="fact-icon">✓</span><div><strong>Conductores verificados</strong><small>Perfiles y unidades revisadas.</small></div></article>
+      <article><span class="fact-icon">⌖</span><div><strong>Ruta en tiempo real</strong><small>Acompaña cada etapa del viaje.</small></div></article>
+      <article><span class="fact-icon">◉</span><div><strong>Soporte cercano</strong><small>Ayuda cuando la necesitas.</small></div></article>
     </section>
 
     <section class="section-shell experience" id="como-funciona">
-      <div class="section-heading reveal">
-        <span class="eyebrow dark">Una app, dos experiencias</span>
-        <h2>Hecha para quien viaja y para quien conduce</h2>
-        <p>Costa-Go organiza la información importante en cada momento, sin distraerte de lo esencial.</p>
-      </div>
+      <div class="section-heading compact reveal"><span class="eyebrow dark">Una app, dos experiencias</span><h2>Hecha para quien viaja y para quien conduce</h2><p>La información cambia según tu rol, pero conserva la misma experiencia sencilla y segura.</p></div>
       <div class="role-tabs reveal" role="tablist" aria-label="Experiencias de Costa-Go">
-        <button type="button" role="tab" aria-selected="true" aria-controls="passenger-panel" id="passenger-tab" data-role="passenger">Pasajero</button>
-        <button type="button" role="tab" aria-selected="false" aria-controls="driver-panel" id="driver-tab" data-role="driver">Conductor</button>
+        <button type="button" role="tab" aria-selected="true" aria-controls="passenger-panel" id="passenger-tab" data-role="passenger" data-screen="/assets/passenger-home.png">Pasajero</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="driver-panel" id="driver-tab" data-role="driver" data-screen="/assets/driver-home.png">Conductor</button>
       </div>
-      <div class="role-panel active" id="passenger-panel" role="tabpanel" aria-labelledby="passenger-tab">
-        <div class="steps">
-          <article><span>01</span><h3>Elige tu recorrido</h3><p>Marca origen, destino y paradas con direcciones claras o directamente sobre el mapa.</p></article>
-          <article><span>02</span><h3>Confirma con tranquilidad</h3><p>Revisa distancia, duración, pasajeros, método de pago y tarifa estimada.</p></article>
-          <article><span>03</span><h3>Sigue el viaje</h3><p>Recibe estados, contacta al conductor y observa su avance en tiempo real.</p></article>
-        </div>
-      </div>
-      <div class="role-panel" id="driver-panel" role="tabpanel" aria-labelledby="driver-tab" hidden>
-        <div class="steps">
-          <article><span>01</span><h3>Completa tu perfil</h3><p>Registra vehículo, fotografía y documentos para la revisión administrativa.</p></article>
-          <article><span>02</span><h3>Recibe solicitudes</h3><p>Consulta origen, destinos, distancia y tarifa antes de aceptar.</p></article>
-          <article><span>03</span><h3>Navega con confianza</h3><p>Utiliza la ruta, los estados del viaje y las herramientas de contacto integradas.</p></article>
+      <div class="experience-stage reveal">
+        <div class="experience-device"><figure class="phone role-phone"><img id="role-screen" src="/assets/passenger-home.png" alt="Pantalla real de Costa-Go para pasajero" width="1080" height="1920" loading="lazy"></figure><div class="device-pulse" aria-hidden="true"></div></div>
+        <div class="role-panels">
+          <div class="role-panel active" id="passenger-panel" role="tabpanel" aria-labelledby="passenger-tab">
+            <span class="role-label">Viaja con claridad</span>
+            <div class="steps"><article><span>1</span><div><h3>Elige tu recorrido</h3><p>Selecciona origen, destino y paradas de forma rápida.</p></div></article><article><span>2</span><div><h3>Confirma con tranquilidad</h3><p>Revisa el resumen y el valor estimado antes de solicitar.</p></div></article><article><span>3</span><div><h3>Sigue el viaje</h3><p>Conoce al conductor y acompaña la ruta en tiempo real.</p></div></article></div>
+          </div>
+          <div class="role-panel" id="driver-panel" role="tabpanel" aria-labelledby="driver-tab" hidden>
+            <span class="role-label" id="experiencia-conductor">Conduce con confianza</span>
+            <div class="steps"><article><span>1</span><div><h3>Completa tu perfil</h3><p>Registra tus datos, documentos y mototaxi para revisión.</p></div></article><article><span>2</span><div><h3>Recibe solicitudes</h3><p>Consulta la información principal antes de aceptar.</p></div></article><article><span>3</span><div><h3>Navega y completa</h3><p>Utiliza la ruta sugerida y actualiza el estado del viaje.</p></div></article></div>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="safety" id="seguridad">
-      <div class="section-shell safety-grid">
-        <div class="safety-copy reveal">
-          <span class="eyebrow">Confianza en cada trayecto</span>
-          <h2>Seguridad que acompaña el viaje</h2>
-          <p>La operación combina revisión de conductores, información visible del vehículo, seguimiento y canales de soporte.</p>
-          <ul>
-            <li><span>✓</span><div><strong>Perfiles revisados</strong><small>Fotografía, vehículo y documentos habilitantes.</small></div></li>
-            <li><span>✓</span><div><strong>Información antes de abordar</strong><small>Nombre, placa, fotografía y calificación.</small></div></li>
-            <li><span>✓</span><div><strong>Ayuda y comunicación</strong><small>Chat, llamada, soporte e incidentes dentro de la app.</small></div></li>
-          </ul>
+      <div class="section-shell safety-shell">
+        <div class="section-heading reveal"><span class="eyebrow light">Seguridad que acompaña el viaje</span><h2>Información útil antes, durante y después</h2><p>Costa-Go reúne perfiles revisados, datos de la unidad, seguimiento y canales de ayuda en un solo lugar.</p></div>
+        <div class="safety-grid">
+          <article class="driver-card reveal"><div class="driver-photo"><img src="/assets/driver-account.png" alt="Perfil de conductor Costa-Go" width="1080" height="1920" loading="lazy"><span>✓</span></div><div><small>Conductor asignado</small><h3>Juan Q.</h3><p><b>★ 5.0</b> · Unidad verificada</p><span class="verified">Conductor verificado</span></div></article>
+          <div class="safety-benefits reveal"><article><span>✓</span><div><h3>Perfiles revisados</h3><p>Validamos identidad, documentos y mototaxi.</p></div></article><article><span>i</span><div><h3>Información antes de abordar</h3><p>Consulta nombre, calificación y datos de la unidad.</p></div></article><article><span>⌖</span><div><h3>Seguimiento del viaje</h3><p>Comparte el recorrido y sigue cada cambio de estado.</p></div></article><article><span>◉</span><div><h3>Ayuda y comunicación</h3><p>Chat, llamada y soporte dentro de Costa-Go.</p></div></article></div>
         </div>
-        <div class="safety-card reveal">
-          <div class="shield">✓</div>
-          <p>Tu viaje se actualiza en cada etapa</p>
-          <div class="timeline">
-            <span class="done">Solicitud</span><i></i><span class="done">Asignación</span><i></i><span>Recorrido</span><i></i><span>Llegada</span>
-          </div>
-          <small>Costa-Go no sustituye a los servicios públicos de emergencia.</small>
-        </div>
+        <div class="trip-progress reveal"><div class="progress-copy"><span class="eyebrow light">Todo bajo control</span><h3>Estado de tu viaje</h3></div><ol><li class="complete"><span>1</span><b>Solicitud</b></li><li class="complete"><span>2</span><b>Asignación</b></li><li class="active"><span>3</span><b>Recorrido</b></li><li><span>4</span><b>Llegada</b></li></ol></div>
       </div>
     </section>
 
-    <section class="section-shell coverage" id="cobertura">
-      <div class="coverage-card reveal">
-        <div>
-          <span class="eyebrow">Crecemos de forma responsable</span>
-          <h2>Zonas de cobertura configuradas para cada operación</h2>
-          <p>La disponibilidad se determina por zonas habilitadas. Atacames y sus sectores operativos forman la primera cobertura comercial.</p>
-          <p class="coverage-note">La aplicación te avisará claramente si un origen o destino está fuera del área disponible.</p>
-        </div>
-        <div class="coverage-map" aria-label="Representación de zonas de cobertura">
-          <span class="pin pin-one">Atacames</span>
-          <span class="pin pin-two">Tonsupa</span>
-          <span class="pin pin-three">Súa</span>
-          <div class="route-line"></div>
-        </div>
-      </div>
+    <section class="section-shell operations" id="cobertura">
+      <article class="coverage-card reveal">
+        <div class="coverage-copy"><span class="eyebrow dark">Cobertura activa</span><h2>Movilidad local para la costa de Atacames</h2><p>Las zonas se habilitan de forma controlada para ofrecer una operación clara y cercana.</p><ul class="zone-list"><li data-status="active"><span></span><div><strong>Atacames</strong><small>Disponible</small></div></li><li data-status="active"><span></span><div><strong>Tonsupa</strong><small>Disponible</small></div></li><li data-status="active"><span></span><div><strong>Súa</strong><small>Disponible</small></div></li></ul><p class="coverage-note">Si el origen o destino está fuera del área disponible, la app te lo indicará antes de confirmar.</p></div>
+        <div class="coast-map" role="img" aria-label="Mapa ilustrado de Atacames, Tonsupa y Súa"><span class="map-land"></span><span class="map-sea"></span><span class="map-route"></span><span class="map-pin pin-atacames"><i></i>Atacames</span><span class="map-pin pin-tonsupa"><i></i>Tonsupa</span><span class="map-pin pin-sua"><i></i>Súa</span></div>
+      </article>
+      <article class="fare-card reveal"><div><span class="eyebrow dark">Tarifa transparente</span><h2>Conoce el valor estimado antes de confirmar</h2><p>Consulta la ruta, pasajeros y tarifa sugerida en el resumen del viaje.</p></div><div class="fare-example"><div class="fare-route"><span class="origin-dot"></span><div><small>Origen</small><strong>Atacames, centro</strong></div></div><div class="fare-route"><span class="destination-dot"></span><div><small>Destino</small><strong>Playa de Tonsupa</strong></div></div><div class="fare-meta"><span>1 pasajero</span><strong>Valor estimado visible en la app</strong></div><a class="button primary" href="/fares.html">Consultar tarifario</a></div></article>
     </section>
 
-    <section class="section-shell testimonials" aria-label="Compromisos de servicio">
-      <div class="section-heading reveal"><span class="eyebrow dark">Nuestra prioridad</span><h2>Una experiencia sencilla de principio a fin</h2></div>
-      <div class="quote-grid">
-        <blockquote class="reveal"><p>“Información clara antes de solicitar y acompañamiento durante todo el recorrido.”</p><footer>Experiencia del pasajero</footer></blockquote>
-        <blockquote class="reveal"><p>“Herramientas organizadas para recibir, aceptar y completar viajes con seguridad.”</p><footer>Experiencia del conductor</footer></blockquote>
-      </div>
-    </section>
+    <section class="advertising" aria-labelledby="advertising-title"><div class="section-shell advertising-shell"><div class="ad-preview reveal"><div class="mini-phone"><img src="/assets/passenger-home.png" alt="Vista de Costa-Go durante la búsqueda" width="1080" height="1920" loading="lazy"><div class="mini-banner"><img src="/assets/advertising-placeholder.png" alt="Ejemplo de banner comercial" width="1200" height="400" loading="lazy"><span>Comercio afiliado</span></div></div></div><div class="ad-copy reveal"><span class="eyebrow dark">Comercios locales</span><h2 id="advertising-title">Tu negocio también puede moverse con Costa-Go</h2><p>Conecta con usuarios de la zona mediante campañas visibles en momentos relevantes de la experiencia.</p><div class="ad-moments"><span><b>⌕</b> Durante la búsqueda</span><span><b>◷</b> Durante la espera</span><span><b>▰</b> Durante el viaje</span></div><a class="button primary" href="/anunciarme/">Anunciar mi negocio</a></div></div></section>
 
-    <section class="faq" id="preguntas">
-      <div class="section-shell faq-grid">
-        <div class="section-heading reveal"><span class="eyebrow dark">Resolvemos tus dudas</span><h2>Preguntas frecuentes</h2><p>También encontrarás ayuda contextual y solicitudes de soporte dentro de la aplicación.</p></div>
-        <div class="accordion reveal">
-          <details><summary>¿Cómo solicito un viaje?<span>+</span></summary><p>Selecciona origen y destino, revisa el resumen y confirma. El sistema buscará conductores disponibles dentro de la zona.</p></details>
-          <details><summary>¿Puedo programar un viaje?<span>+</span></summary><p>Sí. Elige “Programar para más tarde”, selecciona una fecha válida y consulta la solicitud desde Viajes programados.</p></details>
-          <details><summary>¿Cómo se calcula la tarifa?<span>+</span></summary><p>Según la zona puede aplicarse un tarifario territorial o un valor sugerido. Siempre verás el resumen antes de confirmar.</p></details>
-          <details><summary>¿Qué necesito para ser conductor?<span>+</span></summary><p>Debes completar el perfil, registrar el vehículo y cargar la documentación requerida. Un administrador revisará la solicitud antes de habilitar viajes.</p></details>
-          <details><summary>¿Cómo contacto a soporte?<span>+</span></summary><p>Utiliza Ayuda y soporte dentro de la app o escribe a <a href="mailto:soporte@costa-go.com">soporte@costa-go.com</a>.</p></details>
-        </div>
-      </div>
-    </section>
+    <section class="faq" id="preguntas"><div class="section-shell faq-grid"><div class="section-heading reveal"><span class="eyebrow dark">Resolvemos tus dudas</span><h2>Preguntas frecuentes</h2><p>También encontrarás ayuda contextual y solicitudes de soporte dentro de la aplicación.</p></div><div class="accordion reveal"><details><summary>¿Cómo solicito un viaje?<span>+</span></summary><p>Selecciona origen y destino, revisa el resumen y confirma. Costa-Go buscará conductores disponibles dentro de la zona.</p></details><details><summary>¿Puedo programar un viaje?<span>+</span></summary><p>Sí. Elige “Programar para más tarde”, selecciona una fecha válida y consulta la solicitud desde Viajes programados.</p></details><details><summary>¿Cómo se calcula la tarifa?<span>+</span></summary><p>Según la zona puede aplicarse un tarifario territorial o una regla por distancia. Siempre verás el resumen antes de confirmar.</p></details><details><summary>¿Qué necesito para ser conductor?<span>+</span></summary><p>Debes completar el perfil, registrar una mototaxi y cargar la documentación requerida para revisión.</p></details><details><summary>¿Cómo contacto a soporte?<span>+</span></summary><p>Utiliza Ayuda y soporte dentro de la app o escribe a <a href="mailto:soporte@costa-go.com">soporte@costa-go.com</a>.</p></details></div></div></section>
 
-    <section class="download" id="descarga">
-      <div class="download-card reveal">
-        <img src="/assets/costa-go-emblem.png" alt="" width="110" height="110">
-        <div><span class="eyebrow">Muy pronto</span><h2>Costa-Go estará disponible en Google Play</h2><p>Estamos completando las verificaciones necesarias para ofrecerte una experiencia estable y segura.</p></div>
-        <a class="button light" href="mailto:soporte@costa-go.com?subject=Quiero%20conocer%20Costa-Go">Quiero recibir información</a>
-      </div>
-    </section>
+    <section class="launch" id="lanzamiento"><div class="launch-card reveal"><div class="play-symbol" aria-hidden="true">▷</div><div><span class="eyebrow light">Próximo lanzamiento</span><h2>Muy pronto en Google Play</h2><p>Estamos preparando una experiencia estable y segura para pasajeros y conductores.</p></div><a class="button light" href="mailto:soporte@costa-go.com?subject=Quiero%20conocer%20Costa-Go">Quiero recibir información</a></div></section>
   </main>
 
-  <footer class="site-footer">
-    <div class="footer-grid">
-      <div class="footer-brand"><a class="brand" href="#inicio"><img src="/assets/costa-go-emblem.png" alt="" width="44" height="44"><span>Costa-<b>Go</b></span></a><p>Movilidad inteligente para conectar personas, lugares y oportunidades.</p></div>
-      <div><h3>Información</h3><a href="/fares.html">Tarifario</a><a href="#cobertura">Cobertura</a><a href="#preguntas">Preguntas frecuentes</a></div>
-      <div><h3>Legal</h3><a href="/privacy.html">Política de privacidad</a><a href="/terms.html">Términos de uso</a><a href="/account-deletion.html">Eliminar cuenta</a></div>
-      <div><h3>Contacto</h3><a href="mailto:soporte@costa-go.com">soporte@costa-go.com</a><span>Ecuador</span></div>
-    </div>
-    <div class="footer-bottom"><span>© <b id="year"></b> Costa-Go. Todos los derechos reservados.</span><span>Powered by DFAR System</span></div>
-  </footer>
+  <footer class="site-footer"><div class="footer-grid"><div class="footer-brand"><a class="brand" href="#inicio"><img src="/assets/costa-go-emblem.png" alt="" width="44" height="44"><span>Costa-<b>Go</b></span></a><p>Movilidad local, segura y hecha para la costa.</p></div><div><h3>Información</h3><a href="/fares.html">Tarifario</a><a href="#cobertura">Cobertura</a><a href="#preguntas">Preguntas frecuentes</a></div><div><h3>Legal</h3><a href="/privacy.html">Política de privacidad</a><a href="/terms.html">Términos de uso</a><a href="/account-deletion.html">Eliminar cuenta</a></div><div><h3>Contacto</h3><a href="mailto:soporte@costa-go.com">soporte@costa-go.com</a><span>COSTAGO S.A.S.</span><span>Ecuador</span></div></div><div class="footer-bottom"><span>© <b id="year"></b> Costa-Go · Operado por COSTAGO S.A.S.</span><span>Powered by DFAR System</span></div></footer>
+
   <button class="commercial-assistant-launcher" id="commercial-assistant-launcher" type="button" aria-label="Anuncia tu negocio" aria-expanded="false" aria-controls="commercial-assistant-panel"><img src="/assets/costi-avatar.png" alt="" width="38" height="38"><span>Anuncia tu negocio</span></button>
   <aside class="commercial-assistant-panel" id="commercial-assistant-panel" aria-label="Chat Costa-Go" hidden><header><strong>Chat Costa-Go</strong><button id="commercial-assistant-close" type="button" aria-label="Cerrar chat">×</button></header><iframe title="Chat Costa-Go" data-src="/anunciarme/?embed=1&amp;source=WEB" loading="lazy"></iframe></aside>
   <script src="/site.js" defer></script>
