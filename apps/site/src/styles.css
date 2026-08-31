@@ -138,7 +138,7 @@ h2 { margin: 12px 0 18px; font-size: clamp(34px, 4vw, 53px); line-height: 1.08; 
 .faq { display:grid; grid-template-columns:.65fr 1.35fr; gap:100px; align-items:start; }.accordion details { border-bottom:1px solid var(--line); }.accordion summary { display:flex; justify-content:space-between; align-items:center; padding:21px 0; cursor:pointer; list-style:none; font-size:17px; font-weight:750; }.accordion summary::-webkit-details-marker { display:none; }.accordion summary span { color:var(--blue); font-size:24px; transition:transform .2s; }.accordion details[open] summary span { transform:rotate(45deg); }.accordion details p { max-width:730px; margin:-5px 0 23px; color:var(--muted); }.accordion a { color:var(--blue); }
 .launch { padding:30px 24px 70px; background:var(--surface); }.launch-card { width:min(1180px,100%); margin:auto; padding:34px 42px; display:grid; grid-template-columns:72px 1fr auto; gap:25px; align-items:center; color:#fff; border-radius:24px; background:linear-gradient(115deg,#063a67,#047fbd); box-shadow:var(--shadow); }.play-symbol { display:grid; place-items:center; width:64px; height:64px; border:1px solid rgba(255,255,255,.35); border-radius:18px; font-size:30px; }.launch h2 { margin:3px 0; font-size:31px; }.launch p { margin:0; color:rgba(255,255,255,.76); }
 .site-footer { padding:65px 0 24px; color:#bdd4e4; background:#031f37; }.footer-grid { display:grid; grid-template-columns:1.5fr repeat(3,1fr); gap:60px; }.footer-brand p { max-width:240px; }.footer-grid h3 { margin:0 0 16px; color:#fff; font-size:15px; }.footer-grid > div { display:flex; flex-direction:column; gap:8px; }.footer-grid a:not(.brand):hover { color:#fff; }.footer-bottom { display:flex; justify-content:space-between; gap:20px; margin-top:42px; padding-top:22px; border-top:1px solid rgba(255,255,255,.12); font-size:12px; }
-.reveal { opacity:0; transform:translateY(24px); transition:opacity .6s ease,transform .6s ease; }.reveal.visible { opacity:1; transform:none; }
+.reveal { opacity:1; transform:none; }
 
 @media (max-width: 1050px) {
   .nav-links { gap:17px; }.hero-shell { grid-template-columns:1fr 1fr; }.hero-phone { right:70px; }.hero-phone-secondary { right:-30px; }
@@ -156,3 +156,164 @@ h2 { margin: 12px 0 18px; font-size: clamp(34px, 4vw, 53px); line-height: 1.08; 
   .launch { padding-inline:16px; }.launch-card { padding:28px 22px; grid-template-columns:52px 1fr; }.play-symbol { width:50px; height:50px; }.launch h2 { font-size:26px; }.launch-card .button { grid-column:1 / -1; width:100%; }.footer-grid { grid-template-columns:1fr 1fr; gap:35px 24px; }.footer-grid > div:last-child { grid-column:auto; }.footer-brand { grid-column:1 / -1; }.footer-bottom { flex-direction:column; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior:auto; }.reveal { opacity:1; transform:none; transition:none; }.button { transition:none; } }
+
+/* Landing 2026: composición continua inspirada en la experiencia Costa-Go. */
+.section-shell,
+.nav-shell,
+.footer-grid,
+.footer-bottom { width: min(1320px, calc(100% - 64px)); }
+.section-shell { padding-block: 78px; }
+
+.site-header { position: absolute; background: rgba(3, 55, 94, .16); backdrop-filter: blur(9px); }
+.nav-shell { height: 72px; }
+.brand { font-size: 21px; }
+.brand img { width: 42px; height: 42px; }
+.nav-links { gap: 31px; font-size: 13px; }
+.nav-cta { padding: 11px 20px; }
+.theme-toggle { border: 1px solid rgba(255, 255, 255, .16); }
+
+.hero { min-height: 650px; background-position: 57% 58%; }
+.hero::before {
+  background:
+    linear-gradient(90deg, rgba(2, 40, 72, .99) 0%, rgba(3, 59, 98, .94) 32%, rgba(3, 67, 106, .46) 54%, rgba(4, 56, 91, .04) 82%),
+    linear-gradient(180deg, rgba(3, 48, 82, .16), rgba(2, 36, 63, .24));
+}
+.hero-shell { width: min(1320px, calc(100% - 64px)); min-height: 650px; padding-top: 88px; grid-template-columns: .92fr 1.08fr; }
+.hero-copy { max-width: 560px; padding-bottom: 18px; }
+.hero h1 { max-width: 540px; margin: 17px 0; font-size: clamp(50px, 5.25vw, 76px); line-height: .99; }
+.hero-copy > p { max-width: 505px; font-size: 16px; line-height: 1.55; }
+.hero-actions { margin-top: 25px; }
+.trust-row { margin-top: 26px; gap: 22px; }
+.hero-visual { height: 520px; }
+.hero-phone { width: 240px; height: 490px; right: 120px; top: 3px; border-width: 7px; border-radius: 34px; transform: rotate(-1.5deg); }
+.hero-phone-secondary { width: 174px; height: 365px; right: 0; top: 117px; border-width: 6px; border-radius: 30px; transform: rotate(3deg); }
+.hero-phone .mock-map { height: 225px; }
+.hero-phone .mock-sheet { min-height: 180px; }
+.hero-phone-secondary .trip-mini-map { height: 135px; }
+.hero-wave { height: 38px; clip-path: ellipse(58% 38% at 50% 100%); }
+
+.flow { min-height: 570px; grid-template-columns: .75fr 1.25fr; gap: 65px; }
+.flow-intro { align-self: center; }
+.flow h2 { max-width: 410px; }
+h2 { font-size: clamp(32px, 3.35vw, 48px); }
+.flow-demo { grid-template-columns: 250px 1fr; gap: 44px; }
+.experience-device { height: 500px; }
+.role-phone { width: 245px; height: 500px; border-width: 7px; border-radius: 34px; }
+.role-phone .mock-map { height: 225px; }
+.steps article { padding: 15px 0; }
+
+.safety {
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 92% 72%, rgba(43, 170, 225, .22), transparent 22%),
+    linear-gradient(105deg, #eaf7ff 0%, #f7fbff 53%, #dff2fb 100%);
+}
+:root[data-theme="dark"] .safety {
+  background: linear-gradient(115deg, #06243b, #0b3651 58%, #0a4d6d);
+}
+.safety::after { right: -40px; bottom: -230px; background: radial-gradient(circle, rgba(43, 170, 225, .24), transparent 67%); }
+.safety-layout { min-height: 470px; grid-template-columns: .82fr 1.18fr; gap: 72px; }
+.safety-copy > p { color: var(--muted); }
+.safety-copy li span { color: var(--muted); }
+.safety-copy li strong { color: var(--ink); }
+.safety-copy li > b { box-shadow: 0 9px 25px rgba(5, 90, 145, .13); }
+.identity-preview {
+  color: #eef8ff;
+  background: linear-gradient(145deg, rgba(4, 43, 73, .97), rgba(7, 85, 126, .95));
+  border-color: rgba(255, 255, 255, .2);
+  box-shadow: 0 28px 65px rgba(3, 54, 89, .22);
+}
+
+.coverage { min-height: 500px; grid-template-columns: 1fr 1fr; gap: 28px; align-items: stretch; }
+.coast-map { min-height: 400px; box-shadow: none; border: 1px solid var(--line); }
+.coverage-copy { padding: 38px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-soft); }
+.coverage-copy h2 { font-size: clamp(30px, 3vw, 43px); }
+.fare-summary { padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+
+.advertising { padding: 52px 0; background: var(--surface); }
+.advertising-layout {
+  min-height: 330px;
+  padding: 48px 54px;
+  grid-template-columns: .74fr 1.26fr;
+  gap: 60px;
+  border-radius: 28px;
+  background:
+    linear-gradient(90deg, rgba(3, 42, 75, .98), rgba(4, 88, 139, .92)),
+    url('/assets/costa-go-coast.png') center / cover;
+  box-shadow: 0 26px 60px rgba(3, 50, 82, .18);
+}
+.ad-demo { max-width: 680px; padding: 17px; border-radius: 23px; }
+.sponsor-card { border-radius: 16px; }
+.sponsor-content { min-height: 170px; grid-template-columns: 1fr 190px; }
+.sponsor-content > div:first-child { padding: 20px; }
+.sponsor-content h3 { font-size: 23px; }
+.ad-context { padding-top: 13px; }
+
+.faq { padding-top: 64px; padding-bottom: 64px; grid-template-columns: .62fr 1.38fr; gap: 80px; }
+.faq-link { display: inline-flex; align-items: center; gap: 12px; margin-top: 18px; padding: 10px 16px; color: var(--blue); border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 800; }
+.accordion summary { padding: 16px 0; }
+
+.launch { padding: 0 32px 0; }
+.launch-card {
+  width: min(1320px, 100%);
+  min-height: 145px;
+  padding: 28px 38px;
+  grid-template-columns: 82px 1fr auto auto;
+  border-radius: 24px 24px 0 0;
+  background: linear-gradient(110deg, #06315a, #0576ad 58%, #0ba5d6);
+}
+.launch-logo { width: 72px; height: 72px; object-fit: contain; filter: drop-shadow(0 8px 20px rgba(0, 0, 0, .22)); }
+.launch h2 { font-size: 29px; }
+.play-store-badge { min-width: 177px; padding: 10px 15px; display: grid; grid-template-columns: 33px 1fr; color: #fff; border: 1px solid rgba(255, 255, 255, .32); border-radius: 12px; background: #061729; line-height: 1.1; }
+.play-store-badge > span { grid-row: 1 / 3; align-self: center; font-size: 27px; }
+.play-store-badge small { font-size: 8px; }
+.play-store-badge strong { font-size: 17px; }
+.launch-qr { display: flex; align-items: center; gap: 11px; max-width: 170px; font-size: 10px; color: rgba(255, 255, 255, .82); }
+.launch-qr i { width: 55px; height: 55px; flex: 0 0 auto; border: 6px solid #fff; background: repeating-conic-gradient(#061729 0 25%, #fff 0 50%) 50% / 12px 12px; }
+
+.site-footer { padding-top: 48px; }
+
+@media (max-width: 900px) {
+  .hero { min-height: 945px; background-position: 58% center; }
+  .hero-shell { min-height: 945px; padding-top: 105px; }
+  .hero-copy { max-width: 610px; }
+  .hero-visual { height: 420px; }
+  .hero-phone { width: 210px; height: 430px; right: 145px; }
+  .hero-phone-secondary { width: 155px; height: 325px; right: 20px; top: 78px; }
+  .flow, .safety-layout, .coverage, .advertising-layout, .faq { grid-template-columns: 1fr; }
+  .flow-demo { grid-template-columns: 245px 1fr; }
+  .coverage { gap: 20px; }
+  .advertising { padding-inline: 24px; }
+  .advertising-layout { padding: 42px; }
+  .launch-card { grid-template-columns: 72px 1fr auto; }
+  .launch-qr { display: none; }
+}
+
+@media (max-width: 620px) {
+  .section-shell, .nav-shell, .footer-grid, .footer-bottom, .hero-shell { width: calc(100% - 32px); }
+  .hero { min-height: 0; background-position: 61% center; }
+  .hero::before { background: linear-gradient(180deg, rgba(2, 34, 61, .98) 0%, rgba(3, 53, 88, .9) 51%, rgba(3, 46, 75, .42) 100%); }
+  .hero-shell { min-height: 0; padding: 94px 0 48px; display: flex; flex-direction: column; align-items: stretch; }
+  .hero-copy { max-width: none; padding-bottom: 0; }
+  .hero h1 { max-width: 370px; font-size: clamp(42px, 12vw, 52px); }
+  .hero-copy > p { max-width: 430px; }
+  .hero-visual { width: 100%; height: 360px; margin: 30px 0 0; flex: 0 0 360px; }
+  .hero-phone { width: 170px; height: 345px; right: 104px; top: 4px; }
+  .hero-phone-secondary { width: 123px; height: 258px; right: 4px; top: 66px; }
+  .hero-phone .mock-map { height: 150px; }
+  .flow { padding-top: 60px; }
+  .flow-demo { display: block; }
+  .experience-device { height: 480px; }
+  .role-panels { margin-top: 25px; }
+  .safety-layout { padding-block: 65px; }
+  .coverage-copy { padding: 26px; }
+  .coast-map { min-height: 340px; }
+  .advertising { padding: 28px 16px; }
+  .advertising-layout { padding: 30px 20px; border-radius: 22px; }
+  .sponsor-content { grid-template-columns: 1fr; }
+  .faq { padding-block: 55px; }
+  .launch { padding-inline: 16px; }
+  .launch-card { padding: 27px 22px; grid-template-columns: 58px 1fr; border-radius: 20px 20px 0 0; }
+  .launch-logo { width: 55px; height: 55px; }
+  .play-store-badge { grid-column: 1 / -1; justify-self: stretch; }
+}

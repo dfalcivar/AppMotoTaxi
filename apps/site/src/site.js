@@ -62,7 +62,7 @@ document.querySelectorAll('[data-role]').forEach(tab => tab.addEventListener('cl
 document.querySelectorAll('[data-open-role]').forEach(link => link.addEventListener('click', () => activateRole(link.dataset.openRole)));
 
 const savedTheme = localStorage.getItem('costa-go-theme');
-document.documentElement.dataset.theme = savedTheme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+document.documentElement.dataset.theme = savedTheme || 'light';
 function updateThemeLabel() {
   if (!themeButton) return;
   const isDark = document.documentElement.dataset.theme === 'dark';
