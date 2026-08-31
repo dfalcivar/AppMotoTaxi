@@ -47,6 +47,21 @@ const base = String.fromEnvironment('API_BASE_URL',
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
+enum PassengerRequestSectionLayout { stacked }
+
+/// The request controls intentionally stay stacked at every logical width.
+/// There is no separate tablet composition yet, so a wider phone or tablet
+/// must not silently opt into an unreviewed horizontal layout.
+PassengerRequestSectionLayout passengerRequestSectionLayoutFor(
+        double logicalAvailableWidth) =>
+    PassengerRequestSectionLayout.stacked;
+
+const driverGpsActiveMessage =
+    'Ubicación GPS activa. Esperando solicitudes cercanas.';
+
+bool shouldShowDriverStatusMessage(String? message) =>
+    message != null && message != driverGpsActiveMessage;
+
 FleetGateway fleetFor(Session session) => FleetGateway(
         (method, path, body) =>
             Api().call(method, path, token: session.token, body: body),
@@ -7152,6 +7167,7 @@ Future<void> rating(
 
 class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   bool fleetLinkBusy = false;
+  String? _lastRequestLayoutDiagnostics;
   void pendingOwnerFleetLink() {
     if (mounted && FleetLinks.pending.value.isNotEmpty && !fleetLinkBusy) {
       unawaited(openOwnerFleetLink());
@@ -10509,7 +10525,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           ),
         ),
         LayoutBuilder(builder: (context, constraints) {
-          final narrow = constraints.maxWidth < 340;
+          final media = MediaQuery.of(context);
+          final layout = passengerRequestSectionLayoutFor(constraints.maxWidth);
+          if (kDebugMode) {
+            final diagnostics =
+                'viewport=${media.size.width.toStringAsFixed(1)}x${media.size.height.toStringAsFixed(1)} '
+                'availableWidth=${constraints.maxWidth.toStringAsFixed(1)} '
+                'dpr=${media.devicePixelRatio.toStringAsFixed(2)} '
+                'textScale=${media.textScaler.scale(1).toStringAsFixed(2)} '
+                'breakpoint=${layout.name}';
+            if (_lastRequestLayoutDiagnostics != diagnostics) {
+              _lastRequestLayoutDiagnostics = diagnostics;
+              debugPrint('[PassengerRequestLayout] $diagnostics');
+            }
+          }
           final passengerSelector =
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const _PassengerSectionTitle('Número de pasajeros',
@@ -10603,18 +10632,14 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               ],
             ),
           ]);
-          if (narrow) {
-            return Column(children: [
-              passengerSelector,
-              const SizedBox(height: 8),
-              paymentSelector,
-            ]);
-          }
-          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(child: passengerSelector),
-            const SizedBox(width: 12),
-            Expanded(child: paymentSelector),
-          ]);
+          return Column(
+              key: const ValueKey('passenger-request-sections-stacked'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                passengerSelector,
+                const SizedBox(height: 8),
+                paymentSelector,
+              ]);
         }),
         if (message != null)
           Padding(
@@ -11843,8 +11868,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           realtime.subscribeTrip(active['tripId'].toString());
         }
         if (mounted) {
-          setState(() => driverMessage =
-              'Ubicación GPS activa. Esperando solicitudes cercanas.');
+          setState(() => driverMessage = driverGpsActiveMessage);
         }
       } catch (e) {
         await api.available(widget.s.token, false);
@@ -11895,9 +11919,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       setState(() {
         available = v;
         if (!v) nearbyDriverPositions.clear();
-        driverMessage = v
-            ? 'Ubicación GPS activa. Esperando solicitudes cercanas.'
-            : 'No recibirás nuevas solicitudes.';
+        driverMessage =
+            v ? driverGpsActiveMessage : 'No recibirás nuevas solicitudes.';
       });
       await refresh();
     } catch (e) {
@@ -15011,30 +15034,53 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ),
         const SizedBox(height: 12),
       ],
-      Row(children: [
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Disponible para viajes',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w900)),
-            if (active != null)
-              Text('Estás en un viaje',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: colors.primary, fontWeight: FontWeight.w700)),
-          ]),
+      Container(
+        key: const ValueKey('driver-availability-header'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Color.alphaBlend(
+              colors.primary.withValues(
+                  alpha: Theme.of(context).brightness == Brightness.dark
+                      ? .10
+                      : .055),
+              colors.surfaceContainerLow),
+          borderRadius: BorderRadius.circular(20),
+          border:
+              Border.all(color: colors.outlineVariant.withValues(alpha: .65)),
         ),
-        Switch(
-          value: available,
-          onChanged:
-              active == null && _membershipEligible && fleetSession != null
-                  ? toggle
-                  : null,
-        ),
-      ]),
-      const SizedBox(height: 7),
+        child: Row(children: [
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Disponible para viajes',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 2),
+              Text(
+                  active != null
+                      ? 'Estás atendiendo un viaje.'
+                      : 'Recibirás solicitudes de pasajeros cercanos.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: active != null
+                          ? colors.primary
+                          : colors.onSurfaceVariant,
+                      fontWeight:
+                          active != null ? FontWeight.w700 : FontWeight.w500)),
+            ]),
+          ),
+          const SizedBox(width: 10),
+          Switch(
+            value: available,
+            onChanged:
+                active == null && _membershipEligible && fleetSession != null
+                    ? toggle
+                    : null,
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
       if (active == null)
         _PassengerSurface(
           padding: const EdgeInsets.all(12),
@@ -15072,62 +15118,99 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             },
                       child: const Text('Seleccionar'))
                 ])
-              : Column(children: [
-                  Row(children: [
-                    FleetPhoto(
-                        gateway: fleetFor(widget.s),
-                        id: fleetSession['photoId']?.toString(),
-                        size: 68,
-                        height: 52),
-                    const SizedBox(width: 11),
-                    Expanded(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                          Text('Mototaxi activa',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelMedium
-                                  ?.copyWith(color: colors.onSurfaceVariant)),
-                          Text('${fleetSession['identifier']}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w800)),
-                          Text(
-                              [
-                                fleetSession['color'],
-                                if (fleetSession['unitNumber'] != null)
-                                  'Unidad ${fleetSession['unitNumber']}'
-                              ].whereType<String>().join(' · '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(color: colors.onSurfaceVariant))
-                        ])),
-                    TextButton(
-                        onPressed: fleetChanging
-                            ? null
-                            : () async {
-                                await chooseFleet();
-                              },
-                        child: const Text('Cambiar'))
-                  ]),
-                  const SizedBox(height: 4),
-                  Divider(color: colors.outlineVariant),
-                  SizedBox(
-                      width: double.infinity,
-                      child: TextButton.icon(
-                          style: TextButton.styleFrom(
-                              foregroundColor: colors.error),
-                          onPressed: fleetChanging ? null : finishFleetSession,
-                          icon: const Icon(Icons.logout_rounded, size: 19),
-                          label: const Text('Finalizar jornada')))
-                ]),
+              : Column(
+                  key: const ValueKey('driver-active-fleet-card'),
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                      Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            FleetPhoto(
+                                gateway: fleetFor(widget.s),
+                                id: fleetSession['photoId']?.toString(),
+                                size: 78,
+                                height: 62),
+                            const SizedBox(width: 11),
+                            Expanded(
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                  Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                            width: 8,
+                                            height: 8,
+                                            decoration: const BoxDecoration(
+                                                color: Color(0xff20aa5b),
+                                                shape: BoxShape.circle)),
+                                        const SizedBox(width: 6),
+                                        Flexible(
+                                          child: Text('Mototaxi activa',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelMedium
+                                                  ?.copyWith(
+                                                      color: colors.onSurface,
+                                                      fontWeight:
+                                                          FontWeight.w800)),
+                                        ),
+                                      ]),
+                                  const SizedBox(height: 2),
+                                  Text('${fleetSession['identifier']}',
+                                      maxLines: 2,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w900)),
+                                  Text(
+                                      [
+                                        fleetSession['color'],
+                                        if (fleetSession['unitNumber'] != null)
+                                          'Unidad ${fleetSession['unitNumber']}'
+                                      ].whereType<String>().join(' · '),
+                                      maxLines: 2,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                              color: colors.onSurfaceVariant))
+                                ])),
+                            TextButton.icon(
+                                style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 8),
+                                    visualDensity: VisualDensity.compact),
+                                onPressed: fleetChanging
+                                    ? null
+                                    : () async {
+                                        await chooseFleet();
+                                      },
+                                iconAlignment: IconAlignment.end,
+                                icon: const Icon(Icons.chevron_right, size: 20),
+                                label: const Text('Cambiar'))
+                          ]),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                            key: const ValueKey('driver-finish-session-action'),
+                            style: TextButton.styleFrom(
+                                foregroundColor: colors.error,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                visualDensity: VisualDensity.compact,
+                                textStyle: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(fontWeight: FontWeight.w700)),
+                            onPressed:
+                                fleetChanging ? null : finishFleetSession,
+                            icon: const Icon(Icons.logout_rounded, size: 18),
+                            label: const Text('Finalizar jornada')),
+                      )
+                    ]),
         ),
       if (active == null) const SizedBox(height: 10),
       if (active == null) ...[
@@ -15167,75 +15250,67 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(children: [
-                        Flexible(
-                          child: Text(
-                              hasScheduledTrips
-                                  ? 'Viajes programados'
-                                  : 'Viajes programados (0)',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        runSpacing: 5,
+                        children: [
+                          Text('Viajes programados',
                               style: Theme.of(context)
                                   .textTheme
                                   .titleSmall
                                   ?.copyWith(fontWeight: FontWeight.w800)),
-                        ),
-                        if (hasScheduledTrips) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            constraints: const BoxConstraints(minWidth: 24),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 7, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: scheduledAccent,
-                              borderRadius: BorderRadius.circular(99),
+                          if (hasScheduledTrips)
+                            Container(
+                              constraints: const BoxConstraints(minWidth: 24),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: scheduledAccent,
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: Text('$scheduledCount',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelMedium
+                                      ?.copyWith(
+                                          color: colors.onPrimary,
+                                          fontWeight: FontWeight.w900)),
                             ),
-                            child: Text('$scheduledCount',
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelMedium
-                                    ?.copyWith(
-                                        color: colors.onPrimary,
-                                        fontWeight: FontWeight.w900)),
-                          ),
+                          if (hasScheduledTrips)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: scheduledAccent.withValues(alpha: .15),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: Text('Nuevo',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelMedium
+                                      ?.copyWith(
+                                          color: scheduledAccent,
+                                          fontWeight: FontWeight.w900)),
+                            ),
                         ],
-                      ]),
-                      if (hasScheduledTrips) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          scheduledCount == 1
-                              ? 'Tienes un viaje programado pendiente'
-                              : 'Tienes $scheduledCount viajes programados pendientes',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: colors.onSurfaceVariant),
-                        ),
-                      ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        hasScheduledTrips
+                            ? scheduledCount == 1
+                                ? 'Tienes un viaje programado pendiente.'
+                                : 'Tienes $scheduledCount viajes programados pendientes.'
+                            : 'No tienes viajes programados pendientes.',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: colors.onSurfaceVariant),
+                      ),
                     ],
                   ),
                 ),
-                if (hasScheduledTrips) ...[
-                  const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: scheduledAccent.withValues(alpha: .15),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                    child: Text('Nuevo',
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelMedium
-                            ?.copyWith(
-                                color: scheduledAccent,
-                                fontWeight: FontWeight.w900)),
-                  ),
-                ],
                 Icon(Icons.chevron_right,
                     color: hasScheduledTrips
                         ? scheduledAccent
@@ -15245,7 +15320,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           ),
         ),
         const SizedBox(height: 8),
-        if (driverMessage != null)
+        if (shouldShowDriverStatusMessage(driverMessage))
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             margin: const EdgeInsets.only(bottom: 12),
@@ -15265,34 +15340,102 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             ),
             const SizedBox(width: 9),
             Expanded(
-              child: Text(
-                  'Ubicación GPS activa. Esperando solicitudes cercanas.',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: colors.onSurfaceVariant)),
+              child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                      text: 'GPS activo',
+                      style: TextStyle(
+                          color: colors.onSurface,
+                          fontWeight: FontWeight.w800)),
+                  TextSpan(
+                      text: ' · Esperando solicitudes cercanas.',
+                      style: TextStyle(color: colors.onSurfaceVariant)),
+                ]),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
             ),
           ]),
           const SizedBox(height: 9),
         ],
         if (available && offers.isEmpty)
-          _PassengerSurface(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Column(children: [
-              const _CostaGoEmblem(size: 72),
-              const SizedBox(height: 8),
-              Text('Esperando viajes',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 4),
-              Text('Mantente en línea para recibir solicitudes cercanas.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: colors.onSurfaceVariant)),
+          Container(
+            key: const ValueKey('driver-waiting-trips-card'),
+            constraints: const BoxConstraints(minHeight: 190),
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                  color: colors.outlineVariant.withValues(alpha: .7)),
+              boxShadow: [
+                BoxShadow(
+                    color: colors.shadow.withValues(alpha: .06),
+                    blurRadius: 18,
+                    offset: const Offset(0, 7))
+              ],
+            ),
+            child: Stack(alignment: Alignment.center, children: [
+              Positioned.fill(
+                child: Opacity(
+                  opacity: Theme.of(context).brightness == Brightness.dark
+                      ? .13
+                      : .2,
+                  child: Image.asset(
+                    Theme.of(context).brightness == Brightness.dark
+                        ? 'assets/images/fleet-empty-dark.png'
+                        : 'assets/images/fleet-empty-light.png',
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
+                    excludeFromSemantics: true,
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        colors.surface.withValues(alpha: .38),
+                        colors.surface.withValues(alpha: .82),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                    width: 68,
+                    height: 68,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: colors.surface.withValues(alpha: .86),
+                      border: Border.all(
+                          color: colors.primary.withValues(alpha: .22)),
+                    ),
+                    child: const _CostaGoEmblem(size: 54),
+                  ),
+                  const SizedBox(height: 10),
+                  Text('Esperando viajes',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 4),
+                  Text('Mantente en línea para recibir solicitudes cercanas.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: colors.onSurfaceVariant)),
+                ]),
+              ),
             ]),
           ),
         if (offers.isNotEmpty) _offerCarousel(context),

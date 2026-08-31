@@ -3,6 +3,38 @@ import 'package:latlong2/latlong.dart';
 import 'package:mototaxi_atacames/main.dart';
 
 void main() {
+  group('layout de pasajeros y método de pago', () {
+    test('permanece apilado en todos los anchos lógicos de teléfono', () {
+      for (final width in [280.0, 320.0, 340.0, 360.0, 390.0, 411.0, 430.0]) {
+        expect(passengerRequestSectionLayoutFor(width),
+            PassengerRequestSectionLayout.stacked,
+            reason: 'ancho lógico $width');
+      }
+    });
+
+    test('no activa un diseño de tablet que todavía no existe', () {
+      for (final width in [600.0, 720.0, 840.0, 1024.0]) {
+        expect(passengerRequestSectionLayoutFor(width),
+            PassengerRequestSectionLayout.stacked,
+            reason: 'ancho lógico $width');
+      }
+    });
+  });
+
+  group('estado GPS del conductor', () {
+    test('no duplica el mensaje GPS dentro de una barra adicional', () {
+      expect(shouldShowDriverStatusMessage(driverGpsActiveMessage), isFalse);
+    });
+
+    test('conserva otros mensajes operativos y de error', () {
+      expect(shouldShowDriverStatusMessage('No recibirás nuevas solicitudes.'),
+          isTrue);
+      expect(shouldShowDriverStatusMessage('No se pudo obtener la ubicación.'),
+          isTrue);
+      expect(shouldShowDriverStatusMessage(null), isFalse);
+    });
+  });
+
   group('enlaces de preguntas frecuentes', () {
     test('detecta un enlace web seguro dentro de la respuesta', () {
       final uri = firstWebUrl(
