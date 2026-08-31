@@ -1145,7 +1145,7 @@ Future<_NotificationDetailAction?> _showNotificationDetailSheet({
 }) {
   final tripFuture = tripId == null
       ? Future<Map<String, dynamic>?>.value(null)
-      : Api().trip(session.token, tripId).then(
+      : Api().trip(session.token, tripId).then<Map<String, dynamic>?>(
             (value) => Map<String, dynamic>.from(value as Map),
             onError: (_) => null,
           );
