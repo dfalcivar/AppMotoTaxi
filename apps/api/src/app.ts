@@ -336,19 +336,39 @@ export interface ScheduledTripPolicy {
   minimumNoticeMinutes: number;
   activationLeadMinutes: number;
   maximumAdvanceMinutes: number;
+  driverReminderMinutes?: number;
+  confirmationGraceMinutes?: number;
 }
 
 async function configuredScheduledTripPolicy(): Promise<ScheduledTripPolicy> {
   const [settings] = await database()`
     select scheduled_trip_minimum_notice_minutes as "minimumNoticeMinutes",
-      scheduled_trip_lead_minutes as "activationLeadMinutes"
+      scheduled_trip_lead_minutes as "activationLeadMinutes",
+      scheduled_trip_driver_reminder_minutes as "driverReminderMinutes",
+      scheduled_trip_confirmation_grace_minutes as "confirmationGraceMinutes"
     from operational_settings where id=1
   `;
   return {
     minimumNoticeMinutes: Number(settings?.minimumNoticeMinutes ?? 30),
     activationLeadMinutes: Number(settings?.activationLeadMinutes ?? 10),
+    driverReminderMinutes: Number(settings?.driverReminderMinutes ?? 30),
+    confirmationGraceMinutes: Number(settings?.confirmationGraceMinutes ?? 5),
     maximumAdvanceMinutes: 24 * 60
   };
+}
+
+export type ScheduledDriverActivationDecision = "ASSIGN" | "RELEASE_BUSY" | "RELEASE_NOT_READY" | "WAIT_FOR_CONFIRMATION";
+
+export function scheduledDriverActivationDecision(input: {
+  busy: boolean;
+  fleetEligible: boolean;
+  confirmationDeadline?: Date | null;
+  now: Date;
+}): ScheduledDriverActivationDecision {
+  if (input.busy) return "RELEASE_BUSY";
+  if (input.fleetEligible) return "ASSIGN";
+  if (input.confirmationDeadline && input.confirmationDeadline.getTime() <= input.now.getTime()) return "RELEASE_NOT_READY";
+  return "WAIT_FOR_CONFIRMATION";
 }
 
 export function scheduledTimeError(scheduledFor: Date, policy: ScheduledTripPolicy): string | undefined {
@@ -790,11 +810,40 @@ export async function buildApp() {
   }
 
   async function activateScheduledTrips(): Promise<void> {
-    const { activationLeadMinutes: leadMinutes } = await configuredScheduledTripPolicy();
+    const policy = await configuredScheduledTripPolicy();
+    const leadMinutes = policy.activationLeadMinutes;
+    const reminderMinutes = policy.driverReminderMinutes ?? 30;
+    const confirmationGraceMinutes = policy.confirmationGraceMinutes ?? 5;
+    const preparationReminders = await database()`
+      with candidates as (
+        select id from trips
+        where scheduled_for is not null
+          and schedule_status='SCHEDULED_ASSIGNED'
+          and status='SEARCHING'
+          and driver_id is not null
+          and driver_prepare_reminder_sent_at is null
+          and scheduled_for <= now() + (${reminderMinutes} * interval '1 minute')
+          and scheduled_for > now() + (${leadMinutes} * interval '1 minute')
+        order by scheduled_for
+        limit 50
+        for update skip locked
+      )
+      update trips trip set driver_prepare_reminder_sent_at=now()
+      from candidates where trip.id=candidates.id
+      returning trip.id::text as "tripId", trip.driver_id::text as "driverId", trip.scheduled_for as "scheduledFor"
+    `;
+    for (const reminder of preparationReminders) {
+      await sendPush(
+        String(reminder.driverId),
+        `Viaje programado en aproximadamente ${reminderMinutes} minutos`,
+        "La reserva sigue asignada a ti. Abre Costa-Go antes de la hora para confirmar la mototaxi e iniciar tu jornada.",
+        { tripId: String(reminder.tripId), type: "SCHEDULED_DRIVER_REMINDER" }
+      );
+    }
     const due = await database()`
       select id::text as "tripId", passenger_id::text as "passengerId",
         driver_id::text as "driverId", scheduled_for as "scheduledFor",
-        schedule_status as "scheduleStatus"
+        schedule_status as "scheduleStatus", clock_timestamp() as "serverNow"
       from trips
       where scheduled_for is not null
         and schedule_status in ('SCHEDULED','SCHEDULED_ASSIGNED')
@@ -805,7 +854,10 @@ export async function buildApp() {
     `;
     for (const item of due) {
       const activated = await database().begin(async tx => {
-        const [current] = await tx`select driver_id::text as "driverId",status,schedule_status as schedule from trips where id=${item.tripId} for update`;
+        const [current] = await tx`select driver_id::text as "driverId",status,schedule_status as schedule,
+          driver_confirmation_requested_at as "confirmationRequestedAt",
+          driver_confirmation_deadline_at as "confirmationDeadlineAt"
+          from trips where id=${item.tripId} for update`;
         if (!current || current.status!=='SEARCHING' || current.driverId!==item.driverId || !['SCHEDULED','SCHEDULED_ASSIGNED'].includes(current.schedule)) return 'SKIPPED' as const;
         if (item.driverId) {
           const [busy] = await tx`
@@ -814,15 +866,40 @@ export async function buildApp() {
             limit 1
           `;
           const [fleet]=await tx`select fleet_driver_can_receive(${item.driverId}) as eligible`;
-          if (busy || !fleet?.eligible) {
+          const decision = scheduledDriverActivationDecision({
+            busy: Boolean(busy),
+            fleetEligible: Boolean(fleet?.eligible),
+            confirmationDeadline: current.confirmationDeadlineAt ? new Date(current.confirmationDeadlineAt as string) : null,
+            now: new Date(item.serverNow as string)
+          });
+          if (decision === "WAIT_FOR_CONFIRMATION") {
+            if (current.confirmationRequestedAt) return "SKIPPED" as const;
+            const [waiting] = await tx`
+              update trips set driver_confirmation_requested_at=now(),
+                driver_confirmation_deadline_at=now() + (${confirmationGraceMinutes} * interval '1 minute')
+              where id=${item.tripId} and status='SEARCHING' and schedule_status='SCHEDULED_ASSIGNED'
+                and driver_id=${item.driverId} and driver_confirmation_requested_at is null
+              returning id
+            `;
+            if (!waiting) return "SKIPPED" as const;
+            await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata)
+              values (${item.tripId}, 'SEARCHING', 'SEARCHING', 'SCHEDULED_DRIVER_CONFIRMATION_REQUIRED',
+              ${JSON.stringify({ driverId: item.driverId, graceMinutes: confirmationGraceMinutes })}::jsonb)`;
+            return "AWAITING_CONFIRMATION" as const;
+          }
+          if (decision === "RELEASE_BUSY" || decision === "RELEASE_NOT_READY") {
+            const reasonCode = decision === "RELEASE_BUSY" ? "SCHEDULED_DRIVER_BUSY" : "SCHEDULED_DRIVER_NOT_READY";
             const [released] = await tx`
-              update trips set driver_id=null, assigned_at=null, schedule_status='SCHEDULED_READY'
+              update trips set driver_id=null, assigned_at=null, schedule_status='SCHEDULED_READY',
+                driver_confirmation_requested_at=null, driver_confirmation_deadline_at=null
               where id=${item.tripId} and status='SEARCHING' and schedule_status='SCHEDULED_ASSIGNED'
               returning id
             `;
             if (!released) return "SKIPPED" as const;
-            await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata) values (${item.tripId}, 'SEARCHING', 'SEARCHING', 'SCHEDULED_DRIVER_BUSY', ${JSON.stringify({ releasedDriverId: item.driverId })}::jsonb)`;
-            return "RELEASED" as const;
+            await tx`insert into trip_events (trip_id, from_status, to_status, reason_code, metadata)
+              values (${item.tripId}, 'SEARCHING', 'SEARCHING', ${reasonCode},
+              ${JSON.stringify({ releasedDriverId: item.driverId, confirmationGraceMinutes })}::jsonb)`;
+            return decision;
           }
           const [ready] = await tx`
             update trips set status='ASSIGNED', schedule_status='SCHEDULED_READY',
@@ -862,10 +939,20 @@ export async function buildApp() {
           sendPush(String(item.driverId), `Viaje programado en ${leadMinutes} minutos`, "Abre Costa-Go para iniciar el desplazamiento al origen.", { tripId: String(item.tripId), type: "SCHEDULED_DRIVER_REMINDER" })
         ]);
         realtime.publishTripStatus(String(item.tripId), "ASSIGNED");
-      } else if (activated === "RELEASED") {
+      } else if (activated === "AWAITING_CONFIRMATION") {
+        await sendPush(
+          String(item.driverId),
+          "Confirma tu mototaxi para la reserva",
+          `Abre Costa-Go y activa tu jornada. Tienes ${confirmationGraceMinutes} minutos antes de que la reserva se ofrezca a otro conductor.`,
+          { tripId: String(item.tripId), type: "SCHEDULED_DRIVER_REMINDER" }
+        );
+      } else if (activated === "RELEASE_BUSY" || activated === "RELEASE_NOT_READY") {
+        const driverMessage = activated === "RELEASE_BUSY"
+          ? "La reserva se liberó porque ya tenías otro viaje activo."
+          : "La reserva se liberó porque no se confirmó una mototaxi disponible dentro del tiempo indicado.";
         await Promise.all([
           sendPush(String(item.passengerId), "Buscando otro conductor", "La reserva fue liberada y se está ofreciendo nuevamente.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_RELEASED" }),
-          sendPush(String(item.driverId), "Reserva liberada", "No fue posible iniciar el viaje programado mientras tenías otro viaje activo.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_RELEASED" })
+          sendPush(String(item.driverId), "Reserva liberada", driverMessage, { tripId: String(item.tripId), type: "SCHEDULED_TRIP_RELEASED" })
         ]);
         await redispatchOldestTrip(String(item.tripId));
       } else if (activated === "UNASSIGNED") {
@@ -2234,7 +2321,9 @@ export async function buildApp() {
       const [trip] = await tx`
         update trips set driver_id=${user.id!},
           cooperative_id=(select cooperative_id from users where id=${user.id!}),
-          schedule_status='SCHEDULED_ASSIGNED', assigned_at=now()
+          schedule_status='SCHEDULED_ASSIGNED', assigned_at=now(),
+          driver_prepare_reminder_sent_at=null, driver_confirmation_requested_at=null,
+          driver_confirmation_deadline_at=null
         where id=${tripId} and status='SEARCHING' and schedule_status='SCHEDULED'
           and driver_id is null and scheduled_for > now()
         returning passenger_id::text as "passengerId", scheduled_for as "scheduledFor"
@@ -2264,7 +2353,8 @@ export async function buildApp() {
     const result = await database().begin(async tx => {
       const [trip] = await tx`
         update trips set driver_id=null, cooperative_id=null, assigned_at=null,
-          schedule_status='SCHEDULED'
+          schedule_status='SCHEDULED', driver_prepare_reminder_sent_at=null,
+          driver_confirmation_requested_at=null, driver_confirmation_deadline_at=null
         where id=${tripId} and driver_id=${user.id!} and status='SEARCHING'
           and schedule_status='SCHEDULED_ASSIGNED' and scheduled_for > now()
         returning passenger_id::text as "passengerId"

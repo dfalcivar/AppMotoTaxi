@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { scheduledTimeError, tripTotalCents } from "./app.js";
+import { scheduledDriverActivationDecision, scheduledTimeError, tripTotalCents } from "./app.js";
 
 describe("política de viajes programados", () => {
   afterEach(() => vi.useRealTimers());
@@ -19,6 +19,38 @@ describe("política de viajes programados", () => {
     expect(scheduledTimeError(new Date("2026-08-11T12:30:00-05:00"), policy)).toBeUndefined();
     expect(scheduledTimeError(new Date("2026-08-12T12:00:00-05:00"), policy)).toBeUndefined();
     expect(scheduledTimeError(new Date("2026-08-12T12:00:01-05:00"), policy)).toBe("SCHEDULE_TOO_FAR");
+  });
+});
+
+describe("activación segura de reservas asignadas", () => {
+  const now = new Date("2026-08-30T10:00:00-05:00");
+
+  it("conserva la reserva mientras el conductor está dentro de la ventana para confirmar", () => {
+    expect(scheduledDriverActivationDecision({
+      busy: false,
+      fleetEligible: false,
+      confirmationDeadline: new Date("2026-08-30T10:05:00-05:00"),
+      now
+    })).toBe("WAIT_FOR_CONFIRMATION");
+  });
+
+  it("activa la reserva cuando el conductor confirma una mototaxi elegible", () => {
+    expect(scheduledDriverActivationDecision({
+      busy: false,
+      fleetEligible: true,
+      confirmationDeadline: new Date("2026-08-30T10:05:00-05:00"),
+      now
+    })).toBe("ASSIGN");
+  });
+
+  it("libera por causa diferenciada si está ocupado o vence la confirmación", () => {
+    expect(scheduledDriverActivationDecision({ busy: true, fleetEligible: false, now })).toBe("RELEASE_BUSY");
+    expect(scheduledDriverActivationDecision({
+      busy: false,
+      fleetEligible: false,
+      confirmationDeadline: new Date("2026-08-30T09:59:59-05:00"),
+      now
+    })).toBe("RELEASE_NOT_READY");
   });
 });
 
