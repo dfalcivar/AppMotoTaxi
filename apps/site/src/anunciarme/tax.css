@@ -1,0 +1,12 @@
+.plan .price span {
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.tax-notice {
+  margin: 24px 0 0;
+  color: var(--muted);
+  font-size: .95rem;
+  text-align: center;
+}

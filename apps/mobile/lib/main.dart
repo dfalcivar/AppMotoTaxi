@@ -13396,6 +13396,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         TextEditingController(text: order['shortCode']?.toString() ?? '');
     final observation = TextEditingController();
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
+    final subtotal =
+        ((order['breakdown'] as Map?)?['subtotalAmount'] as num?)?.toDouble() ??
+            (order['taxableSubtotal'] as num?)?.toDouble() ??
+            amount;
+    final vatRate =
+        ((order['breakdown'] as Map?)?['vatRatePercent'] as num?)?.toDouble() ??
+            (order['vatRatePercent'] as num?)?.toDouble() ??
+            0;
+    final vatAmount =
+        ((order['breakdown'] as Map?)?['vatAmount'] as num?)?.toDouble() ??
+            (order['vatAmount'] as num?)?.toDouble() ??
+            0;
     var sending = false;
     final submitted = await showDialog<bool>(
           context: context,
@@ -13449,18 +13461,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       _PassengerSurface(
                         padding: const EdgeInsets.all(13),
                         child: Column(children: [
-                          Text('Monto a pagar',
-                              style:
-                                  Theme.of(dialogContext).textTheme.bodySmall),
-                          Text('\$${amount.toStringAsFixed(2)}',
-                              style: Theme.of(dialogContext)
-                                  .textTheme
-                                  .headlineMedium
-                                  ?.copyWith(
-                                      color: Theme.of(dialogContext)
-                                          .colorScheme
-                                          .primary,
-                                      fontWeight: FontWeight.w900)),
+                          _membershipAmountRow(
+                              dialogContext, 'Subtotal', subtotal),
+                          _membershipAmountRow(
+                              dialogContext,
+                              'IVA (${vatRate.toStringAsFixed(vatRate % 1 == 0 ? 0 : 3)}%)',
+                              vatAmount),
+                          const Divider(height: 18),
+                          _membershipAmountRow(
+                              dialogContext, 'Total a pagar', amount),
                         ]),
                       ),
                       const SizedBox(height: 10),
@@ -13971,6 +13980,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
     if (!context.mounted) return;
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
+    final subtotal =
+        ((order['breakdown'] as Map?)?['subtotalAmount'] as num?)?.toDouble() ??
+            (order['taxableSubtotal'] as num?)?.toDouble() ??
+            amount;
+    final vatRate =
+        ((order['breakdown'] as Map?)?['vatRatePercent'] as num?)?.toDouble() ??
+            (order['vatRatePercent'] as num?)?.toDouble() ??
+            0;
+    final vatAmount =
+        ((order['breakdown'] as Map?)?['vatAmount'] as num?)?.toDouble() ??
+            (order['vatAmount'] as num?)?.toDouble() ??
+            0;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -14110,18 +14131,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 _PassengerSurface(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  child: Row(children: [
-                    const Expanded(
-                        child: Text('Total a pagar',
-                            style: TextStyle(fontWeight: FontWeight.w800))),
-                    Text('\$${amount.toStringAsFixed(2)}',
-                        style: Theme.of(sheetContext)
-                            .textTheme
-                            .titleLarge
-                            ?.copyWith(
-                                color:
-                                    Theme.of(sheetContext).colorScheme.primary,
-                                fontWeight: FontWeight.w900)),
+                  child: Column(children: [
+                    _membershipAmountRow(sheetContext, 'Subtotal', subtotal),
+                    _membershipAmountRow(
+                        sheetContext,
+                        'IVA (${vatRate.toStringAsFixed(vatRate % 1 == 0 ? 0 : 3)}%)',
+                        vatAmount),
+                    const Divider(height: 18),
+                    _membershipAmountRow(sheetContext, 'Total a pagar', amount),
                   ]),
                 ),
                 const SizedBox(height: 14),
@@ -14424,6 +14441,21 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             'Ajustes',
                             (breakdown['adjustmentAmount'] as num?) ??
                                 order['adjustmentAmount'] as num),
+                      const Divider(height: 20),
+                      _membershipAmountRow(
+                          sheetContext,
+                          'Subtotal',
+                          (breakdown['subtotalAmount'] as num?) ??
+                              order['taxableSubtotal'] ??
+                              amount),
+                      _membershipAmountRow(
+                          sheetContext,
+                          'IVA (${((breakdown['vatRatePercent'] as num?) ?? order['vatRatePercent'] ?? 0).toString()}%)',
+                          (breakdown['vatAmount'] as num?) ??
+                              order['vatAmount'] ??
+                              0),
+                      _membershipAmountRow(
+                          sheetContext, 'Total a pagar', amount),
                     ]),
                   ),
                   if (status == 'PENDING_VERIFICATION')
@@ -14664,7 +14696,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         ),
                         const TextSpan(text: ' por '),
                         TextSpan(
-                          text: '\$${amount.toStringAsFixed(2)}.',
+                          text: '\$${amount.toStringAsFixed(2)} + IVA.',
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                         const TextSpan(
@@ -14840,7 +14872,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                     _membershipDetailLine('Viajes del ciclo',
                                         '${membership['completedTrips'] ?? 0}'),
                                     _membershipDetailLine('Renovación estimada',
-                                        '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
+                                        '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
                                     if (extraAmount > 0)
                                       _membershipDetailLine(
                                           'Excedente acumulado',
@@ -14967,16 +14999,28 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                                   .textTheme
                                                                   .bodySmall),
                                                           const Spacer(),
-                                                          Text(
-                                                              '\$${(plan['amount'] as num).toStringAsFixed(2)}',
+                                                          Text.rich(
+                                                              TextSpan(
+                                                                  children: [
+                                                                    TextSpan(
+                                                                        text:
+                                                                            '\$${(plan['amount'] as num).toStringAsFixed(2)}',
+                                                                        style: const TextStyle(
+                                                                            fontWeight:
+                                                                                FontWeight.w900)),
+                                                                    TextSpan(
+                                                                        text:
+                                                                            ' + IVA',
+                                                                        style: TextStyle(
+                                                                            fontSize:
+                                                                                12,
+                                                                            color:
+                                                                                Theme.of(sheetContext).colorScheme.onSurfaceVariant)),
+                                                                  ]),
                                                               style: Theme.of(
                                                                       sheetContext)
                                                                   .textTheme
-                                                                  .titleMedium
-                                                                  ?.copyWith(
-                                                                      fontWeight:
-                                                                          FontWeight
-                                                                              .w900)),
+                                                                  .titleMedium),
                                                           if (pendingOrder ==
                                                               null)
                                                             const Text(
@@ -14986,6 +15030,23 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                                         11)),
                                                         ])))));
                                   })),
+                          const SizedBox(height: 12),
+                          Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.info_outline,
+                                    size: 18,
+                                    color: Theme.of(sheetContext)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                    child: Text(
+                                        'Los valores mostrados no incluyen IVA. El porcentaje vigente se detallará antes del pago.',
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .bodySmall)),
+                              ]),
                           const SizedBox(height: 12),
                           const Row(
                               crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,0 +1,10 @@
+.commercial-payment-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+
+.commercial-payment-summary span:last-of-type,
+.commercial-payment-summary strong:last-child {
+  border-top: 1px solid #cfe3e8;
+  padding-top: 10px;
+}

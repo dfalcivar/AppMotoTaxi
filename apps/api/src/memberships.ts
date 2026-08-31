@@ -8,6 +8,7 @@ import { sendTransactionalEmail } from "./email.js";
 import { sendPush } from "./push.js";
 import { lockMembershipBilling } from './membership-trip-usage.js';
 import { requireOrderFiscalProfile } from './fiscal/clients.js';
+import { taxBreakdown } from './taxes.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
@@ -400,6 +401,9 @@ function paymentOrderResult(order: Record<string, unknown>) {
         baseAmount: Number(order.baseAmount ?? 0),
         billableExtraAmount: Number(order.priorUsageAmount ?? 0),
         adjustmentAmount: Number(order.adjustmentAmount ?? 0),
+        subtotalAmount: Number(order.taxableSubtotal ?? order.totalAmount ?? 0),
+        vatRatePercent: Number(order.vatRatePercent ?? 0),
+        vatAmount: Number(order.vatAmount ?? 0),
         totalAmount: Number(order.totalAmount ?? 0),
         legacy: true
       };
@@ -444,6 +448,8 @@ async function activePaymentOrder(driverId: string) {
   const [order] = await database()`
     select id::text,status,short_code as "shortCode",base_amount::float8 as "baseAmount",
       prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",
+      taxable_subtotal::float8 as "taxableSubtotal",vat_rate_percent::float8 as "vatRatePercent",
+      vat_amount::float8 as "vatAmount",
       total_amount::float8 as "totalAmount",
       currency,expires_at as "expiresAt",plan_snapshot as "plan",metadata
     from membership_payment_orders
@@ -475,6 +481,8 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
     const [existing] = await tx`
       select id::text,status,short_code as "shortCode",base_amount::float8 as "baseAmount",
         prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",
+        taxable_subtotal::float8 as "taxableSubtotal",vat_rate_percent::float8 as "vatRatePercent",
+        vat_amount::float8 as "vatAmount",
         total_amount::float8 as "totalAmount",
         currency,expires_at as "expiresAt",plan_snapshot as "plan",metadata
       from membership_payment_orders
@@ -496,7 +504,7 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
       return { order: existing as Record<string, unknown>, reused: true };
     }
 
-    const [settings] = await tx`select membership_qr_duration_hours as hours from operational_settings where id=1`;
+    const [settings] = await tx`select membership_qr_duration_hours as hours,vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`;
     const [plan] = await tx`select * from membership_plans where id=${input.planId} and enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())`;
     if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
     const [cycle] = await tx`
@@ -512,7 +520,7 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
     `;
     const usageAmount = money(Math.max(0, Number(cycle?.billable_extra_amount ?? 0)));
     const adjustmentAmount = money(Number(cycle?.adjustment_amount ?? 0));
-    const total = money(Math.max(0, Number(plan.base_amount) + usageAmount + adjustmentAmount));
+    const tax = taxBreakdown(Math.max(0, Number(plan.base_amount) + usageAmount + adjustmentAmount), settings?.vatRatePercent ?? 0);
     const economicBreakdown = {
       baseAmount: money(Number(plan.base_amount)),
       includedTrips: Number(cycle?.included_trips_snapshot ?? plan.included_trips ?? 0),
@@ -527,7 +535,10 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
         Number(cycle?.base_membership_amount_snapshot ?? plan.base_amount))),
       billableExtraAmount: usageAmount,
       adjustmentAmount,
-      totalAmount: total
+      subtotalAmount: tax.subtotal,
+      vatRatePercent: tax.vatRatePercent,
+      vatAmount: tax.vatAmount,
+      totalAmount: tax.total
     };
     const orderId = randomUUID();
     const rawToken = paymentOrderPublicToken(orderId);
@@ -535,23 +546,26 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
     const [order] = await tx`
       insert into membership_payment_orders (
         id,public_token_hash,short_code,driver_id,membership_cycle_id,plan_id,plan_snapshot,
-        base_amount,prior_usage_amount,adjustment_amount,total_amount,currency,intended_method,receiver_scope,
+        base_amount,prior_usage_amount,adjustment_amount,taxable_subtotal,vat_rate_percent,vat_amount,total_amount,currency,intended_method,receiver_scope,
         verification_channel,status,expires_at,created_by,idempotency_key,metadata
       ) values (${orderId},${sha256(rawToken)},${shortCode},${driverId},${cycle?.id ?? null},${plan.id},
         ${JSON.stringify({ code: plan.code, name: plan.name, durationDays: plan.duration_days, includedTrips: plan.included_trips, maximumAmount: plan.max_renewal_amount, extraTripSharePercent: plan.extra_trip_share_percent })}::jsonb,
-        ${plan.base_amount},${usageAmount},${adjustmentAmount},${total},${plan.currency},${input.intendedMethod ?? null},
+        ${plan.base_amount},${usageAmount},${adjustmentAmount},${tax.subtotal},${tax.vatRatePercent},${tax.vatAmount},${tax.total},${plan.currency},${input.intendedMethod ?? null},
         ${input.intendedMethod === "BANK_TRANSFER" ? "COSTA_GO_CENTRAL" : "NOT_APPLICABLE"},
         ${input.intendedMethod === "BANK_TRANSFER" ? "REMOTE_PROOF" : null},'PENDING',
         now()+(${Number(settings?.hours ?? 24)}*interval '1 hour'),${driverId},${input.idempotencyKey},
         ${JSON.stringify({ tokenVersion: 1, economicBreakdown })}::jsonb)
       returning id::text,status,short_code as "shortCode",base_amount::float8 as "baseAmount",
         prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",
+        taxable_subtotal::float8 as "taxableSubtotal",vat_rate_percent::float8 as "vatRatePercent",
+        vat_amount::float8 as "vatAmount",
         total_amount::float8 as "totalAmount",currency,expires_at as "expiresAt",plan_snapshot as "plan",metadata
     `;
     return { order: order as Record<string, unknown>, reused: false };
   });
   return { ...paymentOrderResult(result.order), reused: result.reused } as unknown as {
     id: string; status: string; shortCode: string; baseAmount: number; priorUsageAmount: number; adjustmentAmount: number;
+    taxableSubtotal: number; vatRatePercent: number; vatAmount: number;
     totalAmount: number; currency: string; expiresAt: string; plan: Record<string, unknown>;
     token: string | null; qrUrl: string | null; reused: boolean;
   };
@@ -909,11 +923,21 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
     const membership = await currentMembership(user.id!);
     const eligibility = await driverMembershipEligibility(user.id!);
-    const [plans, pendingOrder] = await Promise.all([
+    const [plans, pendingOrder, settingsRows] = await Promise.all([
       database()`select id::text,code,name,base_amount::float8 as amount,currency,duration_days as "durationDays",included_trips as "includedTrips",max_renewal_amount::float8 as "maximumAmount" from membership_plans where enabled=true and effective_from<=now() and (effective_until is null or effective_until>now()) order by duration_days`,
-      activePaymentOrder(user.id!)
+      activePaymentOrder(user.id!),
+      database()`select vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`
     ]);
-    return { membership: membership ?? { status: "PENDING" }, eligibility, plans, pendingOrder };
+    const vatRatePercent = Number(settingsRows[0]?.vatRatePercent ?? 0);
+    const pricedPlans = plans.map(plan => ({ ...plan, ...taxBreakdown(plan.amount, vatRatePercent) }));
+    const renewalTax = taxBreakdown(membership?.estimatedNextRenewalAmount ?? 0, vatRatePercent);
+    return {
+      membership: membership ? { ...membership, estimatedRenewalTax: renewalTax } : { status: "PENDING" },
+      eligibility,
+      plans: pricedPlans,
+      pendingOrder,
+      tax: { vatRatePercent, pricesIncludeVat: false }
+    };
   });
 
   app.get("/v1/driver/membership/collection-points", async (request, reply) => {
@@ -946,7 +970,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/driver/membership/payments", async (request, reply) => {
     const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
-    return database()`select p.id::text,p.amount::float8,p.currency,p.method,p.status,p.confirmed_at as "confirmedAt",o.plan_snapshot as "plan",p.reference_masked as "reference" from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.driver_id=${user.id!} order by p.confirmed_at desc limit 100`;
+    return database()`select p.id::text,p.amount::float8,p.currency,p.method,p.status,p.confirmed_at as "confirmedAt",o.plan_snapshot as "plan",o.taxable_subtotal::float8 as "subtotalAmount",o.vat_rate_percent::float8 as "vatRatePercent",o.vat_amount::float8 as "vatAmount",p.reference_masked as "reference" from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.driver_id=${user.id!} order by p.confirmed_at desc limit 100`;
   });
 
   app.get("/v1/driver/membership/payment-orders", async (request, reply) => {
@@ -954,7 +978,8 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const rows = await database()`
       select id::text,status,short_code as "shortCode",plan_snapshot as plan,
         base_amount::float8 as "baseAmount",prior_usage_amount::float8 as "priorUsageAmount",
-        adjustment_amount::float8 as "adjustmentAmount",total_amount::float8 as "totalAmount",
+        adjustment_amount::float8 as "adjustmentAmount",taxable_subtotal::float8 as "taxableSubtotal",
+        vat_rate_percent::float8 as "vatRatePercent",vat_amount::float8 as "vatAmount",total_amount::float8 as "totalAmount",
         currency,expires_at as "expiresAt",paid_at as "paidAt",cancelled_at as "cancelledAt",
         cancellation_reason_code as "cancellationReason",
         cancellation_observation as "cancellationObservation",created_at as "createdAt",metadata
@@ -976,7 +1001,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
   app.get("/v1/driver/membership/payment-orders/:id", async (request, reply) => {
     const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
     const id = (request.params as { id: string }).id;
-    const [order] = await database()`select id::text,status,short_code as "shortCode",plan_snapshot as plan,base_amount::float8 as "baseAmount",prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",total_amount::float8 as "totalAmount",currency,expires_at as "expiresAt",paid_at as "paidAt",cancelled_at as "cancelledAt",cancellation_reason_code as "cancellationReason",cancellation_observation as "cancellationObservation",created_at as "createdAt",metadata from membership_payment_orders where id=${id} and driver_id=${user.id!}`;
+    const [order] = await database()`select id::text,status,short_code as "shortCode",plan_snapshot as plan,base_amount::float8 as "baseAmount",prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",taxable_subtotal::float8 as "taxableSubtotal",vat_rate_percent::float8 as "vatRatePercent",vat_amount::float8 as "vatAmount",total_amount::float8 as "totalAmount",currency,expires_at as "expiresAt",paid_at as "paidAt",cancelled_at as "cancelledAt",cancellation_reason_code as "cancellationReason",cancellation_observation as "cancellationObservation",created_at as "createdAt",metadata from membership_payment_orders where id=${id} and driver_id=${user.id!}`;
     if (!order) return reply.code(404).send({ error: "PAYMENT_ORDER_NOT_FOUND" });
     return Number((order.metadata as Record<string, unknown> | undefined)?.tokenVersion) === 1 ? paymentOrderResult(order as Record<string, unknown>) : order;
   });
@@ -1255,7 +1280,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/api-usage",async(request,reply)=>{try{requirePermission(request,"api_usage:view");const [settings]=await database()`select * from operational_settings where id=1`;if(!settings)throw new Error("SETTINGS_NOT_FOUND");const rows=await database()`select provider,count(*)::int as requests,count(*) filter(where result='ERROR')::int as errors from api_usage_events where billing_period=date_trunc('month',now())::date group by provider order by provider`;const map=Object.fromEntries(rows.map(row=>[String(row.provider),Number(row.requests)]));const textSearch=map.TEXT_SEARCH_PRO??0;const navigation=map.NAVIGATION_SDK??0;return {period:new Date().toISOString().slice(0,7),providers:rows,textSearch:{used:textSearch,freeCap:Number(settings.text_search_free_cap_reference),operationalLimit:Number(settings.text_search_free_cap_reference)+Math.floor(Number(settings.text_search_monthly_budget_usd)*1000/Math.max(0.01,Number(settings.text_search_price_per_thousand_usd))),estimatedCost:Math.max(0,textSearch-Number(settings.text_search_free_cap_reference))*Number(settings.text_search_price_per_thousand_usd)/1000},navigation:{used:navigation,freeCap:Number(settings.navigation_free_cap_reference)}};}catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/collector/payment-orders/token/:token",async(request,reply)=>{try{requirePermission(request,"payments:collect");const token=(request.params as {token:string}).token;const [order]=await database()`select o.id::text,o.status,o.short_code as "shortCode",o.total_amount::float8 as amount,o.currency,o.expires_at as "expiresAt",o.plan_snapshot as plan,u.full_name as driver,concat('****',right(coalesce(d.identity_number,''),4)) as identification,v.identifier as vehicle,c.name as cooperative,dm.expires_at as "currentExpiresAt" from membership_payment_orders o join users u on u.id=o.driver_id join drivers d on d.user_id=o.driver_id left join lateral(select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=o.driver_id and r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED' and v.merged_into is null)v on true left join cooperatives c on c.id=u.cooperative_id left join lateral(select expires_at from driver_memberships where driver_id=o.driver_id and cycle_closed_at is null order by created_at desc limit 1)dm on true where o.public_token_hash=${sha256(token)} and o.status in ('PENDING','PENDING_VERIFICATION') and o.expires_at>now()`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});return order;}catch(error){return businessError(error,reply);} });
+  app.get("/v1/collector/payment-orders/token/:token",async(request,reply)=>{try{requirePermission(request,"payments:collect");const token=(request.params as {token:string}).token;const [order]=await database()`select o.id::text,o.status,o.short_code as "shortCode",o.taxable_subtotal::float8 as "subtotalAmount",o.vat_rate_percent::float8 as "vatRatePercent",o.vat_amount::float8 as "vatAmount",o.total_amount::float8 as amount,o.currency,o.expires_at as "expiresAt",o.plan_snapshot as plan,u.full_name as driver,concat('****',right(coalesce(d.identity_number,''),4)) as identification,v.identifier as vehicle,c.name as cooperative,dm.expires_at as "currentExpiresAt" from membership_payment_orders o join users u on u.id=o.driver_id join drivers d on d.user_id=o.driver_id left join lateral(select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=o.driver_id and r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED' and v.merged_into is null)v on true left join cooperatives c on c.id=u.cooperative_id left join lateral(select expires_at from driver_memberships where driver_id=o.driver_id and cycle_closed_at is null order by created_at desc limit 1)dm on true where o.public_token_hash=${sha256(token)} and o.status in ('PENDING','PENDING_VERIFICATION') and o.expires_at>now()`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});return order;}catch(error){return businessError(error,reply);} });
 
   app.get("/v1/collector/payment-orders/search",async(request,reply)=>{try{
     requirePermission(request,"payments:collect");
@@ -1265,7 +1290,9 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const tokenHash=token?sha256(token):null;
     const normalized=query.toLowerCase().replace(/[^a-z0-9]/g,"");
     const rows=await database()`
-      select o.id::text,o.status,o.short_code as "shortCode",o.total_amount::float8 as amount,o.currency,
+      select o.id::text,o.status,o.short_code as "shortCode",
+        o.taxable_subtotal::float8 as "subtotalAmount",o.vat_rate_percent::float8 as "vatRatePercent",
+        o.vat_amount::float8 as "vatAmount",o.total_amount::float8 as amount,o.currency,
         o.expires_at as "expiresAt",o.plan_snapshot as plan,u.full_name as driver,u.email,
         concat('****',right(coalesce(d.identity_number,''),4)) as identification,v.identifier as vehicle,
         c.name as cooperative,dm.expires_at as "currentExpiresAt"

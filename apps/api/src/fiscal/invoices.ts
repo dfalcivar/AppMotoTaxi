@@ -10,9 +10,9 @@ export class FacturaService {
       for(const job of jobs){
         const reference=`costago:${job.source}:${job.payment_id}:${job.document_type}`;
         const [invoice]=await tx`insert into fiscal_invoices(external_reference,source,service_type,zone_id,payment_id,document_type,
-          client_id,fiscal_snapshot,concept,total,currency,provider,environment,email_to,paid_at,status)
+          client_id,fiscal_snapshot,concept,subtotal,tax_amount,total,currency,provider,environment,email_to,paid_at,status)
           values(${reference},${job.source},${job.service_type},${job.zone_id},${job.payment_id},${job.document_type},${job.client_id},
-          ${job.fiscal_snapshot},${job.concept},${job.amount},${job.currency},${config.provider},${config.environment},
+          ${job.fiscal_snapshot},${job.concept},${job.subtotal},${job.tax_amount},${job.amount},${job.currency},${config.provider},${config.environment},
           ${((job.fiscal_snapshot??{}) as {billingEmail?:string}).billingEmail??null},${job.paid_at},
           ${config.enabled&&this.provider.configured?'PENDIENTE':'PENDIENTE_INTEGRACION'})
           on conflict(source,payment_id,document_type) do nothing returning id::text`;

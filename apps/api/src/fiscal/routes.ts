@@ -2,13 +2,14 @@ import type { FastifyInstance,FastifyRequest,FastifyReply } from 'fastify';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { database } from '../database.js';
-import { requirePermission,userFrom,type SessionUser } from '../admin.js';
+import { persistAudit,requirePermission,userFrom,type SessionUser } from '../admin.js';
 import { PerfilFiscalService,ClienteService,fiscalProfileSchema,type FiscalOwner } from './clients.js';
 import { billingConfiguration,billingProvider } from './providers.js';
 import { FacturaService } from './invoices.js';
 
 const profileService=new PerfilFiscalService();
 const uuid=z.string().uuid();
+const vatRateSchema=z.object({vatRatePercent:z.coerce.number().min(0).max(100)});
 export const fiscalFilterSchema=z.object({
   search:z.string().trim().max(120).default(''),limit:z.coerce.number().int().min(1).max(100).default(25),
   offset:z.coerce.number().int().min(0).default(0),start:z.string().date().optional(),end:z.string().date().optional(),
@@ -105,8 +106,16 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     return {profile};
   }catch(e){return fiscalError(e,reply);}});
 
-  app.get('/v1/admin/fiscal/config',async(req,reply)=>{try{requirePermission(req,'FACTURACION_VER');return {...billingConfiguration(),providerReady:billingProvider().configured,
-    profilesEnabled:true,emissionAvailable:billingConfiguration().enabled&&billingProvider().configured};}catch(e){return fiscalError(e,reply);}});
+  app.get('/v1/admin/fiscal/config',async(req,reply)=>{try{requirePermission(req,'FACTURACION_VER');const [settings]=await database()`select vat_rate_percent::float8 as "vatRatePercent",updated_at as "vatUpdatedAt" from operational_settings where id=1`;return {...billingConfiguration(),providerReady:billingProvider().configured,
+    profilesEnabled:true,emissionAvailable:billingConfiguration().enabled&&billingProvider().configured,...settings};}catch(e){return fiscalError(e,reply);}});
+  app.patch('/v1/admin/fiscal/config/vat',async(req,reply)=>{try{
+    const actor=requirePermission(req,'FACTURACION_ADMINISTRAR'),input=vatRateSchema.parse(req.body);
+    const [previous]=await database()`select vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`;
+    const [settings]=await database()`update operational_settings set vat_rate_percent=${input.vatRatePercent},updated_at=now(),updated_by=${actor.id!} where id=1 returning vat_rate_percent::float8 as "vatRatePercent",updated_at as "vatUpdatedAt"`;
+    if(!settings)throw new Error('FISCAL_OPERATION_FAILED');
+    await persistAudit(actor,'VAT_RATE_UPDATED','OPERATIONAL_SETTINGS','1',`IVA ${Number(previous?.vatRatePercent??0)}% → ${settings.vatRatePercent}%`);
+    return settings;
+  }catch(e){return fiscalError(e,reply);}});
   app.get('/v1/admin/fiscal/clients',async(req,reply)=>{try{
     requirePermission(req,'CLIENTES_FISCALES_VER');const q=fiscalFilterSchema.parse(req.query);reply.header('Cache-Control','private, no-store');
     const rows=await database()`select c.id::text,c.active,c.created_at as "createdAt",c.updated_at as "updatedAt",

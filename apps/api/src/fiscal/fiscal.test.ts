@@ -23,6 +23,8 @@ beforeAll(async()=>{
   await pg.exec(`create table users(id uuid primary key,full_name text,email text,deleted_at timestamptz,active_session_id uuid);
     create table advertisers(id uuid primary key,business_name text,email text);
     create table service_areas(id uuid primary key,name text);
+    create table operational_settings(id int primary key,vat_rate_percent numeric(6,3) not null default 15,updated_at timestamptz default now(),updated_by uuid);
+    insert into operational_settings(id) values(1);
     create table membership_payment_orders(id uuid primary key,driver_id uuid,status text default 'PENDING',expires_at timestamptz default now()+interval '1 day');
     create table advertising_orders(id uuid primary key,advertiser_id uuid,status text default 'PENDING_PAYMENT',assigned_commercial_id uuid);
     create table affiliate_banners(id uuid primary key,order_id uuid,service_area_id uuid);

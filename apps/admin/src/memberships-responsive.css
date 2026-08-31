@@ -94,6 +94,9 @@
 .collector-order-results small { color: #667d84; }
 .collector-order { display: grid; gap: 10px; margin-top: 14px; padding: 16px; border: 1px solid #d5e5e9; border-radius: 14px; background: #f8fbfc; }
 .collector-order h3,.collector-order p { margin: 0; }
+.collector-order-tax { display: grid; grid-template-columns: 1fr auto; gap: 6px 18px; padding: 12px; border-radius: 12px; background: #eef7f9; }
+.collector-order-tax span { color: #526b73; }
+.collector-order-tax strong { text-align: right; }
 .collector-order label { display: grid; grid-template-columns: minmax(90px,auto) minmax(180px,1fr); align-items: center; gap: 10px; }
 .collector-order .primary { justify-self: start; }
 
