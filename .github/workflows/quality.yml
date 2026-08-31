@@ -37,5 +37,18 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter analyze
+      - name: Run flutter analyze
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee "$RUNNER_TEMP/flutter-analyze.log"
+          analyze_status=${PIPESTATUS[0]}
+          if [ "$analyze_status" -ne 0 ]; then
+            while IFS= read -r diagnostic; do
+              if [[ "$diagnostic" =~ ^[[:space:]]*(error|warning|info)[[:space:]]*• ]]; then
+                echo "::error title=Flutter analyze::$diagnostic"
+              fi
+            done < "$RUNNER_TEMP/flutter-analyze.log"
+          fi
+          exit "$analyze_status"
       - run: flutter test
