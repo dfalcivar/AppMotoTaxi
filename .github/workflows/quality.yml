@@ -40,9 +40,11 @@ jobs:
       - name: Run flutter analyze
         shell: bash
         run: |
+          set +e
           set -o pipefail
           flutter analyze 2>&1 | tee "$RUNNER_TEMP/flutter-analyze.log"
           analyze_status=${PIPESTATUS[0]}
+          set -e
           if [ "$analyze_status" -ne 0 ]; then
             while IFS= read -r diagnostic; do
               if [ -n "$diagnostic" ]; then
