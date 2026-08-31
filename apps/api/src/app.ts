@@ -29,6 +29,7 @@ import { captureOperationalError } from "./observability.js";
 import { sendTransactionalEmail } from "./email.js";
 import { registerCollectionAdminRoutes } from "./collection-admin.js";
 import { advertisingSchedulerTick, registerCommercialRoutes } from "./commercial.js";
+import { registerCooperativeDemoRoutes } from "./cooperative-demo.js";
 import {
   driverMembershipEligibility,
   membershipSchedulerTick,
@@ -462,6 +463,7 @@ export async function buildApp() {
   await registerMembershipRoutes(app);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
+  await registerCooperativeDemoRoutes(app);
   await registerFiscalRoutes(app);
   await registerFleetRoutes(app, authenticatedUser);
   const fleetScheduler = setInterval(() => {

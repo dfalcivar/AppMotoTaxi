@@ -36,7 +36,7 @@ await writeFile(
 
 // Render/Cloudflare can cache config.js longer than HTML. Version every reference so
 // a new deploy never combines a fresh page with stale environment configuration.
-for (const page of ["viaje/index.html", "anunciarme/index.html", "anunciarme/comprobante/index.html"]) {
+for (const page of ["viaje/index.html", "anunciarme/index.html", "anunciarme/comprobante/index.html", "cooperativas/index.html"]) {
   const file = resolve(output, page);
   const html = await readFile(file, "utf8");
   await writeFile(file, html.replaceAll('/config.js', `/config.js?v=${publicConfigVersion}`), "utf8");
