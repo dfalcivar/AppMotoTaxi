@@ -59,10 +59,9 @@
 .landing-v2 .v2-audience-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:14px; border:1px solid var(--v2-line); border-radius:24px; background:rgba(255,255,255,.74); }
 .landing-v2 .v2-audience-option { min-width:0; padding:22px 20px 19px; display:flex; flex-direction:column; border-right:1px solid var(--v2-line); }
 .landing-v2 .v2-audience-option:last-child { border-right:0; }
-.landing-v2 .v2-audience-icon { width:42px; height:42px; display:grid; place-items:center; border-radius:50%; color:#087bea; background:#e6f3ff; font-size:1rem; }
-.landing-v2 .v2-audience-icon.driver { color:#116cb3; background:#e6f1fa; }
-.landing-v2 .v2-audience-icon.business { color:#e77437; background:#fff0e7; border-radius:13px; }
-.landing-v2 .v2-audience-icon.cooperative { color:#0c9563; background:#e2f8ed; }
+.landing-v2 .v2-audience-illustration { width:132px; height:132px; margin:0 auto; display:block; object-fit:cover; }
+.landing-v2 .v2-audience-illustration.cooperative { width:144px; height:144px; margin-top:-6px; margin-bottom:-6px; }
+.landing-v2 .v2-audience-option { text-align:center; }
 .landing-v2 .v2-audience-option h3 { margin-top:15px; font-size:1.06rem; }
 .landing-v2 .v2-audience-option p { margin-top:9px; color:var(--v2-muted); font-size:.84rem; line-height:1.52; }
 .landing-v2 .v2-audience-option a { width:100%; min-height:38px; margin-top:auto; padding:15px 13px 0; display:flex; align-items:flex-end; justify-content:space-between; color:#0874d1; border-top:1px solid transparent; font-size:.78rem; font-weight:850; text-decoration:none; }
@@ -97,10 +96,11 @@
 .landing-v2 .v2-coverage { padding:62px 0; background:#fff; }
 .landing-v2 .v2-coverage-grid { display:grid; grid-template-columns:1.08fr .92fr; gap:28px; }
 .landing-v2 .v2-coverage-card,.landing-v2 .v2-fare { min-height:360px; border:1px solid var(--v2-line); border-radius:24px; overflow:hidden; box-shadow:0 14px 36px rgba(5,77,128,.08); }
-.landing-v2 .v2-coverage-card { display:grid; grid-template-columns:1.08fr .92fr; background:#fff; }
-.landing-v2 .v2-coast-map { min-width:0; min-height:360px; overflow:hidden; background:#d7f3fa; }
-.landing-v2 .v2-coast-map img { width:100%; height:100%; display:block; object-fit:cover; object-position:61% center; }
-.landing-v2 .v2-map-copy { padding:34px 28px; display:flex; flex-direction:column; justify-content:center; background:linear-gradient(135deg,#fff,#f6fbff); }
+.landing-v2 .v2-coverage-card { position:relative; display:block; background:#fff; }
+.landing-v2 .v2-coast-map { position:absolute; inset:0; width:100%; min-width:0; min-height:360px; overflow:hidden; background:#fff; }
+.landing-v2 .v2-coast-map img { width:100%; height:100%; display:block; object-fit:cover; object-position:center; }
+.landing-v2 .v2-map-copy { position:relative; z-index:1; width:43%; min-height:360px; margin-left:auto; padding:34px 24px 34px 16px; display:flex; flex-direction:column; justify-content:center; background:transparent; }
+.landing-v2 .v2-map-copy .v2-kicker { margin-left:42px; }
 .landing-v2 .v2-map-copy h2 { font-size:2rem; }
 .landing-v2 .v2-map-copy p { margin-top:14px; color:var(--v2-muted); line-height:1.5; }
 .landing-v2 .v2-map-copy>div { display:flex; gap:8px; margin-top:18px; }
@@ -187,7 +187,7 @@ html[data-theme="dark"] .landing-v2 .v2-early-actions a.primary { color:#fff; ba
   .landing-v2 .v2-flow-phone { height:370px; }.landing-v2 .v2-flow-phone img { width:245px; }.landing-v2 .v2-steps { gap:24px; }.landing-v2 .v2-steps li { grid-template-columns:34px 1fr; gap:10px; }.landing-v2 .v2-steps li>span { grid-template-columns:40px 1fr; column-gap:10px; }.landing-v2 .v2-steps i { width:40px; height:40px; }
   .landing-v2 .v2-audience-heading h2 { font-size:1.8rem; }.landing-v2 .v2-audience-grid { grid-template-columns:1fr; padding:8px; }.landing-v2 .v2-audience-option { border-right:0; border-bottom:1px solid var(--v2-line) !important; }.landing-v2 .v2-audience-option:last-child { border-bottom:0 !important; }.landing-v2 .v2-cooperative-entry { margin:0; }
   .landing-v2 .v2-safety { padding:48px 0; }.landing-v2 .v2-safety-benefits { grid-template-columns:1fr 1fr; }.landing-v2 .v2-driver-card { padding:20px 16px; }.landing-v2 .v2-driver-head>img { width:80px; height:80px; }.landing-v2 .v2-trip-status li span { font-size:.64rem; }
-  .landing-v2 .v2-coverage-card { grid-template-columns:1fr; }.landing-v2 .v2-coast-map { min-height:320px; }.landing-v2 .v2-map-copy { padding:25px 20px; }.landing-v2 .v2-map-copy>div { flex-wrap:wrap; }.landing-v2 .v2-fare { padding:24px 18px; }.landing-v2 .v2-fare-card { grid-template-columns:1fr; }.landing-v2 .v2-fare h2 { font-size:1.8rem; }
+  .landing-v2 .v2-coast-map { position:relative; inset:auto; width:100%; min-height:320px; }.landing-v2 .v2-coast-map img { position:absolute; inset:0; object-position:33% center; }.landing-v2 .v2-map-copy { width:100%; min-height:0; margin-left:0; padding:25px 20px; background:linear-gradient(135deg,#fff,#f6fbff); }.landing-v2 .v2-map-copy .v2-kicker { margin-left:0; }.landing-v2 .v2-map-copy>div { flex-wrap:wrap; }.landing-v2 .v2-fare { padding:24px 18px; }.landing-v2 .v2-fare-card { grid-template-columns:1fr; }.landing-v2 .v2-fare h2 { font-size:1.8rem; }
   .landing-v2 .v2-early-access-row { padding:22px 18px; }.landing-v2 .v2-early-access-row h2 { font-size:1.55rem; }.landing-v2 .v2-early-actions { grid-template-columns:1fr; }
   .landing-v2 .v2-ad-grid { grid-template-columns:1fr; padding:28px 20px 0; }.landing-v2 .v2-ad-copy { text-align:center; }.landing-v2 .v2-ad-phone { grid-row:auto; grid-column:auto; height:290px; }.landing-v2 .v2-ad-phone img { width:250px; }.landing-v2 .v2-ad-moments { grid-column:auto; padding-bottom:26px; }.landing-v2 .v2-ad-moments b { width:44px; height:44px; }
   .landing-v2 .v2-faq-row { align-items:flex-start; flex-direction:column; }.landing-v2 .v2-faq-row>a { width:100%; justify-content:center; }
