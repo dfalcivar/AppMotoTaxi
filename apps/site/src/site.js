@@ -24,10 +24,37 @@ function activateRole(role) {
   });
   const screen = document.querySelector('#role-screen');
   if (screen) {
-    screen.src = tab.dataset.screen;
-    screen.alt = role === 'driver'
-      ? 'Pantalla real de Costa-Go para conductor'
-      : 'Pantalla real de Costa-Go para pasajero';
+    const isDriver = role === 'driver';
+    screen.classList.toggle('driver-mode', isDriver);
+    screen.classList.toggle('passenger-mode', !isDriver);
+    screen.setAttribute('aria-label', isDriver
+      ? 'Interfaz ilustrativa de Costa-Go para conductor'
+      : 'Interfaz ilustrativa de Costa-Go para pasajero');
+
+    const roleContent = isDriver
+      ? {
+          welcome: 'Modo conductor',
+          greeting: 'Hola',
+          question: 'Disponible para viajes',
+          'search-copy': 'Mototaxi activa · MT-2',
+          'state-icon': '✓',
+          'state-title': 'Listo para recibir solicitudes',
+          'state-copy': 'Ubicación activa y unidad verificada',
+        }
+      : {
+          welcome: 'Bienvenido',
+          greeting: 'Hola, usuario',
+          question: '¿A dónde vamos?',
+          'search-copy': 'Busca tu destino',
+          'state-icon': '⌖',
+          'state-title': 'Viaja con tranquilidad',
+          'state-copy': 'Origen, destino y tarifa clara',
+        };
+
+    Object.entries(roleContent).forEach(([key, value]) => {
+      const element = document.querySelector(`#role-${key}`);
+      if (element) element.textContent = value;
+    });
   }
 }
 
