@@ -130,9 +130,9 @@ async function candidatesForSegment(segment:z.infer<typeof segmentSchema>){
     left join lateral(select t.service_area_id,t.requested_at from trips t where t.passenger_id=u.id or t.driver_id=u.id order by t.requested_at desc limit 1) recent on true left join service_areas area on area.id=recent.service_area_id
     where u.status='ACTIVE' and u.deleted_at is null
       and (${segment.userIds.length}=0 or u.id=any(${segment.userIds}::uuid[]))
-      and (${segment.platforms.length}=0 or d.platform=any(${segment.platforms}))
-      and (${segment.roles.length}=0 or u.role::text=any(${segment.roles}) or exists(select 1 from mobile_account_roles r where r.user_id=u.id and r.role=any(${segment.roles})))
-      and (${segment.zones.length}=0 or area.name=any(${segment.zones}) or recent.service_area_id::text=any(${segment.zones}))
+      and (${segment.platforms.length}=0 or d.platform=any(${segment.platforms}::text[]))
+      and (${segment.roles.length}=0 or u.role::text=any(${segment.roles}::text[]) or exists(select 1 from mobile_account_roles r where r.user_id=u.id and r.role=any(${segment.roles}::text[])))
+      and (${segment.zones.length}=0 or area.name=any(${segment.zones}::text[]) or recent.service_area_id::text=any(${segment.zones}::text[]))
       and (${segment.activeWithinDays??null}::int is null or coalesce(recent.requested_at,u.updated_at,u.created_at)>=now()-(coalesce(${segment.activeWithinDays??null},365)*interval '1 day')) order by u.full_name limit 10000`;
 }
 
@@ -145,9 +145,9 @@ async function estimateSegment(segment:z.infer<typeof segmentSchema>){
     left join service_areas area on area.id=recent.service_area_id
     where u.status='ACTIVE' and u.deleted_at is null
       and (${segment.userIds.length}=0 or u.id=any(${segment.userIds}::uuid[]))
-      and (${segment.platforms.length}=0 or d.platform=any(${segment.platforms}))
-      and (${segment.roles.length}=0 or u.role::text=any(${segment.roles}) or exists(select 1 from mobile_account_roles r where r.user_id=u.id and r.role=any(${segment.roles})))
-      and (${segment.zones.length}=0 or area.name=any(${segment.zones}) or recent.service_area_id::text=any(${segment.zones}))
+      and (${segment.platforms.length}=0 or d.platform=any(${segment.platforms}::text[]))
+      and (${segment.roles.length}=0 or u.role::text=any(${segment.roles}::text[]) or exists(select 1 from mobile_account_roles r where r.user_id=u.id and r.role=any(${segment.roles}::text[])))
+      and (${segment.zones.length}=0 or area.name=any(${segment.zones}::text[]) or recent.service_area_id::text=any(${segment.zones}::text[]))
       and (${segment.activeWithinDays??null}::int is null or coalesce(recent.requested_at,u.updated_at,u.created_at)>=now()-(coalesce(${segment.activeWithinDays??null},365)*interval '1 day'))
     order by u.id`;
   const valid=rows.filter((row:any)=>row.validToken);
