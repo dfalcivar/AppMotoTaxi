@@ -29,10 +29,12 @@ import UniformTypeIdentifiers
       binaryMessenger: registrar.messenger()
     )
     channel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "pickDocument" else {
-        result(FlutterMethodNotImplemented)
+      if call.method == "openNotificationSettings" {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { result(nil); return }
+        UIApplication.shared.open(url, options: [:]) { _ in result(nil) }
         return
       }
+      guard call.method == "pickDocument" else { result(FlutterMethodNotImplemented); return }
       let arguments = call.arguments as? [String: Any]
       self?.presentDocumentPicker(result: result, pdfOnly: (arguments?["extensions"] as? [String]) == ["pdf"])
     }

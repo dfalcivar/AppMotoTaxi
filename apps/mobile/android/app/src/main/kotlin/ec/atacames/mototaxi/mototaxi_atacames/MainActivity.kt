@@ -16,6 +16,7 @@ import android.media.ToneGenerator
 import android.hardware.fingerprint.FingerprintManager
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
@@ -66,6 +67,13 @@ class MainActivity : FlutterFragmentActivity() {
                             return@setMethodCallHandler
                         }
                         startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        result.success(null)
+                    }
+                    "openNotificationSettings" -> {
+                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        }
+                        startActivity(intent)
                         result.success(null)
                     }
                     "playDriverArrivalAlert" -> {

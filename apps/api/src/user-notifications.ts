@@ -33,7 +33,7 @@ const persistentTypes = new Set([
   "TEST_PUSH"
 ]);
 
-export type NotificationCategory = "TRANSACTIONAL" | "OPERATIONAL" | "SMART" | "CAMPAIGN" | "PROMOTIONAL";
+export type NotificationCategory = "TRANSACTIONAL" | "OPERATIONAL" | "REMINDER" | "SYSTEM" | "SMART" | "CAMPAIGN" | "PROMOTIONAL";
 export type NotificationPriority = "CRITICAL" | "HIGH" | "NORMAL" | "LOW";
 
 export function notificationClassification(type: string): { category: NotificationCategory; priority: NotificationPriority } {
@@ -41,6 +41,8 @@ export function notificationClassification(type: string): { category: Notificati
   if(normalized.startsWith("SMART_"))return {category:"SMART",priority:"NORMAL"};
   if(normalized==="CAMPAIGN"||normalized==="EVENT")return {category:"CAMPAIGN",priority:"NORMAL"};
   if(normalized==="PROMOTIONAL")return {category:"PROMOTIONAL",priority:"LOW"};
+  if(normalized==='APP_UPDATE'||normalized==='SYSTEM')return {category:'SYSTEM',priority:'HIGH'};
+  if(normalized==='SCHEDULED_TRIP_REMINDER'||normalized==='MEMBERSHIP_EXPIRING')return {category:'REMINDER',priority:'NORMAL'};
   if(normalized.startsWith("MEMBERSHIP_")||normalized.startsWith("SUPPORT_")||normalized==="FLEET_SESSION")return {category:"OPERATIONAL",priority:"HIGH"};
   return {category:"TRANSACTIONAL",priority:["TRIP_OFFER","TRIP_CANCELLED","DRIVER_ARRIVED","NO_DRIVER"].includes(normalized)?"CRITICAL":"HIGH"};
 }

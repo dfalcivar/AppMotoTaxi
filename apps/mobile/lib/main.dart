@@ -5551,6 +5551,16 @@ class _AccountHubState extends State<AccountHub> {
             ),
           ),
           actionCard(
+            icon: Icons.notifications_none_rounded,
+            title: 'Notificaciones',
+            subtitle: 'Preferencias y configuración',
+            onTap: () => Navigator.push(
+              c,
+              MaterialPageRoute(
+                  builder: (_) => NotificationPreferencesScreen(widget.s)),
+            ),
+          ),
+          actionCard(
             icon: Icons.support_agent_outlined,
             title: 'Ayuda y soporte',
             subtitle: 'Preguntas frecuentes y solicitudes de ayuda',
@@ -5604,6 +5614,423 @@ class _AccountHubState extends State<AccountHub> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class NotificationPreferencesScreen extends StatefulWidget {
+  const NotificationPreferencesScreen(this.session, {super.key});
+  final Session session;
+
+  @override
+  State<NotificationPreferencesScreen> createState() =>
+      _NotificationPreferencesScreenState();
+}
+
+class _NotificationPreferencesScreenState
+    extends State<NotificationPreferencesScreen> with WidgetsBindingObserver {
+  Map<String, dynamic> preferences = {};
+  bool loading = true;
+  bool permissionEnabled = true;
+  String roleContext = 'PASSENGER';
+  String? error;
+  final Set<String> saving = {};
+
+  bool get hasPassenger => widget.session.availableRoles.contains('PASSENGER');
+  bool get hasDriver => widget.session.availableRoles.contains('DRIVER');
+  bool get dualRole => hasPassenger && hasDriver;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    roleContext = widget.session.role == 'DRIVER' ? 'DRIVER' : 'PASSENGER';
+    load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) load(silent: true);
+  }
+
+  Future<void> load({bool silent = false}) async {
+    if (!silent && mounted) setState(() => loading = true);
+    try {
+      final settings =
+          await FirebaseMessaging.instance.getNotificationSettings();
+      final localEnabled = const {
+        AuthorizationStatus.authorized,
+        AuthorizationStatus.provisional,
+      }.contains(settings.authorizationStatus);
+      if (localEnabled) unawaited(Api().registerFcm(widget.session.token));
+      final result = await Api().call(
+          'GET', '/v1/account/notification-preferences',
+          token: widget.session.token);
+      if (!mounted) return;
+      setState(() {
+        preferences = Map<String, dynamic>.from(result['preferences'] ?? {});
+        permissionEnabled = localEnabled;
+        error = null;
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        error = e.toString();
+        loading = false;
+      });
+    }
+  }
+
+  bool enabled(String key) =>
+      preferences[key]?['enabled'] != false &&
+      preferences[key]?['state'] != 'USER_DISABLED';
+
+  Future<void> change(String key, bool value) async {
+    if (saving.contains(key)) return;
+    final before = Map<String, dynamic>.from(preferences[key] ?? {});
+    setState(() {
+      saving.add(key);
+      preferences[key] = {
+        ...before,
+        'enabled': value,
+        'state': value ? 'ENABLED' : 'USER_DISABLED'
+      };
+    });
+    try {
+      final result = await Api().call(
+          'PUT', '/v1/account/notification-preferences/$key',
+          token: widget.session.token, body: {'enabled': value});
+      if (mounted) {
+        setState(() => preferences[key] = Map<String, dynamic>.from(result));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => preferences[key] = before);
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('No se guardó el cambio: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => saving.remove(key));
+    }
+  }
+
+  Future<void> openSettings() async {
+    try {
+      await nativeActions.invokeMethod<void>('openNotificationSettings');
+    } catch (_) {
+      await launchUrl(Uri.parse('app-settings:'),
+          mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+
+    Widget iconBadge(IconData icon, Color color) => Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+              color: color.withValues(alpha: dark ? .24 : .11),
+              borderRadius: BorderRadius.circular(16)),
+          child: Icon(icon, color: color),
+        );
+
+    Widget preferenceTile({
+      required IconData icon,
+      required Color color,
+      required String title,
+      required String subtitle,
+      String? keyName,
+      bool required = false,
+    }) {
+      final state = keyName == null ? null : preferences[keyName]?['state'];
+      final paused = state == 'AUTO_PAUSED';
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          iconBadge(icon, color),
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(title,
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                    if (required)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                            color: Colors.green.withValues(alpha: .13),
+                            borderRadius: BorderRadius.circular(99)),
+                        child: Text('Siempre activas',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                                color: Colors.green.shade600,
+                                fontWeight: FontWeight.w800)),
+                      ),
+                    if (paused)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: .14),
+                            borderRadius: BorderRadius.circular(99)),
+                        child: Text('Pausa automática',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                                color: Colors.orange.shade700,
+                                fontWeight: FontWeight.w800)),
+                      ),
+                  ]),
+              const SizedBox(height: 4),
+              Text(subtitle,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: scheme.onSurfaceVariant)),
+              if (required) ...[
+                const SizedBox(height: 7),
+                Row(children: [
+                  Icon(Icons.lock_outline_rounded,
+                      size: 16, color: scheme.onSurfaceVariant),
+                  const SizedBox(width: 5),
+                  Expanded(
+                      child: Text('No se pueden desactivar',
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant))),
+                ]),
+              ],
+            ]),
+          ),
+          if (!required && keyName != null) ...[
+            const SizedBox(width: 8),
+            saving.contains(keyName)
+                ? const Padding(
+                    padding: EdgeInsets.all(11),
+                    child: SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2)))
+                : Switch.adaptive(
+                    value: enabled(keyName),
+                    onChanged: (value) => change(keyName, value)),
+          ],
+        ]),
+      );
+    }
+
+    final items = <Widget>[
+      preferenceTile(
+        icon: Icons.directions_bike_rounded,
+        color: scheme.primary,
+        title: 'Viajes y seguridad',
+        subtitle: roleContext == 'DRIVER'
+            ? 'Solicitudes, estados del viaje, seguridad y avisos indispensables.'
+            : 'Información sobre tus viajes, conductor, seguridad y estados importantes.',
+        required: true,
+      ),
+      if (roleContext == 'PASSENGER') ...[
+        const Divider(height: 1),
+        preferenceTile(
+          icon: Icons.psychology_alt_rounded,
+          color: Colors.deepPurple,
+          title: 'Recomendaciones de viaje',
+          subtitle: 'Sugerencias inteligentes basadas en tus hábitos de viaje.',
+          keyName: 'PASSENGER_SMART_RECOMMENDATIONS',
+        ),
+        const Divider(height: 1),
+        preferenceTile(
+          icon: Icons.alarm_rounded,
+          color: Colors.green,
+          title: 'Recordatorios',
+          subtitle: 'Avisos anticipados de tus viajes programados.',
+          keyName: 'PASSENGER_SCHEDULED_TRIP_REMINDERS',
+        ),
+      ] else ...[
+        const Divider(height: 1),
+        preferenceTile(
+          icon: Icons.event_repeat_rounded,
+          color: Colors.green,
+          title: 'Recordatorios',
+          subtitle: 'Avisos anticipados de renovación de membresía.',
+          keyName: 'DRIVER_MEMBERSHIP_REMINDERS',
+        ),
+      ],
+      const Divider(height: 1),
+      preferenceTile(
+        icon: Icons.local_offer_outlined,
+        color: Colors.orange,
+        title: 'Novedades y promociones',
+        subtitle:
+            'Ofertas, campañas comerciales y novedades de nuestros aliados.',
+        keyName: 'PROMOTIONAL_NOTIFICATIONS',
+      ),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Preferencias de notificaciones'),
+        actions: [
+          IconButton(
+              tooltip: 'Información',
+              onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                        title: const Text('Cómo funcionan'),
+                        content: const Text(
+                            'Los avisos críticos de viajes, seguridad y actualizaciones importantes permanecen activos. Las preferencias se aplican a recordatorios, recomendaciones y promociones.'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Entendido'))
+                        ],
+                      )),
+              icon: const Icon(Icons.info_outline_rounded)),
+        ],
+      ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: load,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+                children: [
+                  Card(
+                    elevation: 0,
+                    color: scheme.surfaceContainerHigh,
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Row(children: [
+                        iconBadge(
+                            Icons.notifications_none_rounded, scheme.primary),
+                        const SizedBox(width: 14),
+                        Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              Text('Notificaciones',
+                                  style: theme.textTheme.titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.w900)),
+                              const SizedBox(height: 4),
+                              Text(
+                                  'Elige qué tipos de notificaciones deseas recibir en Costa-Go.',
+                                  style: TextStyle(
+                                      color: scheme.onSurfaceVariant)),
+                            ])),
+                      ]),
+                    ),
+                  ),
+                  if (dualRole) ...[
+                    const SizedBox(height: 14),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                            value: 'PASSENGER',
+                            label: Text('Pasajero'),
+                            icon: Icon(Icons.person_outline)),
+                        ButtonSegment(
+                            value: 'DRIVER',
+                            label: Text('Conductor'),
+                            icon: Icon(Icons.directions_bike_outlined)),
+                      ],
+                      selected: {roleContext},
+                      onSelectionChanged: (value) =>
+                          setState(() => roleContext = value.first),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Text('TIPOS DE NOTIFICACIONES',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: .8)),
+                  const SizedBox(height: 9),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    elevation: 0,
+                    clipBehavior: Clip.antiAlias,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: BorderSide(color: scheme.outlineVariant)),
+                    child: Column(children: items),
+                  ),
+                  if (roleContext == 'PASSENGER') ...[
+                    const SizedBox(height: 18),
+                    Card(
+                      elevation: 0,
+                      color: scheme.surfaceContainerHigh,
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        leading: iconBadge(
+                            Icons.auto_awesome_rounded, scheme.secondary),
+                        title: const Text('Notificaciones inteligentes',
+                            style: TextStyle(fontWeight: FontWeight.w800)),
+                        subtitle: const Text(
+                            'Costa-Go ajusta automáticamente la frecuencia para mostrarte solo avisos relevantes. Tus patrones no se eliminan al desactivarlas.'),
+                      ),
+                    ),
+                  ],
+                  if (!permissionEnabled) ...[
+                    const SizedBox(height: 18),
+                    Card(
+                      elevation: 0,
+                      color: scheme.errorContainer,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                Icon(Icons.notifications_off_outlined,
+                                    color: scheme.onErrorContainer),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                    child: Text(
+                                        'Las notificaciones están desactivadas',
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                                color: scheme.onErrorContainer,
+                                                fontWeight: FontWeight.w900))),
+                              ]),
+                              const SizedBox(height: 8),
+                              Text(
+                                  'Para recibir notificaciones, actívalas en la configuración del dispositivo.',
+                                  style: TextStyle(
+                                      color: scheme.onErrorContainer)),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton.icon(
+                                      onPressed: openSettings,
+                                      icon: const Icon(Icons.settings_outlined),
+                                      label:
+                                          const Text('Abrir configuración'))),
+                            ]),
+                      ),
+                    ),
+                  ],
+                  if (error != null) ...[
+                    const SizedBox(height: 14),
+                    Text(error!,
+                        style: TextStyle(color: scheme.error),
+                        textAlign: TextAlign.center),
+                  ],
+                ],
+              ),
+            ),
     );
   }
 }

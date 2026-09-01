@@ -9,6 +9,7 @@ import { sendPush } from "./push.js";
 import { lockMembershipBilling } from './membership-trip-usage.js';
 import { requireOrderFiscalProfile } from './fiscal/clients.js';
 import { taxBreakdown } from './taxes.js';
+import {notificationPreferenceAllows} from './notification-preferences.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
@@ -729,7 +730,8 @@ export async function membershipSchedulerTick(): Promise<void> {
     returning dm.id::text,dm.driver_id::text as "driverId",dm.expires_at as "expiresAt"
   `;
   for (const item of expiring) {
-    void sendPush(item.driverId, "Tu membresía está próxima a vencer", `Renueva antes del ${new Date(String(item.expiresAt)).toLocaleDateString("es-EC", { timeZone: "America/Guayaquil" })} para seguir recibiendo solicitudes.`, { type: "MEMBERSHIP_EXPIRING", membershipId: item.id }).catch(() => undefined);
+    if(await notificationPreferenceAllows(String(item.driverId),'DRIVER_MEMBERSHIP_REMINDERS'))
+      void sendPush(item.driverId, "Tu membresía está próxima a vencer", `Renueva antes del ${new Date(String(item.expiresAt)).toLocaleDateString("es-EC", { timeZone: "America/Guayaquil" })} para seguir recibiendo solicitudes.`, { type: "MEMBERSHIP_EXPIRING", membershipId: item.id }).catch(() => undefined);
   }
 
   const expired = await database()`

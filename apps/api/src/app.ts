@@ -18,6 +18,7 @@ import { currentSession, releaseSession, releaseStaleSessions } from './fleet/se
 import { fleetError } from './fleet/routes.js';
 import {deliverFleetNotifications} from './fleet/notifications.js';
 import {compareAppVersions,registerSmartNotificationRoutes,smartNotificationSchedulerTick} from './smart-notifications.js';
+import {notificationPreferenceAllows,registerNotificationPreferenceRoutes} from './notification-preferences.js';
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
@@ -464,6 +465,7 @@ export async function buildApp() {
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
   await registerSmartNotificationRoutes(app);
+  await registerNotificationPreferenceRoutes(app,authenticatedUser);
   await registerMobileAccountAdminRoutes(app);
   await registerSupportRoutes(app);
   await registerTripSharingRoutes(app);
@@ -949,8 +951,9 @@ export async function buildApp() {
         };
         realtime.publishToUser(String(item.passengerId), activationEvent);
         realtime.publishToUser(String(item.driverId), activationEvent);
+        const passengerReminderAllowed=await notificationPreferenceAllows(String(item.passengerId),'PASSENGER_SCHEDULED_TRIP_REMINDERS');
         await Promise.all([
-          sendPush(String(item.passengerId), "Tu viaje programado está próximo", "El conductor asignado se preparará para dirigirse al origen.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" }),
+          ...(passengerReminderAllowed?[sendPush(String(item.passengerId), "Tu viaje programado está próximo", "El conductor asignado se preparará para dirigirse al origen.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" })]:[]),
           sendPush(String(item.driverId), `Viaje programado en ${leadMinutes} minutos`, "Abre Costa-Go para iniciar el desplazamiento al origen.", { tripId: String(item.tripId), type: "SCHEDULED_DRIVER_REMINDER" })
         ]);
         realtime.publishTripStatus(String(item.tripId), "ASSIGNED");
@@ -971,7 +974,8 @@ export async function buildApp() {
         ]);
         await redispatchOldestTrip(String(item.tripId));
       } else if (activated === "UNASSIGNED") {
-        await sendPush(String(item.passengerId), "Buscando conductor", "Tu viaje programado ya está próximo; iniciamos la búsqueda.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" });
+        if(await notificationPreferenceAllows(String(item.passengerId),'PASSENGER_SCHEDULED_TRIP_REMINDERS'))
+          await sendPush(String(item.passengerId), "Buscando conductor", "Tu viaje programado ya está próximo; iniciamos la búsqueda.", { tripId: String(item.tripId), type: "SCHEDULED_TRIP_REMINDER" });
         await redispatchOldestTrip(String(item.tripId));
       }
     }
