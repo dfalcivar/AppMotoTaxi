@@ -57,10 +57,23 @@ PassengerRequestSectionLayout passengerRequestSectionLayoutFor(
 }) =>
     PassengerRequestSectionLayout.stacked;
 
-bool shouldShowPassengerRequestMessage(String? message) {
+bool shouldShowPassengerRequestMessage(
+  String? message, {
+  bool destinationConfirmed = false,
+}) {
   final normalized =
       (message ?? '').trim().toLowerCase().replaceFirst(RegExp(r'[.!]+$'), '');
-  return normalized.isNotEmpty && normalized != 'destino confirmado';
+  if (normalized.isEmpty || normalized == 'destino confirmado') return false;
+  if (destinationConfirmed &&
+      {
+        'origen confirmado',
+        'origen identificado por su dirección',
+        'destino identificado por su dirección',
+        'ubicación actualizada en el mapa',
+      }.contains(normalized)) {
+    return false;
+  }
+  return true;
 }
 
 bool shouldResetPassengerRequestDraftAfterStatus(String? status) =>
@@ -9499,7 +9512,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         const Distance().as(LengthUnit.Meter, pendingMapPoint!, point) < 2 &&
         !selectionResolving &&
         field.text.trim().isNotEmpty;
-    selectionLookupGeneration++;
+    final confirmationGeneration = ++selectionLookupGeneration;
     setState(() {
       mapSelection = null;
       pendingMapPoint = null;
@@ -9527,15 +9540,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     refreshRoute(force: true);
     if (previewIsCurrent) {
       if (mounted) {
-        setState(() => message = selection == MapPointSelection.origin
-            ? 'Origen confirmado.'
-            : 'Destino confirmado.');
+        setState(() => message =
+            selection == MapPointSelection.origin && dropoff == null
+                ? 'Origen confirmado.'
+                : null);
       }
       return;
     }
     try {
       final result = await api.reverse(widget.s.token, point);
-      if (!mounted) return;
+      if (!mounted || confirmationGeneration != selectionLookupGeneration) {
+        return;
+      }
       final selectedPoint = selection == MapPointSelection.origin
           ? pickup
           : _destinationPoint(destinationIndex);
@@ -9547,15 +9563,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         if (selection == MapPointSelection.origin) {
           origin.text =
               cleanAddressLabel(result['label'], fallback: coordinateLabel);
-          message = 'Origen identificado por su dirección.';
+          message =
+              dropoff == null ? 'Origen identificado por su dirección.' : null;
         } else {
           field.text =
               cleanAddressLabel(result['label'], fallback: coordinateLabel);
-          message = 'Destino identificado por su dirección.';
+          message = null;
         }
       });
     } catch (_) {
-      if (mounted) {
+      if (mounted && confirmationGeneration == selectionLookupGeneration) {
         setState(() => message =
             'El punto quedó guardado, pero no se pudo obtener su dirección.');
       }
@@ -11456,7 +11473,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             },
           ),
         ],
-        if (shouldShowPassengerRequestMessage(message))
+        if (shouldShowPassengerRequestMessage(
+          message,
+          destinationConfirmed: pickup != null && dropoff != null,
+        ))
           Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
               child: Text(message!)),

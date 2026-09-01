@@ -24,8 +24,25 @@ void main() {
       expect(shouldShowPassengerRequestMessage('Destino confirmado.'), isFalse);
       expect(
           shouldShowPassengerRequestMessage(' destino confirmado '), isFalse);
+      expect(
+          shouldShowPassengerRequestMessage('Origen confirmado.',
+              destinationConfirmed: true),
+          isFalse);
+      expect(
+          shouldShowPassengerRequestMessage(
+              'Destino identificado por su dirección.',
+              destinationConfirmed: true),
+          isFalse);
+      expect(
+          shouldShowPassengerRequestMessage('Origen confirmado.',
+              destinationConfirmed: false),
+          isTrue);
       expect(shouldShowPassengerRequestMessage(null), isFalse);
       expect(shouldShowPassengerRequestMessage('Calculando la ruta…'), isTrue);
+      expect(
+          shouldShowPassengerRequestMessage('Fuera del área de cobertura.',
+              destinationConfirmed: true),
+          isTrue);
     });
 
     test('reinicia el borrador únicamente al finalizar el viaje', () {
