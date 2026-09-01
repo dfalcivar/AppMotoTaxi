@@ -6855,7 +6855,8 @@ class _PassengerSectionTitle extends StatelessWidget {
 }
 
 class _PassengerSurface extends StatelessWidget {
-  const _PassengerSurface({required this.child, this.padding, this.color});
+  const _PassengerSurface(
+      {super.key, required this.child, this.padding, this.color});
 
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -6887,39 +6888,25 @@ class _TripFareBadge extends StatelessWidget {
   const _TripFareBadge({
     required this.cents,
     required this.label,
-    this.emphasized = false,
     this.width = 116,
   });
 
   final int cents;
   final String label;
-  final bool emphasized;
   final double width;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final background = emphasized ? scheme.primary : scheme.primaryContainer;
-    final foreground =
-        emphasized ? scheme.onPrimary : scheme.onPrimaryContainer;
+    final background = scheme.primaryContainer;
+    final foreground = scheme.onPrimaryContainer;
     return Container(
       width: width,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(18),
-        border: emphasized
-            ? null
-            : Border.all(color: scheme.primary.withValues(alpha: .18)),
-        boxShadow: emphasized
-            ? [
-                BoxShadow(
-                  color: scheme.primary.withValues(alpha: .2),
-                  blurRadius: 12,
-                  offset: const Offset(0, 5),
-                )
-              ]
-            : null,
+        border: Border.all(color: scheme.primary.withValues(alpha: .18)),
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         FittedBox(
@@ -6934,16 +6921,18 @@ class _TripFareBadge extends StatelessWidget {
                 ),
           ),
         ),
-        const SizedBox(height: 1),
-        Text(
-          label,
-          maxLines: 2,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: foreground.withValues(alpha: .9),
-                fontWeight: FontWeight.w700,
-              ),
-        ),
+        if (label.isNotEmpty) ...[
+          const SizedBox(height: 1),
+          Text(
+            label,
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: foreground.withValues(alpha: .9),
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
       ]),
     );
   }
@@ -7292,7 +7281,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   final notes = TextEditingController();
   final passengerSheetController = DraggableScrollableController();
   final passengerSearchAdKey = GlobalKey();
+  final passengerActiveTripKey = GlobalKey();
   Timer? passengerSearchRevealTimer;
+  Timer? passengerActiveRevealTimer;
   late final RealtimeService realtime;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   StreamSubscription<RemoteMessage>? messageSubscription;
@@ -7526,6 +7517,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     }
     notes.dispose();
     passengerSearchRevealTimer?.cancel();
+    passengerActiveRevealTimer?.cancel();
     passengerSheetController.dispose();
     super.dispose();
   }
@@ -7552,6 +7544,22 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       unawaited(Scrollable.ensureVisible(
         adContext,
         alignment: .48,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      ));
+    });
+  }
+
+  void _revealPassengerActiveTrip() {
+    _movePassengerSheet(.90);
+    passengerActiveRevealTimer?.cancel();
+    passengerActiveRevealTimer = Timer(const Duration(milliseconds: 380), () {
+      if (!mounted) return;
+      final tripContext = passengerActiveTripKey.currentContext;
+      if (tripContext == null) return;
+      unawaited(Scrollable.ensureVisible(
+        tripContext,
+        alignment: .06,
         duration: const Duration(milliseconds: 320),
         curve: Curves.easeOutCubic,
       ));
@@ -8252,7 +8260,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         if (t['status'] == 'SEARCHING') {
           _revealPassengerSearch();
         } else {
-          _movePassengerSheet(.52);
+          _revealPassengerActiveTrip();
         }
       }
       realtime.subscribeTrip(t['tripId'].toString());
@@ -10040,13 +10048,33 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   ]),
             ),
             if (fareCents != null) ...[
-              const SizedBox(width: 10),
-              _TripFareBadge(
-                cents: fareCents,
-                label: active?['status'] == 'SEARCHING'
-                    ? 'Tarifa estimada'
-                    : 'Valor a pagar',
-                width: 112,
+              const SizedBox(width: 12),
+              Container(
+                width: 1,
+                height: 54,
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 94,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(
+                    active?['status'] == 'SEARCHING'
+                        ? 'Tarifa estimada'
+                        : 'Valor a pagar',
+                    maxLines: 1,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  _TripFareBadge(
+                    cents: fareCents,
+                    label: '',
+                    width: 92,
+                  ),
+                ]),
               ),
             ],
           ]),
@@ -10156,6 +10184,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     final etaValue = (active?['driverEtaMinutes'] as num?)?.ceil();
     return [
       _PassengerSurface(
+        key: passengerActiveTripKey,
         padding: const EdgeInsets.all(16),
         child: Row(children: [
           InkWell(
@@ -15788,15 +15817,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       ]),
                     ]),
               ),
-              if (_tripFareCents(active) case final fareCents?) ...[
-                const SizedBox(width: 8),
-                _TripFareBadge(
-                  cents: fareCents,
-                  label: 'Valor a cobrar',
-                  emphasized: true,
-                  width: 108,
-                ),
-              ],
             ]),
             const Divider(height: 12),
             _driverRoutePoint(
@@ -15842,17 +15862,62 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 title: const Text('Referencia'),
                 subtitle: Text(active['notes'].toString()),
               ),
-            ListTile(
-              dense: true,
-              visualDensity: VisualDensity.compact,
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.account_balance_wallet_outlined,
-                  color: colors.primary, size: 21),
-              title: const Text('Pago'),
-              subtitle: Text(active['paymentMethod'] == 'DEUNA'
-                  ? 'Transferencia'
-                  : 'Efectivo'),
-            ),
+            const Divider(height: 12),
+            Row(children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: colors.primaryContainer.withValues(alpha: .55),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.account_balance_wallet_outlined,
+                    color: colors.primary, size: 21),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Pago',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelLarge
+                              ?.copyWith(fontWeight: FontWeight.w800)),
+                      Text(
+                          active['paymentMethod'] == 'DEUNA'
+                              ? 'Transferencia'
+                              : 'Efectivo',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: colors.onSurfaceVariant)),
+                    ]),
+              ),
+              if (_tripFareCents(active) case final fareCents?) ...[
+                Container(
+                  width: 1,
+                  height: 42,
+                  margin: const EdgeInsets.symmetric(horizontal: 10),
+                  color: colors.outlineVariant,
+                ),
+                Flexible(
+                  child: Text('Valor a cobrar',
+                      maxLines: 2,
+                      textAlign: TextAlign.end,
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 8),
+                _TripFareBadge(
+                  cents: fareCents,
+                  label: '',
+                  width: 88,
+                ),
+              ],
+            ]),
           ]),
         ),
         const SizedBox(height: 8),
