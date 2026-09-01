@@ -36,13 +36,30 @@ void main() {
       expect(
           shouldShowPassengerRequestMessage('Origen confirmado.',
               destinationConfirmed: false),
-          isTrue);
+          isFalse);
       expect(shouldShowPassengerRequestMessage(null), isFalse);
       expect(shouldShowPassengerRequestMessage('Calculando la ruta…'), isTrue);
       expect(
           shouldShowPassengerRequestMessage('Fuera del área de cobertura.',
               destinationConfirmed: true),
           isTrue);
+    });
+
+    test('usa una sola banda para confirmaciones y cierre del viaje', () {
+      expect(passengerRequestStatusLabel('Origen confirmado.'),
+          'Origen confirmado');
+      expect(
+          passengerRequestStatusLabel('Origen confirmado.',
+              destinationConfirmed: true),
+          'Destino confirmado');
+      expect(passengerRequestStatusLabel('Solicitud cancelada correctamente.'),
+          'Solicitud cancelada correctamente');
+      expect(
+          passengerRequestStatusLabel('Viaje finalizado.'), 'Viaje finalizado');
+      expect(passengerRequestStatusLabel('Gracias por tu calificación.'),
+          'Gracias por tu calificación');
+      expect(
+          passengerRequestStatusLabel('Fuera del área de cobertura.'), isNull);
     });
 
     test('reinicia el borrador únicamente al finalizar el viaje', () {

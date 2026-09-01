@@ -63,17 +63,46 @@ bool shouldShowPassengerRequestMessage(
 }) {
   final normalized =
       (message ?? '').trim().toLowerCase().replaceFirst(RegExp(r'[.!]+$'), '');
-  if (normalized.isEmpty || normalized == 'destino confirmado') return false;
-  if (destinationConfirmed &&
-      {
-        'origen confirmado',
-        'origen identificado por su dirección',
-        'destino identificado por su dirección',
-        'ubicación actualizada en el mapa',
-      }.contains(normalized)) {
-    return false;
+  return normalized.isNotEmpty &&
+      passengerRequestStatusLabel(
+            message,
+            destinationConfirmed: destinationConfirmed,
+          ) ==
+          null;
+}
+
+String? passengerRequestStatusLabel(
+  String? message, {
+  bool destinationConfirmed = false,
+}) {
+  final value = (message ?? '').trim();
+  final normalized = value.toLowerCase().replaceFirst(RegExp(r'[.!]+$'), '');
+  if (normalized == 'solicitud cancelada correctamente' ||
+      normalized == 'la solicitud fue cancelada' ||
+      normalized == 'el viaje fue cancelado por administración') {
+    return value.replaceFirst(RegExp(r'[.!]+$'), '');
   }
-  return true;
+  if (normalized == 'viaje finalizado') return 'Viaje finalizado';
+  if (normalized == 'gracias por tu calificación') {
+    return 'Gracias por tu calificación';
+  }
+  if (normalized == 'destino confirmado' ||
+      normalized == 'destino identificado por su dirección' ||
+      (destinationConfirmed &&
+          {
+            '',
+            'origen confirmado',
+            'origen identificado por su dirección',
+            'ubicación actualizada en el mapa',
+          }.contains(normalized))) {
+    return 'Destino confirmado';
+  }
+  if (normalized == 'origen confirmado' ||
+      normalized == 'origen identificado por su dirección' ||
+      normalized == 'ubicación actualizada en el mapa') {
+    return 'Origen confirmado';
+  }
+  return null;
 }
 
 bool shouldResetPassengerRequestDraftAfterStatus(String? status) =>
@@ -7771,6 +7800,46 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
   }
 
+  void _cancelPassengerAutoReveal() {
+    passengerSearchRevealTimer?.cancel();
+    passengerSearchRevealTimer = null;
+    passengerActiveRevealTimer?.cancel();
+    passengerActiveRevealTimer = null;
+  }
+
+  void _resetPassengerRequestAfterTerminalEvent(String confirmation) {
+    for (final stop in additionalStops) {
+      stop.dispose();
+    }
+    additionalStops.clear();
+    destination.clear();
+    notes.clear();
+    dropoff = null;
+    selectedDestinationIndex = 0;
+    scheduledFor = null;
+    editingScheduledTripId = null;
+    people = 1;
+    paymentMethod = 'CASH';
+    mapSelection = null;
+    pendingMapPoint = null;
+    pendingSelectionArea = null;
+    selectionResolving = false;
+    selectionMoving = false;
+    reviewLocationActive = false;
+    routePoints = [];
+    routeDistanceMeters = null;
+    routeDurationSeconds = null;
+    lastRouteAt = null;
+    nearbyDrivers.clear();
+    originSelectionGuard.resetToAutomatic();
+    pickup = currentLocation;
+    selectedOriginArea =
+        pickup == null ? null : serviceAreaCatalog?.find(pickup!);
+    origin.text = pickup == null ? '' : 'Mi ubicación actual';
+    message = confirmation;
+    sheetExtent = .35;
+  }
+
   Future<void> showPassengerCoverageError(String code, String message) async {
     if (!mounted || coverageDialogOpen) return;
     coverageDialogOpen = true;
@@ -8268,29 +8337,15 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   Future<void> resetAfterCompletedTrip() async {
-    final completedDestination = dropoff;
+    final fallbackPoint = currentLocation ?? dropoff ?? pickup;
     if (!mounted || active != null) return;
+    _cancelPassengerAutoReveal();
     setState(() {
-      dropoff = null;
-      destination.clear();
-      notes.clear();
-      for (final stop in additionalStops) {
-        stop.dispose();
-      }
-      additionalStops.clear();
-      selectedDestinationIndex = 0;
-      scheduledFor = null;
-      editingScheduledTripId = null;
-      routePoints = [];
-      routeDistanceMeters = null;
-      routeDurationSeconds = null;
-      mapSelection = null;
-      pendingMapPoint = null;
-      selectionResolving = false;
-      selectionMoving = false;
+      _resetPassengerRequestAfterTerminalEvent('Viaje finalizado.');
     });
+    _movePassengerSheet(.35);
 
-    var point = currentLocation ?? completedDestination ?? pickup;
+    var point = fallbackPoint;
     try {
       final position = await currentGpsPosition(context);
       point = LatLng(position.latitude, position.longitude);
@@ -8406,14 +8461,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       }
       if (t['status'] == 'CANCELLED') {
         final administrative = t['cancellationReason'] == 'ADMIN_CANCELLED';
+        _cancelPassengerAutoReveal();
         setState(() {
           active = null;
-          sheetExtent = .35;
           driverPosition = null;
-          routePoints = [];
-          message = administrative
+          _resetPassengerRequestAfterTerminalEvent(administrative
               ? 'El viaje fue cancelado por administración.'
-              : 'La solicitud fue cancelada.';
+              : 'La solicitud fue cancelada.');
         });
         _movePassengerSheet(.35);
         if (pickup != null) {
@@ -10520,14 +10574,19 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       if (!mounted) return;
       final consequence = result['consequence'];
       final days = consequence is Map ? consequence['suspensionDays'] : 0;
+      _cancelPassengerAutoReveal();
       setState(() {
         active = null;
         driverPosition = null;
-        routePoints = [];
-        sheetExtent = .35;
-        message = 'Solicitud cancelada correctamente.';
+        _resetPassengerRequestAfterTerminalEvent(
+            'Solicitud cancelada correctamente.');
       });
       _movePassengerSheet(.35);
+      if (pickup != null) {
+        realtime.subscribeNearby(pickup!.latitude, pickup!.longitude,
+            paymentMethod: paymentMethod);
+        unawaited(refreshNearbyDrivers(pickup));
+      }
       if (consequence is Map && (days == null || (days is num && days > 0))) {
         await showAccountSuspension({
           'accountId': widget.s.id,
@@ -11449,7 +11508,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             ],
           );
         }),
-        if (pickup != null && dropoff != null) ...[
+        if (passengerRequestStatusLabel(
+          message,
+          destinationConfirmed: pickup != null && dropoff != null,
+        )
+            case final statusLabel?) ...[
           const SizedBox(height: 8),
           Builder(
             builder: (context) {
@@ -11465,9 +11528,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 child: Row(children: [
                   Icon(Icons.verified_user_outlined, color: positive),
                   const SizedBox(width: 9),
-                  Text('Destino confirmado',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: positive, fontWeight: FontWeight.w900)),
+                  Expanded(
+                    child: Text(statusLabel,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            color: positive, fontWeight: FontWeight.w900)),
+                  ),
                 ]),
               );
             },
