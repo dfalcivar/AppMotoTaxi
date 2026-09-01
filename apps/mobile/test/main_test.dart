@@ -135,6 +135,30 @@ void main() {
           NotificationTarget.inbox);
     });
 
+    test('el banner general solo cubre SMART, campañas y pruebas', () {
+      for (final type in [
+        'TEST_PUSH',
+        'SMART_FREQUENT_TRIP',
+        'SMART_REACTIVATION',
+        'CAMPAIGN',
+        'EVENT',
+        'PROMOTIONAL',
+      ]) {
+        expect(notificationUsesGeneralInAppBanner(type), isTrue, reason: type);
+      }
+      expect(notificationUsesGeneralInAppBanner('UNKNOWN', category: 'SMART'),
+          isTrue);
+      for (final type in [
+        'CHAT_MESSAGE',
+        'TRIP_ASSIGNED',
+        'DRIVER_ARRIVED',
+        'TRIP_OFFER',
+        'SCHEDULED_TRIP_REMINDER',
+      ]) {
+        expect(notificationUsesGeneralInAppBanner(type), isFalse, reason: type);
+      }
+    });
+
     test('solo el viaje finalizado navega directamente al detalle', () {
       for (final type in [
         'TRIP_ASSIGNED',

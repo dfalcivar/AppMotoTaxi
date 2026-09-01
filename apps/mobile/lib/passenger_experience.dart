@@ -303,6 +303,23 @@ NotificationTarget notificationTargetFor(String? value) {
   return NotificationTarget.inbox;
 }
 
+bool notificationUsesGeneralInAppBanner(
+  String? type, {
+  String? category,
+}) {
+  final normalizedType = type?.trim().toUpperCase();
+  final normalizedCategory = category?.trim().toUpperCase();
+  if (normalizedType == 'TEST_PUSH' ||
+      normalizedType == 'CAMPAIGN' ||
+      normalizedType == 'EVENT' ||
+      normalizedType == 'PROMOTIONAL' ||
+      normalizedType?.startsWith('SMART_') == true) {
+    return true;
+  }
+  return const {'SMART', 'CAMPAIGN', 'PROMOTIONAL'}
+      .contains(normalizedCategory);
+}
+
 Future<void> openNotificationChat(
     BuildContext context, Session session, String tripId) async {
   final realtime = RealtimeService(baseUrl: base, token: session.token);
@@ -1018,8 +1035,8 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
       final notificationId = item['id']?.toString();
       if (notificationId != null && notificationId.isNotEmpty) {
         try {
-          await Api().trackNotificationEvent(widget.session.token,
-              notificationId, 'DEEP_LINK_OPENED');
+          await Api().trackNotificationEvent(
+              widget.session.token, notificationId, 'DEEP_LINK_OPENED');
         } catch (_) {
           // Preparar el viaje tiene prioridad sobre la telemetría.
         }
@@ -1030,7 +1047,8 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
         'deepLinkTracked': true,
       };
       if (mounted) Navigator.pop(context);
-    } else if (target == NotificationTarget.fleet && data['vehicleId'] != null) {
+    } else if (target == NotificationTarget.fleet &&
+        data['vehicleId'] != null) {
       await Navigator.push(
           context,
           MaterialPageRoute(

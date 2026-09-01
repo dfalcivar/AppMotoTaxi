@@ -1855,8 +1855,7 @@ class Api {
       call('PATCH', '/v1/notifications/$id/read', token: t);
   Future<dynamic> markAllNotificationsRead(String t) =>
       call('POST', '/v1/notifications/read-all', token: t);
-  Future<dynamic> trackNotificationEvent(
-          String t, String id, String event,
+  Future<dynamic> trackNotificationEvent(String t, String id, String event,
           {Map<String, dynamic> metadata = const {}}) =>
       call('POST', '/v1/notifications/$id/events',
           token: t, body: {'event': event, 'metadata': metadata});
@@ -7595,6 +7594,27 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       messageSubscription = FirebaseMessaging.onMessage.listen((push) {
         unawaited(UserNotificationStore.instance.refresh(widget.s));
         final type = push.data['type'];
+        if (notificationUsesGeneralInAppBanner(type?.toString(),
+            category: push.data['notificationCategory']?.toString())) {
+          if (!mounted) return;
+          final notificationId =
+              push.data['internalNotificationId']?.toString();
+          InAppNotificationBanner.show(
+            context,
+            id: 'general-${notificationId ?? push.data['idempotencyKey'] ?? push.data['campaignId'] ?? type}',
+            title: push.notification?.title ??
+                push.data['title']?.toString() ??
+                'Costa-Go',
+            message: push.notification?.body ??
+                push.data['body']?.toString() ??
+                'Tienes una nueva notificación.',
+            actionLabel: 'Ver',
+            icon: type?.toString().startsWith('SMART_') == true
+                ? Icons.auto_awesome_outlined
+                : Icons.notifications_active_outlined,
+            onTap: () => handleOpenedPush(push),
+          );
+        }
         if (type == 'CHAT_MESSAGE' && !passengerChatOpen) {
           if (!mounted) return;
           InAppNotificationBanner.show(
@@ -7808,7 +7828,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (latitude == null || longitude == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Esta recomendación no contiene un destino válido.')));
+            content:
+                Text('Esta recomendación no contiene un destino válido.')));
       }
       return;
     }
@@ -7836,7 +7857,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
     final notificationId = data['notificationId']?.toString();
     smartNotificationAttributionId =
-        notificationId == null || notificationId.isEmpty ? null : notificationId;
+        notificationId == null || notificationId.isEmpty
+            ? null
+            : notificationId;
     if (notificationId != null && notificationId.isNotEmpty) {
       try {
         await api.markNotificationRead(widget.s.token, notificationId);
@@ -7844,8 +7867,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           await api.trackNotificationEvent(
               widget.s.token, notificationId, 'DEEP_LINK_OPENED');
         }
-        await api.trackNotificationEvent(widget.s.token, notificationId,
-            'TRIP_PREPARATION_OPENED',
+        await api.trackNotificationEvent(
+            widget.s.token, notificationId, 'TRIP_PREPARATION_OPENED',
             metadata: {'destinationReference': label});
       } catch (_) {
         // La preparación del borrador no depende de la analítica.
@@ -12101,6 +12124,28 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((message) {
         unawaited(UserNotificationStore.instance.refresh(widget.s));
+        final type = message.data['type']?.toString();
+        if (notificationUsesGeneralInAppBanner(type,
+            category: message.data['notificationCategory']?.toString())) {
+          if (!mounted) return;
+          final notificationId =
+              message.data['internalNotificationId']?.toString();
+          InAppNotificationBanner.show(
+            context,
+            id: 'general-${notificationId ?? message.data['idempotencyKey'] ?? message.data['campaignId'] ?? type}',
+            title: message.notification?.title ??
+                message.data['title']?.toString() ??
+                'Costa-Go',
+            message: message.notification?.body ??
+                message.data['body']?.toString() ??
+                'Tienes una nueva notificación.',
+            actionLabel: 'Ver',
+            icon: type?.startsWith('SMART_') == true
+                ? Icons.auto_awesome_outlined
+                : Icons.notifications_active_outlined,
+            onTap: () => handleOpenedPush(message),
+          );
+        }
         if (message.data['type'] == 'CHAT_MESSAGE' && !driverChatOpen) {
           if (!mounted) return;
           InAppNotificationBanner.show(
