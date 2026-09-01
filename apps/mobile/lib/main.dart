@@ -13067,7 +13067,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       if (!mounted) return true;
       if (accept) {
         unawaited(refreshMembership(force: true));
-        await restore();
+        // La oferta ya elevó el panel para mostrar toda la información.
+        // Al aceptarla conservamos esa altura para que el viaje activo no
+        // vuelva a quedar parcialmente oculto.
+        await restore(adjustSheet: false);
         await refresh();
       } else {
         setState(() {
