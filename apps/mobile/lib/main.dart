@@ -47,33 +47,28 @@ const base = String.fromEnvironment('API_BASE_URL',
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
-enum PassengerRequestSectionLayout { sideBySide, stacked }
-
-enum PassengerPaymentOptionLayout { sideBySide, stacked }
+enum PassengerRequestSectionLayout { stacked }
 
 enum FavoritePlaceAction { origin, destination, rename, delete }
 
-/// Uses the actual logical space available to the controls and reserves more
-/// room when the system text size grows. Device model and physical pixels are
-/// intentionally irrelevant.
 PassengerRequestSectionLayout passengerRequestSectionLayoutFor(
   double logicalAvailableWidth, {
   double textScale = 1,
-}) {
-  final minimumSectionWidth = 170 + math.max(0, textScale - 1) * 90;
-  return logicalAvailableWidth >= minimumSectionWidth * 2 + 8
-      ? PassengerRequestSectionLayout.sideBySide
-      : PassengerRequestSectionLayout.stacked;
+}) =>
+    PassengerRequestSectionLayout.stacked;
+
+bool shouldShowPassengerRequestMessage(String? message) {
+  final normalized =
+      (message ?? '').trim().toLowerCase().replaceFirst(RegExp(r'[.!]+$'), '');
+  return normalized.isNotEmpty && normalized != 'destino confirmado';
 }
 
-PassengerPaymentOptionLayout passengerPaymentOptionLayoutFor(
-  double logicalAvailableWidth, {
-  double textScale = 1,
-}) {
-  final minimumOptionWidth = 146 + math.max(0, textScale - 1) * 80;
-  return logicalAvailableWidth >= minimumOptionWidth * 2 + 8
-      ? PassengerPaymentOptionLayout.sideBySide
-      : PassengerPaymentOptionLayout.stacked;
+bool shouldResetPassengerRequestDraftAfterStatus(String? status) =>
+    status?.trim().toUpperCase() == 'COMPLETED';
+
+String? tripMeetReferenceText(dynamic value) {
+  final reference = value?.toString().trim() ?? '';
+  return reference.isEmpty ? null : reference;
 }
 
 const driverGpsActiveMessage =
@@ -6899,6 +6894,58 @@ class _PassengerSurface extends StatelessWidget {
   }
 }
 
+class _TripMeetReferenceCard extends StatelessWidget {
+  const _TripMeetReferenceCard({required this.reference});
+
+  final String reference;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: .24),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.primary.withValues(alpha: .22)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer.withValues(alpha: .72),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child:
+              Icon(Icons.chat_bubble_outline, color: scheme.primary, size: 23),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              'Referencia para encontrarte',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: scheme.primary, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              reference,
+              softWrap: true,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(height: 1.35, fontWeight: FontWeight.w500),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
 class _PassengerMapSelectionPanel extends StatelessWidget {
   const _PassengerMapSelectionPanel({
     required this.isOrigin,
@@ -8208,7 +8255,29 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   Future<void> resetAfterCompletedTrip() async {
-    var point = currentLocation ?? dropoff ?? pickup;
+    final completedDestination = dropoff;
+    if (!mounted || active != null) return;
+    setState(() {
+      dropoff = null;
+      destination.clear();
+      notes.clear();
+      for (final stop in additionalStops) {
+        stop.dispose();
+      }
+      additionalStops.clear();
+      selectedDestinationIndex = 0;
+      scheduledFor = null;
+      editingScheduledTripId = null;
+      routePoints = [];
+      routeDistanceMeters = null;
+      routeDurationSeconds = null;
+      mapSelection = null;
+      pendingMapPoint = null;
+      selectionResolving = false;
+      selectionMoving = false;
+    });
+
+    var point = currentLocation ?? completedDestination ?? pickup;
     try {
       final position = await currentGpsPosition(context);
       point = LatLng(position.latitude, position.longitude);
@@ -8220,18 +8289,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       currentLocation = point;
       pickup = point;
       originSelectionGuard.resetToAutomatic();
-      dropoff = null;
       origin.text = 'Mi ubicación actual';
-      destination.clear();
-      for (final stop in additionalStops) {
-        stop.dispose();
-      }
-      additionalStops.clear();
-      scheduledFor = null;
-      routePoints = [];
-      routeDistanceMeters = null;
-      routeDurationSeconds = null;
-      mapSelection = null;
     });
     realtime.subscribeNearby(point.latitude, point.longitude,
         paymentMethod: paymentMethod);
@@ -8297,7 +8355,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         }
         return;
       }
-      if (t['status'] == 'COMPLETED') {
+      if (shouldResetPassengerRequestDraftAfterStatus(
+          t['status']?.toString())) {
         setState(() {
           active = null;
           sheetExtent = .35;
@@ -9804,6 +9863,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       });
       final fareBreakdown =
           tripFareBreakdown(Map<String, dynamic>.from(preview as Map));
+      final meetReference = tripMeetReferenceText(payload['notes']);
       return await showDialog<bool>(
             context: context,
             builder: (dialogContext) {
@@ -9883,6 +9943,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                           last: entry.key == stops.length - 1)),
                                 ]),
                           ),
+                          if (meetReference != null) ...[
+                            const SizedBox(height: 10),
+                            _TripMeetReferenceCard(reference: meetReference),
+                          ],
                           const SizedBox(height: 10),
                           LayoutBuilder(builder: (context, constraints) {
                             final width = (constraints.maxWidth - 8) / 2;
@@ -10033,7 +10097,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                   ?.copyWith(fontWeight: FontWeight.w800)),
                           const SizedBox(height: 6),
                           Text(
-                            'Selecciona “Programar para más tarde” al solicitar tu próximo viaje.',
+                            'Selecciona “Más tarde” al solicitar tu próximo viaje.',
                             textAlign: TextAlign.center,
                             style: Theme.of(sheetContext).textTheme.bodyMedium,
                           ),
@@ -11155,7 +11219,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 ButtonSegment(
                     value: true,
                     icon: Icon(Icons.calendar_month_outlined),
-                    label: Text('Programar para más tarde')),
+                    label: Text('Más tarde')),
               ],
               selected: {scheduledFor != null},
               style: const ButtonStyle(
@@ -11278,111 +11342,86 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 children: [
                   const _PassengerSectionTitle('Método de pago',
                       icon: Icons.account_balance_wallet_outlined),
-                  LayoutBuilder(
-                    builder: (context, paymentConstraints) {
-                      final paymentLayout = passengerPaymentOptionLayoutFor(
-                        paymentConstraints.maxWidth,
-                        textScale: textScale,
-                      );
-                      Widget optionButton((String, String, IconData) option) {
-                        return Semantics(
-                          button: true,
-                          selected: paymentMethod == option.$1,
-                          label: 'Pago con ${option.$2}',
-                          child: Material(
-                            color: paymentMethod == option.$1
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .primaryContainer
-                                    .withValues(alpha: .55)
-                                : Theme.of(context).colorScheme.surface,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              side: BorderSide(
-                                color: paymentMethod == option.$1
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context)
-                                        .colorScheme
-                                        .outlineVariant,
-                              ),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: InkWell(
-                              onTap: () => updatePaymentMethod(option.$1),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 11),
-                                child: Row(children: [
-                                  Icon(option.$3, size: 19),
-                                  const SizedBox(width: 7),
-                                  Expanded(
-                                    child: Text(option.$2,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w700)),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Icon(
-                                    paymentMethod == option.$1
-                                        ? Icons.radio_button_checked
-                                        : Icons.radio_button_unchecked,
-                                    size: 19,
-                                    color: paymentMethod == option.$1
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant,
-                                  ),
-                                ]),
-                              ),
+                  Builder(builder: (context) {
+                    Widget optionButton((String, String, IconData) option) {
+                      return Semantics(
+                        button: true,
+                        selected: paymentMethod == option.$1,
+                        label: 'Pago con ${option.$2}',
+                        child: Material(
+                          color: paymentMethod == option.$1
+                              ? Theme.of(context)
+                                  .colorScheme
+                                  .primaryContainer
+                                  .withValues(alpha: .55)
+                              : Theme.of(context).colorScheme.surface,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(
+                              color: paymentMethod == option.$1
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .outlineVariant,
                             ),
                           ),
-                        );
-                      }
-
-                      const options = [
-                        ('CASH', 'Efectivo', Icons.payments_outlined),
-                        (
-                          'DEUNA',
-                          'Transferencia',
-                          Icons.account_balance_wallet_outlined
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            onTap: () => updatePaymentMethod(option.$1),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 11),
+                              child: Row(children: [
+                                Icon(option.$3, size: 18),
+                                const SizedBox(width: 5),
+                                Expanded(
+                                  child: Text(option.$2,
+                                      softWrap: true,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w700)),
+                                ),
+                                const SizedBox(width: 4),
+                                Icon(
+                                  paymentMethod == option.$1
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  size: 19,
+                                  color: paymentMethod == option.$1
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                ),
+                              ]),
+                            ),
+                          ),
                         ),
-                      ];
-                      if (paymentLayout ==
-                          PassengerPaymentOptionLayout.sideBySide) {
-                        return Row(
-                          key: const ValueKey(
-                              'passenger-payment-method-side-by-side'),
-                          children: [
-                            Expanded(child: optionButton(options[0])),
-                            const SizedBox(width: 8),
-                            Expanded(child: optionButton(options[1])),
-                          ],
-                        );
-                      }
-                      return Column(
-                        key: const ValueKey('passenger-payment-method-stacked'),
+                      );
+                    }
+
+                    const options = [
+                      ('CASH', 'Efectivo', Icons.payments_outlined),
+                      (
+                        'DEUNA',
+                        'Transferencia',
+                        Icons.account_balance_wallet_outlined
+                      ),
+                    ];
+                    return IntrinsicHeight(
+                      child: Row(
+                        key: const ValueKey(
+                            'passenger-payment-method-side-by-side'),
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          optionButton(options[0]),
-                          const SizedBox(height: 8),
-                          optionButton(options[1]),
+                          Expanded(child: optionButton(options[0])),
+                          const SizedBox(width: 8),
+                          Expanded(child: optionButton(options[1])),
                         ],
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  }),
                 ]),
           );
-          if (layout == PassengerRequestSectionLayout.sideBySide) {
-            return Row(
-              key: const ValueKey('passenger-request-sections-side-by-side'),
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: passengerSelector),
-                const SizedBox(width: 8),
-                Expanded(child: paymentSelector),
-              ],
-            );
-          }
           return Column(
             key: const ValueKey('passenger-request-sections-stacked'),
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -11417,7 +11456,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             },
           ),
         ],
-        if (message != null)
+        if (shouldShowPassengerRequestMessage(message))
           Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
               child: Text(message!)),
@@ -13878,6 +13917,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final passengers = (offer['passengers'] as num?)?.toInt() ?? 1;
     final paymentLabel =
         offer['paymentMethod'] == 'DEUNA' ? 'Transferencia' : 'Efectivo';
+    final meetReference = tripMeetReferenceText(offer['notes']);
     final colors = Theme.of(context).colorScheme;
     return Dismissible(
       key: ValueKey(offerId),
@@ -14056,12 +14096,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           '${entry.key + 1}. ${cleanAddressLabel(entry.value['reference'], fallback: 'Destino')}')
                       .join('\n'),
             ),
-            if (offer['notes']?.toString().trim().isNotEmpty == true)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 7),
-                child: Text('Referencia: ${offer['notes']}',
-                    style: Theme.of(context).textTheme.bodyMedium),
-              ),
+            if (meetReference != null) ...[
+              const SizedBox(height: 4),
+              _TripMeetReferenceCard(reference: meetReference),
+              const SizedBox(height: 10),
+            ],
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
               decoration: BoxDecoration(
@@ -16479,16 +16518,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             fallback: 'Parada ${entry.key + 1}')),
                       )),
             ],
-            if (active['notes']?.toString().trim().isNotEmpty == true)
-              ListTile(
-                dense: true,
-                visualDensity: VisualDensity.compact,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.chat_bubble_outline,
-                    color: colors.primary, size: 21),
-                title: const Text('Referencia'),
-                subtitle: Text(active['notes'].toString()),
-              ),
+            if (tripMeetReferenceText(active['notes'])
+                case final meetReference?) ...[
+              const SizedBox(height: 4),
+              _TripMeetReferenceCard(reference: meetReference),
+              const SizedBox(height: 6),
+            ],
             const Divider(height: 12),
             Row(children: [
               Container(

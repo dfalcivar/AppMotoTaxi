@@ -4,37 +4,45 @@ import 'package:mototaxi_atacames/main.dart';
 
 void main() {
   group('layout de pasajeros y método de pago', () {
-    test('usa el ancho lógico real para apilar o compartir fila', () {
-      expect(passengerRequestSectionLayoutFor(320),
-          PassengerRequestSectionLayout.stacked);
-      for (final width in [360.0, 390.0, 430.0]) {
+    test('mantiene las secciones a ancho completo en todos los teléfonos', () {
+      for (final width in [280.0, 320.0, 360.0, 390.0, 430.0, 720.0]) {
         expect(passengerRequestSectionLayoutFor(width),
-            PassengerRequestSectionLayout.sideBySide,
+            PassengerRequestSectionLayout.stacked,
             reason: 'ancho lógico disponible $width');
       }
     });
 
-    test('el texto aumentado exige más ancho y evita compresión', () {
-      for (final width in [320.0, 360.0, 390.0]) {
-        expect(passengerRequestSectionLayoutFor(width, textScale: 1.3),
+    test('el zoom y el texto aumentado no cambian la secuencia final', () {
+      for (final scale in [1.0, 1.3, 1.6, 2.0]) {
+        expect(passengerRequestSectionLayoutFor(430, textScale: scale),
             PassengerRequestSectionLayout.stacked,
-            reason: 'ancho $width con texto aumentado');
+            reason: 'escala de texto $scale');
       }
-      expect(passengerRequestSectionLayoutFor(430, textScale: 1.3),
-          PassengerRequestSectionLayout.sideBySide);
-      expect(passengerRequestSectionLayoutFor(430, textScale: 1.6),
-          PassengerRequestSectionLayout.stacked);
     });
 
-    test('las opciones de pago también responden a su propio ancho', () {
-      expect(passengerPaymentOptionLayoutFor(280),
-          PassengerPaymentOptionLayout.stacked);
-      expect(passengerPaymentOptionLayoutFor(320),
-          PassengerPaymentOptionLayout.sideBySide);
-      expect(passengerPaymentOptionLayoutFor(360, textScale: 1.5),
-          PassengerPaymentOptionLayout.stacked);
-      expect(passengerPaymentOptionLayoutFor(430, textScale: 1.5),
-          PassengerPaymentOptionLayout.sideBySide);
+    test('oculta únicamente el mensaje duplicado de destino confirmado', () {
+      expect(shouldShowPassengerRequestMessage('Destino confirmado.'), isFalse);
+      expect(
+          shouldShowPassengerRequestMessage(' destino confirmado '), isFalse);
+      expect(shouldShowPassengerRequestMessage(null), isFalse);
+      expect(shouldShowPassengerRequestMessage('Calculando la ruta…'), isTrue);
+    });
+
+    test('reinicia el borrador únicamente al finalizar el viaje', () {
+      expect(shouldResetPassengerRequestDraftAfterStatus('COMPLETED'), isTrue);
+      expect(
+          shouldResetPassengerRequestDraftAfterStatus(' completed '), isTrue);
+      expect(
+          shouldResetPassengerRequestDraftAfterStatus('IN_PROGRESS'), isFalse);
+      expect(shouldResetPassengerRequestDraftAfterStatus('CANCELLED'), isFalse);
+      expect(shouldResetPassengerRequestDraftAfterStatus(null), isFalse);
+    });
+
+    test('normaliza la referencia compartida por pasajero y conductor', () {
+      expect(tripMeetReferenceText(' Cerca de la puerta principal '),
+          'Cerca de la puerta principal');
+      expect(tripMeetReferenceText('   '), isNull);
+      expect(tripMeetReferenceText(null), isNull);
     });
   });
 
