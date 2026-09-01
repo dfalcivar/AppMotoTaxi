@@ -11029,6 +11029,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   final api = Api();
   final driverSheetController = DraggableScrollableController();
   final offerPageController = PageController(viewportFraction: .94);
+  final driverOfferSectionKey = GlobalKey();
+  Timer? revealOfferTimer;
   late final RealtimeService realtime;
   dynamic active;
   List offers = [];
@@ -11296,6 +11298,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     realtime.dispose();
     driverSheetController.dispose();
     offerPageController.dispose();
+    revealOfferTimer?.cancel();
     nativeOpenSubscription?.cancel();
     for (final timer in offerAlertTimers.values) {
       timer.cancel();
@@ -11373,7 +11376,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             offerPageController.jumpToPage(index);
           }
         }
-        _moveDriverSheet(.58);
+        _revealIncomingOffer();
       }));
     }
   }
@@ -11490,7 +11493,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           message: body,
           actionLabel: 'Ver viaje',
           onTap: () {
-            _moveDriverSheet(.58);
+            _revealIncomingOffer();
             unawaited(refresh());
           },
         );
@@ -11510,6 +11513,22 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         duration: const Duration(milliseconds: 320),
         curve: Curves.easeOutCubic,
       );
+    });
+  }
+
+  void _revealIncomingOffer() {
+    _moveDriverSheet(.90);
+    revealOfferTimer?.cancel();
+    revealOfferTimer = Timer(const Duration(milliseconds: 380), () {
+      if (!mounted) return;
+      final offerContext = driverOfferSectionKey.currentContext;
+      if (offerContext == null) return;
+      unawaited(Scrollable.ensureVisible(
+        offerContext,
+        alignment: .08,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      ));
     });
   }
 
@@ -11999,7 +12018,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             offers = unique.values.toList();
             if (offerIndex >= offers.length) offerIndex = 0;
           });
-          if (!hadOffers && r.isNotEmpty) _moveDriverSheet(.48);
+          if (!hadOffers && r.isNotEmpty) _revealIncomingOffer();
           for (final offer in r) {
             unawaited(announceTripOffer(offer['tripId']?.toString()));
           }
@@ -13218,16 +13237,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           Icon(Icons.payments_outlined,
                               size: 17, color: colors.primary),
                           const SizedBox(width: 5),
-                      Flexible(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(paymentLabel,
-                              maxLines: 1,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelMedium
-                                  ?.copyWith(fontWeight: FontWeight.w800)),
-                        ),
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(paymentLabel,
+                                  maxLines: 1,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelMedium
+                                      ?.copyWith(fontWeight: FontWeight.w800)),
+                            ),
                           ),
                         ]),
                   ),
@@ -13337,6 +13356,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Widget _offerCarousel(BuildContext context) => Column(children: [
         SizedBox(
+          key: driverOfferSectionKey,
           height: 468,
           child: PageView.builder(
             controller: offerPageController,
