@@ -750,7 +750,8 @@ export async function buildApp() {
   async function dispatchReachedTripsToDriver(driverId: string): Promise<number> {
     const inserted = await database()`
       with new_offers as (
-        insert into driver_offers (trip_id, driver_id, expires_at, search_round, distance_meters)
+        insert into driver_offers as existing_offer
+          (trip_id, driver_id, expires_at, search_round, distance_meters)
         select t.id, d.user_id,
           t.driver_search_next_round_at,
           t.driver_search_round,
@@ -787,9 +788,22 @@ export async function buildApp() {
             where active_trip.driver_id=d.user_id
               and active_trip.status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
           )
+          -- A driver returning from a completed trip joins the whole radius
+          -- already reached, not only the newest geographical ring.
           and ST_DWithin(d.last_location, t.origin, t.driver_search_upper_meters)
-          and (t.driver_search_lower_meters=0 or ST_Distance(d.last_location,t.origin)>t.driver_search_lower_meters)
-        on conflict (trip_id, driver_id) do nothing
+        on conflict (trip_id, driver_id) do update set
+          offered_at=now(),
+          expires_at=excluded.expires_at,
+          responded_at=null,
+          accepted=null,
+          response_reason=null,
+          search_round=excluded.search_round,
+          distance_meters=excluded.distance_meters,
+          notification_sent_at=null
+        -- Only offers closed automatically because this driver accepted
+        -- another trip may return. Explicit rejections remain final.
+        where existing_offer.response_reason='DRIVER_BUSY'
+          and existing_offer.accepted=false
         returning trip_id, driver_id
       )
       select n.trip_id::text as "tripId", n.driver_id::text as "driverId",
@@ -1853,8 +1867,9 @@ export async function buildApp() {
     }
     await database()`update drivers set is_available=${parsed.data.available}, last_location=case when ${parsed.data.location ? true : false} then ST_SetSRID(ST_MakePoint(${parsed.data.location?.longitude ?? 0}, ${parsed.data.location?.latitude ?? 0}),4326)::geography else last_location end, last_location_at=case when ${parsed.data.location ? true : false} then now() else last_location_at end where user_id=${user.id!}`;
     if (parsed.data.available) {
-      void dispatchReachedTripsToDriver(user.id!).catch(() => undefined);
-      void redispatchOldestTrip().catch(() => undefined);
+      void redispatchOldestTrip()
+        .then(() => dispatchReachedTripsToDriver(user.id!))
+        .catch(() => undefined);
     }
     else realtime.publishDriverUnavailable(user.id!);
     return { available: parsed.data.available };
@@ -2647,7 +2662,9 @@ export async function buildApp() {
           and not exists(select 1 from notification_analytics_events completed where completed.notification_id=requested.notification_id and completed.event='TRIP_COMPLETED')`;
       const eligibility = await driverMembershipEligibility(user.id!);
       if (!eligibility.eligible) await database()`update drivers set is_available=false where user_id=${user.id!}`;
-      else void redispatchOldestTrip().catch(() => undefined);
+      else void redispatchOldestTrip()
+        .then(() => dispatchReachedTripsToDriver(user.id!))
+        .catch(() => undefined);
     }
     realtime.publishTripStatus(tripId, String(result.status));
     return result;
@@ -2739,8 +2756,8 @@ export async function buildApp() {
       `;
       return [];
     }
-    await dispatchReachedTripsToDriver(user.id!);
     await redispatchOldestTrip();
+    await dispatchReachedTripsToDriver(user.id!);
     return database()`
       select o.id::text as "offerId", t.id::text as "tripId", t.passengers,
         t.payment_method as "paymentMethod", t.service_zone as zone,

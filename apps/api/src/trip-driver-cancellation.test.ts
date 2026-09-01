@@ -13,7 +13,7 @@ describe("cancelación y reasignación de una carrera aceptada", () => {
     expect(source).toContain("await Promise.all([");
   });
 
-  it("normaliza motivos de respuesta e impide volver a ofertar al mismo conductor", async () => {
+  it("normaliza motivos y solo reactiva ofertas cerradas porque el conductor estaba ocupado", async () => {
     const migration = await readFile(
       resolve(process.cwd(), "migrations/055_trip_request_safety_driver_cancellation.sql"), "utf8");
     expect(migration).toContain("DRIVER_REJECTED");
@@ -22,6 +22,16 @@ describe("cancelación y reasignación de una carrera aceptada", () => {
     expect(migration).toContain("DRIVER_CANCELLED_AFTER_ACCEPTANCE");
     const initial = await readFile(resolve(process.cwd(), "migrations/001_initial.sql"), "utf8");
     expect(initial).toContain("UNIQUE (trip_id, driver_id)");
+    const source = await readFile(resolve(process.cwd(), "src/app.ts"), "utf8");
+    const returningDispatch = source.slice(
+      source.indexOf("async function dispatchReachedTripsToDriver"),
+      source.indexOf("async function processDueDriverSearchRounds")
+    );
+    expect(returningDispatch).toContain("on conflict (trip_id, driver_id) do update");
+    expect(returningDispatch).toContain("existing_offer.response_reason='DRIVER_BUSY'");
+    expect(returningDispatch).toContain("existing_offer.accepted=false");
+    expect(returningDispatch).toContain("ST_DWithin(d.last_location, t.origin, t.driver_search_upper_meters)");
+    expect(returningDispatch).not.toContain("ST_Distance(d.last_location,t.origin)>t.driver_search_lower_meters");
   });
 
   it("protege la creación de viajes contra doble envío", async () => {
