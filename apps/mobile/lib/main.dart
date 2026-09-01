@@ -6876,6 +6876,79 @@ class _PassengerSurface extends StatelessWidget {
   }
 }
 
+int? _tripFareCents(dynamic trip) {
+  if (trip is! Map) return null;
+  final value = trip['finalTotalCents'] ?? trip['quotedTotalCents'];
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
+}
+
+class _TripFareBadge extends StatelessWidget {
+  const _TripFareBadge({
+    required this.cents,
+    required this.label,
+    this.emphasized = false,
+    this.width = 116,
+  });
+
+  final int cents;
+  final String label;
+  final bool emphasized;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final background = emphasized ? scheme.primary : scheme.primaryContainer;
+    final foreground =
+        emphasized ? scheme.onPrimary : scheme.onPrimaryContainer;
+    return Container(
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(18),
+        border: emphasized
+            ? null
+            : Border.all(color: scheme.primary.withValues(alpha: .18)),
+        boxShadow: emphasized
+            ? [
+                BoxShadow(
+                  color: scheme.primary.withValues(alpha: .2),
+                  blurRadius: 12,
+                  offset: const Offset(0, 5),
+                )
+              ]
+            : null,
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            '\$${(cents / 100).toStringAsFixed(2)}',
+            maxLines: 1,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: foreground,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.5,
+                ),
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          label,
+          maxLines: 2,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: foreground.withValues(alpha: .9),
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+      ]),
+    );
+  }
+}
+
 class _PassengerMetric extends StatelessWidget {
   const _PassengerMetric(
       {required this.icon, required this.label, required this.value});
@@ -7218,6 +7291,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   final List<PassengerStopDraft> additionalStops = [];
   final notes = TextEditingController();
   final passengerSheetController = DraggableScrollableController();
+  final passengerSearchAdKey = GlobalKey();
+  Timer? passengerSearchRevealTimer;
   late final RealtimeService realtime;
   StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
   StreamSubscription<RemoteMessage>? messageSubscription;
@@ -7450,6 +7525,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       stop.dispose();
     }
     notes.dispose();
+    passengerSearchRevealTimer?.cancel();
     passengerSheetController.dispose();
     super.dispose();
   }
@@ -7463,6 +7539,22 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         duration: const Duration(milliseconds: 320),
         curve: Curves.easeOutCubic,
       );
+    });
+  }
+
+  void _revealPassengerSearch() {
+    _movePassengerSheet(.90);
+    passengerSearchRevealTimer?.cancel();
+    passengerSearchRevealTimer = Timer(const Duration(milliseconds: 380), () {
+      if (!mounted) return;
+      final adContext = passengerSearchAdKey.currentContext;
+      if (adContext == null) return;
+      unawaited(Scrollable.ensureVisible(
+        adContext,
+        alignment: .48,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      ));
     });
   }
 
@@ -7771,6 +7863,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         'IN_PROGRESS': 'Tu viaje está en curso.'
       }[status];
     });
+    if (status == 'SEARCHING') _revealPassengerSearch();
   }
 
   Future<void> openPassengerChat(String? requestedTripId,
@@ -8156,7 +8249,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         }[t['status']];
       });
       if (previousStatus != t['status']?.toString()) {
-        _movePassengerSheet(t['status'] == 'SEARCHING' ? .50 : .52);
+        if (t['status'] == 'SEARCHING') {
+          _revealPassengerSearch();
+        } else {
+          _movePassengerSheet(.52);
+        }
       }
       realtime.subscribeTrip(t['tripId'].toString());
       refreshRoute(force: routePoints.isEmpty);
@@ -9702,6 +9799,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       setState(() {
         if (!isScheduled) {
           active = {
+            ...Map<String, dynamic>.from(t as Map),
             'tripId': t['tripId'],
             'status': 'SEARCHING',
             'searchProgress': t['searchProgress']
@@ -9713,7 +9811,11 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               : 'Viaje programado actualizado correctamente.');
         }
       });
-      _movePassengerSheet(active == null ? .35 : .50);
+      if (active == null) {
+        _movePassengerSheet(.35);
+      } else {
+        _revealPassengerSearch();
+      }
       await load();
     } catch (e) {
       if (!mounted) return;
@@ -9902,37 +10004,58 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   Widget _routeSummary(BuildContext context, {bool card = false}) {
-    if (routeDistanceMeters == null || routeDurationSeconds == null) {
+    final fareCents = _tripFareCents(active);
+    final hasRoute =
+        routeDistanceMeters != null && routeDurationSeconds != null;
+    if (!hasRoute && fareCents == null) {
       return const SizedBox.shrink();
     }
-    final label = '${(routeDistanceMeters! / 1000).toStringAsFixed(1)} km · '
-        '${(routeDurationSeconds! / 60).ceil()} min';
+    final routeLabel = hasRoute
+        ? '${(routeDistanceMeters! / 1000).toStringAsFixed(1)} km · '
+            '${(routeDurationSeconds! / 60).ceil()} min'
+        : 'Calculando ruta…';
     if (card) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: _PassengerSurface(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(children: [
+          child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
             Icon(Icons.route_outlined,
-                color: Theme.of(context).colorScheme.primary),
+                size: 29, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 10),
             Expanded(
-                child: Text('Ruta estimada',
-                    style: TextStyle(
-                        color: Theme.of(context).colorScheme.primary,
-                        fontWeight: FontWeight.w800))),
-            Text(label,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w800)),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Ruta estimada',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(routeLabel,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                  ]),
+            ),
+            if (fareCents != null) ...[
+              const SizedBox(width: 10),
+              _TripFareBadge(
+                cents: fareCents,
+                label: active?['status'] == 'SEARCHING'
+                    ? 'Tarifa estimada'
+                    : 'Valor a pagar',
+                width: 112,
+              ),
+            ],
           ]),
         ),
       );
     }
     return Padding(
         padding: const EdgeInsets.only(bottom: 12),
-        child: Text('Ruta estimada: $label',
+        child: Text('Ruta estimada: $routeLabel',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleSmall));
   }
@@ -9951,7 +10074,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         const SizedBox(height: 14),
         _routeSummary(context, card: true),
         AffiliateBanners(
-          key: const ValueKey('searching-ad'),
+          key: passengerSearchAdKey,
           variant: AffiliateBannerVariant.expanded,
           load: () => api.banners(widget.s.token, 'PASSENGER_SEARCHING_DRIVER',
               serviceAreaId: selectedOriginArea?.id),
@@ -10090,6 +10213,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ]),
       ),
       const SizedBox(height: 12),
+      _routeSummary(context, card: true),
       TripVehicleBadge(
           gateway: fleetFor(widget.s), vehicle: active['vehicleDetails']),
       const SizedBox(height: 10),
@@ -10111,7 +10235,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             unawaited(_reportBannerEvent(banner, 'IMPRESSION')),
       ),
       const SizedBox(height: 12),
-      _routeSummary(context, card: true),
       Row(children: [
         Expanded(
           child: OutlinedButton.icon(
@@ -15665,6 +15788,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       ]),
                     ]),
               ),
+              if (_tripFareCents(active) case final fareCents?) ...[
+                const SizedBox(width: 8),
+                _TripFareBadge(
+                  cents: fareCents,
+                  label: 'Valor a cobrar',
+                  emphasized: true,
+                  width: 108,
+                ),
+              ],
             ]),
             const Divider(height: 12),
             _driverRoutePoint(
