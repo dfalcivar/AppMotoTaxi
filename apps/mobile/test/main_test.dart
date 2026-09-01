@@ -4,20 +4,37 @@ import 'package:mototaxi_atacames/main.dart';
 
 void main() {
   group('layout de pasajeros y método de pago', () {
-    test('permanece apilado en todos los anchos lógicos de teléfono', () {
-      for (final width in [280.0, 320.0, 340.0, 360.0, 390.0, 411.0, 430.0]) {
+    test('usa el ancho lógico real para apilar o compartir fila', () {
+      expect(passengerRequestSectionLayoutFor(320),
+          PassengerRequestSectionLayout.stacked);
+      for (final width in [360.0, 390.0, 430.0]) {
         expect(passengerRequestSectionLayoutFor(width),
-            PassengerRequestSectionLayout.stacked,
-            reason: 'ancho lógico $width');
+            PassengerRequestSectionLayout.sideBySide,
+            reason: 'ancho lógico disponible $width');
       }
     });
 
-    test('no activa un diseño de tablet que todavía no existe', () {
-      for (final width in [600.0, 720.0, 840.0, 1024.0]) {
-        expect(passengerRequestSectionLayoutFor(width),
+    test('el texto aumentado exige más ancho y evita compresión', () {
+      for (final width in [320.0, 360.0, 390.0]) {
+        expect(passengerRequestSectionLayoutFor(width, textScale: 1.3),
             PassengerRequestSectionLayout.stacked,
-            reason: 'ancho lógico $width');
+            reason: 'ancho $width con texto aumentado');
       }
+      expect(passengerRequestSectionLayoutFor(430, textScale: 1.3),
+          PassengerRequestSectionLayout.sideBySide);
+      expect(passengerRequestSectionLayoutFor(430, textScale: 1.6),
+          PassengerRequestSectionLayout.stacked);
+    });
+
+    test('las opciones de pago también responden a su propio ancho', () {
+      expect(passengerPaymentOptionLayoutFor(280),
+          PassengerPaymentOptionLayout.stacked);
+      expect(passengerPaymentOptionLayoutFor(320),
+          PassengerPaymentOptionLayout.sideBySide);
+      expect(passengerPaymentOptionLayoutFor(360, textScale: 1.5),
+          PassengerPaymentOptionLayout.stacked);
+      expect(passengerPaymentOptionLayoutFor(430, textScale: 1.5),
+          PassengerPaymentOptionLayout.sideBySide);
     });
   });
 

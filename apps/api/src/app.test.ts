@@ -115,6 +115,15 @@ describe("API de cotización", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("protege la edición del nombre de un lugar favorito", async () => {
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/favorite-places/00000000-0000-4000-8000-000000000000",
+      payload: { label: "Trabajo" }
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
   it("protege los documentos habilitantes del conductor", async () => {
     const response = await app.inject({
       method: "GET",

@@ -213,6 +213,9 @@ const favoritePlaceSchema = z.object({
   address: z.string().trim().min(3).max(200),
   location: pointSchema
 });
+const favoritePlaceRenameSchema = z.object({
+  label: z.string().trim().min(2).max(50)
+});
 const driverDocumentSchema = z.object({
   documentType: z.enum(["PROFILE_PHOTO", "IDENTIFICATION", "LICENSE", "REGISTRATION", "OPERATING_PERMIT"]),
   fileBase64: z.string().min(100).max(7_000_000),
@@ -1758,6 +1761,31 @@ export async function buildApp() {
         created_at as "createdAt"
     `;
     return reply.code(201).send(place);
+  });
+
+  app.patch("/v1/favorite-places/:id", async (request, reply) => {
+    const user = await authenticatedUser(request, reply); if (!user) return;
+    if (user.role !== "PASSENGER") return reply.code(403).send({ error: "FORBIDDEN" });
+    const parsed = favoritePlaceRenameSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "INVALID_FAVORITE_PLACE" });
+    const id = (request.params as { id: string }).id;
+    const duplicate = await database()`
+      select id from favorite_places
+      where user_id=${user.id!} and lower(label)=lower(${parsed.data.label}) and id<>${id}
+      limit 1
+    `;
+    if (duplicate.length) return reply.code(409).send({ error: "FAVORITE_LABEL_EXISTS" });
+    const [place] = await database()`
+      update favorite_places
+      set label=${parsed.data.label}, updated_at=now()
+      where id=${id} and user_id=${user.id!}
+      returning id::text, label, address,
+        ST_Y(location::geometry) as latitude,
+        ST_X(location::geometry) as longitude,
+        created_at as "createdAt"
+    `;
+    if (!place) return reply.code(404).send({ error: "NOT_FOUND" });
+    return place;
   });
 
   app.delete("/v1/favorite-places/:id", async (request, reply) => {

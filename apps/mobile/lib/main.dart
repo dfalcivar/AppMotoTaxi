@@ -47,14 +47,34 @@ const base = String.fromEnvironment('API_BASE_URL',
 const apiHttpProxy = String.fromEnvironment('API_HTTP_PROXY');
 const sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
-enum PassengerRequestSectionLayout { stacked }
+enum PassengerRequestSectionLayout { sideBySide, stacked }
 
-/// The request controls intentionally stay stacked at every logical width.
-/// There is no separate tablet composition yet, so a wider phone or tablet
-/// must not silently opt into an unreviewed horizontal layout.
+enum PassengerPaymentOptionLayout { sideBySide, stacked }
+
+enum FavoritePlaceAction { origin, destination, rename, delete }
+
+/// Uses the actual logical space available to the controls and reserves more
+/// room when the system text size grows. Device model and physical pixels are
+/// intentionally irrelevant.
 PassengerRequestSectionLayout passengerRequestSectionLayoutFor(
-        double logicalAvailableWidth) =>
-    PassengerRequestSectionLayout.stacked;
+  double logicalAvailableWidth, {
+  double textScale = 1,
+}) {
+  final minimumSectionWidth = 170 + math.max(0, textScale - 1) * 90;
+  return logicalAvailableWidth >= minimumSectionWidth * 2 + 8
+      ? PassengerRequestSectionLayout.sideBySide
+      : PassengerRequestSectionLayout.stacked;
+}
+
+PassengerPaymentOptionLayout passengerPaymentOptionLayoutFor(
+  double logicalAvailableWidth, {
+  double textScale = 1,
+}) {
+  final minimumOptionWidth = 146 + math.max(0, textScale - 1) * 80;
+  return logicalAvailableWidth >= minimumOptionWidth * 2 + 8
+      ? PassengerPaymentOptionLayout.sideBySide
+      : PassengerPaymentOptionLayout.stacked;
+}
 
 const driverGpsActiveMessage =
     'Ubicación GPS activa. Esperando solicitudes cercanas.';
@@ -1357,6 +1377,8 @@ String mensajeApi(dynamic code) =>
           'La fotografía no es válida o supera el tamaño permitido.',
       'INVALID_FAVORITE_PLACE':
           'Revisa el nombre y la dirección del lugar favorito.',
+      'FAVORITE_LABEL_EXISTS':
+          'Ya tienes un lugar favorito guardado con ese nombre.',
       'FIREBASE_PROJECT_MISMATCH':
           'La APK y la API de Render pertenecen a proyectos Firebase diferentes.',
       'FIREBASE_SERVER_NOT_CONFIGURED':
@@ -1991,6 +2013,9 @@ class Api {
       });
   Future<void> deleteFavoritePlace(String t, String id) =>
       call('DELETE', '/v1/favorite-places/$id', token: t);
+  Future<dynamic> renameFavoritePlace(String t, String id, String label) =>
+      call('PATCH', '/v1/favorite-places/$id',
+          token: t, body: {'label': label});
   Future<List<dynamic>> search(String t, String query,
       [LatLng? focus, String? serviceAreaId]) async {
     final parameters = <String, String>{'q': query};
@@ -6804,12 +6829,10 @@ class _CancellationInfoRow extends StatelessWidget {
 }
 
 class _PassengerSectionTitle extends StatelessWidget {
-  const _PassengerSectionTitle(this.title,
-      {this.icon, this.trailing, this.subtitle});
+  const _PassengerSectionTitle(this.title, {this.icon, this.subtitle});
 
   final String title;
   final IconData? icon;
-  final Widget? trailing;
   final String? subtitle;
 
   @override
@@ -6848,7 +6871,6 @@ class _PassengerSectionTitle extends StatelessWidget {
             ),
           ),
         ),
-        if (trailing != null) trailing!,
       ]),
     );
   }
@@ -6873,6 +6895,129 @@ class _PassengerSurface extends StatelessWidget {
         border: Border.all(color: scheme.outlineVariant.withValues(alpha: .75)),
       ),
       child: child,
+    );
+  }
+}
+
+class _PassengerMapSelectionPanel extends StatelessWidget {
+  const _PassengerMapSelectionPanel({
+    required this.isOrigin,
+    required this.destinationNumber,
+    required this.address,
+    required this.resolving,
+    required this.canConfirm,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final bool isOrigin;
+  final int destinationNumber;
+  final String address;
+  final bool resolving;
+  final bool canConfirm;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final accent = isOrigin
+        ? scheme.primary
+        : (isDark ? const Color(0xffff746a) : const Color(0xffdf3f36));
+    final accentSurface = accent.withValues(alpha: isDark ? .16 : .10);
+    final title =
+        isOrigin ? 'Fija el origen' : 'Fija el destino $destinationNumber';
+    final confirmLabel = isOrigin ? 'Confirmar origen' : 'Confirmar destino';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(title,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w900)),
+        const SizedBox(height: 6),
+        Text(
+          'Arrastra el marcador o toca el punto exacto en el mapa.',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyMedium
+              ?.copyWith(color: scheme.onSurfaceVariant, height: 1.35),
+        ),
+        const SizedBox(height: 18),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(20),
+            border:
+                Border.all(color: scheme.outlineVariant.withValues(alpha: .80)),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: accentSurface,
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(
+                isOrigin ? Icons.my_location_outlined : Icons.flag_outlined,
+                color: accent,
+                size: 27,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      address.isEmpty ? 'Ubicación seleccionada' : address,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w800, height: 1.3),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      resolving
+                          ? 'Obteniendo dirección…'
+                          : 'La coordenada exacta se conservará al confirmar.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant, height: 1.35),
+                    ),
+                  ]),
+            ),
+            if (resolving) ...[
+              const SizedBox(width: 10),
+              SizedBox.square(
+                dimension: 20,
+                child:
+                    CircularProgressIndicator(strokeWidth: 2.2, color: accent),
+              ),
+            ],
+          ]),
+        ),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: canConfirm ? onConfirm : null,
+          icon: const Icon(Icons.check),
+          label: Text(confirmLabel),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(56),
+            textStyle: theme.textTheme.titleSmall
+                ?.copyWith(fontWeight: FontWeight.w900),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextButton(
+          onPressed: onCancel,
+          style: TextButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+          child: const Text('Cancelar ajuste'),
+        ),
+      ],
     );
   }
 }
@@ -8452,7 +8597,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       pendingMapPoint = currentLocation ?? pickup ?? dropoff;
       selectionResolving = false;
       selectionMoving = false;
-      sheetExtent = .24;
+      sheetExtent = .52;
       if (isOrigin) {
         origin.clear();
         pickup = null;
@@ -8469,7 +8614,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           ? 'Mueve el mapa para elegir un nuevo origen.'
           : 'Mueve el mapa para elegir un nuevo destino.';
     });
-    _movePassengerSheet(.24);
+    _movePassengerSheet(.52);
   }
 
   void clearDestination(int destinationIndex) {
@@ -8536,12 +8681,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           : _destinationPoint(destinationIndex) ?? pickup ?? currentLocation;
       selectionResolving = false;
       selectionMoving = false;
-      sheetExtent = .24;
+      sheetExtent = .52;
       message = selection == MapPointSelection.origin
           ? 'Mueve el mapa para ajustar el origen.'
           : 'Mueve el mapa para ajustar el destino.';
     });
-    _movePassengerSheet(.24);
+    _movePassengerSheet(.52);
   }
 
   void selectionMovementStarted() {
@@ -8687,7 +8832,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         (place['longitude'] as num).toDouble());
     setState(() {
       mapSelection = null;
-      sheetExtent = .35;
+      sheetExtent = .78;
       if (isOrigin) {
         originSelectionGuard.markManualOrigin();
         pickup = point;
@@ -8700,13 +8845,248 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       message =
           '${place['label']} seleccionado como ${isOrigin ? 'origen' : 'destino'}.';
     });
-    _movePassengerSheet(.35);
+    _movePassengerSheet(.78);
     if (isOrigin) {
       realtime.subscribeNearby(point.latitude, point.longitude,
           paymentMethod: paymentMethod);
       unawaited(refreshNearbyDrivers(point));
     }
     await refreshRoute(force: true);
+  }
+
+  IconData _favoritePlaceIcon(dynamic place) {
+    final value =
+        '${place['type'] ?? ''} ${place['label'] ?? ''}'.toLowerCase();
+    if (value.contains('casa') || value.contains('home')) {
+      return Icons.home_outlined;
+    }
+    if (value.contains('trabajo') || value.contains('work')) {
+      return Icons.work_outline;
+    }
+    if (value.contains('univers') ||
+        value.contains('coleg') ||
+        value.contains('escuela')) {
+      return Icons.school_outlined;
+    }
+    if (value.contains('mall') || value.contains('comercial')) {
+      return Icons.shopping_bag_outlined;
+    }
+    if (value.contains('gym') || value.contains('gimnas')) {
+      return Icons.favorite_border;
+    }
+    return Icons.place_outlined;
+  }
+
+  Future<bool> _renameFavoritePlace(dynamic place) async {
+    final controller = TextEditingController(text: place['label'].toString());
+    final label = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Editar nombre'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 50,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(
+              labelText: 'Nombre del favorito',
+              hintText: 'Casa, Trabajo, Universidad…'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('Guardar')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (label == null || label.length < 2 || label == place['label']) {
+      return false;
+    }
+    try {
+      await api.renameFavoritePlace(
+          widget.s.token, place['id'].toString(), label);
+      await loadFavoritePlaces();
+      if (mounted) {
+        setState(() => message = 'Nombre del favorito actualizado.');
+      }
+      return true;
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+      return false;
+    }
+  }
+
+  Future<bool> _deleteFavoritePlace(dynamic place) async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Eliminar favorito'),
+            content: Text(
+                '¿Deseas eliminar “${place['label']}” de tus lugares favoritos?'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancelar')),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(dialogContext).colorScheme.error,
+                    foregroundColor:
+                        Theme.of(dialogContext).colorScheme.onError),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Eliminar'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return false;
+    try {
+      await api.deleteFavoritePlace(widget.s.token, place['id'].toString());
+      await loadFavoritePlaces();
+      if (mounted) setState(() => message = 'Favorito eliminado.');
+      return true;
+    } catch (error) {
+      if (mounted) setState(() => message = error.toString());
+      return false;
+    }
+  }
+
+  Widget _favoriteActionTile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool danger = false,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = danger ? scheme.error : scheme.primary;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .75)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .10),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 21),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            color: danger ? scheme.error : scheme.onSurface,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(subtitle,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant, height: 1.3)),
+                  ]),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right, color: color),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Future<FavoritePlaceAction?> _showFavoritePlaceActions(
+      BuildContext listContext, dynamic place) {
+    return showModalBottomSheet<FavoritePlaceAction>(
+      context: listContext,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (actionContext) {
+        final scheme = Theme.of(actionContext).colorScheme;
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+              16, 2, 16, 16 + MediaQuery.viewPaddingOf(actionContext).bottom),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withValues(alpha: .55),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(_favoritePlaceIcon(place),
+                  color: scheme.primary, size: 30),
+            ),
+            const SizedBox(height: 10),
+            Text(place['label'].toString(),
+                textAlign: TextAlign.center,
+                style: Theme.of(actionContext)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 4),
+            Text(cleanAddressLabel(place['address']),
+                textAlign: TextAlign.center,
+                style: Theme.of(actionContext)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: scheme.onSurfaceVariant)),
+            const SizedBox(height: 16),
+            Divider(color: scheme.outlineVariant),
+            const SizedBox(height: 8),
+            _favoriteActionTile(actionContext,
+                icon: Icons.navigation_outlined,
+                title: 'Usar como origen',
+                subtitle: 'Establecer este lugar como origen del viaje',
+                onTap: () =>
+                    Navigator.pop(actionContext, FavoritePlaceAction.origin)),
+            const SizedBox(height: 8),
+            _favoriteActionTile(actionContext,
+                icon: Icons.flag_outlined,
+                title: 'Usar como destino',
+                subtitle: 'Establecer este lugar como destino del viaje',
+                onTap: () => Navigator.pop(
+                    actionContext, FavoritePlaceAction.destination)),
+            const SizedBox(height: 12),
+            Divider(color: scheme.outlineVariant),
+            const SizedBox(height: 8),
+            _favoriteActionTile(actionContext,
+                icon: Icons.edit_outlined,
+                title: 'Editar nombre',
+                subtitle: 'Cambiar el nombre de este favorito',
+                onTap: () =>
+                    Navigator.pop(actionContext, FavoritePlaceAction.rename)),
+            const SizedBox(height: 8),
+            _favoriteActionTile(actionContext,
+                icon: Icons.delete_outline,
+                title: 'Eliminar favorito',
+                subtitle: 'Eliminar este lugar de mis favoritos',
+                danger: true,
+                onTap: () =>
+                    Navigator.pop(actionContext, FavoritePlaceAction.delete)),
+          ]),
+        );
+      },
+    );
   }
 
   Future<void> showFavoritePlaces() async {
@@ -8716,52 +9096,183 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const ListTile(
-              leading: Icon(Icons.star_outline),
-              title: Text('Lugares favoritos'),
-              subtitle: Text('Úsalos rápidamente como origen o destino.'),
-            ),
-            if (favoritePlaces.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(18),
-                child: Text('Todavía no tienes lugares guardados.'),
-              ),
-            ...favoritePlaces.map((place) => ListTile(
-                  leading: const Icon(Icons.place_outlined),
-                  title: Text(place['label'].toString()),
-                  subtitle: Text(cleanAddressLabel(place['address']),
-                      maxLines: 2, overflow: TextOverflow.ellipsis),
-                  trailing: PopupMenuButton<String>(
-                    onSelected: (value) async {
-                      if (value == 'delete') {
-                        await api.deleteFavoritePlace(
-                            widget.s.token, place['id'].toString());
-                        await loadFavoritePlaces();
-                        if (sheetContext.mounted) Navigator.pop(sheetContext);
-                      } else {
-                        Navigator.pop(sheetContext);
-                        await useFavorite(place, value == 'origin');
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                          value: 'origin', child: Text('Usar como origen')),
-                      PopupMenuItem(
-                          value: 'destination',
-                          child: Text('Usar como destino')),
-                      PopupMenuDivider(),
-                      PopupMenuItem(value: 'delete', child: Text('Eliminar')),
-                    ],
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: .88,
+        child: StatefulBuilder(builder: (sheetContext, setSheetState) {
+          Future<void> administer(
+              dynamic place, FavoritePlaceAction action) async {
+            final changed = action == FavoritePlaceAction.rename
+                ? await _renameFavoritePlace(place)
+                : await _deleteFavoritePlace(place);
+            if (changed && sheetContext.mounted) setSheetState(() {});
+          }
+
+          Future<void> openFavorite(dynamic place) async {
+            final action = await _showFavoritePlaceActions(sheetContext, place);
+            if (action == null || !sheetContext.mounted) return;
+            if (action == FavoritePlaceAction.origin ||
+                action == FavoritePlaceAction.destination) {
+              Navigator.pop(sheetContext);
+              await useFavorite(place, action == FavoritePlaceAction.origin);
+              return;
+            }
+            await administer(place, action);
+          }
+
+          final scheme = Theme.of(sheetContext).colorScheme;
+          return Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 8, 10),
+              child: Row(children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: scheme.primaryContainer.withValues(alpha: .55),
+                    shape: BoxShape.circle,
                   ),
-                )),
-            const Divider(),
-            Row(children: [
-              Expanded(
-                child: TextButton.icon(
+                  child: Icon(Icons.star_outline, color: scheme.primary),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Mis favoritos',
+                            style: Theme.of(sheetContext)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w900)),
+                        Text('Úsalos rápidamente como origen o destino.',
+                            style: Theme.of(sheetContext)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant)),
+                      ]),
+                ),
+                IconButton(
+                    tooltip: 'Cerrar',
+                    onPressed: () => Navigator.pop(sheetContext),
+                    icon: const Icon(Icons.close)),
+              ]),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                children: [
+                  if (favoritePlaces.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 32),
+                      child: Text('Todavía no tienes lugares guardados.',
+                          textAlign: TextAlign.center),
+                    ),
+                  for (final place in favoritePlaces) ...[
+                    Material(
+                      color: scheme.surfaceContainerLow,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        side: BorderSide(
+                            color: scheme.outlineVariant.withValues(alpha: .8)),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => openFavorite(place),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 11, 4, 11),
+                          child: Row(children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: scheme.primaryContainer
+                                    .withValues(alpha: .48),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(_favoritePlaceIcon(place),
+                                  color: scheme.primary, size: 22),
+                            ),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(place['label'].toString(),
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w800)),
+                                    const SizedBox(height: 3),
+                                    Text(cleanAddressLabel(place['address']),
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                                color:
+                                                    scheme.onSurfaceVariant)),
+                                  ]),
+                            ),
+                            PopupMenuButton<FavoritePlaceAction>(
+                              tooltip: 'Administrar favorito',
+                              onSelected: (action) => administer(place, action),
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(
+                                  value: FavoritePlaceAction.rename,
+                                  child: ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Icon(Icons.edit_outlined),
+                                    title: Text('Editar nombre'),
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: FavoritePlaceAction.delete,
+                                  child: ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Icon(Icons.delete_outline),
+                                    title: Text('Eliminar favorito'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ]),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  _PassengerSurface(
+                    padding: const EdgeInsets.all(12),
+                    color: scheme.primaryContainer.withValues(alpha: .22),
+                    child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline,
+                              color: scheme.primary, size: 21),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              'Toca un favorito para usarlo rápidamente. Usa el menú de tres puntos para editarlo o eliminarlo.',
+                              style: Theme.of(sheetContext)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(height: 1.35),
+                            ),
+                          ),
+                        ]),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
+              child: LayoutBuilder(builder: (context, constraints) {
+                final textScale = MediaQuery.textScalerOf(context).scale(1);
+                final stack = constraints.maxWidth < 330 || textScale > 1.25;
+                final originButton = OutlinedButton.icon(
                   onPressed: pickup == null
                       ? null
                       : () {
@@ -8770,10 +9281,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                         },
                   icon: const Icon(Icons.home_outlined),
                   label: const Text('Guardar origen'),
-                ),
-              ),
-              Expanded(
-                child: TextButton.icon(
+                );
+                final destinationButton = OutlinedButton.icon(
                   onPressed: dropoff == null
                       ? null
                       : () {
@@ -8782,11 +9291,25 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                         },
                   icon: const Icon(Icons.flag_outlined),
                   label: const Text('Guardar destino'),
-                ),
-              ),
-            ]),
-          ]),
-        ),
+                );
+                if (stack) {
+                  return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        originButton,
+                        const SizedBox(height: 8),
+                        destinationButton,
+                      ]);
+                }
+                return Row(children: [
+                  Expanded(child: originButton),
+                  const SizedBox(width: 8),
+                  Expanded(child: destinationButton),
+                ]);
+              }),
+            ),
+          ]);
+        }),
       ),
     );
   }
@@ -8923,7 +9446,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       pendingMapPoint = null;
       selectionResolving = false;
       selectionMoving = false;
-      sheetExtent = .35;
+      sheetExtent = .78;
       if (selection == MapPointSelection.origin) {
         originSelectionGuard.markManualOrigin();
         pickup = point;
@@ -8936,7 +9459,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         message = 'Consultando la dirección del destino...';
       }
     });
-    _movePassengerSheet(.35);
+    _movePassengerSheet(.78);
     if (selection == MapPointSelection.origin) {
       realtime.subscribeNearby(point.latitude, point.longitude,
           paymentMethod: paymentMethod);
@@ -9406,7 +9929,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                   Navigator.pop(dialogContext, false),
                               child: const Text('Modificar')),
                           _CostaGoPrimaryButton(
-                            label: 'Confirmar solicitud',
+                            label: 'Solicitar mototaxi',
                             onPressed: () => Navigator.pop(dialogContext, true),
                           ),
                         ]),
@@ -10312,57 +10835,22 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     ];
   }
 
-  List<Widget> _mapSelectionContent(BuildContext context) {
+  List<Widget> _mapSelectionContent() {
     final isOrigin = mapSelection == MapPointSelection.origin;
     final address = (isOrigin
             ? origin.text
             : _destinationController(selectedDestinationIndex).text)
         .trim();
     return [
-      Text(
-          isOrigin
-              ? 'Fija tu punto de partida'
-              : 'Fija el destino ${selectedDestinationIndex + 1}',
-          textAlign: TextAlign.center,
-          style: Theme.of(context)
-              .textTheme
-              .titleLarge
-              ?.copyWith(fontWeight: FontWeight.w800)),
-      const SizedBox(height: 4),
-      const Text('Arrastra el marcador o toca el punto exacto en el mapa.',
-          textAlign: TextAlign.center),
-      const SizedBox(height: 14),
-      Card(
-        margin: EdgeInsets.zero,
-        child: ListTile(
-          leading: Icon(
-              isOrigin ? Icons.person_pin_circle : Icons.flag_outlined,
-              color:
-                  isOrigin ? const Color(0xff008b9a) : const Color(0xffef5b4d)),
-          title: Text(address.isEmpty ? 'Ubicación seleccionada' : address,
-              maxLines: 2, overflow: TextOverflow.ellipsis),
-          subtitle: Text(selectionResolving
-              ? 'Obteniendo dirección…'
-              : 'La coordenada exacta se conservará al confirmar.'),
-          trailing: selectionResolving
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2))
-              : null,
-        ),
-      ),
-      const SizedBox(height: 14),
-      FilledButton.icon(
-        onPressed: pendingMapPoint == null ||
-                (serviceAreaCatalog != null && pendingSelectionArea == null)
-            ? null
-            : confirmVisibleMapPoint,
-        icon: const Icon(Icons.check),
-        label: Text(isOrigin ? 'Confirmar origen' : 'Confirmar destino'),
-      ),
-      TextButton(
-        onPressed: () {
+      _PassengerMapSelectionPanel(
+        isOrigin: isOrigin,
+        destinationNumber: selectedDestinationIndex + 1,
+        address: address,
+        resolving: selectionResolving,
+        canConfirm: pendingMapPoint != null &&
+            (serviceAreaCatalog == null || pendingSelectionArea != null),
+        onConfirm: confirmVisibleMapPoint,
+        onCancel: () {
           selectionLookupGeneration++;
           setState(() {
             mapSelection = null;
@@ -10373,7 +10861,6 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           });
           _movePassengerSheet(.35);
         },
-        child: const Text('Cancelar ajuste'),
       ),
     ];
   }
@@ -10416,6 +10903,40 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       routePoints = [];
     });
     unawaited(refreshRoute(force: true));
+  }
+
+  Widget _requestShortcut({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.primaryContainer.withValues(alpha: .38),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPressed,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 50),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(icon, size: 19, color: scheme.primary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: scheme.primary, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget destinationField(int index) {
@@ -10536,17 +11057,20 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           ]),
         ),
         const SizedBox(height: 8),
-        const _PassengerSectionTitle('Origen',
-            icon: Icons.location_on_outlined),
-        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          Expanded(
-            child: TextField(
+        _PassengerSurface(
+          padding: const EdgeInsets.all(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const _PassengerSectionTitle('Origen',
+                icon: Icons.location_on_outlined),
+            TextField(
               controller: origin,
               onTap: () => _movePassengerSheet(.72),
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 isDense: true,
                 hintText: 'Escribe una dirección o mueve el mapa',
+                prefixIcon: const Icon(Icons.my_location_outlined),
                 suffixIcon: origin.text.isEmpty
                     ? null
                     : IconButton(
@@ -10555,58 +11079,78 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                         onPressed: () => clearPoint(true)),
               ),
             ),
-          ),
-          const SizedBox(width: 5),
-          IconButton.filledTonal(
-              tooltip: 'Lugares favoritos',
-              onPressed: showFavoritePlaces,
-              style: IconButton.styleFrom(
-                  minimumSize: const Size.square(40), padding: EdgeInsets.zero),
-              icon: const Icon(Icons.star_outline, size: 20)),
-          IconButton.filledTonal(
-              tooltip: 'Usar ubicación actual',
-              onPressed: () => unawaited(useCurrentLocation(explicit: true)),
-              style: IconButton.styleFrom(
-                  minimumSize: const Size.square(40), padding: EdgeInsets.zero),
-              icon: const Icon(Icons.my_location_outlined, size: 20)),
-          IconButton.filledTonal(
-              tooltip: 'Buscar dirección',
-              onPressed: () => locate(true),
-              style: IconButton.styleFrom(
-                  minimumSize: const Size.square(40), padding: EdgeInsets.zero),
-              icon: const Icon(Icons.search, size: 20)),
-        ]),
+            const SizedBox(height: 9),
+            Row(children: [
+              Expanded(
+                child: _requestShortcut(
+                  icon: Icons.navigation_outlined,
+                  label: 'Mi ubicación',
+                  onPressed: () =>
+                      unawaited(useCurrentLocation(explicit: true)),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: _requestShortcut(
+                  icon: Icons.star_outline,
+                  label: 'Favoritos',
+                  onPressed: showFavoritePlaces,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: _requestShortcut(
+                  icon: Icons.map_outlined,
+                  label: 'Buscar en mapa',
+                  onPressed: () => locate(true),
+                ),
+              ),
+            ]),
+          ]),
+        ),
         const SizedBox(height: 8),
-        _PassengerSectionTitle(
-          'Destinos y paradas',
-          icon: Icons.flag_outlined,
-          trailing: IconButton.filled(
-            tooltip: additionalStops.length >= 2
-                ? 'Máximo tres destinos'
-                : 'Agregar parada',
-            onPressed: additionalStops.length >= 2 ? null : addDestination,
-            style: IconButton.styleFrom(
-                minimumSize: const Size.square(40), padding: EdgeInsets.zero),
-            icon: const Icon(Icons.add, size: 21),
-          ),
+        _PassengerSurface(
+          padding: const EdgeInsets.all(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const _PassengerSectionTitle('Destino y paradas',
+                icon: Icons.flag_outlined),
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: 1 + additionalStops.length,
+              onReorderItem: reorderDestinations,
+              itemBuilder: (context, index) => destinationField(index),
+            ),
+            OutlinedButton.icon(
+              onPressed: additionalStops.length >= 2 ? null : addDestination,
+              icon: const Icon(Icons.add_circle_outline, size: 20),
+              label: Text(additionalStops.length >= 2
+                  ? 'Máximo tres destinos'
+                  : 'Agregar parada (opcional)'),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .outlineVariant
+                        .withValues(alpha: .8)),
+              ),
+            ),
+          ]),
         ),
-        ReorderableListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          buildDefaultDragHandles: false,
-          itemCount: 1 + additionalStops.length,
-          onReorderItem: reorderDestinations,
-          itemBuilder: (context, index) => destinationField(index),
-        ),
-        const _PassengerSectionTitle('Programación',
-            icon: Icons.schedule_outlined),
-        Row(children: [
-          Expanded(
-            child: SegmentedButton<bool>(
+        const SizedBox(height: 8),
+        _PassengerSurface(
+          padding: const EdgeInsets.all(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const _PassengerSectionTitle('Programación',
+                icon: Icons.schedule_outlined),
+            SegmentedButton<bool>(
               segments: const [
                 ButtonSegment(
                     value: false,
-                    icon: Icon(Icons.bolt_outlined),
+                    icon: Icon(Icons.check),
                     label: Text('Ahora')),
                 ButtonSegment(
                     value: true,
@@ -10627,172 +11171,252 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 }
               },
             ),
-          ),
-        ]),
-        if (scheduledFor == null)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              'Las reservas requieren al menos $scheduledMinimumNoticeMinutes minutos de anticipación.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-        if (scheduledFor != null)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.event_available_outlined),
-            title: Text(MaterialLocalizations.of(context)
-                .formatMediumDate(scheduledFor!)),
-            subtitle:
-                Text(TimeOfDay.fromDateTime(scheduledFor!).format(context)),
-            trailing: TextButton(
-                onPressed: chooseSchedule, child: const Text('Modificar')),
-          ),
-        const SizedBox(height: 8),
-        const _PassengerSectionTitle('Referencia para encontrarte',
-            icon: Icons.chat_bubble_outline, subtitle: '(opcional)'),
-        TextField(
-          controller: notes,
-          onTap: () => _movePassengerSheet(.72),
-          onChanged: (_) => setState(() {}),
-          maxLength: 300,
-          maxLines: 1,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => FocusScope.of(context).unfocus(),
-          decoration: InputDecoration(
-            isDense: true,
-            counterText: '',
-            hintText: 'Ej: Frente a la iglesia, puerta azul, etc.',
-            suffixIcon: notes.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: 'Borrar referencia',
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      notes.clear();
-                      setState(() {});
-                    },
-                  ),
-          ),
+            if (scheduledFor == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Las reservas requieren al menos $scheduledMinimumNoticeMinutes minutos de anticipación.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                ),
+              ),
+            if (scheduledFor != null)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.event_available_outlined),
+                title: Text(MaterialLocalizations.of(context)
+                    .formatMediumDate(scheduledFor!)),
+                subtitle:
+                    Text(TimeOfDay.fromDateTime(scheduledFor!).format(context)),
+                trailing: TextButton(
+                    onPressed: chooseSchedule, child: const Text('Modificar')),
+              ),
+          ]),
         ),
+        const SizedBox(height: 8),
+        _PassengerSurface(
+          padding: const EdgeInsets.all(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const _PassengerSectionTitle('Referencia para encontrarte',
+                icon: Icons.chat_bubble_outline, subtitle: '(opcional)'),
+            TextField(
+              controller: notes,
+              onTap: () => _movePassengerSheet(.72),
+              onChanged: (_) => setState(() {}),
+              maxLength: 300,
+              maxLines: 1,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => FocusScope.of(context).unfocus(),
+              decoration: InputDecoration(
+                isDense: true,
+                counterText: '',
+                hintText: 'Ej: Frente a la iglesia, puerta azul, etc.',
+                suffixIcon: notes.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Borrar referencia',
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          notes.clear();
+                          setState(() {});
+                        },
+                      ),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 8),
         LayoutBuilder(builder: (context, constraints) {
           final media = MediaQuery.of(context);
-          final layout = passengerRequestSectionLayoutFor(constraints.maxWidth);
+          final textScale = media.textScaler.scale(1);
+          final layout = passengerRequestSectionLayoutFor(
+            constraints.maxWidth,
+            textScale: textScale,
+          );
           if (kDebugMode) {
             final diagnostics =
                 'viewport=${media.size.width.toStringAsFixed(1)}x${media.size.height.toStringAsFixed(1)} '
                 'availableWidth=${constraints.maxWidth.toStringAsFixed(1)} '
                 'dpr=${media.devicePixelRatio.toStringAsFixed(2)} '
-                'textScale=${media.textScaler.scale(1).toStringAsFixed(2)} '
+                'textScale=${textScale.toStringAsFixed(2)} '
                 'breakpoint=${layout.name}';
             if (_lastRequestLayoutDiagnostics != diagnostics) {
               _lastRequestLayoutDiagnostics = diagnostics;
               debugPrint('[PassengerRequestLayout] $diagnostics');
             }
           }
-          final passengerSelector =
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const _PassengerSectionTitle('Número de pasajeros',
-                icon: Icons.group_outlined, subtitle: '(máximo 3)'),
-            SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 1, label: Text('1')),
-                ButtonSegment(value: 2, label: Text('2')),
-                ButtonSegment(value: 3, label: Text('3')),
-              ],
-              selected: {people},
-              style: const ButtonStyle(
-                visualDensity: VisualDensity.compact,
-                padding: WidgetStatePropertyAll(
-                    EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
-              ),
-              onSelectionChanged: (value) =>
-                  setState(() => people = value.first),
-            ),
-          ]);
-          final paymentSelector =
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const _PassengerSectionTitle('Método de pago',
-                icon: Icons.account_balance_wallet_outlined),
-            Row(
-              key: const ValueKey('passenger-payment-method'),
-              children: [
-                for (final option in const [
-                  ('CASH', 'Efectivo', Icons.payments_outlined),
-                  (
-                    'DEUNA',
-                    'Transferencia',
-                    Icons.account_balance_wallet_outlined
+          final passengerSelector = _PassengerSurface(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _PassengerSectionTitle('Número de pasajeros',
+                      icon: Icons.group_outlined, subtitle: '(máximo 3)'),
+                  SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment(value: 1, label: Text('1')),
+                      ButtonSegment(value: 2, label: Text('2')),
+                      ButtonSegment(value: 3, label: Text('3')),
+                    ],
+                    selected: {people},
+                    style: const ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                      padding: WidgetStatePropertyAll(
+                          EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+                    ),
+                    onSelectionChanged: (value) =>
+                        setState(() => people = value.first),
                   ),
-                ]) ...[
-                  if (option.$1 != 'CASH') const SizedBox(width: 8),
-                  Expanded(
-                    child: Semantics(
-                      button: true,
-                      selected: paymentMethod == option.$1,
-                      label: 'Pago con ${option.$2}',
-                      child: Material(
-                        color: paymentMethod == option.$1
-                            ? Theme.of(context)
-                                .colorScheme
-                                .primaryContainer
-                                .withValues(alpha: .55)
-                            : Theme.of(context).colorScheme.surface,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          side: BorderSide(
+                ]),
+          );
+          final paymentSelector = _PassengerSurface(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _PassengerSectionTitle('Método de pago',
+                      icon: Icons.account_balance_wallet_outlined),
+                  LayoutBuilder(
+                    builder: (context, paymentConstraints) {
+                      final paymentLayout = passengerPaymentOptionLayoutFor(
+                        paymentConstraints.maxWidth,
+                        textScale: textScale,
+                      );
+                      Widget optionButton((String, String, IconData) option) {
+                        return Semantics(
+                          button: true,
+                          selected: paymentMethod == option.$1,
+                          label: 'Pago con ${option.$2}',
+                          child: Material(
                             color: paymentMethod == option.$1
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).colorScheme.outlineVariant,
-                          ),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: InkWell(
-                          onTap: () => updatePaymentMethod(option.$1),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 11),
-                            child: Row(children: [
-                              Icon(option.$3, size: 19),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(option.$2,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w700)),
-                              ),
-                              Icon(
-                                paymentMethod == option.$1
-                                    ? Icons.radio_button_checked
-                                    : Icons.radio_button_unchecked,
-                                size: 19,
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .primaryContainer
+                                    .withValues(alpha: .55)
+                                : Theme.of(context).colorScheme.surface,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: BorderSide(
                                 color: paymentMethod == option.$1
                                     ? Theme.of(context).colorScheme.primary
                                     : Theme.of(context)
                                         .colorScheme
-                                        .onSurfaceVariant,
+                                        .outlineVariant,
                               ),
-                            ]),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: InkWell(
+                              onTap: () => updatePaymentMethod(option.$1),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 11),
+                                child: Row(children: [
+                                  Icon(option.$3, size: 19),
+                                  const SizedBox(width: 7),
+                                  Expanded(
+                                    child: Text(option.$2,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w700)),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    paymentMethod == option.$1
+                                        ? Icons.radio_button_checked
+                                        : Icons.radio_button_unchecked,
+                                    size: 19,
+                                    color: paymentMethod == option.$1
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                  ),
+                                ]),
+                              ),
+                            ),
                           ),
+                        );
+                      }
+
+                      const options = [
+                        ('CASH', 'Efectivo', Icons.payments_outlined),
+                        (
+                          'DEUNA',
+                          'Transferencia',
+                          Icons.account_balance_wallet_outlined
                         ),
-                      ),
-                    ),
+                      ];
+                      if (paymentLayout ==
+                          PassengerPaymentOptionLayout.sideBySide) {
+                        return Row(
+                          key: const ValueKey(
+                              'passenger-payment-method-side-by-side'),
+                          children: [
+                            Expanded(child: optionButton(options[0])),
+                            const SizedBox(width: 8),
+                            Expanded(child: optionButton(options[1])),
+                          ],
+                        );
+                      }
+                      return Column(
+                        key: const ValueKey('passenger-payment-method-stacked'),
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          optionButton(options[0]),
+                          const SizedBox(height: 8),
+                          optionButton(options[1]),
+                        ],
+                      );
+                    },
                   ),
-                ],
-              ],
-            ),
-          ]);
-          return Column(
-              key: const ValueKey('passenger-request-sections-stacked'),
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+                ]),
+          );
+          if (layout == PassengerRequestSectionLayout.sideBySide) {
+            return Row(
+              key: const ValueKey('passenger-request-sections-side-by-side'),
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                passengerSelector,
-                const SizedBox(height: 8),
-                paymentSelector,
-              ]);
+                Expanded(child: passengerSelector),
+                const SizedBox(width: 8),
+                Expanded(child: paymentSelector),
+              ],
+            );
+          }
+          return Column(
+            key: const ValueKey('passenger-request-sections-stacked'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              passengerSelector,
+              const SizedBox(height: 8),
+              paymentSelector,
+            ],
+          );
         }),
+        if (pickup != null && dropoff != null) ...[
+          const SizedBox(height: 8),
+          Builder(
+            builder: (context) {
+              final isDark = Theme.of(context).brightness == Brightness.dark;
+              final positive =
+                  isDark ? const Color(0xff79e6a2) : const Color(0xff167a38);
+              final positiveSurface =
+                  isDark ? const Color(0xff123825) : const Color(0xffedf9f1);
+              return _PassengerSurface(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                color: positiveSurface,
+                child: Row(children: [
+                  Icon(Icons.verified_user_outlined, color: positive),
+                  const SizedBox(width: 9),
+                  Text('Destino confirmado',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: positive, fontWeight: FontWeight.w900)),
+                ]),
+              );
+            },
+          ),
+        ],
         if (message != null)
           Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
@@ -10817,7 +11441,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         const SizedBox(height: 10),
         _CostaGoPrimaryButton(
           label:
-              requestSubmitting ? 'Creando solicitud…' : 'Solicitar mototaxi',
+              requestSubmitting ? 'Creando solicitud…' : 'Confirmar solicitud',
           loading: requestSubmitting,
           onPressed: requestSubmitting || _currentRequestPayload() == null
               ? null
@@ -10923,13 +11547,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   color: Theme.of(context).colorScheme.surface,
                   elevation: 16,
                   shadowColor: Colors.black45,
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(28)),
+                  borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(editing ? 32 : 28)),
                   clipBehavior: Clip.antiAlias,
                   child: ListView(
                     controller: scrollController,
                     padding: EdgeInsets.fromLTRB(
-                        14, 8, 14, MediaQuery.paddingOf(context).bottom + 16),
+                        editing ? 18 : 14,
+                        8,
+                        editing ? 18 : 14,
+                        MediaQuery.paddingOf(context).bottom + 16),
                     children: [
                       Center(
                         child: Container(
@@ -10946,7 +11573,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                       ),
                       const SizedBox(height: 8),
                       if (editing)
-                        ..._mapSelectionContent(context)
+                        ..._mapSelectionContent()
                       else if (searching)
                         ..._searchingContent(context)
                       else if (isAssignedTrip(active))
