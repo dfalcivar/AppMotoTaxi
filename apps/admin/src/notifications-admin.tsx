@@ -17,7 +17,7 @@ function percent(value:unknown){return `${Number(value??0).toFixed(1)}%`;}
 function ecuDateTimeLocal(date:Date){return new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Guayaquil',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(date).replace(' ','T');}
 function campaignRecipientStatus(recipient:any,user:any){return campaignRecipientLabels[recipient?.status??user.reason]??recipient?.status??user.reason;}
 function campaignRecipientReason(recipient:any,user:any){if(recipient?.errorCode==='NON_CRITICAL_LIMIT')return String(recipient.errorMessage??'').split(',').map(reason=>campaignLimitLabels[reason]??reason).join(' ');if(recipient?.errorMessage)return recipient.errorMessage;if(!user.validToken)return 'No existe un dispositivo con token FCM vigente para este usuario.';return recipient?.status==='SENT'?'Aceptada por FCM para entrega al dispositivo.':'';}
-function Badge({value}:{value:string}){return <span className={`smart-badge ${value.toLowerCase()}`}>{value.replaceAll('_',' ')}</span>;}
+function Badge({value}:{value:string}){const tone=value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/_/g,'-').replace(/\s+/g,'-');return <span className={`smart-badge ${tone}`}>{value.replaceAll('_',' ')}</span>;}
 
 export function NotificationsAdmin({token,permissions}:Props){
   const can=(permission:string)=>permissions.includes(permission),initial=routeQuery().get('sub')||'summary';
