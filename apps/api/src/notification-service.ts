@@ -33,7 +33,7 @@ export interface NotificationResult {
 function stringData(command:NotificationCommand):Record<string,string>{
   const data:Record<string,string>={
     type:command.type,notificationCategory:command.category,notificationPriority:command.priority,
-    notificationRoute:command.deepLink?.startsWith('costa-go://trip/prepare')?'SMART_TRIP':'NOTIFICATIONS'
+    notificationRoute:command.type==='APP_UPDATE'?'APP_STORE':command.deepLink?.startsWith('costa-go://trip/prepare')?'SMART_TRIP':'NOTIFICATIONS'
   };
   if(command.referenceId)data.referenceId=command.referenceId;
   if(command.deepLink)data.deepLink=command.deepLink;
@@ -68,7 +68,7 @@ export class NotificationService {
     await database()`insert into notification_analytics_events(notification_id,user_id,event) values (${notificationId},${normalized.userId},'CREATED')`;
     if(normalized.scheduledAt&&normalized.scheduledAt.getTime()>Date.now())return {notificationId,accepted:true,pushSent:false,persisted:true,status:'QUEUED'};
     if(!normalized.sendPush)return {notificationId,accepted:true,pushSent:false,persisted:true,status:'CREATED'};
-    const push=await sendPush(normalized.userId,normalized.title,normalized.body,stringData(normalized));
+    const push=await sendPush(normalized.userId,normalized.title,normalized.body,{...stringData(normalized),internalNotificationId:notificationId});
     const status:NotificationStatus=push.sent>0?'SENT':push.skipped?'SKIPPED':'FAILED';
     await database()`update user_notifications set status=${status},push_sent_at=case when ${push.sent}>0 then now() else push_sent_at end,
       error_code=${push.errorCode??push.errors?.[0]?.code??null},error_message=${push.errors?.[0]?.message??null} where id=${notificationId}`;

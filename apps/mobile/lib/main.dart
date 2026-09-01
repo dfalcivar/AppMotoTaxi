@@ -22,6 +22,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'affiliate_banners.dart';
@@ -1703,11 +1704,15 @@ class Api {
           AuthorizationStatus.authorized,
           AuthorizationStatus.provisional,
         }.contains(notificationSettings.authorizationStatus);
+        final packageInfo = await PackageInfo.fromPlatform();
+        final buildNumber = int.tryParse(packageInfo.buildNumber);
         final response =
             await call('PUT', '/v1/devices/fcm-token', token: token, body: {
           'token': fcm,
           'platform':
               defaultTargetPlatform == TargetPlatform.iOS ? 'IOS' : 'ANDROID',
+          'versionName': packageInfo.version,
+          if (buildNumber != null) 'buildNumber': buildNumber,
           'firebaseProjectId': Firebase.app().options.projectId,
           'notificationProtocol': nativeAlertsSupported ? 2 : 1,
           'notificationsEnabled': notificationsEnabled,
@@ -8097,6 +8102,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ...Map<String, dynamic>.from(push.data),
         'notificationId': push.data['internalNotificationId'],
       }));
+    } else if (target == NotificationTarget.appStore) {
+      unawaited(openAppUpdateStore(context, widget.s,
+          notificationId: push.data['internalNotificationId']?.toString(),
+          storeUrl: push.data['deepLink']?.toString()));
     } else if (target == NotificationTarget.chat) {
       unawaited(openPassengerChat(tripId,
           notificationId: push.data['internalNotificationId']));
@@ -12389,6 +12398,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (target == NotificationTarget.chat) {
       unawaited(openDriverChat(push.data['tripId'],
           notificationId: push.data['internalNotificationId']));
+    } else if (target == NotificationTarget.appStore) {
+      unawaited(openAppUpdateStore(context, widget.s,
+          notificationId: push.data['internalNotificationId']?.toString(),
+          storeUrl: push.data['deepLink']?.toString()));
     } else if (target == NotificationTarget.tripDetail &&
         push.data['tripId'] != null) {
       unawaited(Navigator.push(

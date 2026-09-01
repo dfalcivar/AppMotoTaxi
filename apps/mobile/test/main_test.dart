@@ -133,6 +133,8 @@ void main() {
       expect(notificationTargetFor('SMART_TRIP'), NotificationTarget.smartTrip);
       expect(notificationTargetFor('SMART_REACTIVATION'),
           NotificationTarget.inbox);
+      expect(notificationTargetFor('APP_UPDATE'), NotificationTarget.appStore);
+      expect(notificationTargetFor('APP_STORE'), NotificationTarget.appStore);
     });
 
     test('el banner general solo cubre SMART, campañas y pruebas', () {
@@ -143,6 +145,7 @@ void main() {
         'CAMPAIGN',
         'EVENT',
         'PROMOTIONAL',
+        'APP_UPDATE',
       ]) {
         expect(notificationUsesGeneralInAppBanner(type), isTrue, reason: type);
       }

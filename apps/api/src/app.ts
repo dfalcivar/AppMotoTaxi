@@ -17,7 +17,7 @@ import { registerFleetRoutes } from './fleet/routes.js';
 import { currentSession, releaseSession, releaseStaleSessions } from './fleet/service.js';
 import { fleetError } from './fleet/routes.js';
 import {deliverFleetNotifications} from './fleet/notifications.js';
-import {registerSmartNotificationRoutes,smartNotificationSchedulerTick} from './smart-notifications.js';
+import {compareAppVersions,registerSmartNotificationRoutes,smartNotificationSchedulerTick} from './smart-notifications.js';
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
@@ -186,6 +186,8 @@ const routeSchema = z.object({
 const deviceTokenSchema = z.object({
   token: z.string().min(20).max(4096),
   platform: z.enum(["ANDROID", "IOS"]).default("ANDROID"),
+  versionName: z.string().trim().regex(/^\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/).max(50).optional(),
+  buildNumber: z.number().int().min(1).max(2147483647).optional(),
   notificationProtocol: z.number().int().min(1).max(2).default(1),
   firebaseProjectId: z.string().trim().min(3).max(200).optional(),
   notificationsEnabled: z.boolean().optional()
@@ -1575,13 +1577,37 @@ export async function buildApp() {
       // retiramos tokens antiguos sin crear una ventana en la que no haya push.
       await tx`delete from device_tokens where user_id=${user.id!} and token<>${parsed.data.token}`;
       await tx`
-        insert into device_tokens (user_id, token, platform, last_seen_at, notification_protocol,enabled,invalidated_at)
-        values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now(),${parsed.data.notificationProtocol},coalesce(${parsed.data.notificationsEnabled??null},true),null)
+        insert into device_tokens (user_id, token, platform, last_seen_at, notification_protocol,enabled,invalidated_at,app_version,app_build,app_version_reported_at)
+        values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now(),${parsed.data.notificationProtocol},coalesce(${parsed.data.notificationsEnabled??null},true),null,${parsed.data.versionName??null},${parsed.data.buildNumber??null},case when ${Boolean(parsed.data.versionName||parsed.data.buildNumber)} then now() else null end)
         on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now(), notification_protocol=excluded.notification_protocol,
-          enabled=coalesce(${parsed.data.notificationsEnabled??null},device_tokens.enabled),invalidated_at=null
+          enabled=coalesce(${parsed.data.notificationsEnabled??null},device_tokens.enabled),invalidated_at=null,
+          app_version=coalesce(excluded.app_version,device_tokens.app_version),app_build=coalesce(excluded.app_build,device_tokens.app_build),
+          app_version_reported_at=case when excluded.app_version is not null or excluded.app_build is not null then now() else device_tokens.app_version_reported_at end
       `;
+      if(parsed.data.versionName||parsed.data.buildNumber){
+        await tx`insert into notification_analytics_events(notification_id,user_id,event,metadata)
+          select n.id,${user.id!},'APP_UPDATED',${JSON.stringify({versionName:parsed.data.versionName,buildNumber:parsed.data.buildNumber,platform:parsed.data.platform})}::jsonb
+          from user_notifications n
+          join notification_campaign_recipients r on r.notification_id=n.id and r.user_id=${user.id!} and r.status in ('SENT','OPENED')
+          join notification_campaigns c on c.id=r.campaign_id and c.campaign_type='APP_UPDATE'
+          where n.user_id=${user.id!}
+            and coalesce((c.metadata->>'targetPlatform')::text,${parsed.data.platform})=${parsed.data.platform}
+            and (${parsed.data.buildNumber??null}::int is not null and ${parsed.data.buildNumber??null}::int>=nullif(c.metadata->>'publishedBuild','')::int)
+          on conflict(notification_id,event) where event='APP_UPDATED' do nothing`;
+      }
     });
     return { registered: true, push };
+  });
+
+  app.get('/v1/app-version/config',async(request,reply)=>{
+    const user=await authenticatedUser(request,reply,{allowPendingDriver:true});if(!user)return;
+    const parsed=z.object({platform:z.enum(['ANDROID','IOS']),versionName:z.string().trim().max(50).optional(),buildNumber:z.coerce.number().int().min(1).optional()}).safeParse(request.query);
+    if(!parsed.success)return reply.code(400).send({error:'INVALID_APP_VERSION_QUERY'});
+    const [config]=await database()`select platform,latest_version as "latestVersion",latest_build as "latestBuild",minimum_supported_version as "minimumSupportedVersion",minimum_supported_build as "minimumSupportedBuild",update_policy as "updatePolicy",required_update_enabled as "requiredUpdateEnabled",message,store_url as "storeUrl" from app_version_config where platform=${parsed.data.platform}`;
+    if(!config)return reply.code(404).send({error:'APP_VERSION_CONFIG_NOT_FOUND'});
+    const below=(build:unknown,version:unknown)=>parsed.data.buildNumber!=null&&build!=null?parsed.data.buildNumber<Number(build):Boolean(parsed.data.versionName&&version&&compareAppVersions(parsed.data.versionName,version)<0);
+    const latestAvailable=below(config.latestBuild,config.latestVersion),unsupported=below(config.minimumSupportedBuild,config.minimumSupportedVersion);
+    return {...config,updateType:unsupported&&config.requiredUpdateEnabled?'REQUIRED':latestAvailable?'RECOMMENDED':'NONE',requiredUpdateEnabled:Boolean(config.requiredUpdateEnabled)};
   });
 
   // Diagnóstico temporal del piloto: permite comprobar el envío al dispositivo
@@ -2548,7 +2574,7 @@ export async function buildApp() {
   app.post('/v1/notifications/:notificationId/events',async(request,reply)=>{
     const user=await authenticatedUser(request,reply);if(!user)return;
     const notificationId=(request.params as {notificationId:string}).notificationId;
-    const parsed=z.object({event:z.enum(['DEEP_LINK_OPENED','TRIP_PREPARATION_OPENED','TRIP_REQUESTED','TRIP_COMPLETED']),metadata:z.record(z.string(),z.unknown()).default({})}).safeParse(request.body);
+    const parsed=z.object({event:z.enum(['DEEP_LINK_OPENED','STORE_OPENED','TRIP_PREPARATION_OPENED','TRIP_REQUESTED','TRIP_COMPLETED']),metadata:z.record(z.string(),z.unknown()).default({})}).safeParse(request.body);
     if(!z.string().uuid().safeParse(notificationId).success||!parsed.success)return reply.code(400).send({error:'INVALID_NOTIFICATION_EVENT'});
     const [owned]=await database()`select id from user_notifications where id=${notificationId} and user_id=${user.id!}`;if(!owned)return reply.code(404).send({error:'NOTIFICATION_NOT_FOUND'});
     await database()`insert into notification_analytics_events(notification_id,user_id,event,metadata) values (${notificationId},${user.id!},${parsed.data.event},${JSON.stringify(parsed.data.metadata)}::jsonb)`;

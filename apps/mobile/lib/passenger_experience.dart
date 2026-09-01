@@ -111,6 +111,7 @@ enum NotificationTarget {
   membership,
   fleet,
   smartTrip,
+  appStore,
   inbox
 }
 
@@ -261,6 +262,9 @@ NotificationTarget notificationTargetFor(String? value) {
     return NotificationTarget.fleet;
   }
   if (type == 'NOTIFICATIONS') return NotificationTarget.inbox;
+  if (type == 'APP_STORE' || type == 'APP_UPDATE') {
+    return NotificationTarget.appStore;
+  }
   if (const {
     'SMART_TRIP',
     'SMART_FREQUENT_TRIP',
@@ -313,11 +317,43 @@ bool notificationUsesGeneralInAppBanner(
       normalizedType == 'CAMPAIGN' ||
       normalizedType == 'EVENT' ||
       normalizedType == 'PROMOTIONAL' ||
+      normalizedType == 'APP_UPDATE' ||
       normalizedType?.startsWith('SMART_') == true) {
     return true;
   }
   return const {'SMART', 'CAMPAIGN', 'PROMOTIONAL'}
       .contains(normalizedCategory);
+}
+
+Future<void> openAppUpdateStore(
+  BuildContext context,
+  Session session, {
+  required String? notificationId,
+  required String? storeUrl,
+}) async {
+  final uri = Uri.tryParse(storeUrl ?? '');
+  if (uri == null || !const {'https', 'http'}.contains(uri.scheme)) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('La tienda todavía no está configurada para esta plataforma.')));
+    }
+    return;
+  }
+  if (notificationId != null && notificationId.isNotEmpty) {
+    try {
+      await Api().markNotificationRead(session.token, notificationId);
+      await Api().trackNotificationEvent(
+          session.token, notificationId, 'STORE_OPENED',
+          metadata: {'storeUrl': uri.toString()});
+    } catch (_) {
+      // Abrir la tienda tiene prioridad sobre la telemetría.
+    }
+  }
+  final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No pudimos abrir la tienda.')));
+  }
 }
 
 Future<void> openNotificationChat(
@@ -1047,6 +1083,10 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
         'deepLinkTracked': true,
       };
       if (mounted) Navigator.pop(context);
+    } else if (target == NotificationTarget.appStore) {
+      await openAppUpdateStore(context, widget.session,
+          notificationId: item['id']?.toString(),
+          storeUrl: item['deepLink']?.toString() ?? data['deepLink']?.toString());
     } else if (target == NotificationTarget.fleet &&
         data['vehicleId'] != null) {
       await Navigator.push(
