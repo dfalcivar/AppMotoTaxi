@@ -13074,6 +13074,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final distance = (offer['distanceMeters'] as num?)?.toDouble();
     final duration = (offer['durationSeconds'] as num?)?.toDouble();
     final fare = (offer['quotedTotalCents'] as num?)?.toInt();
+    final passengers = (offer['passengers'] as num?)?.toInt() ?? 1;
+    final paymentLabel =
+        offer['paymentMethod'] == 'DEUNA' ? 'Transferencia' : 'Efectivo';
+    final colors = Theme.of(context).colorScheme;
     return Dismissible(
       key: ValueKey(offerId),
       direction: DismissDirection.down,
@@ -13093,38 +13097,144 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ]),
       ),
       child: _PassengerSurface(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: SingleChildScrollView(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const _CostaGoEmblem(size: 38),
-              const SizedBox(width: 9),
               Expanded(
-                child: Text(
-                  'Nuevo viaje · ${offer['passengers']} pasajero(s)',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w900),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  'Solicitud ${index + 1} de ${offers.length}',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.w900,
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const _CostaGoEmblem(size: 42),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Nuevo viaje',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleLarge
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w900)),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                        '$passengers ${passengers == 1 ? 'pasajero' : 'pasajeros'}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w800)),
+                                  ]),
+                            ),
+                          ]),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: colors.primaryContainer,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          'Solicitud ${index + 1} de ${offers.length}',
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: colors.onPrimaryContainer,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                        ),
                       ),
-                ),
+                    ]),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 132,
+                child: Column(children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 13),
+                    decoration: BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: colors.primary.withValues(alpha: .2),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6),
+                        )
+                      ],
+                    ),
+                    child: Column(children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          fare == null
+                              ? '—'
+                              : '\$${(fare / 100).toStringAsFixed(2)}',
+                          maxLines: 1,
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineMedium
+                              ?.copyWith(
+                                color: colors.onPrimary,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -.7,
+                              ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text('Tarifa estimada',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(
+                                color: colors.onPrimary.withValues(alpha: .9),
+                                fontWeight: FontWeight.w700,
+                              )),
+                    ]),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    decoration: BoxDecoration(
+                      color:
+                          colors.surfaceContainerHighest.withValues(alpha: .55),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                          color: colors.outlineVariant.withValues(alpha: .55)),
+                    ),
+                    child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.payments_outlined,
+                              size: 17, color: colors.primary),
+                          const SizedBox(width: 5),
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(paymentLabel,
+                              maxLines: 1,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800)),
+                        ),
+                          ),
+                        ]),
+                  ),
+                ]),
               ),
             ]),
-            const SizedBox(height: 9),
+            const SizedBox(height: 12),
             _driverRoutePoint(
               icon: Icons.radio_button_checked,
               label: 'Origen',
@@ -13171,15 +13281,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   if (duration != null)
                     _driverOfferDatum(Icons.schedule_outlined,
                         '${(duration / 60).ceil()} min', 'aprox.'),
-                  if (fare != null)
-                    _driverOfferDatum(Icons.sell_outlined,
-                        '\$${(fare / 100).toStringAsFixed(2)}', ''),
-                  _driverOfferDatum(
-                      Icons.payments_outlined,
-                      offer['paymentMethod'] == 'DEUNA'
-                          ? 'Transferencia'
-                          : 'Efectivo',
-                      ''),
+                  _driverOfferDatum(Icons.payments_outlined, paymentLabel, ''),
                 ],
               ),
             ),
@@ -13235,7 +13337,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Widget _offerCarousel(BuildContext context) => Column(children: [
         SizedBox(
-          height: 392,
+          height: 468,
           child: PageView.builder(
             controller: offerPageController,
             itemCount: offers.length,
