@@ -128,6 +128,11 @@ void main() {
           NotificationTarget.membership);
       expect(notificationTargetFor('SCHEDULED_TRIP_ASSIGNED'),
           NotificationTarget.scheduledTrips);
+      expect(notificationTargetFor('SMART_FREQUENT_TRIP'),
+          NotificationTarget.smartTrip);
+      expect(notificationTargetFor('SMART_TRIP'), NotificationTarget.smartTrip);
+      expect(notificationTargetFor('SMART_REACTIVATION'),
+          NotificationTarget.inbox);
     });
 
     test('solo el viaje finalizado navega directamente al detalle', () {

@@ -6,6 +6,7 @@ export const consoleGroups = [
   { label: 'Membresías y cobranzas', modules: ['memberships'] },
   { label: 'Finanzas y facturación', modules: ['fiscal'] },
   { label: 'Comercial y crecimiento', modules: ['commercial', 'advertising'] },
+  { label: 'Comunicación', modules: ['notifications'] },
   { label: 'Cobertura y tarifas', modules: ['pricing', 'zones'] },
   { label: 'Gestión y soporte', modules: ['settings', 'incidents', 'access', 'audit', 'database'] },
 ];
@@ -17,6 +18,7 @@ export const consoleDescriptions: Record<string,string> = {
   cooperatives:'Consulta conductores, viajes y actividad de cada cooperativa.', memberships:'Gestiona vigencia, renovaciones, cobranzas y puntos de pago.',
   fiscal:'Consulta clientes fiscales, documentos, ingresos y comprobantes según tus permisos.',commercial:'Gestiona prospectos, ventas, pagos y campañas sin perder su trazabilidad.',
   advertising:'Administra publicidad institucional y sus momentos de exposición.',pricing:'Configura tarifas, sectores y reglas por trayecto.',
+  notifications:'Analiza patrones, controla recomendaciones y administra campañas sin reemplazar las alertas críticas.',
   zones:'Define, valida y consulta los polígonos de cobertura.',settings:'Parámetros de búsqueda, tarifas, seguridad y operación.',
   incidents:'Atiende solicitudes, incidencias y preguntas frecuentes.',access:'Administra usuarios, roles y credenciales sin revelar contraseñas.',
   audit:'Consulta el historial de acciones y cambios administrativos.',database:'Comprueba la conexión real y el motor de almacenamiento.',

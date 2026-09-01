@@ -110,7 +110,15 @@ enum NotificationTarget {
   offers,
   membership,
   fleet,
+  smartTrip,
   inbox
+}
+
+/// Puente mínimo entre el centro existente y el formulario del pasajero.
+/// La sugerencia solo prepara el borrador; nunca solicita un viaje por sí sola.
+class SmartTripSuggestion {
+  SmartTripSuggestion._();
+  static final pending = ValueNotifier<Map<String, dynamic>?>(null);
 }
 
 const _informationalTripNotificationTypes = {
@@ -253,6 +261,15 @@ NotificationTarget notificationTargetFor(String? value) {
     return NotificationTarget.fleet;
   }
   if (type == 'NOTIFICATIONS') return NotificationTarget.inbox;
+  if (const {
+    'SMART_TRIP',
+    'SMART_FREQUENT_TRIP',
+    'SMART_RETURN_HOME',
+    'SMART_FAVORITE_DESTINATION',
+    'SMART_SCHEDULED_TRIP',
+  }.contains(type)) {
+    return NotificationTarget.smartTrip;
+  }
   if (type == 'CHAT_MESSAGE') return NotificationTarget.chat;
   if (const {
     'TRIP_OFFER',
@@ -997,7 +1014,23 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
     }
     await markRead(item);
     if (!mounted) return;
-    if (target == NotificationTarget.fleet && data['vehicleId'] != null) {
+    if (target == NotificationTarget.smartTrip) {
+      final notificationId = item['id']?.toString();
+      if (notificationId != null && notificationId.isNotEmpty) {
+        try {
+          await Api().trackNotificationEvent(widget.session.token,
+              notificationId, 'DEEP_LINK_OPENED');
+        } catch (_) {
+          // Preparar el viaje tiene prioridad sobre la telemetría.
+        }
+      }
+      SmartTripSuggestion.pending.value = {
+        ...data,
+        if (notificationId != null) 'notificationId': notificationId,
+        'deepLinkTracked': true,
+      };
+      if (mounted) Navigator.pop(context);
+    } else if (target == NotificationTarget.fleet && data['vehicleId'] != null) {
       await Navigator.push(
           context,
           MaterialPageRoute(

@@ -203,6 +203,7 @@ export async function sendPush(userId: string, title: string, body: string, data
       from device_tokens device
       join users account on account.id=device.user_id
       where device.user_id=${userId} and device.last_seen_at > now() - interval '90 days'
+        and device.enabled=true and device.invalidated_at is null
     `;
     if (rows[0]?.userType) data.userType ??= String(rows[0].userType);
     const tokens = rows.map(row => String(row.token));
@@ -271,7 +272,7 @@ export async function sendPush(userId: string, title: string, body: string, data
         ? [tokens[index]!]
         : []
     );
-    if (invalid.length) await database()`delete from device_tokens where token = any(${invalid})`;
+    if (invalid.length) await database()`update device_tokens set enabled=false,invalidated_at=now() where token = any(${invalid})`;
     const errors = result.responses
       .filter(response => !response.success)
       .map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" }));

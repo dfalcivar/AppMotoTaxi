@@ -21,6 +21,7 @@ import "./brand.css";
 import "./fare-audit.css";
 import "./console-system.css";
 import "./cooperative-portal.css";
+import "./notifications-admin.css";
 import {CooperativePortal} from './cooperative-portal';
 import { MobileAccountActions } from "./mobile-account-actions.js";
 const MembershipAdmin=lazy(()=>import("./memberships-admin.js").then(m=>({default:m.MembershipAdmin})));
@@ -31,10 +32,11 @@ const CoverageZones=lazy(()=>import("./service-area-admin.js").then(m=>({default
 const FareTerritories=lazy(()=>import("./fare-admin.js").then(m=>({default:m.FareTerritories})));
 const CommercialAdmin=lazy(()=>import("./commercial-admin.js").then(m=>({default:m.CommercialAdmin})));
 const FiscalAdmin = lazy(() => import('./fiscal-admin.js').then(module => ({default:module.FiscalAdmin})));
+const NotificationsAdmin=lazy(()=>import('./notifications-admin.js').then(module=>({default:module.NotificationsAdmin})));
 import { AdminErrorBoundary } from "./observability.js";
 import { PassengerCancellationSettings, PassengerCancellationHistory } from './passenger-cancellations.js';
 
-type Module = "home" | "fleet" | "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
+type Module = "home" | "fleet" | "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "notifications" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
 
 const labels: Record<Module, string> = {
   home:"Inicio",
@@ -48,6 +50,7 @@ const labels: Record<Module, string> = {
   memberships: "Membresías",
   passengers: "Pasajeros",
   cooperatives: "Cooperativas",
+  notifications: "Notificaciones inteligentes",
   pricing: "Tarifas",
   zones: "Zonas de cobertura",
   settings: "Configuración operativa",
@@ -67,6 +70,7 @@ const modulePermissions: Record<Module, string[]> = {
   operations: ["operations:view"], alerts: ["alerts:view"],
   trips: ["trips:view"], drivers: ["drivers:view"], memberships: ["memberships:view"], passengers: ["passengers:view"],
   cooperatives: ["cooperatives:view"], pricing: ["pricing:view"], zones: ["service_areas:view"],
+  notifications: ["notifications:view"],
   settings: ["settings:view"], advertising: ["advertising:view"],
   commercial: ["commercial:dashboard", "commercial:leads:view", "commercial:campaigns:view", "commercial:payments:view"], incidents: ["incidents:view"],
   access: ["roles:manage"], audit: ["audit:view"], database: ["database:view"]
@@ -958,6 +962,7 @@ function App() {
       {currentModule === "fleet" && <FleetAdmin token={session.token} permissions={session.user.permissions ?? []} cooperativeScoped={session.user.role==='ANALISTA_COOPERATIVA'} />}
       {currentModule === "passengers" && <Passengers canEditAccounts={allowed("mobile_accounts:edit")} token={session.token} canManage={allowed("passengers:manage")} canResetPasswords={allowed("users:manage")} />}
       {currentModule === "cooperatives" && <Cooperatives token={session.token} canManage={allowed("cooperatives:manage")} />}
+      {currentModule === "notifications" && <NotificationsAdmin token={session.token} permissions={session.user.permissions ?? []} />}
       {currentModule === "pricing" && <Pricing token={session.token} admin={allowed("pricing:manage")} />}
       {currentModule === "pricing" && <FareTerritories token={session.token} canManage={allowed("pricing:manage")} />}
       {currentModule === "zones" && <CoverageZones token={session.token} permissions={session.user.permissions ?? []} />}

@@ -74,6 +74,11 @@ export const allPermissions = [
   "database:view",
   "operations:view",
   "alerts:view",
+  "notifications:view",
+  "notifications:manage",
+  "notifications:test",
+  "notification_campaigns:view",
+  "notification_campaigns:manage",
   "faq:view",
   "faq:manage",
   "memberships:view",
@@ -110,13 +115,14 @@ const operationsPermissions: Permission[] = [
   "trips:view", "trips:manage", "support:view", "support:manage",
   "incidents:view", "incidents:manage", "reports:view", "reports:export",
   "pricing:view", "zones:view", "service_areas:view", "advertising:view", "settings:view",
-  "operations:view", "alerts:view", "faq:view"
+  "operations:view", "alerts:view", "notifications:view", "notifications:manage",
+  "notifications:test", "notification_campaigns:view", "notification_campaigns:manage", "faq:view"
 ];
 
 const supportPermissions: Permission[] = [
   "dashboard:view", "passengers:view", "drivers:view", "trips:view",
   "support:view", "support:manage", "incidents:view", "incidents:manage",
-  "faq:view", "faq:manage", "service_areas:view"
+  "faq:view", "faq:manage", "service_areas:view", "notifications:view", "notifications:test"
 ];
 
 const cooperativeAnalystPermissions: Permission[] = [
@@ -144,7 +150,7 @@ const commercialPermissions: Permission[] = [
   "commercial:advertisers:view", "commercial:advertisers:manage",
   "commercial:orders:view", "commercial:orders:manage",
   "commercial:payments:view", "commercial:campaigns:view",
-  "commercial:campaigns:manage", "advertising:view", "service_areas:view"
+  "commercial:campaigns:manage", "advertising:view", "service_areas:view", "notification_campaigns:view"
 ];
 
 export const rolePermissions: Record<AdminRole, readonly Permission[]> = {

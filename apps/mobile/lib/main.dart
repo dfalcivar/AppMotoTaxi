@@ -1697,6 +1697,12 @@ class Api {
         if (fcm == null || fcm.isEmpty) {
           throw StateError('Firebase no entregó un token FCM.');
         }
+        final notificationSettings =
+            await FirebaseMessaging.instance.getNotificationSettings();
+        final notificationsEnabled = const {
+          AuthorizationStatus.authorized,
+          AuthorizationStatus.provisional,
+        }.contains(notificationSettings.authorizationStatus);
         final response =
             await call('PUT', '/v1/devices/fcm-token', token: token, body: {
           'token': fcm,
@@ -1704,6 +1710,7 @@ class Api {
               defaultTargetPlatform == TargetPlatform.iOS ? 'IOS' : 'ANDROID',
           'firebaseProjectId': Firebase.app().options.projectId,
           'notificationProtocol': nativeAlertsSupported ? 2 : 1,
+          'notificationsEnabled': notificationsEnabled,
         });
         final push = response?['push'];
         if (push is Map && push['projectMatches'] == false) {
@@ -1848,6 +1855,11 @@ class Api {
       call('PATCH', '/v1/notifications/$id/read', token: t);
   Future<dynamic> markAllNotificationsRead(String t) =>
       call('POST', '/v1/notifications/read-all', token: t);
+  Future<dynamic> trackNotificationEvent(
+          String t, String id, String event,
+          {Map<String, dynamic> metadata = const {}}) =>
+      call('POST', '/v1/notifications/$id/events',
+          token: t, body: {'event': event, 'metadata': metadata});
   Future<Map<String, dynamic>> supportConfig(String t) async =>
       Map<String, dynamic>.from(
           await call('GET', '/v1/support/config', token: t));
@@ -7566,6 +7578,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   bool initialLocationLoading = false;
   bool usingProvisionalLocation = false;
   bool requestSubmitting = false;
+  String? smartNotificationAttributionId;
   @override
   void initState() {
     super.initState();
@@ -7648,6 +7661,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     loadFavoritePlaces();
     loadServiceAreas();
     Future.microtask(initializePassengerLocation);
+    SmartTripSuggestion.pending.addListener(_consumeSmartTripSuggestion);
     FleetLinks.pending.addListener(pendingOwnerFleetLink);
     WidgetsBinding.instance
         .addPostFrameCallback((_) => pendingOwnerFleetLink());
@@ -7744,6 +7758,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     openedMessageSubscription?.cancel();
     realtime.dispose();
     origin.dispose();
+    SmartTripSuggestion.pending.removeListener(_consumeSmartTripSuggestion);
     FleetLinks.pending.removeListener(pendingOwnerFleetLink);
     destination.dispose();
     for (final stop in additionalStops) {
@@ -7766,6 +7781,79 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         curve: Curves.easeOutCubic,
       );
     });
+  }
+
+  void _consumeSmartTripSuggestion() {
+    final suggestion = SmartTripSuggestion.pending.value;
+    if (suggestion == null || !mounted) return;
+    SmartTripSuggestion.pending.value = null;
+    unawaited(_prepareSmartTrip(suggestion));
+  }
+
+  Future<void> _prepareSmartTrip(Map<String, dynamic> data) async {
+    if (active != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Finaliza tu viaje actual antes de preparar otro recorrido.')));
+      }
+      return;
+    }
+    final latitude = double.tryParse(
+        (data['destinationLatitude'] ?? data['destinationLat'])?.toString() ??
+            '');
+    final longitude = double.tryParse(
+        (data['destinationLongitude'] ?? data['destinationLng'])?.toString() ??
+            '');
+    if (latitude == null || longitude == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Esta recomendación no contiene un destino válido.')));
+      }
+      return;
+    }
+    final point = LatLng(latitude, longitude);
+    final label = cleanAddressLabel(data['destinationReference'],
+        fallback: 'Destino sugerido');
+    for (final stop in additionalStops) {
+      stop.dispose();
+    }
+    setState(() {
+      additionalStops.clear();
+      selectedDestinationIndex = 0;
+      destination.text = label;
+      dropoff = point;
+      scheduledFor = null;
+      editingScheduledTripId = null;
+      routePoints = [];
+      routeDistanceMeters = null;
+      routeDurationSeconds = null;
+      if (pickup == null && currentLocation != null) {
+        pickup = currentLocation;
+        origin.text = 'Mi ubicación actual';
+      }
+      message = 'Destino sugerido listo. Revísalo antes de confirmar.';
+    });
+    final notificationId = data['notificationId']?.toString();
+    smartNotificationAttributionId =
+        notificationId == null || notificationId.isEmpty ? null : notificationId;
+    if (notificationId != null && notificationId.isNotEmpty) {
+      try {
+        await api.markNotificationRead(widget.s.token, notificationId);
+        if (data['deepLinkTracked'] != true) {
+          await api.trackNotificationEvent(
+              widget.s.token, notificationId, 'DEEP_LINK_OPENED');
+        }
+        await api.trackNotificationEvent(widget.s.token, notificationId,
+            'TRIP_PREPARATION_OPENED',
+            metadata: {'destinationReference': label});
+      } catch (_) {
+        // La preparación del borrador no depende de la analítica.
+      }
+    }
+    if (!mounted) return;
+    _movePassengerSheet(.90);
+    await refreshRoute(force: true);
   }
 
   void _revealPassengerSearch() {
@@ -7981,7 +8069,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         push.data['notificationRoute'] ?? push.data['type']);
     final notificationType = push.data['type']?.toString();
     final tripId = push.data['tripId']?.toString();
-    if (target == NotificationTarget.chat) {
+    if (target == NotificationTarget.smartTrip) {
+      unawaited(_prepareSmartTrip({
+        ...Map<String, dynamic>.from(push.data),
+        'notificationId': push.data['internalNotificationId'],
+      }));
+    } else if (target == NotificationTarget.chat) {
       unawaited(openPassengerChat(tripId,
           notificationId: push.data['internalNotificationId']));
     } else if (target == NotificationTarget.scheduledTrips) {
@@ -10462,6 +10555,16 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           ? await api.createFromPayload(widget.s.token, payload)
           : await api.updateScheduled(widget.s.token, editingId, payload);
       final isScheduled = payload['scheduledFor'] != null;
+      final attributionId = smartNotificationAttributionId;
+      if (attributionId != null) {
+        unawaited(api.trackNotificationEvent(
+            widget.s.token, attributionId, 'TRIP_REQUESTED',
+            metadata: {
+              'tripId': t['tripId']?.toString(),
+              'scheduled': isScheduled,
+            }).catchError((_) {}));
+        smartNotificationAttributionId = null;
+      }
       setState(() {
         if (!isScheduled) {
           active = {

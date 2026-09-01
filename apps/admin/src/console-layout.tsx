@@ -4,7 +4,7 @@ import {consoleDescriptions,consoleGroups,ecuDate,navigateConsole,normalizeSearc
 import {ConsoleIcon,ConsoleModal,ErrorState,LoadingState} from './console-ui';
 import {MototaxiIcon} from './mototaxi-icon';
 
-const iconFor:Record<string,string>={home:'home',dashboard:'chart',operations:'map',alerts:'alert',trips:'trips',drivers:'users',passengers:'users',cooperatives:'shield',memberships:'money',fiscal:'document',commercial:'chart',advertising:'document',pricing:'money',zones:'map',settings:'settings',incidents:'support',access:'shield',audit:'document',database:'database'};
+const iconFor:Record<string,string>={home:'home',dashboard:'chart',operations:'map',alerts:'alert',trips:'trips',drivers:'users',passengers:'users',cooperatives:'shield',memberships:'money',fiscal:'document',commercial:'chart',advertising:'document',notifications:'bell',pricing:'money',zones:'map',settings:'settings',incidents:'support',access:'shield',audit:'document',database:'database'};
 export function ConsoleLayout({session,current,labels,visible,can,roleLabel,onNavigate,onLogout,onRefresh,children}:{session:Session;current:string;labels:Record<string,string>;visible:string[];can:(p:string)=>boolean;roleLabel:string;onNavigate:(module:string,params?:Record<string,string>)=>void;onLogout:()=>void;onRefresh:()=>void;children:ReactNode}) {
   const key=`cg:nav:${session.user.id??session.user.email}`;
   const read=(suffix:string)=>{try{return JSON.parse(localStorage.getItem(key+suffix)??'[]') as string[];}catch{return [];}};
