@@ -94,6 +94,31 @@ void main() {
     });
   });
 
+  group('reincorporación de ofertas del conductor', () {
+    test('una reoferta del mismo viaje se reconoce como una aparición nueva',
+        () {
+      final first = driverOfferOccurrenceKey('trip-1', {
+        'offeredAt': '2026-09-01T10:00:00Z',
+        'expiresAt': '2026-09-01T10:00:15Z',
+      });
+      final returning = driverOfferOccurrenceKey('trip-1', {
+        'offeredAt': '2026-09-01T10:08:00Z',
+        'expiresAt': '2026-09-01T10:08:15Z',
+      });
+      expect(returning, isNot(first));
+    });
+
+    test('eventos duplicados de la misma oferta conservan una sola identidad',
+        () {
+      final offer = {
+        'offeredAt': '2026-09-01T10:08:00Z',
+        'expiresAt': '2026-09-01T10:08:15Z',
+      };
+      expect(driverOfferOccurrenceKey('trip-1', offer),
+          driverOfferOccurrenceKey('trip-1', Map.of(offer)));
+    });
+  });
+
   group('enlaces de preguntas frecuentes', () {
     test('detecta un enlace web seguro dentro de la respuesta', () {
       final uri = firstWebUrl(

@@ -120,6 +120,9 @@ const driverGpsActiveMessage =
 bool shouldShowDriverStatusMessage(String? message) =>
     message != null && message != driverGpsActiveMessage;
 
+String driverOfferOccurrenceKey(String tripId, Map<dynamic, dynamic> offer) =>
+    '$tripId:${offer['offeredAt'] ?? offer['expiresAt'] ?? ''}';
+
 FleetGateway fleetFor(Session session) => FleetGateway(
         (method, path, body) =>
             Api().call(method, path, token: session.token, body: body),
@@ -12908,10 +12911,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
       return;
     }
-    if (closedOfferTrips.contains(tripId) ||
-        announcedOfferIds.containsKey(tripId)) {
-      return;
-    }
     // Reconcile with the server before playing late WebSocket/FCM messages.
     dynamic validOffer;
     try {
@@ -12922,12 +12921,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     } catch (_) {
       return;
     }
-    if (!mounted ||
-        validOffer == null ||
-        closedOfferTrips.contains(tripId) ||
-        announcedOfferIds.containsKey(tripId)) {
-      return;
-    }
+    if (!mounted || validOffer == null) return;
+    // A pending trip can be offered again after this driver finishes another
+    // one. Its trip id is intentionally preserved, while offeredAt changes.
+    // Treat that fresh occurrence like a new trip without reviving stale push
+    // events from an offer that is no longer active.
+    final occurrenceKey = driverOfferOccurrenceKey(
+        tripId, Map<dynamic, dynamic>.from(validOffer as Map));
+    if (announcedOfferIds.containsKey(occurrenceKey)) return;
+    closedOfferTrips.remove(tripId);
     title ??= 'Nuevo viaje cercano';
     body ??=
         '${validOffer['passengers']} pasajero(s): ${validOffer['originReference'] ?? 'Origen'} → ${validOffer['destinationReference'] ?? 'Destino'}';
@@ -12948,13 +12950,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final now = DateTime.now();
     announcedOfferIds.removeWhere(
         (_, value) => now.difference(value) > const Duration(minutes: 3));
-    final previous = announcedOfferIds[tripId];
+    final previous = announcedOfferIds[occurrenceKey];
     if (previous != null &&
         now.difference(previous) < const Duration(seconds: 8)) {
       debugPrint('Evento duplicado de solicitud ignorado: $tripId');
       return;
     }
-    announcedOfferIds[tripId] = now;
+    announcedOfferIds[occurrenceKey] = now;
     var nativeNotificationShown = false;
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       try {
@@ -13439,8 +13441,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   bool driverRefreshing = false;
+  bool driverRefreshPending = false;
   Future<void> refresh() async {
-    if (driverRefreshing) return;
+    if (driverRefreshing) {
+      // Offers can be reactivated while the completed trip is still being
+      // reconciled. Never drop that refresh: run it as soon as this cycle ends.
+      driverRefreshPending = true;
+      return;
+    }
     driverRefreshing = true;
     try {
       unawaited(refreshMembership());
@@ -13524,6 +13532,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       if (mounted) setState(() => driverMessage = e.toString());
     } finally {
       driverRefreshing = false;
+      if (driverRefreshPending && mounted) {
+        driverRefreshPending = false;
+        unawaited(refresh());
+      }
     }
   }
 
