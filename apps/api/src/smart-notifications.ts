@@ -150,7 +150,7 @@ async function estimateSegment(segment:z.infer<typeof segmentSchema>){
       and (${segment.roles.length}=0 or u.role::text=any(${segment.roles}::text[]) or exists(select 1 from mobile_account_roles r where r.user_id=u.id and r.role=any(${segment.roles}::text[])))
       and (${segment.zones.length}=0 or area.name=any(${segment.zones}::text[]) or recent.service_area_id::text=any(${segment.zones}::text[]))
       and (${segment.activeWithinDays??null}::int is null or coalesce(recent.requested_at,u.updated_at,u.created_at)>=now()-(coalesce(${segment.activeWithinDays??null},365)*interval '1 day'))
-    order by u.id`;
+    order by u.id::text`;
   const valid=rows.filter((row:any)=>row.validToken);
   return {usersFound:rows.length,total:valid.length,android:valid.filter((row:any)=>row.platform==='ANDROID').length,ios:valid.filter((row:any)=>row.platform==='IOS').length,withoutValidToken:rows.length-valid.length,excluded:rows.length-valid.length};
 }
