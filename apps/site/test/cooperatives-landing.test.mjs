@@ -21,6 +21,8 @@ test("publica una landing específica para cooperativas de mototaxis", () => {
   assert.match(page, /Conoce cómo Costa-Go convierte la operación de tu cooperativa en información clara para gestionar mejor, identificar oportunidades y tomar decisiones con respaldo de datos\./);
   assert.doesNotMatch(page, /class="coastal-art"/);
   assert.match(home, /href="\/cooperativas\/"/);
+  assert.match(page, /Acceso corporativo/);
+  assert.match(page, /https:\/\/mototaxi-atacames-admin\.onrender\.com\//);
 });
 
 test("el formulario incluye los campos requeridos y envío idempotente", () => {

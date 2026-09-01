@@ -20,6 +20,8 @@ import "./service-areas.css";
 import "./brand.css";
 import "./fare-audit.css";
 import "./console-system.css";
+import "./cooperative-portal.css";
+import {CooperativePortal} from './cooperative-portal';
 import { MobileAccountActions } from "./mobile-account-actions.js";
 const MembershipAdmin=lazy(()=>import("./memberships-admin.js").then(m=>({default:m.MembershipAdmin})));
 const FleetAdmin=lazy(()=>import('./fleet-admin.js').then(m=>({default:m.FleetAdmin})));
@@ -189,7 +191,7 @@ function Login({ onSession }: { onSession: (session: Session) => void }) {
     event.preventDefault(); setBusy(true); setError("");
     try { onSession(await login(email.trim(), password)); } catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
   }
-  return <div className="login-shell"><form className="login-card" onSubmit={submit}><div className="admin-brand-lockup"><img src="/costa-go-emblem.png" alt="" /><strong><span>COSTA-</span>GO</strong></div><span className="eyebrow">PLATAFORMA DE MOVILIDAD</span><h1>Centro de control</h1><p>Acceso para administración y soporte.</p><label>Correo<input autoComplete="username" type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label><label>Contraseña<input autoComplete="current-password" type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label><Notice error={error} /><button className="primary" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button></form></div>;
+  return <div className="login-shell"><form className="login-card" onSubmit={submit}><div className="admin-brand-lockup"><img src="/costa-go-emblem.png" alt="" /><strong><span>COSTA-</span>GO</strong></div><span className="eyebrow">PLATAFORMA DE MOVILIDAD</span><h1>Centro de control</h1><p>Acceso para administración, cooperativas y soporte autorizado.</p><label>Correo<input autoComplete="username" type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label><label>Contraseña<input autoComplete="current-password" type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label><Notice error={error} /><button className="primary" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button><small className="login-scope-note">Cada cuenta de cooperativa consulta únicamente su propia operación.</small></form></div>;
 }
 
 function DashboardBars({ items, valueKey = "value", labelKey = "label" }: { items: any[]; valueKey?: string; labelKey?: string }) {
@@ -242,12 +244,12 @@ function DashboardDetailDialog({ token, selection, query, onClose, endpoint="/v1
   return <div className="modal-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)onClose();}}><section className="modal-card metric-detail-modal" role="dialog" aria-modal="true" aria-labelledby="metric-detail-title"><div className="decision-heading"><div><span className="eyebrow">DETALLE DE MÉTRICA</span><h2 id="metric-detail-title">{selection.title}</h2></div><button className="modal-close-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></div><form className="metric-detail-search" onSubmit={event=>{event.preventDefault();setPage(1);setSearch(draft.trim());}}><input aria-label="Buscar en el detalle" value={draft} onChange={event=>setDraft(event.target.value)} placeholder="Buscar por nombre, viaje, lugar…"/><button className="secondary">Buscar</button>{search&&<button className="link" type="button" onClick={()=>{setDraft("");setSearch("");setPage(1);}}>Limpiar</button>}</form><Notice error={error}/>{loading?<Empty text="Consultando registros…"/>:data?.rows?.length?<DataTable serverPaged headers={[...data.columns.map((column:any)=>column.label),"Detalle"]} rows={data.rows.map((row:any)=>[...data.columns.map((column:any)=>dashboardCell(row[column.key],column.type)),(row.id||row.tripId)?<button className="link" onClick={()=>{onClose();const drivers=["connectedDrivers","activeDrivers","pendingDrivers","highCancellationDrivers"].includes(selection.metric);navigateConsole(data.module??(drivers?"drivers":selection.metric==="openIncidents"?"incidents":"trips"),{record:(data.module==="incidents"||selection.metric==="openIncidents")?row.id:(row.tripId??row.id)});}}>Ver registro</button>:"—"])}/>:<Empty text="No existen registros para esta métrica y los filtros aplicados."/>}<div className="metric-detail-footer"><small>{Number(data?.total??0).toLocaleString("es-EC")} registro(s) · página {page} de {pages}</small><div className="row-actions"><button className="secondary" type="button" disabled={page<=1||loading} onClick={()=>setPage(value=>value-1)}>Anterior</button><button className="secondary" type="button" disabled={page>=pages||loading} onClick={()=>setPage(value=>value+1)}>Siguiente</button><button className="primary" type="button" onClick={onClose}>Cerrar</button></div></div></section></div>;
 }
 
-function Dashboard({ token, cooperative = false }: { token: string; cooperative?: boolean }) {
+function Dashboard({ token }: { token: string }) {
   const today = new Date(); const monthAgo = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000);
   const dateValue = (date: Date) => date.toLocaleDateString("en-CA",{timeZone:"America/Guayaquil"});
   const initial = { from: dateValue(monthAgo), to: dateValue(today), cooperativeId: "", driverId: "", sector: "", status: "", tripType: "ALL" };
   const [draft, setDraft] = useConsoleState("dashboard-draft",initial); const [filters, setFilters] = useConsoleState("dashboard-filters",initial);
-  const [data, setData] = useState<any>(); const [error, setError] = useState(""); const [loading, setLoading] = useState(true); const [selectedDriver, setSelectedDriver] = useState<any>(); const [driverLoading, setDriverLoading] = useState(false); const [detail,setDetail]=useState<DashboardDetailSelection>(); const [cooperativeDetail,setCooperativeDetail]=useState(false);
+  const [data, setData] = useState<any>(); const [error, setError] = useState(""); const [loading, setLoading] = useState(true); const [selectedDriver, setSelectedDriver] = useState<any>(); const [driverLoading, setDriverLoading] = useState(false); const [detail,setDetail]=useState<DashboardDetailSelection>();
 
   const dashboardQuery = (values: typeof initial) => {
     const query = new URLSearchParams();
@@ -263,15 +265,8 @@ function Dashboard({ token, cooperative = false }: { token: string; cooperative?
 
   useEffect(() => {
     setLoading(true); setError("");
-    const path = cooperative ? "/v1/admin/cooperative-dashboard/overview" : `/v1/admin/dashboard?${dashboardQuery(filters)}`;
-    apiFetch<any>(path, token).then(setData).catch(reason => setError(errorText(reason))).finally(() => setLoading(false));
-  }, [token, cooperative, filters]);
-
-  if (cooperative) {
-    if (error) return <Notice error={error} />; if (!data) return <Empty text="Cargando operación…" />;
-    const organization=data.cooperative; const stats=[["Conductores",organization.totalDrivers],["Conductores activos",organization.activeDrivers],["Conductores conectados",organization.connectedDrivers],["Viajes totales",organization.totalTrips],["Viajes del mes",organization.tripsThisMonth],["Completados",organization.completedTrips],["Cancelados",organization.cancelledTrips]];
-    return <><div className="metric-grid">{stats.map(([label,value])=><button type="button" className="metric interactive-metric" key={String(label)} onClick={()=>setCooperativeDetail(true)}><span>{String(label)}</span><strong>{String(value??0)}</strong><small>Ver registros</small></button>)}</div><section className="card"><Header eyebrow="ALCANCE RESTRINGIDO" title={organization.name}/><p className="note">Estas cifras contienen únicamente información de tu cooperativa. Selecciona cualquier indicador para consultar los conductores, viajes y actividad que lo componen.</p></section>{cooperativeDetail&&<CooperativeOverviewDialog token={token} item={organization} self onClose={()=>setCooperativeDetail(false)}/>}</>;
-  }
+    apiFetch<any>(`/v1/admin/dashboard?${dashboardQuery(filters)}`, token).then(setData).catch(reason => setError(errorText(reason))).finally(() => setLoading(false));
+  }, [token, filters]);
 
   const setPreset = (days: number) => { const end = new Date(); const start = new Date(end.getTime() - (days - 1) * 86400000); const next = { ...draft, from: dateValue(start), to: dateValue(end) }; setDraft(next); setFilters(next); };
   const metricLabels: Record<string, { label: string; icon: string; tone: string }> = {
@@ -949,11 +944,12 @@ function App() {
   const requested=new URLSearchParams(location).get('module') as Module;
   const currentModule=visible.includes(requested)?requested:'home';
   const cooperativeDashboard=allowed('cooperative_dashboard:view')&&!allowed('dashboard:view');
-  return <ConsoleLayout session={session} current={currentModule} labels={labels} visible={visible} can={allowed} roleLabel={roleLabels[session.user.role]??session.user.role} onNavigate={selectModule} onLogout={logout} onRefresh={()=>setRevision(v=>v+1)}>
+  const resolvedLabels=cooperativeDashboard?{...labels,home:'Portal corporativo',dashboard:'Inteligencia operativa',fleet:'Flota y unidades'}:labels;
+  return <ConsoleLayout session={session} current={currentModule} labels={resolvedLabels} visible={visible} can={allowed} roleLabel={roleLabels[session.user.role]??session.user.role} onNavigate={selectModule} onLogout={logout} onRefresh={()=>setRevision(v=>v+1)}>
     <ConsoleContext.Provider value={{userId:(session.user.id??session.user.email)+':'+(session.user.permissions??[]).join(','),module:currentModule,canExport:allowed('reports:export')}}>
     <div key={currentModule+location+revision} className="cg-module-content"><Suspense fallback={<LoadingState label="Cargando módulo…"/>}>
-      {currentModule==='home'&&<ConsoleHome token={session.token} name={session.user.name} can={allowed} cooperative={cooperativeDashboard} Detail={DashboardDetailDialog} Map={OperationsMap}/>}
-      {currentModule === "dashboard" && <Dashboard token={session.token} cooperative={cooperativeDashboard} />}
+      {currentModule==='home'&&(cooperativeDashboard?<CooperativePortal token={session.token} name={session.user.name} view="overview" canExport={allowed('reports:export_aggregated')}/>:<ConsoleHome token={session.token} name={session.user.name} can={allowed} cooperative={false} Detail={DashboardDetailDialog} Map={OperationsMap}/>)}
+      {currentModule === "dashboard" && (cooperativeDashboard?<CooperativePortal token={session.token} name={session.user.name} view="analytics" canExport={allowed('reports:export_aggregated')}/>:<Dashboard token={session.token} />)}
       {currentModule === "operations" && <OperationsCenter token={session.token} />}
       {currentModule === "alerts" && <AlertsCenter token={session.token} />}
       {currentModule === "trips" && <Trips token={session.token} admin={allowed("trips:manage")} />}
