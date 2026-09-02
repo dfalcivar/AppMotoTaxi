@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -2215,6 +2216,9 @@ class MototaxiApp extends StatelessWidget {
           navigatorKey: rootNavigatorKey,
           title: 'Costa-Go',
           debugShowCheckedModeBanner: false,
+          locale: const Locale('es', 'EC'),
+          supportedLocales: const [Locale('es', 'EC')],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
           themeMode: mode,
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),
@@ -10969,6 +10973,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                         if (mounted) {
                                           setState(() => message =
                                               'Viaje programado cancelado.');
+                                          unawaited(load());
                                         }
                                       },
                                       icon: const Icon(Icons.close),
@@ -12505,6 +12510,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   List scheduledOffers = [];
   List scheduledTrips = [];
   DateTime? lastScheduledRefreshAt;
+  int scheduledRefreshRevision = 0;
   DateTime? lastActiveProbeAt;
   bool available = false;
   String? driverMessage;
@@ -12621,6 +12627,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               message.data['reason'] == 'ADMIN_CANCELLED'
                   ? 'El viaje fue cancelado por administración.'
                   : 'El pasajero canceló la solicitud.');
+          // La portada usa una caché independiente de viajes programados.
+          // Una cancelación debe invalidarla inmediatamente para no conservar
+          // el contador ni el estado anterior hasta abrir el detalle.
+          unawaited(refreshScheduled(force: true));
         }
         if (message.data['type'] == 'TRIP_OFFER' ||
             message.data['type'] == 'TRIP_OFFER_CANCELLED' ||
@@ -12803,6 +12813,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       realtime.connect();
       unawaited(api.registerFcm(widget.s.token));
       unawaited(refreshMembership(force: true));
+      unawaited(refreshScheduled(force: true));
       unawaited(restore(adjustSheet: false).catchError((Object error) {
         if (mounted) {
           setState(() => driverMessage =
@@ -13078,6 +13089,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         setState(() => offers
             .removeWhere((offer) => offer['tripId']?.toString() == tripId));
       }
+      // Este evento también se emite al cancelar una reserva programada.
+      // Forzamos la reconciliación de su portada y listado, saltando la caché
+      // normal entre consultas periódicas.
+      unawaited(refreshScheduled(force: true));
       refresh();
     } else if (event['type'] == 'trip:stop-completed') {
       final completed = event['completedStop'] is Map
@@ -13578,16 +13593,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final now = DateTime.now();
     if (!force &&
         lastScheduledRefreshAt != null &&
-        now.difference(lastScheduledRefreshAt!) < const Duration(seconds: 30)) {
+        now.difference(lastScheduledRefreshAt!) < const Duration(seconds: 5)) {
       return;
     }
     lastScheduledRefreshAt = now;
+    final revision = ++scheduledRefreshRevision;
     try {
       final values = await Future.wait([
         api.scheduledOffers(widget.s.token),
         api.scheduledTrips(widget.s.token),
       ]);
-      if (!mounted) return;
+      if (!mounted || revision != scheduledRefreshRevision) return;
       setState(() {
         scheduledOffers = values[0];
         scheduledTrips = values[1];
