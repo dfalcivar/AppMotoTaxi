@@ -8793,12 +8793,21 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (type == 'driver:location') {
       final item = Map<String, dynamic>.from(event['location'] as Map);
       if (item['tripId']?.toString() != active?['tripId']?.toString()) return;
+      late final LatLng latestDriverPosition;
       setState(() {
-        driverPosition = LatLng((item['latitude'] as num).toDouble(),
+        latestDriverPosition = LatLng((item['latitude'] as num).toDouble(),
             (item['longitude'] as num).toDouble());
+        driverPosition = latestDriverPosition;
         driverBearing = (item['bearing'] as num?)?.toDouble() ?? 0;
       });
-      refreshRoute();
+      // La polyline se conserva durante el avance. Solo pedimos otra ruta si
+      // el GPS confirma un desvío real; LiveMap se ocupa del movimiento y del
+      // ajuste visual sobre la vía entre una lectura y la siguiente.
+      if (routePoints.length < 2 ||
+          distanceFromMototaxiRouteMeters(latestDriverPosition, routePoints) >
+              45) {
+        refreshRoute(force: true);
+      }
       return;
     }
     if (type == 'trip:subscribed' && event['liveLocation'] != null) {
@@ -9102,7 +9111,15 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         }
       }
       realtime.subscribeTrip(t['tripId'].toString());
-      refreshRoute(force: routePoints.isEmpty);
+      final currentStatus = t['status']?.toString();
+      final currentDriverPosition = driverPosition;
+      if (routePoints.isEmpty || previousStatus != currentStatus) {
+        refreshRoute(force: true);
+      } else if (currentDriverPosition != null &&
+          distanceFromMototaxiRouteMeters(currentDriverPosition, routePoints) >
+              45) {
+        refreshRoute(force: true);
+      }
     } catch (_) {
     } finally {
       passengerLoadBusy = false;
@@ -12205,6 +12222,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                           serviceAreaCatalog?.referenceCenter,
                       driverPosition: driverPosition,
                       driverBearing: driverBearing,
+                      driverMarkerStatus:
+                          active?['status']?.toString() == 'IN_PROGRESS'
+                              ? MototaxiMarkerStatus.activeTrip
+                              : MototaxiMarkerStatus.assigned,
                       routePoints: routePoints,
                       nearbyDrivers: active == null
                           ? nearbyDrivers
@@ -13301,7 +13322,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (available && active == null) {
       unawaited(refreshNearbyDriverPositions(pointFrom(position)));
     }
-    refreshDriverRoute();
+    final point = pointFrom(position);
+    if (active != null &&
+        (routePoints.length < 2 ||
+            distanceFromMototaxiRouteMeters(point, routePoints) > 45)) {
+      refreshDriverRoute(force: true);
+    }
   }
 
   void sendReviewPosition(LatLng point) {
@@ -13486,6 +13512,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await refreshScheduled();
       if (active == null) await syncActivatedScheduledTrip();
       if (active != null) {
+        final previousStatus = active?['status']?.toString();
         final latest = await api.trip(widget.s.token, active['tripId']);
         if (latest['status'] == 'COMPLETED') {
           closeOfferAlert(latest['tripId']?.toString());
@@ -13524,7 +13551,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         }
         unawaited(resolveOriginAddress(latest));
         realtime.subscribeTrip(latest['tripId'].toString());
-        refreshDriverRoute();
+        if (routePoints.isEmpty ||
+            previousStatus != latest['status']?.toString()) {
+          refreshDriverRoute(force: true);
+        }
       }
       if (active == null && available) {
         final r = await api.offers(widget.s.token);
@@ -17422,6 +17452,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       driverPosition:
                           active == null ? null : currentDriverPosition,
                       driverBearing: currentDriverBearing,
+                      driverMarkerStatus:
+                          active?['status']?.toString() == 'IN_PROGRESS'
+                              ? MototaxiMarkerStatus.activeTrip
+                              : MototaxiMarkerStatus.assigned,
                       routePoints: routePoints,
                       nearbyDrivers: active == null
                           ? nearbyDriverPositions

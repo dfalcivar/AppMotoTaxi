@@ -5,11 +5,81 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart';
 
 enum MapPointSelection { origin, destination }
+
+/// Los únicos estados visuales permitidos para una mototaxi en el mapa.
+enum MototaxiMarkerStatus { available, assigned, activeTrip }
+
+const _mototaxiAsset = 'assets/images/mototaxi-map-marker.png';
+const _costaGoBlue = Color(0xff0875df);
+const _costaGoAssignedBlue = Color(0xff0057c8);
+const _costaGoTripGreen = Color(0xff159447);
+
+Color _mototaxiStatusColor(MototaxiMarkerStatus status) => switch (status) {
+      MototaxiMarkerStatus.available => _costaGoBlue,
+      MototaxiMarkerStatus.assigned => _costaGoAssignedBlue,
+      MototaxiMarkerStatus.activeTrip => _costaGoTripGreen,
+    };
+
+/// Ajusta una lectura GPS a la vía dibujada cuando está lo bastante cerca.
+/// Si el GPS se alejó realmente, conserva su posición para que la capa superior
+/// pueda decidir cuándo solicitar una nueva ruta.
+@visibleForTesting
+LatLng snapMototaxiPositionToRoute(
+  LatLng position,
+  List<LatLng> route, {
+  double maximumDistanceMeters = 38,
+}) {
+  if (route.length < 2) return position;
+  final latitudeRadians = position.latitude * math.pi / 180;
+  final longitudeMeters = 111320 * math.cos(latitudeRadians);
+  const latitudeMeters = 110540.0;
+  LatLng? closest;
+  var closestSquaredDistance = double.infinity;
+
+  for (var index = 0; index < route.length - 1; index++) {
+    final start = route[index];
+    final end = route[index + 1];
+    final startX = (start.longitude - position.longitude) * longitudeMeters;
+    final startY = (start.latitude - position.latitude) * latitudeMeters;
+    final endX = (end.longitude - position.longitude) * longitudeMeters;
+    final endY = (end.latitude - position.latitude) * latitudeMeters;
+    final dx = endX - startX;
+    final dy = endY - startY;
+    final segmentSquaredLength = dx * dx + dy * dy;
+    final progress = segmentSquaredLength == 0
+        ? 0.0
+        : ((-startX * dx - startY * dy) / segmentSquaredLength).clamp(0.0, 1.0);
+    final projectedX = startX + dx * progress;
+    final projectedY = startY + dy * progress;
+    final squaredDistance = projectedX * projectedX + projectedY * projectedY;
+    if (squaredDistance < closestSquaredDistance) {
+      closestSquaredDistance = squaredDistance;
+      closest = LatLng(
+        start.latitude + (end.latitude - start.latitude) * progress,
+        start.longitude + (end.longitude - start.longitude) * progress,
+      );
+    }
+  }
+
+  return closest != null &&
+          math.sqrt(closestSquaredDistance) <= maximumDistanceMeters
+      ? closest
+      : position;
+}
+
+double distanceFromMototaxiRouteMeters(LatLng position, List<LatLng> route) =>
+    const Distance().as(
+      LengthUnit.Meter,
+      position,
+      snapMototaxiPositionToRoute(position, route,
+          maximumDistanceMeters: double.infinity),
+    );
 
 const configuredMapProvider =
     String.fromEnvironment('MAP_PROVIDER', defaultValue: 'google');
@@ -92,6 +162,7 @@ class LiveMap extends StatefulWidget {
     this.driverPosition,
     this.selfDriverPosition,
     this.driverBearing = 0,
+    this.driverMarkerStatus = MototaxiMarkerStatus.assigned,
     this.routePoints = const [],
     this.nearbyDrivers = const {},
     this.editing,
@@ -118,6 +189,7 @@ class LiveMap extends StatefulWidget {
   final LatLng? driverPosition;
   final LatLng? selfDriverPosition;
   final double driverBearing;
+  final MototaxiMarkerStatus driverMarkerStatus;
   final List<LatLng> routePoints;
   final Map<String, LatLng> nearbyDrivers;
   final MapPointSelection? editing;
@@ -144,17 +216,23 @@ class LiveMap extends StatefulWidget {
   State<LiveMap> createState() => _LiveMapState();
 }
 
-class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
+class _LiveMapState extends State<LiveMap> with TickerProviderStateMixin {
   static const _nearbyClusterId = gmaps.ClusterManagerId('nearby-mototaxis');
   late final AnimationController _movement;
+  late final AnimationController _assignedPulse;
   final MapController _mapController = MapController();
   gmaps.GoogleMapController? _googleMapController;
   LatLng? _displayedDriver;
   LatLng? _movementStart;
   LatLng? _movementEnd;
+  double _displayedBearing = 0;
+  double _movementStartBearing = 0;
+  double _movementEndBearing = 0;
+  DateTime? _lastDriverTargetAt;
+  double _lastMovementFrame = -1;
+  double _lastPulseFrame = -1;
   LatLng? _selectionCenter;
-  gmaps.BitmapDescriptor? _nearbyMotoIcon;
-  gmaps.BitmapDescriptor? _activeMotoIcon;
+  final Map<MototaxiMarkerStatus, gmaps.BitmapDescriptor> _motoIcons = {};
   Timer? _fitDebounce;
   bool _cameraAnimationRunning = false;
   gmaps.CameraUpdate? _pendingCameraUpdate;
@@ -162,7 +240,9 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _displayedDriver = widget.driverPosition;
+    _displayedDriver = _snapDriverPosition(widget.driverPosition);
+    _displayedBearing = _normalizedBearing(widget.driverBearing);
+    if (_displayedDriver != null) _lastDriverTargetAt = DateTime.now();
     if (widget.editing != null) {
       _selectionCenter = widget.editing == MapPointSelection.origin
           ? widget.pickup ?? widget.currentLocation ?? _center
@@ -178,46 +258,148 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         final start = _movementStart;
         final end = _movementEnd;
         if (start == null || end == null || !mounted) return;
-        final curve = Curves.easeInOut.transform(_movement.value);
+        final progress = _movement.value;
+        if (progress < 1 && progress - _lastMovementFrame < 1 / 30) return;
+        _lastMovementFrame = progress;
         setState(() {
           _displayedDriver = LatLng(
-            ui.lerpDouble(start.latitude, end.latitude, curve)!,
-            ui.lerpDouble(start.longitude, end.longitude, curve)!,
+            ui.lerpDouble(start.latitude, end.latitude, progress)!,
+            ui.lerpDouble(start.longitude, end.longitude, progress)!,
           );
+          _displayedBearing = _interpolateBearing(
+              _movementStartBearing, _movementEndBearing, progress);
         });
       });
+    _assignedPulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..addListener(() {
+        if (widget.driverMarkerStatus != MototaxiMarkerStatus.assigned ||
+            _displayedDriver == null ||
+            !mounted) {
+          return;
+        }
+        final progress = _assignedPulse.value;
+        if (progress < 1 && (progress - _lastPulseFrame).abs() < 1 / 15) {
+          return;
+        }
+        _lastPulseFrame = progress;
+        setState(() {});
+      });
+    _syncAssignedPulse();
     if (configuredMapProvider == 'google') {
       _prepareGoogleMarkerIcons();
     }
   }
 
   Future<void> _prepareGoogleMarkerIcons() async {
-    const nearbyConfiguration = ImageConfiguration(size: Size(24, 24));
-    const activeConfiguration = ImageConfiguration(size: Size(30, 30));
-    final nearby = await gmaps.BitmapDescriptor.asset(
-        nearbyConfiguration, 'assets/images/mototaxi-map-marker.png');
-    final active = await gmaps.BitmapDescriptor.asset(
-        activeConfiguration, 'assets/images/mototaxi-map-marker.png');
+    final pixelRatio = View.of(context).devicePixelRatio.clamp(1.0, 3.0);
+    final data = await rootBundle.load(_mototaxiAsset);
+    final codec = await ui.instantiateImageCodec(
+      data.buffer.asUint8List(),
+      targetWidth: (42 * pixelRatio * 2).round(),
+    );
+    final frame = await codec.getNextFrame();
+    final icons = <MototaxiMarkerStatus, gmaps.BitmapDescriptor>{};
+    for (final status in MototaxiMarkerStatus.values) {
+      icons[status] = await _mototaxiBitmap(
+        frame.image,
+        status,
+        status == MototaxiMarkerStatus.available ? 34 : 42,
+        pixelRatio,
+      );
+    }
+    frame.image.dispose();
+    codec.dispose();
     if (!mounted) return;
     setState(() {
-      _nearbyMotoIcon = nearby;
-      _activeMotoIcon = active;
+      _motoIcons
+        ..clear()
+        ..addAll(icons);
     });
+  }
+
+  Future<gmaps.BitmapDescriptor> _mototaxiBitmap(
+      ui.Image sourceImage,
+      MototaxiMarkerStatus status,
+      double logicalSize,
+      double pixelRatio) async {
+    final physicalSize = (logicalSize * pixelRatio).round();
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final size = physicalSize.toDouble();
+    final center = Offset(size / 2, size / 2);
+    final color = _mototaxiStatusColor(status);
+    final radius = size * .44;
+    canvas.drawCircle(
+        center, radius, Paint()..color = color.withValues(alpha: .13));
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(2, size * .065),
+    );
+    final source = Rect.fromLTWH(
+        0, 0, sourceImage.width.toDouble(), sourceImage.height.toDouble());
+    final maxWidth = size * .80;
+    final maxHeight = size * .68;
+    final scale =
+        math.min(maxWidth / sourceImage.width, maxHeight / sourceImage.height);
+    final imageWidth = sourceImage.width * scale;
+    final imageHeight = sourceImage.height * scale;
+    final destination = Rect.fromCenter(
+      center: center.translate(0, size * .015),
+      width: imageWidth,
+      height: imageHeight,
+    );
+    canvas.drawImageRect(
+        sourceImage, source, destination, Paint()..isAntiAlias = true);
+    final rendered =
+        await recorder.endRecording().toImage(physicalSize, physicalSize);
+    final bytes = await rendered.toByteData(format: ui.ImageByteFormat.png);
+    rendered.dispose();
+    return gmaps.BitmapDescriptor.bytes(
+      Uint8List.view(bytes!.buffer),
+      width: logicalSize,
+      height: logicalSize,
+    );
   }
 
   @override
   void didUpdateWidget(covariant LiveMap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final next = widget.driverPosition;
+    final next = _snapDriverPosition(widget.driverPosition);
     if (next == null) {
+      _movement.stop();
       _displayedDriver = null;
     } else if (_displayedDriver == null) {
       _displayedDriver = next;
+      _displayedBearing = _normalizedBearing(widget.driverBearing);
+      _lastDriverTargetAt = DateTime.now();
     } else if (_meaningfullyDifferent(_displayedDriver!, next)) {
+      final now = DateTime.now();
+      final updateInterval = _lastDriverTargetAt == null
+          ? const Duration(milliseconds: 1600)
+          : now.difference(_lastDriverTargetAt!);
+      _lastDriverTargetAt = now;
       _movementStart = _displayedDriver;
       _movementEnd = next;
+      _movementStartBearing = _displayedBearing;
+      _movementEndBearing = _normalizedBearing(widget.driverBearing);
+      _movement.duration = Duration(
+        milliseconds: updateInterval.inMilliseconds.clamp(1200, 9500),
+      );
+      _lastMovementFrame = -1;
       _movement.forward(from: 0);
+    } else if (oldWidget.driverBearing != widget.driverBearing) {
+      _displayedBearing = _normalizedBearing(widget.driverBearing);
     }
+    if (oldWidget.driverMarkerStatus != widget.driverMarkerStatus) {
+      _lastPulseFrame = -1;
+    }
+    _syncAssignedPulse();
     if (oldWidget.editing != widget.editing && widget.editing != null) {
       _selectionCenter = widget.editing == MapPointSelection.origin
           ? widget.pickup ?? _center
@@ -283,6 +465,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
   void dispose() {
     _fitDebounce?.cancel();
     _movement.dispose();
+    _assignedPulse.dispose();
     _googleMapController?.dispose();
     super.dispose();
   }
@@ -291,6 +474,36 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       {double meters = 2}) {
     return const Distance().as(LengthUnit.Meter, first, second) >= meters;
   }
+
+  LatLng? _snapDriverPosition(LatLng? position) {
+    if (position == null || widget.routePoints.length < 2) return position;
+    return snapMototaxiPositionToRoute(position, widget.routePoints);
+  }
+
+  double _normalizedBearing(double bearing) {
+    if (!bearing.isFinite) return 0;
+    return (bearing % 360 + 360) % 360;
+  }
+
+  double _interpolateBearing(double start, double end, double progress) {
+    final difference = ((end - start + 540) % 360) - 180;
+    return _normalizedBearing(start + difference * progress);
+  }
+
+  void _syncAssignedPulse() {
+    final shouldPulse = _displayedDriver != null &&
+        widget.driverMarkerStatus == MototaxiMarkerStatus.assigned;
+    if (shouldPulse) {
+      if (!_assignedPulse.isAnimating) {
+        _assignedPulse.repeat(reverse: true);
+      }
+      return;
+    }
+    _assignedPulse.stop();
+    if (_assignedPulse.value != 0) _assignedPulse.value = 0;
+  }
+
+  double get _pulseProgress => Curves.easeInOut.transform(_assignedPulse.value);
 
   Future<void> _animateGoogleCamera(gmaps.CameraUpdate update) async {
     final controller = _googleMapController;
@@ -437,16 +650,18 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         Marker(
           key: ValueKey(entry.key),
           point: entry.value,
-          width: 26,
-          height: 26,
-          child: const _MotoMarker(),
+          width: 34,
+          height: 34,
+          child: const MototaxiMarker(
+              status: MototaxiMarkerStatus.available, size: 34),
         ),
       if (widget.selfDriverPosition != null)
         Marker(
           point: widget.selfDriverPosition!,
-          width: 38,
-          height: 38,
-          child: const _SelfDriverMarker(),
+          width: 36,
+          height: 36,
+          child: const MototaxiMarker(
+              status: MototaxiMarkerStatus.available, size: 36),
         ),
       if (widget.currentLocation != null &&
           widget.editing == null &&
@@ -461,9 +676,14 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
       if (_displayedDriver != null)
         Marker(
           point: _displayedDriver!,
-          width: 32,
-          height: 32,
-          child: const _MotoMarker(),
+          width: 46,
+          height: 46,
+          child: MototaxiMarker(
+            status: widget.driverMarkerStatus,
+            size: 46,
+            bearing: _displayedBearing,
+            pulse: _pulseProgress,
+          ),
         ),
     ];
     final googleMarkers = <gmaps.Marker>{
@@ -518,7 +738,7 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
         gmaps.Marker(
           markerId: gmaps.MarkerId('nearby-${entry.key}'),
           position: gmaps.LatLng(entry.value.latitude, entry.value.longitude),
-          icon: _nearbyMotoIcon ??
+          icon: _motoIcons[MototaxiMarkerStatus.available] ??
               gmaps.BitmapDescriptor.defaultMarkerWithHue(
                   gmaps.BitmapDescriptor.hueCyan),
           flat: true,
@@ -530,8 +750,11 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           markerId: const gmaps.MarkerId('self-driver'),
           position: gmaps.LatLng(widget.selfDriverPosition!.latitude,
               widget.selfDriverPosition!.longitude),
-          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
-              gmaps.BitmapDescriptor.hueAzure),
+          flat: true,
+          anchor: const Offset(.5, .5),
+          icon: _motoIcons[MototaxiMarkerStatus.available] ??
+              gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                  gmaps.BitmapDescriptor.hueAzure),
           zIndexInt: 20,
         ),
       if (widget.currentLocation != null &&
@@ -552,10 +775,12 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
           position: gmaps.LatLng(
               _displayedDriver!.latitude, _displayedDriver!.longitude),
           flat: true,
-          icon: _activeMotoIcon ??
+          rotation: _displayedBearing,
+          icon: _motoIcons[widget.driverMarkerStatus] ??
               gmaps.BitmapDescriptor.defaultMarkerWithHue(
                   gmaps.BitmapDescriptor.hueOrange),
-          anchor: const Offset(.5, .55),
+          anchor: const Offset(.5, .5),
+          zIndexInt: 40,
         ),
     };
 
@@ -602,6 +827,23 @@ class _LiveMapState extends State<LiveMap> with SingleTickerProviderStateMixin {
               const gmaps.ClusterManager(clusterManagerId: _nearbyClusterId),
             },
             markers: googleMarkers,
+            circles: _displayedDriver != null &&
+                    widget.driverMarkerStatus == MototaxiMarkerStatus.assigned
+                ? {
+                    gmaps.Circle(
+                      circleId: const gmaps.CircleId('assigned-driver-halo'),
+                      center: gmaps.LatLng(_displayedDriver!.latitude,
+                          _displayedDriver!.longitude),
+                      radius: 4.5 + 3.5 * _pulseProgress,
+                      fillColor: _costaGoAssignedBlue.withValues(
+                          alpha: .16 * (1 - _pulseProgress * .45)),
+                      strokeColor: _costaGoAssignedBlue.withValues(
+                          alpha: .42 * (1 - _pulseProgress * .55)),
+                      strokeWidth: 2,
+                      zIndex: 3,
+                    ),
+                  }
+                : const {},
             polylines: widget.routePoints.length > 1
                 ? {
                     gmaps.Polyline(
@@ -774,21 +1016,6 @@ class _SelectionPin extends StatelessWidget {
   }
 }
 
-class _SelfDriverMarker extends StatelessWidget {
-  const _SelfDriverMarker();
-
-  @override
-  Widget build(BuildContext context) => Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
-        ),
-        child: const Icon(Icons.my_location, color: Colors.white, size: 20),
-      );
-}
-
 class _CurrentLocationMarker extends StatelessWidget {
   const _CurrentLocationMarker();
 
@@ -805,15 +1032,96 @@ class _CurrentLocationMarker extends StatelessWidget {
       );
 }
 
-class _MotoMarker extends StatelessWidget {
-  const _MotoMarker();
+/// Marcador reutilizable. La ilustración siempre es el PNG oficial; el estado
+/// se comunica únicamente mediante el tratamiento exterior generado por la UI.
+class MototaxiMarker extends StatelessWidget {
+  const MototaxiMarker({
+    required this.status,
+    this.size = 32,
+    this.bearing = 0,
+    this.pulse = 0,
+    super.key,
+  }) : assert(size >= 24 && size <= 48);
+
+  final MototaxiMarkerStatus status;
+  final double size;
+  final double bearing;
+  final double pulse;
 
   @override
-  Widget build(BuildContext context) => Image.asset(
-        'assets/images/mototaxi-map-marker.png',
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.high,
+  Widget build(BuildContext context) {
+    final color = _mototaxiStatusColor(status);
+    final isAssigned = status == MototaxiMarkerStatus.assigned;
+    return SizedBox.square(
+      dimension: size,
+      child: CustomPaint(
+        painter: _MototaxiHaloPainter(
+          color: color,
+          pulse: isAssigned ? pulse.clamp(0, 1) : 0,
+          emphasized: status != MototaxiMarkerStatus.available,
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(size * .10),
+          child: Transform.rotate(
+            angle: bearing * math.pi / 180,
+            child: Image.asset(
+              _mototaxiAsset,
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
+              gaplessPlayback: true,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MototaxiHaloPainter extends CustomPainter {
+  const _MototaxiHaloPainter({
+    required this.color,
+    required this.pulse,
+    required this.emphasized,
+  });
+
+  final Color color;
+  final double pulse;
+  final bool emphasized;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final outerRadius = size.shortestSide * (.40 + pulse * .075);
+    if (pulse > 0) {
+      canvas.drawCircle(
+        center,
+        outerRadius,
+        Paint()
+          ..color = color.withValues(alpha: .22 * (1 - pulse * .50))
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, size.width * .055),
       );
+    }
+    final radius = size.shortestSide * .39;
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()..color = color.withValues(alpha: emphasized ? .17 : .10),
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.5, size.shortestSide * .055),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MototaxiHaloPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.pulse != pulse ||
+      oldDelegate.emphasized != emphasized;
 }
 
 class _SimpleMapPin extends StatelessWidget {
