@@ -7964,6 +7964,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   final List<PassengerStopDraft> additionalStops = [];
   final notes = TextEditingController();
   final passengerSheetController = DraggableScrollableController();
+  ScrollController? passengerSheetScrollController;
   final passengerSearchAdKey = GlobalKey();
   final passengerActiveTripKey = GlobalKey();
   Timer? passengerSearchRevealTimer;
@@ -8230,10 +8231,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  void _movePassengerSheet(double size) {
+  void _movePassengerSheet(double size, {bool resetScroll = false}) {
     sheetExtent = size;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !passengerSheetController.isAttached) return;
+      if (!mounted) return;
+      final scrollController = passengerSheetScrollController;
+      if (resetScroll &&
+          scrollController != null &&
+          scrollController.hasClients) {
+        scrollController.jumpTo(scrollController.position.minScrollExtent);
+      }
+      if (!passengerSheetController.isAttached) return;
       passengerSheetController.animateTo(
         size.clamp(.18, .92),
         duration: const Duration(milliseconds: 320),
@@ -11048,7 +11056,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         }
       });
       if (active == null) {
-        _movePassengerSheet(.35);
+        _movePassengerSheet(.35, resetScroll: isScheduled);
       } else {
         _revealPassengerSearch();
       }
@@ -12237,55 +12245,58 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 maxChildSize: .92,
                 snap: true,
                 snapSizes: const [.28, .52, .9],
-                builder: (context, scrollController) => Material(
-                  color: Theme.of(context).colorScheme.surface,
-                  elevation: 16,
-                  shadowColor: Colors.black45,
-                  borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(editing ? 32 : 28)),
-                  clipBehavior: Clip.antiAlias,
-                  child: ListView(
-                    controller: scrollController,
-                    padding: EdgeInsets.fromLTRB(
-                        editing ? 18 : 14,
-                        8,
-                        editing ? 18 : 14,
-                        MediaQuery.paddingOf(context).bottom + 16),
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 44,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant
-                                .withValues(alpha: .35),
-                            borderRadius: BorderRadius.circular(8),
+                builder: (context, scrollController) {
+                  passengerSheetScrollController = scrollController;
+                  return Material(
+                    color: Theme.of(context).colorScheme.surface,
+                    elevation: 16,
+                    shadowColor: Colors.black45,
+                    borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(editing ? 32 : 28)),
+                    clipBehavior: Clip.antiAlias,
+                    child: ListView(
+                      controller: scrollController,
+                      padding: EdgeInsets.fromLTRB(
+                          editing ? 18 : 14,
+                          8,
+                          editing ? 18 : 14,
+                          MediaQuery.paddingOf(context).bottom + 16),
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 44,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant
+                                  .withValues(alpha: .35),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (editing)
-                        ..._mapSelectionContent()
-                      else if (searching)
-                        ..._searchingContent(context)
-                      else if (isAssignedTrip(active))
-                        ..._activeTripContent(context)
-                      else if (active != null) ...[
-                        const Text(
-                            'Estamos verificando el estado de tu solicitud.'),
-                        OutlinedButton(
-                            onPressed: load, child: const Text('Actualizar')),
-                        if (canPassengerCancel(active))
-                          TextButton(
-                              onPressed: cancellationBusy ? null : cancel,
-                              child: const Text('Cancelar solicitud')),
-                      ] else
-                        ..._requestContent(context),
-                    ],
-                  ),
-                ),
+                        const SizedBox(height: 8),
+                        if (editing)
+                          ..._mapSelectionContent()
+                        else if (searching)
+                          ..._searchingContent(context)
+                        else if (isAssignedTrip(active))
+                          ..._activeTripContent(context)
+                        else if (active != null) ...[
+                          const Text(
+                              'Estamos verificando el estado de tu solicitud.'),
+                          OutlinedButton(
+                              onPressed: load, child: const Text('Actualizar')),
+                          if (canPassengerCancel(active))
+                            TextButton(
+                                onPressed: cancellationBusy ? null : cancel,
+                                child: const Text('Cancelar solicitud')),
+                        ] else
+                          ..._requestContent(context),
+                      ],
+                    ),
+                  );
+                },
               ),
             ]);
           }),
