@@ -180,8 +180,8 @@ node node_modules/vite/bin/vite.js build
 # packages/domain
 node node_modules/vitest/vitest.mjs run
 # apps/mobile
-C:\Proyectos\flutter\bin\flutter.bat analyze --no-pub
-C:\Proyectos\flutter\bin\flutter.bat test --no-pub
+C:\Proyectos\flutter-sdk\bin\flutter.bat analyze --no-pub
+C:\Proyectos\flutter-sdk\bin\flutter.bat test --no-pub
 # apps/site
 node build.mjs
 ```

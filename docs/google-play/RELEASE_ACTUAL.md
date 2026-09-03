@@ -1,28 +1,26 @@
 # Versión actual para pruebas cerradas
 
-Actualizado el 1 de septiembre de 2026.
+Actualizado el 3 de septiembre de 2026.
 
 - Aplicación: Costa-Go
-- Versión de referencia: `0.17.6 (58)`
+- Versión de referencia: `0.17.7 (59)`
 - Canal: prueba cerrada
 - Estado documental: políticas, ficha y declaraciones revisadas contra el código actual.
 - Imágenes: deben regenerarse desde esta compilación final; no usar el set histórico eliminado.
 
 ## Cambios de esta versión
 
-- Centro de notificaciones inteligente integrado con la bandeja y los avisos existentes.
-- Preferencias para recomendaciones, promociones y recordatorios, manteniendo siempre activos los avisos de viajes y seguridad.
-- Registro de versión instalada preparado para campañas de actualización recomendada desde Play Store.
-- Reincorporación segura de solicitudes pendientes cuando el conductor finaliza otro viaje, sin duplicar ofertas.
-- Presentación automática de la tarjeta cuando una solicitud vuelve a estar disponible.
-- Viajes programados actualizados inmediatamente al cancelar, incluso ante eventos de red perdidos.
-- Fechas y calendarios visibles en español para pasajero y conductor.
-- El panel del pasajero vuelve al inicio después de confirmar un viaje programado, sin conservar el desplazamiento anterior.
-- Correcciones generales de estabilidad y sincronización del flujo de viajes.
+- Nuevo marcador oficial de mototaxi con fondo transparente y mejor lectura sobre el mapa.
+- Estados visuales diferenciados para mototaxis disponibles, asignadas y con viaje activo.
+- Movimiento progresivo entre posiciones GPS y orientación mediante el rumbo del vehículo.
+- Ajuste visual del marcador a la ruta para reducir desplazamientos causados por imprecisión del GPS.
+- Recalculo de ruta limitado a cambios de etapa o desvíos reales, evitando saltos innecesarios del mapa.
+- Misma experiencia de seguimiento mejorada para pasajero y conductor.
+- Proyecto, compilación local y validación continua actualizados a Flutter `3.47.2` y Dart `3.13.2`.
 
 ## Artefactos esperados
 
-- AAB: `Costa-Go-0.17.6-build58.aab`
+- AAB: `Costa-Go-0.17.7-build59.aab`
 - APK universal: no generado en esta entrega.
 - Firma: clave de publicación Costa-Go existente.
 - API: `https://mototaxi-atacames-api.onrender.com`, sin proxy.

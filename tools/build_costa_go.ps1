@@ -1,7 +1,7 @@
 param(
   [ValidateSet("apk", "appbundle", "all")]
   [string]$Target = "all",
-  [string]$Flutter = "C:\Proyectos\flutter\bin\flutter.bat",
+  [string]$Flutter = "C:\Proyectos\flutter-sdk\bin\flutter.bat",
   [ValidateSet("development", "staging", "production")]
   [string]$Environment = "staging",
   [ValidateSet("google", "osm")]

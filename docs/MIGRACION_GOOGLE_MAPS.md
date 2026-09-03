@@ -52,7 +52,7 @@ Para compilar una APK con Google Maps en PowerShell:
 
 ```powershell
 $env:GOOGLE_MAPS_ANDROID_API_KEY='CLAVE_ANDROID_RESTRINGIDA'
-C:\Proyectos\flutter\bin\flutter.bat build apk --release `
+C:\Proyectos\flutter-sdk\bin\flutter.bat build apk --release `
   --dart-define=MAP_PROVIDER=google
 ```
 
