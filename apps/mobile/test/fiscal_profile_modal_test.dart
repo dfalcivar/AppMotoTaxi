@@ -68,7 +68,8 @@ void main() {
             isNull);
         pending.complete({'profile': profile});
         await tester.pumpAndSettle();
-        expect(find.textContaining('Datos guardados correctamente.'), findsOneWidget);
+        expect(find.textContaining('Datos guardados correctamente.'),
+            findsOneWidget);
         expect(find.text('Cliente de prueba'), findsOneWidget);
         expect(tester.takeException(), isNull);
       });
@@ -91,7 +92,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(TextFormField), findsNothing);
     expect(saves, 0);
-    await tester.tap(find.text('Modificar'));
+    await tester.tap(find.text('Editar datos'));
     await tester.pumpAndSettle();
     expect(find.byType(TextFormField), findsNWidgets(4));
     await tester.enterText(
@@ -111,7 +112,7 @@ void main() {
       save: (data) async => throw Exception('offline'),
     ))));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Modificar'));
+    await tester.tap(find.text('Editar datos'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Guardar y continuar'));
     await tester.tap(find.text('Guardar y continuar'));

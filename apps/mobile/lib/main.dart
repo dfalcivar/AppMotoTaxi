@@ -34,6 +34,7 @@ import 'live_map.dart';
 import 'realtime_service.dart';
 import 'reject_offer_dialog.dart';
 import 'cancellation_feedback_dialog.dart';
+import 'costa_go_design.dart';
 import 'driver_search_indicator.dart';
 import 'fiscal_profile_modal.dart';
 import 'fleet.dart';
@@ -203,7 +204,9 @@ String membershipPlanSummary(dynamic snapshot) {
     return 'Plan por viajes · $trips viajes${validity == null ? ' · sin caducidad' : ' · $validity días'}';
   }
   final duration = membershipPlanDurationDays(value);
-  return duration == null ? 'Plan por período' : 'Plan por período · $duration días';
+  return duration == null
+      ? 'Plan por período'
+      : 'Plan por período · $duration días';
 }
 
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
@@ -2260,54 +2263,7 @@ class MototaxiApp extends StatelessWidget {
           builder: (context, child) => NetworkStatus(child: child!),
           home: const SessionBootstrap()));
 
-  ThemeData _theme(Brightness brightness) {
-    final scheme = ColorScheme.fromSeed(
-        seedColor: const Color(0xff087ccb), brightness: brightness);
-    return ThemeData(
-        colorScheme: scheme,
-        brightness: brightness,
-        useMaterial3: true,
-        scaffoldBackgroundColor:
-            brightness == Brightness.light ? const Color(0xfff3f8fc) : null,
-        appBarTheme: AppBarTheme(
-            centerTitle: false,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            backgroundColor: brightness == Brightness.light
-                ? const Color(0xfff3f8fc)
-                : scheme.surface,
-            titleTextStyle: TextStyle(
-                color: scheme.onSurface,
-                fontSize: 20,
-                fontWeight: FontWeight.w800)),
-        cardTheme: CardThemeData(
-            elevation: 0,
-            margin: const EdgeInsets.symmetric(vertical: 6),
-            color: scheme.surface,
-            shape: RoundedRectangleBorder(
-                side: BorderSide(
-                    color: scheme.outlineVariant.withValues(alpha: .65)),
-                borderRadius: BorderRadius.circular(20))),
-        listTileTheme: ListTileThemeData(
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16))),
-        inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: scheme.surfaceContainerHighest.withValues(alpha: .45),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide.none),
-            focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide(color: scheme.primary, width: 2))),
-        filledButtonTheme: FilledButtonThemeData(
-            style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(54),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18)))));
-  }
+  ThemeData _theme(Brightness brightness) => CostaGoTheme.build(brightness);
 }
 
 class NetworkStatus extends StatefulWidget {
@@ -15314,37 +15270,91 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (successContext) => AlertDialog(
-          icon: Image.asset('assets/images/costa-go-emblem.png', width: 58),
-          title:
-              const Text('¡Gracias por tu pago!', textAlign: TextAlign.center),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('Hemos recibido tu comprobante correctamente.',
-                textAlign: TextAlign.center),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                  color: const Color(0xffe8f8ed),
-                  borderRadius: BorderRadius.circular(14)),
-              child: const Row(children: [
-                Icon(Icons.check_circle, color: Color(0xff159447)),
-                SizedBox(width: 10),
-                Expanded(
-                    child: Text(
-                        'Tu pago será revisado y te notificaremos cuando se confirme.',
-                        style: TextStyle(fontWeight: FontWeight.w700)))
+        builder: (successContext) => Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 430),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(CostaGoSpace.xl),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Image.asset('assets/images/costa-go-emblem.png', width: 88),
+                const SizedBox(height: CostaGoSpace.md),
+                Text('¡Gracias por tu pago!',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(successContext)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+                const SizedBox(height: CostaGoSpace.xs),
+                Text('Hemos recibido tu comprobante correctamente.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(successContext)
+                        .textTheme
+                        .bodyLarge
+                        ?.copyWith(
+                            color: Theme.of(successContext)
+                                .colorScheme
+                                .onSurfaceVariant)),
+                const SizedBox(height: CostaGoSpace.lg),
+                const CostaGoInfoBanner(
+                  title: 'Comprobante recibido',
+                  message:
+                      'Tu pago será revisado y te notificaremos cuando se confirme.',
+                  icon: Icons.check_circle_outline_rounded,
+                  tone: CostaGoStatusTone.success,
+                ),
+                const SizedBox(height: CostaGoSpace.md),
+                CostaGoSurface(
+                  child: Row(children: [
+                    const CostaGoIconBadge(icon: Icons.receipt_long_outlined),
+                    const SizedBox(width: CostaGoSpace.sm),
+                    Expanded(
+                      child: Text(membershipPlanSummary(order['plan']),
+                          style:
+                              Theme.of(successContext).textTheme.titleMedium),
+                    ),
+                    Text(
+                      '\$${((order['totalAmount'] as num?) ?? 0).toStringAsFixed(2)}',
+                      style: Theme.of(successContext)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(
+                            color: Theme.of(successContext).colorScheme.primary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: CostaGoSpace.lg),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(successContext),
+                    child: const Text('Entendido'),
+                  ),
+                ),
+                const SizedBox(height: CostaGoSpace.sm),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.lock_outline_rounded,
+                      size: 16,
+                      color: Theme.of(successContext)
+                          .colorScheme
+                          .onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text('Tu pago está seguro con Costa-Go',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(successContext)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(
+                                color: Theme.of(successContext)
+                                    .colorScheme
+                                    .onSurfaceVariant)),
+                  ),
+                ]),
               ]),
             ),
-            const SizedBox(height: 12),
-            Text(
-                '${membershipPlanName(order['plan'])} · \$${((order['totalAmount'] as num?) ?? 0).toStringAsFixed(2)}'),
-          ]),
-          actions: [
-            FilledButton(
-                onPressed: () => Navigator.pop(successContext),
-                child: const Text('Entendido'))
-          ],
+          ),
         ),
       );
     }
@@ -15369,85 +15379,167 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final confirmed = await showDialog<bool>(
           context: hostContext,
           builder: (context) => StatefulBuilder(builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('Anular orden'),
-              content: SingleChildScrollView(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text(
-                      'La orden quedará en el histórico y su QR dejará de funcionar.'),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    initialValue: reason,
-                    decoration: const InputDecoration(labelText: 'Motivo'),
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'ORDER_GENERATION_ERROR',
-                          child: Text('Error al generar la orden')),
-                      DropdownMenuItem(
-                          value: 'WRONG_MEMBERSHIP',
-                          child: Text('Membresía incorrecta')),
-                      DropdownMenuItem(
-                          value: 'CHANGED_MIND',
-                          child: Text('Cambié de opinión')),
-                      DropdownMenuItem(
-                          value: 'DUPLICATE_ORDER',
-                          child: Text('Orden duplicada')),
-                      DropdownMenuItem(value: 'OTHER', child: Text('Otro')),
-                    ],
-                    onChanged: sending
-                        ? null
-                        : (value) => setState(() => reason = value ?? reason),
-                  ),
-                  if (reason == 'OTHER') ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: observation,
-                      minLines: 2,
-                      maxLines: 4,
-                      maxLength: 500,
-                      decoration: const InputDecoration(
-                          labelText: 'Observación',
-                          hintText: 'Explica brevemente el motivo'),
-                    ),
-                  ],
-                ]),
+            Future<void> cancel() async {
+              if (reason == 'OTHER' && observation.text.trim().length < 3) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Escribe una observación para continuar.')));
+                return;
+              }
+              setState(() => sending = true);
+              try {
+                await api.cancelMembershipPaymentOrder(widget.s.token,
+                    order['id'].toString(), reason, observation.text);
+                if (context.mounted) Navigator.pop(context, true);
+              } catch (error) {
+                setState(() => sending = false);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(SnackBar(content: Text(error.toString())));
+                }
+              }
+            }
+
+            final back = OutlinedButton.icon(
+              onPressed: sending ? null : () => Navigator.pop(context, false),
+              icon: const Icon(Icons.undo_rounded),
+              label: const Text('Volver'),
+            );
+            final destructive = FilledButton.icon(
+              onPressed: sending ? null : cancel,
+              icon: sending
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.delete_outline_rounded),
+              label: Text(sending ? 'Anulando…' : 'Anular orden'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
               ),
-              actions: [
-                TextButton(
-                    onPressed:
-                        sending ? null : () => Navigator.pop(context, false),
-                    child: const Text('Volver')),
-                FilledButton(
-                  onPressed: sending
-                      ? null
-                      : () async {
-                          if (reason == 'OTHER' &&
-                              observation.text.trim().length < 3) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text(
-                                        'Escribe una observación para continuar.')));
-                            return;
-                          }
-                          setState(() => sending = true);
-                          try {
-                            await api.cancelMembershipPaymentOrder(
-                                widget.s.token,
-                                order['id'].toString(),
-                                reason,
-                                observation.text);
-                            if (context.mounted) Navigator.pop(context, true);
-                          } catch (error) {
-                            setState(() => sending = false);
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(error.toString())));
-                            }
-                          }
-                        },
-                  child: Text(sending ? 'Anulando...' : 'Anular orden'),
+            );
+            return Dialog(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 470),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(CostaGoSpace.xl),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const CostaGoIconBadge(
+                      icon: Icons.delete_forever_outlined,
+                      tone: CostaGoStatusTone.danger,
+                      size: 66,
+                    ),
+                    const SizedBox(height: CostaGoSpace.md),
+                    Text('¿Anular esta orden?',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
+                    const SizedBox(height: CostaGoSpace.xs),
+                    Text(
+                      'La orden quedará registrada en tu historial y su QR dejará de funcionar.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: CostaGoSpace.lg),
+                    const CostaGoInfoBanner(
+                      title: 'Ten en cuenta',
+                      message:
+                          'Si fue un error, podrás crear una nueva orden y conservaremos tu información.',
+                      icon: Icons.event_busy_outlined,
+                      tone: CostaGoStatusTone.danger,
+                    ),
+                    const SizedBox(height: CostaGoSpace.lg),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Selecciona el motivo',
+                          style: Theme.of(context).textTheme.titleSmall),
+                    ),
+                    const SizedBox(height: CostaGoSpace.xs),
+                    DropdownButtonFormField<String>(
+                      initialValue: reason,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.warning_amber_rounded),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'ORDER_GENERATION_ERROR',
+                            child: Text('Error al generar la orden')),
+                        DropdownMenuItem(
+                            value: 'WRONG_MEMBERSHIP',
+                            child: Text('Membresía incorrecta')),
+                        DropdownMenuItem(
+                            value: 'CHANGED_MIND',
+                            child: Text('Cambié de opinión')),
+                        DropdownMenuItem(
+                            value: 'DUPLICATE_ORDER',
+                            child: Text('Orden duplicada')),
+                        DropdownMenuItem(value: 'OTHER', child: Text('Otro')),
+                      ],
+                      onChanged: sending
+                          ? null
+                          : (value) => setState(() => reason = value ?? reason),
+                    ),
+                    if (reason == 'OTHER') ...[
+                      const SizedBox(height: CostaGoSpace.sm),
+                      TextField(
+                        controller: observation,
+                        minLines: 2,
+                        maxLines: 4,
+                        maxLength: 500,
+                        decoration: const InputDecoration(
+                          labelText: 'Observación',
+                          hintText: 'Explica brevemente el motivo',
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: CostaGoSpace.md),
+                    const CostaGoInfoBanner(
+                      title: 'Transacción segura',
+                      message: 'La anulación no generará cobros adicionales.',
+                      icon: Icons.gpp_good_outlined,
+                    ),
+                    const SizedBox(height: CostaGoSpace.lg),
+                    LayoutBuilder(builder: (context, constraints) {
+                      final textScale =
+                          MediaQuery.textScalerOf(context).scale(1);
+                      if (constraints.maxWidth < 350 || textScale > 1.15) {
+                        return Column(children: [
+                          SizedBox(width: double.infinity, child: destructive),
+                          const SizedBox(height: CostaGoSpace.xs),
+                          SizedBox(width: double.infinity, child: back),
+                        ]);
+                      }
+                      return Row(children: [
+                        Expanded(child: back),
+                        const SizedBox(width: CostaGoSpace.sm),
+                        Expanded(child: destructive),
+                      ]);
+                    }),
+                    const SizedBox(height: CostaGoSpace.sm),
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.lock_outline_rounded,
+                          size: 15,
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text('Esta acción no se puede deshacer.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant)),
+                      ),
+                    ]),
+                  ]),
                 ),
-              ],
+              ),
             );
           }),
         ) ??
@@ -15485,111 +15577,146 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  String _collectionPointDisplayName(Map<String, dynamic> point) {
+    final raw = point['name']?.toString().trim() ?? '';
+    if (raw.isEmpty) return 'Punto autorizado';
+    return raw
+        .replaceFirst(
+            RegExp(r'^PUNTO\s+COSTA[\s-]*GO\s*[-–—:]?\s*',
+                caseSensitive: false),
+            '')
+        .trim();
+  }
+
   Future<void> _showCollectionPointDetail(
       BuildContext context, Map<String, dynamic> point) async {
     final phone = point['phone']?.toString();
+    final displayName = _collectionPointDisplayName(point);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: false,
       builder: (sheetContext) => FractionallySizedBox(
-        heightFactor: .82,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Row(children: [
-              IconButton(
-                  tooltip: 'Regresar',
-                  onPressed: () => Navigator.pop(sheetContext),
-                  icon: const Icon(Icons.arrow_back_rounded)),
-              Expanded(
-                child:
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const _CostaGoEmblem(size: 34),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(point['name']?.toString() ?? 'Punto autorizado',
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(sheetContext)
-                            .textTheme
-                            .titleLarge
-                            ?.copyWith(fontWeight: FontWeight.w900)),
+        heightFactor: .88,
+        child: Column(children: [
+          const CostaGoSheetHandle(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: CostaGoSpace.lg),
+            child: CostaGoSheetHeader(
+              icon: Icons.storefront_outlined,
+              title: 'Punto Costa-Go',
+              subtitle: displayName,
+              onClose: () => Navigator.pop(sheetContext),
+            ),
+          ),
+          const SizedBox(height: CostaGoSpace.sm),
+          CostaGoStatusChip(
+            label: point['isOpen'] == true
+                ? 'Abierto ahora'
+                : point['isOpen'] == false
+                    ? 'Cerrado ahora'
+                    : 'Horario por confirmar',
+            icon: Icons.circle,
+            tone: point['isOpen'] == true
+                ? CostaGoStatusTone.success
+                : point['isOpen'] == false
+                    ? CostaGoStatusTone.danger
+                    : CostaGoStatusTone.warning,
+          ),
+          const SizedBox(height: CostaGoSpace.sm),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                  CostaGoSpace.lg, 0, CostaGoSpace.lg, CostaGoSpace.xs),
+              children: [
+                CostaGoSurface(
+                  child: Column(children: [
+                    if ((point['address']?.toString() ?? '').isNotEmpty)
+                      CostaGoDetailRow(
+                        icon: Icons.location_on_outlined,
+                        label: 'Dirección',
+                        value: point['address'].toString(),
+                      ),
+                    if ((point['reference']?.toString() ?? '').isNotEmpty) ...[
+                      const Divider(height: 8),
+                      CostaGoDetailRow(
+                        icon: Icons.map_outlined,
+                        label: 'Referencia',
+                        value: point['reference'].toString(),
+                      ),
+                    ],
+                    const Divider(height: 8),
+                    CostaGoDetailRow(
+                      icon: Icons.schedule_outlined,
+                      label: 'Horario de atención',
+                      value: point['todaySchedule']?.toString() ??
+                          'Horario no configurado',
+                    ),
+                    if (phone != null && phone.isNotEmpty) ...[
+                      const Divider(height: 8),
+                      CostaGoDetailRow(
+                        icon: Icons.phone_outlined,
+                        label: 'Teléfono',
+                        value: phone,
+                      ),
+                    ],
+                  ]),
+                ),
+                if (point['distanceKm'] != null) ...[
+                  const SizedBox(height: CostaGoSpace.sm),
+                  CostaGoSurface(
+                    tone: CostaGoStatusTone.info,
+                    child: CostaGoDetailRow(
+                      icon: Icons.near_me_outlined,
+                      label: 'Distancia aproximada',
+                      value:
+                          '${(point['distanceKm'] as num).toStringAsFixed(1)} km desde tu ubicación',
+                      emphasized: true,
+                    ),
                   ),
-                ]),
-              ),
-              const SizedBox(width: 48),
-            ]),
-            const SizedBox(height: 6),
-            Center(
-                child: Chip(
-                    label: Text(point['isOpen'] == true
-                        ? 'Abierto ahora'
-                        : point['isOpen'] == false
-                            ? 'Cerrado ahora'
-                            : 'Horario por confirmar'),
-                    avatar: Icon(Icons.circle,
-                        size: 12,
-                        color: point['isOpen'] == true
-                            ? Colors.green
-                            : Colors.orange))),
-            const SizedBox(height: 8),
-            Expanded(
-                child: ListView(children: [
-              if ((point['address']?.toString() ?? '').isNotEmpty)
-                ListTile(
-                    leading: const CircleAvatar(
-                        child: Icon(Icons.location_on_outlined)),
-                    title: const Text('Dirección'),
-                    subtitle: Text(point['address'].toString())),
-              if ((point['reference']?.toString() ?? '').isNotEmpty)
-                ListTile(
-                    leading:
-                        const CircleAvatar(child: Icon(Icons.map_outlined)),
-                    title: const Text('Referencia'),
-                    subtitle: Text(point['reference'].toString())),
-              ListTile(
-                  leading:
-                      const CircleAvatar(child: Icon(Icons.schedule_outlined)),
-                  title: const Text('Horario de atención'),
-                  subtitle: Text(point['todaySchedule']?.toString() ??
-                      'Horario no configurado')),
-              if (phone != null && phone.isNotEmpty)
-                ListTile(
-                    leading:
-                        const CircleAvatar(child: Icon(Icons.phone_outlined)),
-                    title: const Text('Teléfono'),
-                    subtitle: Text(phone)),
-              if (point['distanceKm'] != null)
-                ListTile(
-                    leading:
-                        const CircleAvatar(child: Icon(Icons.near_me_outlined)),
-                    title: const Text('Distancia aproximada'),
-                    subtitle: Text(
-                        '${(point['distanceKm'] as num).toStringAsFixed(1)} km desde tu ubicación')),
-            ])),
-            const SizedBox(height: 10),
-            Row(children: [
-              Expanded(
-                  child: OutlinedButton.icon(
-                      onPressed: point['latitude'] == null
-                          ? null
-                          : () => _openCollectionPointDirections(point),
-                      icon: const Icon(Icons.navigation_outlined),
-                      label: const Text('Cómo llegar'))),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: FilledButton.icon(
-                      onPressed: phone == null || phone.isEmpty
-                          ? null
-                          : () => launchUrl(Uri(scheme: 'tel', path: phone),
-                              mode: LaunchMode.externalApplication),
-                      icon: const Icon(Icons.phone_outlined),
-                      label: const Text('Llamar'))),
-            ]),
-          ]),
-        ),
+                ],
+              ],
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+                CostaGoSpace.lg,
+                CostaGoSpace.xs,
+                CostaGoSpace.lg,
+                MediaQuery.paddingOf(sheetContext).bottom + CostaGoSpace.md),
+            child: LayoutBuilder(builder: (context, constraints) {
+              final scale = MediaQuery.textScalerOf(context).scale(1);
+              final directions = OutlinedButton.icon(
+                onPressed: point['latitude'] == null
+                    ? null
+                    : () => _openCollectionPointDirections(point),
+                icon: const Icon(Icons.navigation_outlined),
+                label: const Text('Cómo llegar'),
+              );
+              final call = FilledButton.icon(
+                onPressed: phone == null || phone.isEmpty
+                    ? null
+                    : () => launchUrl(Uri(scheme: 'tel', path: phone),
+                        mode: LaunchMode.externalApplication),
+                icon: const Icon(Icons.phone_outlined),
+                label: const Text('Llamar'),
+              );
+              if (constraints.maxWidth < 340 || scale > 1.2) {
+                return Column(children: [
+                  SizedBox(width: double.infinity, child: call),
+                  const SizedBox(height: CostaGoSpace.xs),
+                  SizedBox(width: double.infinity, child: directions),
+                ]);
+              }
+              return Row(children: [
+                Expanded(child: directions),
+                const SizedBox(width: CostaGoSpace.sm),
+                Expanded(child: call),
+              ]);
+            }),
+          ),
+        ]),
       ),
     );
   }
@@ -15608,74 +15735,114 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         useSafeArea: true,
         showDragHandle: false,
         builder: (sheetContext) => FractionallySizedBox(
-          heightFactor: .78,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                IconButton(
-                    tooltip: 'Regresar',
-                    onPressed: () => Navigator.pop(sheetContext),
-                    icon: const Icon(Icons.arrow_back_rounded)),
-                const Expanded(
-                    child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                      _CostaGoEmblem(size: 34),
-                      SizedBox(width: 8),
-                      Text('Puntos de pago',
-                          style: TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.w900)),
-                    ])),
-                const SizedBox(width: 48),
-              ]),
-              Center(
-                  child: Text(order == null
-                      ? 'Selecciona un punto autorizado para presentar tu QR.'
-                      : '${membershipPlanSummary(order['plan'])}\nSelecciona un punto autorizado para presentar tu QR.',
-                      textAlign: TextAlign.center)),
-              const SizedBox(height: 12),
-              Expanded(
-                  child: points.isEmpty
-                      ? const Center(
-                          child: Text(
-                              'No hay puntos de pago activos en este momento.'))
-                      : ListView.separated(
-                          itemCount: points.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 8),
-                          itemBuilder: (_, index) {
-                            final point = points[index];
-                            return Card(
-                                child: ListTile(
-                              leading: CircleAvatar(
-                                  child: Icon(point['isOpen'] == true
-                                      ? Icons.storefront
-                                      : Icons.store_outlined)),
-                              title: Text(
-                                  point['name']?.toString() ??
-                                      'Punto autorizado',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800)),
-                              subtitle: Text([
-                                point['address'],
-                                point['reference'],
-                                if (point['distanceKm'] != null)
-                                  '${(point['distanceKm'] as num).toStringAsFixed(1)} km',
-                                point['isOpen'] == true
-                                    ? 'Abierto'
-                                    : point['isOpen'] == false
-                                        ? 'Cerrado'
-                                        : null
-                              ].whereType<Object>().join('\n')),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () => _showCollectionPointDetail(
-                                  sheetContext, point),
-                            ));
-                          })),
-            ]),
-          ),
+          heightFactor: .84,
+          child: Column(children: [
+            const CostaGoSheetHandle(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: CostaGoSpace.lg),
+              child: CostaGoSheetHeader(
+                icon: Icons.storefront_outlined,
+                title: 'Puntos de pago',
+                subtitle: order == null
+                    ? 'Selecciona un punto autorizado para presentar tu QR.'
+                    : '${membershipPlanSummary(order['plan'])}. Selecciona dónde presentar tu QR.',
+                onClose: () => Navigator.pop(sheetContext),
+              ),
+            ),
+            const SizedBox(height: CostaGoSpace.md),
+            Expanded(
+              child: points.isEmpty
+                  ? const CostaGoEmptyState(
+                      icon: Icons.store_mall_directory_outlined,
+                      title: 'No hay puntos disponibles',
+                      message:
+                          'Vuelve a intentarlo más tarde o utiliza transferencia bancaria.',
+                    )
+                  : ListView.separated(
+                      padding: EdgeInsets.fromLTRB(
+                          CostaGoSpace.lg,
+                          0,
+                          CostaGoSpace.lg,
+                          MediaQuery.paddingOf(sheetContext).bottom +
+                              CostaGoSpace.lg),
+                      itemCount: points.length,
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: CostaGoSpace.sm),
+                      itemBuilder: (_, index) {
+                        final point = points[index];
+                        return CostaGoSurface(
+                          onTap: () =>
+                              _showCollectionPointDetail(sheetContext, point),
+                          child: Row(children: [
+                            const CostaGoIconBadge(
+                              icon: Icons.storefront_outlined,
+                              size: 54,
+                            ),
+                            const SizedBox(width: CostaGoSpace.md),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(_collectionPointDisplayName(point),
+                                      maxLines: 2,
+                                      style: Theme.of(sheetContext)
+                                          .textTheme
+                                          .titleMedium),
+                                  if ((point['address']?.toString() ?? '')
+                                      .isNotEmpty) ...[
+                                    const SizedBox(height: 5),
+                                    Text(point['address'].toString(),
+                                        maxLines: 2,
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                                color: Theme.of(sheetContext)
+                                                    .colorScheme
+                                                    .onSurfaceVariant)),
+                                  ],
+                                  if ((point['reference']?.toString() ?? '')
+                                      .isNotEmpty)
+                                    Text(point['reference'].toString(),
+                                        maxLines: 2,
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .bodySmall),
+                                  const SizedBox(height: 8),
+                                  Wrap(spacing: 8, runSpacing: 6, children: [
+                                    if (point['distanceKm'] != null)
+                                      CostaGoStatusChip(
+                                        label:
+                                            '${(point['distanceKm'] as num).toStringAsFixed(1)} km',
+                                        icon: Icons.location_on_outlined,
+                                      ),
+                                    CostaGoStatusChip(
+                                      label: point['isOpen'] == true
+                                          ? 'Abierto ahora'
+                                          : point['isOpen'] == false
+                                              ? 'Cerrado ahora'
+                                              : 'Por confirmar',
+                                      icon: Icons.circle,
+                                      tone: point['isOpen'] == true
+                                          ? CostaGoStatusTone.success
+                                          : point['isOpen'] == false
+                                              ? CostaGoStatusTone.danger
+                                              : CostaGoStatusTone.warning,
+                                    ),
+                                  ]),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: CostaGoSpace.xs),
+                            Icon(Icons.chevron_right_rounded,
+                                color:
+                                    Theme.of(sheetContext).colorScheme.primary),
+                          ]),
+                        );
+                      },
+                    ),
+            ),
+          ]),
         ),
       );
     } catch (error) {
@@ -15968,56 +16135,131 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (qrUrl == null || qrUrl.isEmpty) return;
     await showDialog<void>(
       context: context,
-      builder: (qrContext) => AlertDialog(
-        titlePadding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-        title: Row(children: [
-          IconButton(
-              tooltip: 'Regresar',
-              onPressed: () => Navigator.pop(qrContext),
-              icon: const Icon(Icons.arrow_back_rounded)),
-          const Expanded(
-              child:
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            _CostaGoEmblem(size: 36),
-            SizedBox(width: 8),
-            Flexible(
-                child: Text('Membresía Costa-Go',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
-          ])),
-          const SizedBox(width: 48),
-        ]),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('QR de pago',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 5),
-          Text(membershipPlanSummary(order['plan']),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: Theme.of(qrContext).colorScheme.primary,
-                  fontWeight: FontWeight.w800)),
-          const SizedBox(height: 10),
-          Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                  color: Colors.white, borderRadius: BorderRadius.circular(18)),
-              child: QrImageView(
-                  data: qrUrl, size: 210, backgroundColor: Colors.white)),
-          const SizedBox(height: 12),
-          const Text(
-              'Presenta este QR en cualquier punto de recaudación autorizado.',
-              textAlign: TextAlign.center),
-          const SizedBox(height: 8),
-          Text('Código ${order['shortCode']}',
-              style: const TextStyle(fontWeight: FontWeight.w900)),
-        ]),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          FilledButton(
-              onPressed: () => Navigator.pop(qrContext),
-              child: const Text('Cerrar'))
-        ],
+      builder: (qrContext) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480, maxHeight: 760),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(CostaGoSpace.lg),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Row(children: [
+                IconButton.filledTonal(
+                  tooltip: 'Regresar',
+                  onPressed: () => Navigator.pop(qrContext),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+                const Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _CostaGoEmblem(size: 38),
+                      SizedBox(width: CostaGoSpace.xs),
+                      Flexible(
+                        child: Text('Membresía Costa-Go',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.w900)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 48),
+              ]),
+              const SizedBox(height: CostaGoSpace.lg),
+              Text('QR de pago',
+                  style: Theme.of(qrContext)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: CostaGoSpace.xs),
+              CostaGoStatusChip(
+                label: membershipPlanSummary(order['plan']),
+                icon: membershipPlanType(order['plan']) == 'TRIP_PACK'
+                    ? Icons.route_outlined
+                    : Icons.calendar_month_outlined,
+              ),
+              const SizedBox(height: CostaGoSpace.md),
+              Semantics(
+                label: 'Código QR para pagar la membresía',
+                image: true,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(CostaGoRadius.large),
+                    border: Border.all(color: const Color(0xffe1e7ef)),
+                  ),
+                  child: QrImageView(
+                    data: qrUrl,
+                    size: 230,
+                    padding: EdgeInsets.zero,
+                    backgroundColor: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(height: CostaGoSpace.md),
+              const CostaGoInfoBanner(
+                title: 'Presenta este QR',
+                message:
+                    'En cualquier punto de recaudación Costa-Go autorizado.',
+                icon: Icons.storefront_outlined,
+              ),
+              const SizedBox(height: CostaGoSpace.sm),
+              CostaGoSurface(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: CostaGoSpace.md,
+                  vertical: CostaGoSpace.sm,
+                ),
+                child: Row(children: [
+                  const Icon(Icons.sell_outlined),
+                  const SizedBox(width: CostaGoSpace.sm),
+                  Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Código de referencia',
+                              style: Theme.of(qrContext).textTheme.bodySmall),
+                          Text(order['shortCode']?.toString() ?? '',
+                              style: Theme.of(qrContext)
+                                  .textTheme
+                                  .titleLarge
+                                  ?.copyWith(
+                                    color:
+                                        Theme.of(qrContext).colorScheme.primary,
+                                    fontWeight: FontWeight.w900,
+                                  )),
+                        ]),
+                  ),
+                  IconButton(
+                    tooltip: 'Copiar referencia',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(
+                          text: order['shortCode']?.toString() ?? ''));
+                      ScaffoldMessenger.of(qrContext).showSnackBar(
+                        const SnackBar(content: Text('Referencia copiada.')),
+                      );
+                    },
+                    icon: const Icon(Icons.copy_outlined),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: CostaGoSpace.sm),
+              const CostaGoInfoBanner(
+                title: 'Pago seguro',
+                message: 'Tu información y tu orden están protegidas.',
+                icon: Icons.verified_user_outlined,
+              ),
+              const SizedBox(height: CostaGoSpace.md),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(qrContext),
+                  child: const Text('Cerrar'),
+                ),
+              ),
+            ]),
+          ),
+        ),
       ),
     );
   }
@@ -16033,12 +16275,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           context: hostContext,
           isScrollControlled: true,
           useSafeArea: true,
-          showDragHandle: true,
+          showDragHandle: false,
           builder: (sheetContext) {
             final scheme = Theme.of(sheetContext).colorScheme;
             final isTripPack = membershipPlanType(order['plan']) == 'TRIP_PACK';
             final statusTitle = {
-                  'PENDING': isTripPack ? 'Comprar viajes' : 'Renovar membresía',
+                  'PENDING':
+                      isTripPack ? 'Comprar viajes' : 'Renovar membresía',
                   'PENDING_VERIFICATION': 'Pago en revisión',
                   'PAID': 'Orden pagada',
                   'REJECTED': 'Orden rechazada',
@@ -16055,21 +16298,35 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   'CANCELLED': 'Anulada',
                 }[status] ??
                 'Pendiente';
-            final statusColor = status == 'PAID'
-                ? Colors.green
-                : status == 'REJECTED' || status == 'CANCELLED'
-                    ? scheme.error
-                    : status == 'PENDING_VERIFICATION'
-                        ? Colors.orange.shade800
-                        : scheme.primary;
+            final statusTone = switch (status) {
+              'PAID' => CostaGoStatusTone.success,
+              'REJECTED' ||
+              'CANCELLED' ||
+              'EXPIRED' =>
+                CostaGoStatusTone.danger,
+              'PENDING_VERIFICATION' => CostaGoStatusTone.warning,
+              _ => CostaGoStatusTone.info,
+            };
+            final statusIcon = switch (status) {
+              'PAID' => Icons.check_circle_rounded,
+              'REJECTED' || 'CANCELLED' => Icons.block_rounded,
+              'EXPIRED' => Icons.event_busy_outlined,
+              'PENDING_VERIFICATION' => Icons.hourglass_top_rounded,
+              _ => Icons.schedule_rounded,
+            };
             return FractionallySizedBox(
               heightFactor: .95,
               child: ListView(
                 padding: EdgeInsets.fromLTRB(
-                    16, 0, 16, MediaQuery.paddingOf(sheetContext).bottom + 18),
+                    CostaGoSpace.lg,
+                    0,
+                    CostaGoSpace.lg,
+                    MediaQuery.paddingOf(sheetContext).bottom +
+                        CostaGoSpace.lg),
                 children: [
+                  const CostaGoSheetHandle(),
                   Row(children: [
-                    IconButton(
+                    IconButton.filledTonal(
                         tooltip: 'Regresar',
                         onPressed: () => Navigator.pop(sheetContext, false),
                         icon: const Icon(Icons.arrow_back_rounded)),
@@ -16094,24 +16351,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   const SizedBox(height: 7),
                   Align(
                     alignment: Alignment.center,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: statusColor.withValues(alpha: .12),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(orderStatusLabel,
-                          style: TextStyle(
-                              color: statusColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800)),
+                    child: CostaGoStatusChip(
+                      label: orderStatusLabel,
+                      icon: statusIcon,
+                      tone: statusTone,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  _PassengerSurface(
-                    padding: const EdgeInsets.all(14),
-                    color: scheme.primaryContainer.withValues(alpha: .22),
+                  const SizedBox(height: CostaGoSpace.md),
+                  CostaGoSurface(
+                    tone: CostaGoStatusTone.info,
                     child: Column(children: [
                       Text('Total a pagar',
                           style: Theme.of(sheetContext)
@@ -16126,7 +16374,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   color: scheme.primary,
                                   fontWeight: FontWeight.w900)),
                       Text(
-                          '${membershipPlanName(order['plan'])}\n${membershipPlanSummary(order['plan'])}',
+                          '${membershipPlanName(order['plan'])} · ${membershipPlanSummary(order['plan'])}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(fontWeight: FontWeight.w700)),
                       if (expiresAt != null) ...[
@@ -16136,12 +16384,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             textAlign: TextAlign.center,
                             style: Theme.of(sheetContext).textTheme.bodySmall),
                       ],
+                      const SizedBox(height: 4),
+                      Text('Código ${order['shortCode'] ?? ''}',
+                          style: Theme.of(sheetContext)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant)),
                     ]),
                   ),
-                  const SizedBox(height: 10),
-                  _PassengerSurface(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  const SizedBox(height: CostaGoSpace.sm),
+                  CostaGoSurface(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: CostaGoSpace.md, vertical: CostaGoSpace.sm),
                     child: Column(children: [
                       _membershipAmountRow(
                           sheetContext,
@@ -16150,9 +16404,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               order['baseAmount'] ??
                               0),
                       if (breakdown['includedTrips'] != null)
-                        _membershipDetailLine(isTripPack ? 'Viajes a acreditar' : 'Viajes incluidos',
+                        _membershipDetailLine(
+                            isTripPack
+                                ? 'Viajes a acreditar'
+                                : 'Viajes incluidos',
                             '${breakdown['includedTrips']}'),
-                      if (!isTripPack && breakdown['extraTrips'] != null &&
+                      if (!isTripPack &&
+                          breakdown['extraTrips'] != null &&
                           (breakdown['extraTrips'] as num) > 0) ...[
                         _membershipDetailLine('Viajes con excedente',
                             '${breakdown['extraTrips']}'),
@@ -16163,12 +16421,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               breakdown['extraTripUnitAmount'] as num),
                       ],
                       if (((breakdown['billableExtraAmount'] as num?) ??
-                                  order['priorUsageAmount'] ??
-                                  0) !=
-                              0)
+                              order['priorUsageAmount'] ??
+                              0) !=
+                          0)
                         _membershipAmountRow(
                             sheetContext,
-                            isTripPack ? 'Saldo del ciclo anterior' : 'Excedente',
+                            isTripPack
+                                ? 'Saldo del ciclo anterior'
+                                : 'Excedente',
                             (breakdown['billableExtraAmount'] as num?) ??
                                 order['priorUsageAmount'] ??
                                 0),
@@ -16195,25 +16455,40 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               order['vatAmount'] ??
                               0),
                       _membershipAmountRow(
-                          sheetContext, 'Total a pagar', amount),
+                          sheetContext, 'Total a pagar', amount,
+                          emphasized: true),
                     ]),
                   ),
                   if (status == 'PENDING_VERIFICATION')
                     const Padding(
-                      padding: EdgeInsets.only(top: 12),
-                      child: _PassengerSurface(
-                        padding: EdgeInsets.all(12),
-                        child: Text(
-                            'Recibimos tu comprobante. El pago será revisado y te notificaremos cuando finalice el proceso.',
-                            textAlign: TextAlign.center),
+                      padding: EdgeInsets.only(top: CostaGoSpace.sm),
+                      child: CostaGoInfoBanner(
+                        title: 'Comprobante recibido',
+                        message:
+                            'El pago será revisado y te notificaremos cuando finalice el proceso.',
+                        icon: Icons.hourglass_top_rounded,
+                        tone: CostaGoStatusTone.warning,
+                      ),
+                    ),
+                  if (status == 'PAID')
+                    const Padding(
+                      padding: EdgeInsets.only(top: CostaGoSpace.sm),
+                      child: CostaGoInfoBanner(
+                        title: 'Pago realizado con éxito',
+                        message: 'Tu membresía fue procesada correctamente.',
+                        icon: Icons.check_circle_outline_rounded,
+                        tone: CostaGoStatusTone.success,
                       ),
                     ),
                   if (status == 'CANCELLED')
                     Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Text(
-                        '${_membershipCancellationLabel(order['cancellationReason']?.toString())}${order['cancellationObservation'] == null ? '' : '\n${order['cancellationObservation']}'}',
-                        textAlign: TextAlign.center,
+                      padding: const EdgeInsets.only(top: CostaGoSpace.sm),
+                      child: CostaGoInfoBanner(
+                        title: 'Motivo de la anulación',
+                        message:
+                            '${_membershipCancellationLabel(order['cancellationReason']?.toString())}${order['cancellationObservation'] == null ? '' : '\n${order['cancellationObservation']}'}',
+                        icon: Icons.info_outline_rounded,
+                        tone: CostaGoStatusTone.danger,
                       ),
                     ),
                   if (status == 'PENDING') ...[
@@ -16290,82 +16565,228 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       final orders =
           raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
       if (!hostContext.mounted) return;
+      var filter = 'ALL';
       await showModalBottomSheet<void>(
         context: hostContext,
         isScrollControlled: true,
         useSafeArea: true,
-        showDragHandle: true,
-        builder: (context) => FractionallySizedBox(
-          heightFactor: .72,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Mis pagos',
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 4),
-              const Text('Órdenes vigentes, pagadas, vencidas y anuladas.'),
-              const SizedBox(height: 12),
-              Expanded(
-                child: orders.isEmpty
-                    ? const Center(
-                        child: Text('Aún no tienes órdenes de pago.'))
-                    : ListView.separated(
-                        itemCount: orders.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final order = orders[index];
-                          final status =
-                              order['status']?.toString() ?? 'PENDING';
-                          final created = DateTime.tryParse(
-                              order['createdAt']?.toString() ?? '');
-                          final statusLabel = const {
-                                'PENDING': 'Pendiente',
-                                'PENDING_VERIFICATION': 'En revisión',
-                                'PAID': 'Pagada',
-                                'REJECTED': 'Rechazada',
-                                'EXPIRED': 'Vencida',
-                                'CANCELLED': 'Anulada',
-                              }[status] ??
-                              status;
-                          final color = status == 'CANCELLED'
-                              ? Theme.of(context).colorScheme.errorContainer
-                              : Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHigh;
-                          return Card(
-                            color: color,
-                            child: ListTile(
-                              leading: Icon(status == 'CANCELLED'
-                                  ? Icons.block_rounded
-                                  : Icons.receipt_long_outlined),
-                              title: Text(
-                                  '${membershipPlanName(order['plan'])} · $statusLabel'),
-                              subtitle: Text([
-                                'Código ${order['shortCode']}',
-                                if (created != null)
-                                  formatEcuadorLongDateTime(created),
-                                if (status == 'CANCELLED')
-                                  _membershipCancellationLabel(
-                                      order['cancellationReason']?.toString()),
-                                if (status == 'CANCELLED' &&
-                                    order['cancellationObservation'] != null)
-                                  order['cancellationObservation'].toString(),
-                              ].join('\n')),
-                              trailing: Text(
-                                  '\$${((order['totalAmount'] as num?) ?? 0).toDouble().toStringAsFixed(2)}'),
-                              onTap: () =>
-                                  _showMembershipPaymentOrder(context, order),
+        showDragHandle: false,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setSheetState) {
+            final visible = orders.where((order) {
+              final status = order['status']?.toString() ?? 'PENDING';
+              return switch (filter) {
+                'PAID' => status == 'PAID',
+                'CANCELLED' => status == 'CANCELLED' || status == 'REJECTED',
+                'ACTIVE' =>
+                  status == 'PENDING' || status == 'PENDING_VERIFICATION',
+                'EXPIRED' => status == 'EXPIRED',
+                _ => true,
+              };
+            }).toList();
+            return FractionallySizedBox(
+              heightFactor: .84,
+              child: Column(children: [
+                const CostaGoSheetHandle(),
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: CostaGoSpace.lg),
+                  child: CostaGoSheetHeader(
+                    icon: Icons.receipt_long_outlined,
+                    title: 'Mis pagos',
+                    subtitle: 'Órdenes vigentes, pagadas, vencidas y anuladas.',
+                    onClose: () => Navigator.pop(context),
+                  ),
+                ),
+                const SizedBox(height: CostaGoSpace.md),
+                SizedBox(
+                  height: 44,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: CostaGoSpace.lg),
+                    children: [
+                      for (final item in const [
+                        ('ALL', 'Todas', Icons.grid_view_rounded),
+                        ('PAID', 'Pagadas', Icons.check_circle_outline_rounded),
+                        ('CANCELLED', 'Anuladas', Icons.block_rounded),
+                        ('ACTIVE', 'Vigentes', Icons.schedule_rounded),
+                        ('EXPIRED', 'Vencidas', Icons.event_busy_outlined),
+                      ]) ...[
+                        ChoiceChip(
+                          selected: filter == item.$1,
+                          onSelected: (_) =>
+                              setSheetState(() => filter = item.$1),
+                          avatar: Icon(item.$3, size: 18),
+                          label: Text(item.$2),
+                        ),
+                        const SizedBox(width: CostaGoSpace.xs),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: CostaGoSpace.sm),
+                Expanded(
+                  child: orders.isEmpty
+                      ? const CostaGoEmptyState(
+                          icon: Icons.receipt_long_outlined,
+                          title: 'Aún no tienes pagos',
+                          message: 'Tus órdenes de membresía aparecerán aquí.',
+                        )
+                      : visible.isEmpty
+                          ? const CostaGoEmptyState(
+                              icon: Icons.filter_alt_off_outlined,
+                              title: 'No hay resultados',
+                              message: 'No tienes órdenes con este estado.',
+                            )
+                          : ListView.separated(
+                              padding: EdgeInsets.fromLTRB(
+                                  CostaGoSpace.lg,
+                                  0,
+                                  CostaGoSpace.lg,
+                                  MediaQuery.paddingOf(context).bottom +
+                                      CostaGoSpace.lg),
+                              itemCount: visible.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: CostaGoSpace.sm),
+                              itemBuilder: (context, index) {
+                                final order = visible[index];
+                                final status =
+                                    order['status']?.toString() ?? 'PENDING';
+                                final created = DateTime.tryParse(
+                                    order['createdAt']?.toString() ?? '');
+                                final statusLabel = const {
+                                      'PENDING': 'Pendiente',
+                                      'PENDING_VERIFICATION': 'En revisión',
+                                      'PAID': 'Pagada',
+                                      'REJECTED': 'Rechazada',
+                                      'EXPIRED': 'Vencida',
+                                      'CANCELLED': 'Anulada',
+                                    }[status] ??
+                                    status;
+                                final tone = switch (status) {
+                                  'PAID' => CostaGoStatusTone.success,
+                                  'CANCELLED' ||
+                                  'REJECTED' =>
+                                    CostaGoStatusTone.danger,
+                                  'EXPIRED' ||
+                                  'PENDING_VERIFICATION' =>
+                                    CostaGoStatusTone.warning,
+                                  _ => CostaGoStatusTone.info,
+                                };
+                                final icon = switch (status) {
+                                  'PAID' => Icons.task_alt_rounded,
+                                  'CANCELLED' ||
+                                  'REJECTED' =>
+                                    Icons.block_rounded,
+                                  'EXPIRED' => Icons.event_busy_outlined,
+                                  _ => Icons.receipt_long_outlined,
+                                };
+                                return CostaGoSurface(
+                                  tone: status == 'CANCELLED' ||
+                                          status == 'REJECTED'
+                                      ? CostaGoStatusTone.danger
+                                      : CostaGoStatusTone.neutral,
+                                  onTap: () => _showMembershipPaymentOrder(
+                                      context, order),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      CostaGoIconBadge(
+                                        icon: icon,
+                                        tone: tone,
+                                        size: 50,
+                                      ),
+                                      const SizedBox(width: CostaGoSpace.sm),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 6,
+                                              crossAxisAlignment:
+                                                  WrapCrossAlignment.center,
+                                              children: [
+                                                Text(
+                                                  membershipPlanName(
+                                                      order['plan']),
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .titleMedium,
+                                                ),
+                                                CostaGoStatusChip(
+                                                  label: statusLabel,
+                                                  tone: tone,
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                                membershipPlanSummary(
+                                                    order['plan']),
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall),
+                                            Text('Código ${order['shortCode']}',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodyMedium),
+                                            if (created != null)
+                                              Text(
+                                                  formatEcuadorLongDateTime(
+                                                      created),
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodySmall
+                                                      ?.copyWith(
+                                                          color: Theme.of(
+                                                                  context)
+                                                              .colorScheme
+                                                              .onSurfaceVariant)),
+                                            if (status == 'CANCELLED' ||
+                                                status == 'REJECTED') ...[
+                                              const Divider(height: 14),
+                                              Text(
+                                                'Motivo: ${_membershipCancellationLabel(order['cancellationReason']?.toString())}',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall,
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: CostaGoSpace.xs),
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            '\$${((order['totalAmount'] as num?) ?? 0).toDouble().toStringAsFixed(2)}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w900),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          const Icon(
+                                              Icons.chevron_right_rounded),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
-                      ),
-              ),
-            ]),
-          ),
+                ),
+              ]),
+            );
+          },
         ),
       );
     } catch (error) {
@@ -16414,7 +16835,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         color: colors.primaryContainer,
                       ),
                       child: Icon(
-                        isTripPack ? Icons.route_rounded : Icons.event_available_rounded,
+                        isTripPack
+                            ? Icons.route_rounded
+                            : Icons.event_available_rounded,
                         color: colors.onPrimaryContainer,
                         size: 30,
                       ),
@@ -16431,7 +16854,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     const SizedBox(height: 10),
                     Text.rich(
                       TextSpan(children: [
-                        TextSpan(text: isTripPack ? 'Vas a comprar el plan ' : 'Vas a activar el plan '),
+                        TextSpan(
+                            text: isTripPack
+                                ? 'Vas a comprar el plan '
+                                : 'Vas a activar el plan '),
                         TextSpan(
                           text: name,
                           style: const TextStyle(fontWeight: FontWeight.w800),
@@ -16464,8 +16890,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(isTripPack ? Icons.route_outlined : Icons.event_available_outlined,
-                              color: colors.primary, size: 22),
+                          Icon(
+                              isTripPack
+                                  ? Icons.route_outlined
+                                  : Icons.event_available_outlined,
+                              color: colors.primary,
+                              size: 22),
                           const SizedBox(width: 9),
                           Flexible(
                             child: Text(
@@ -16496,7 +16926,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         Expanded(
                           child: FilledButton(
                             onPressed: () => Navigator.pop(dialogContext, true),
-                            child: Text(isTripPack ? 'Sí, comprar' : 'Sí, activar'),
+                            child: Text(
+                                isTripPack ? 'Sí, comprar' : 'Sí, activar'),
                           ),
                         ),
                       ],
@@ -16533,9 +16964,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               final status = membership['status']?.toString() ?? 'PENDING';
               final extraAmount =
                   (membership['billableExtraAmount'] as num?)?.toDouble() ?? 0;
+              final currentIsTripPack =
+                  membership['planType']?.toString() == 'TRIP_PACK';
+              final statusTone = switch (status) {
+                'ACTIVE' => CostaGoStatusTone.success,
+                'EXPIRING' ||
+                'GRACE_PERIOD' ||
+                'PAYMENT_DUE' =>
+                  CostaGoStatusTone.warning,
+                'SUSPENDED_NON_PAYMENT' ||
+                'SUSPENDED' ||
+                'EXHAUSTED' =>
+                  CostaGoStatusTone.danger,
+                _ => CostaGoStatusTone.info,
+              };
               final visiblePlans = plans
                   .map((item) => Map<String, dynamic>.from(item as Map))
-                  .where((plan) => (plan['planType']?.toString() ?? 'PERIODIC') == selectedPlanType)
+                  .where((plan) =>
+                      (plan['planType']?.toString() ?? 'PERIODIC') ==
+                      selectedPlanType)
                   .toList();
               Future<void> selectPlan(Map<String, dynamic> plan) async {
                 if (pendingOrder != null || orderGenerationInProgress) return;
@@ -16573,82 +17020,145 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               }
 
               return FractionallySizedBox(
-                  heightFactor: .86,
+                  heightFactor: .9,
                   child: Column(children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 2),
-                      child: Row(children: [
-                        IconButton(
-                            tooltip: 'Cerrar',
-                            onPressed: () => Navigator.pop(sheetContext),
-                            icon: const Icon(Icons.close_rounded)),
-                        Expanded(
-                          child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const _CostaGoEmblem(size: 36),
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text('Membresía Costa-Go',
-                                      textAlign: TextAlign.center,
-                                      style: Theme.of(sheetContext)
-                                          .textTheme
-                                          .titleLarge
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w900)),
-                                ),
-                              ]),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: CostaGoSpace.lg),
+                      child: Column(children: [
+                        const CostaGoSheetHandle(),
+                        CostaGoSheetHeader(
+                          icon: Icons.workspace_premium_outlined,
+                          title: 'Membresía Costa-Go',
+                          subtitle:
+                              'Consulta tu plan actual o elige una modalidad.',
+                          onClose: () => Navigator.pop(sheetContext),
                         ),
-                        const SizedBox(width: 48),
                       ]),
                     ),
                     Expanded(
                         child: ListView(
-                            padding: const EdgeInsets.fromLTRB(18, 2, 18, 28),
+                            padding: const EdgeInsets.fromLTRB(
+                                CostaGoSpace.lg,
+                                CostaGoSpace.md,
+                                CostaGoSpace.lg,
+                                CostaGoSpace.xxl),
                             children: [
                           Align(
-                              alignment: Alignment.centerLeft,
-                              child: Chip(
-                                  label: Text(_membershipStatusLabel(status)),
-                                  avatar: const Icon(Icons.schedule_rounded,
-                                      size: 18))),
-                          Card(
-                              child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(children: [
-                                    _membershipDetailLine(
-                                        'Plan actual',
-                                        membership['planName']?.toString() ??
-                                            'Sin plan activo'),
-                                    _membershipDetailLine(
-                                        membership['planType'] == 'TRIP_PACK'
-                                            ? 'Modalidad'
-                                            : 'Viajes del ciclo',
-                                        membership['planType'] == 'TRIP_PACK'
-                                            ? 'Plan por viajes'
-                                            : '${membership['completedTrips'] ?? 0}'),
-                                    if (membership['planType'] == 'TRIP_PACK') ...[
-                                      _membershipDetailLine('Viajes disponibles',
-                                          '${membership['remainingTrips'] ?? 0}'),
-                                      _membershipDetailLine('Viajes consumidos',
-                                          '${membership['completedTrips'] ?? 0}'),
-                                    ] else
-                                      _membershipDetailLine('Renovación estimada',
-                                          '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
-                                    if (membership['planType'] != 'TRIP_PACK' && extraAmount > 0)
-                                      _membershipDetailLine(
-                                          'Excedente acumulado',
-                                          '\$${extraAmount.toStringAsFixed(2)}'),
-                                    if (membership['expiresAt'] != null)
-                                      _membershipDetailLine(
-                                          'Vigente hasta',
-                                          formatEcuadorCompactDate(
-                                              DateTime.parse(
-                                                  membership['expiresAt']
-                                                      .toString()))),
-                                    if (membership['planType'] == 'TRIP_PACK' && membership['expiresAt'] == null)
-                                      _membershipDetailLine('Vigencia', 'Hasta agotar los viajes'),
-                                  ]))),
+                            alignment: Alignment.centerLeft,
+                            child: CostaGoStatusChip(
+                              label: _membershipStatusLabel(status),
+                              icon: status == 'ACTIVE'
+                                  ? Icons.verified_rounded
+                                  : status == 'EXHAUSTED'
+                                      ? Icons.route_outlined
+                                      : Icons.schedule_rounded,
+                              tone: statusTone,
+                            ),
+                          ),
+                          const SizedBox(height: CostaGoSpace.sm),
+                          CostaGoSurface(
+                            child: Column(children: [
+                              Row(children: [
+                                CostaGoIconBadge(
+                                  icon: currentIsTripPack
+                                      ? Icons.route_outlined
+                                      : Icons.calendar_month_outlined,
+                                  size: 52,
+                                ),
+                                const SizedBox(width: CostaGoSpace.sm),
+                                Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Plan actual',
+                                            style: Theme.of(sheetContext)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                    color:
+                                                        Theme.of(sheetContext)
+                                                            .colorScheme
+                                                            .onSurfaceVariant)),
+                                        Text(
+                                          membership['planName']?.toString() ??
+                                              'Sin plan activo',
+                                          style: Theme.of(sheetContext)
+                                              .textTheme
+                                              .titleLarge,
+                                        ),
+                                      ]),
+                                ),
+                                CostaGoStatusChip(
+                                  label: currentIsTripPack
+                                      ? 'Por viajes'
+                                      : 'Por período',
+                                  icon: currentIsTripPack
+                                      ? Icons.route_outlined
+                                      : Icons.event_repeat_outlined,
+                                ),
+                              ]),
+                              const Divider(),
+                              if (currentIsTripPack)
+                                CostaGoSurface(
+                                  tone: CostaGoStatusTone.info,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: CostaGoSpace.md,
+                                      vertical: CostaGoSpace.sm),
+                                  child: Row(children: [
+                                    Expanded(
+                                      child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text('Viajes disponibles',
+                                                style: Theme.of(sheetContext)
+                                                    .textTheme
+                                                    .bodySmall),
+                                            Text(
+                                              '${membership['remainingTrips'] ?? 0}',
+                                              style: Theme.of(sheetContext)
+                                                  .textTheme
+                                                  .headlineMedium
+                                                  ?.copyWith(
+                                                    color:
+                                                        Theme.of(sheetContext)
+                                                            .colorScheme
+                                                            .primary,
+                                                    fontWeight: FontWeight.w900,
+                                                  ),
+                                            ),
+                                          ]),
+                                    ),
+                                    Text(
+                                      '${membership['completedTrips'] ?? 0} consumidos',
+                                      style: Theme.of(sheetContext)
+                                          .textTheme
+                                          .bodyMedium,
+                                    ),
+                                  ]),
+                                )
+                              else
+                                _membershipDetailLine('Viajes del ciclo',
+                                    '${membership['completedTrips'] ?? 0}'),
+                              if (!currentIsTripPack)
+                                _membershipDetailLine('Renovación estimada',
+                                    '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
+                              if (!currentIsTripPack && extraAmount > 0)
+                                _membershipDetailLine('Excedente acumulado',
+                                    '\$${extraAmount.toStringAsFixed(2)}'),
+                              if (membership['expiresAt'] != null)
+                                _membershipDetailLine(
+                                    'Vigente hasta',
+                                    formatEcuadorCompactDate(DateTime.parse(
+                                        membership['expiresAt'].toString()))),
+                              if (currentIsTripPack &&
+                                  membership['expiresAt'] == null)
+                                _membershipDetailLine(
+                                    'Vigencia', 'Hasta agotar los viajes'),
+                            ]),
+                          ),
                           const SizedBox(height: 8),
                           OutlinedButton.icon(
                               onPressed: () =>
@@ -16689,12 +17199,19 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           const SizedBox(height: 14),
                           SegmentedButton<String>(
                             segments: const [
-                              ButtonSegment(value: 'PERIODIC', icon: Icon(Icons.calendar_month_outlined), label: Text('Por período')),
-                              ButtonSegment(value: 'TRIP_PACK', icon: Icon(Icons.route_outlined), label: Text('Por viajes')),
+                              ButtonSegment(
+                                  value: 'PERIODIC',
+                                  icon: Icon(Icons.calendar_month_outlined),
+                                  label: Text('Por período')),
+                              ButtonSegment(
+                                  value: 'TRIP_PACK',
+                                  icon: Icon(Icons.route_outlined),
+                                  label: Text('Por viajes')),
                             ],
                             selected: {selectedPlanType},
                             onSelectionChanged: pendingOrder == null
-                                ? (value) => setSheetState(() => selectedPlanType = value.first)
+                                ? (value) => setSheetState(
+                                    () => selectedPlanType = value.first)
                                 : null,
                           ),
                           const SizedBox(height: 14),
@@ -16707,109 +17224,115 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           SizedBox(
                               height: 178,
                               child: visiblePlans.isEmpty
-                                  ? Center(child: Text(selectedPlanType == 'TRIP_PACK'
-                                      ? 'Aún no hay planes por viajes disponibles.'
-                                      : 'Aún no hay planes por período disponibles.'))
+                                  ? Center(
+                                      child: Text(selectedPlanType ==
+                                              'TRIP_PACK'
+                                          ? 'Aún no hay planes por viajes disponibles.'
+                                          : 'Aún no hay planes por período disponibles.'))
                                   : ListView.separated(
-                                  scrollDirection: Axis.horizontal,
-                                  itemCount: visiblePlans.length,
-                                  separatorBuilder: (_, __) =>
-                                      const SizedBox(width: 8),
-                                  itemBuilder: (_, index) {
-                                    final plan = visiblePlans[index];
-                                    final current =
-                                        membership['planCode']?.toString() ==
+                                      scrollDirection: Axis.horizontal,
+                                      itemCount: visiblePlans.length,
+                                      separatorBuilder: (_, __) =>
+                                          const SizedBox(width: 8),
+                                      itemBuilder: (_, index) {
+                                        final plan = visiblePlans[index];
+                                        final current = membership['planCode']
+                                                ?.toString() ==
                                             plan['code']?.toString();
-                                    return SizedBox(
-                                        width: 150,
-                                        child: Card(
-                                            shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(16),
-                                                side: BorderSide(
-                                                    color: current
-                                                        ? Theme.of(sheetContext)
-                                                            .colorScheme
-                                                            .primary
-                                                        : Theme.of(sheetContext)
-                                                            .colorScheme
-                                                            .outlineVariant)),
-                                            child: InkWell(
-                                                borderRadius:
-                                                    BorderRadius.circular(16),
-                                                onTap: pendingOrder == null &&
-                                                        !orderGenerationInProgress
-                                                    ? () => selectPlan(plan)
-                                                    : null,
-                                                child: Padding(
-                                                    padding:
-                                                        const EdgeInsets.all(
-                                                            12),
-                                                    child: Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          Icon(
-                                                              plan['planType'] == 'TRIP_PACK'
-                                                                  ? Icons.route_outlined
-                                                                  : current
-                                                                      ? Icons.event_available_outlined
-                                                                      : Icons.calendar_month_outlined,
-                                                              color: Theme.of(
-                                                                      sheetContext)
-                                                                  .colorScheme
-                                                                  .primary),
-                                                          const SizedBox(
-                                                              height: 8),
-                                                          Text(
-                                                              plan['name']
-                                                                      ?.toString() ??
-                                                                  'Plan',
-                                                              style: const TextStyle(
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w900)),
-                                                          Text(
-                                                              plan['planType'] == 'TRIP_PACK'
-                                                                  ? '${plan['includedTrips']} viajes\n${plan['packValidityDays'] == null ? 'Sin caducidad' : '${plan['packValidityDays']} días'}'
-                                                                  : '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
-                                                              style: Theme.of(
-                                                                      sheetContext)
-                                                                  .textTheme
-                                                                  .bodySmall),
-                                                          const Spacer(),
-                                                          Text.rich(
-                                                              TextSpan(
-                                                                  children: [
-                                                                    TextSpan(
-                                                                        text:
-                                                                            '\$${(plan['amount'] as num).toStringAsFixed(2)}',
-                                                                        style: const TextStyle(
-                                                                            fontWeight:
-                                                                                FontWeight.w900)),
-                                                                    TextSpan(
-                                                                        text:
-                                                                            ' + IVA',
-                                                                        style: TextStyle(
-                                                                            fontSize:
-                                                                                12,
-                                                                            color:
-                                                                                Theme.of(sheetContext).colorScheme.onSurfaceVariant)),
-                                                                  ]),
-                                                              style: Theme.of(
-                                                                      sheetContext)
-                                                                  .textTheme
-                                                                  .titleMedium),
-                                                          if (pendingOrder ==
-                                                              null)
-                                                            const Text(
-                                                                'Toca para elegir',
-                                                                style: TextStyle(
-                                                                    fontSize:
-                                                                        11)),
-                                                        ])))));
-                                  })),
+                                        return SizedBox(
+                                            width: 150,
+                                            child: Card(
+                                                shape: RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            16),
+                                                    side: BorderSide(
+                                                        color: current
+                                                            ? Theme.of(sheetContext)
+                                                                .colorScheme
+                                                                .primary
+                                                            : Theme.of(sheetContext)
+                                                                .colorScheme
+                                                                .outlineVariant)),
+                                                child: InkWell(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            16),
+                                                    onTap: pendingOrder ==
+                                                                null &&
+                                                            !orderGenerationInProgress
+                                                        ? () => selectPlan(plan)
+                                                        : null,
+                                                    child: Padding(
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                                12),
+                                                        child: Column(
+                                                            crossAxisAlignment:
+                                                                CrossAxisAlignment
+                                                                    .start,
+                                                            children: [
+                                                              Icon(
+                                                                  plan['planType'] ==
+                                                                          'TRIP_PACK'
+                                                                      ? Icons
+                                                                          .route_outlined
+                                                                      : current
+                                                                          ? Icons
+                                                                              .event_available_outlined
+                                                                          : Icons
+                                                                              .calendar_month_outlined,
+                                                                  color: Theme.of(
+                                                                          sheetContext)
+                                                                      .colorScheme
+                                                                      .primary),
+                                                              const SizedBox(
+                                                                  height: 8),
+                                                              Text(
+                                                                  plan['name']
+                                                                          ?.toString() ??
+                                                                      'Plan',
+                                                                  style: const TextStyle(
+                                                                      fontWeight:
+                                                                          FontWeight
+                                                                              .w900)),
+                                                              Text(
+                                                                  plan['planType'] ==
+                                                                          'TRIP_PACK'
+                                                                      ? '${plan['includedTrips']} viajes\n${plan['packValidityDays'] == null ? 'Sin caducidad' : '${plan['packValidityDays']} días'}'
+                                                                      : '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
+                                                                  style: Theme.of(
+                                                                          sheetContext)
+                                                                      .textTheme
+                                                                      .bodySmall),
+                                                              const Spacer(),
+                                                              Text.rich(
+                                                                  TextSpan(
+                                                                      children: [
+                                                                        TextSpan(
+                                                                            text:
+                                                                                '\$${(plan['amount'] as num).toStringAsFixed(2)}',
+                                                                            style:
+                                                                                const TextStyle(fontWeight: FontWeight.w900)),
+                                                                        TextSpan(
+                                                                            text:
+                                                                                ' + IVA',
+                                                                            style:
+                                                                                TextStyle(fontSize: 12, color: Theme.of(sheetContext).colorScheme.onSurfaceVariant)),
+                                                                      ]),
+                                                                  style: Theme.of(
+                                                                          sheetContext)
+                                                                      .textTheme
+                                                                      .titleMedium),
+                                                              if (pendingOrder ==
+                                                                  null)
+                                                                const Text(
+                                                                    'Toca para elegir',
+                                                                    style: TextStyle(
+                                                                        fontSize:
+                                                                            11)),
+                                                            ])))));
+                                      })),
                           const SizedBox(height: 12),
                           Row(
                               crossAxisAlignment: CrossAxisAlignment.start,

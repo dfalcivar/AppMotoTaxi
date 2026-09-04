@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'costa_go_design.dart';
+
 Future<bool> showFiscalProfileModal(BuildContext context,
     {required Future<dynamic> Function() load,
     required Future<dynamic> Function(Map<String, dynamic>) save}) async {
@@ -36,7 +38,7 @@ class _FiscalProfileModalState extends State<FiscalProfileModal> {
   Map<String, dynamic>? profile;
   String type = 'CEDULA';
   bool loading = true, saving = false, editing = false;
-  String? error, notice;
+  String? error;
   @override
   void initState() {
     super.initState();
@@ -95,8 +97,12 @@ class _FiscalProfileModalState extends State<FiscalProfileModal> {
       setState(() {
         profile = Map<String, dynamic>.from(result['profile'] as Map);
         editing = false;
-        notice = 'Datos guardados correctamente.';
       });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Datos guardados correctamente.')),
+        );
+      }
     } catch (_) {
       if (mounted) {
         setState(() => error =
@@ -111,176 +117,248 @@ class _FiscalProfileModalState extends State<FiscalProfileModal> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context), colors = theme.colorScheme;
+    final theme = Theme.of(context);
     return PopScope(
-        canPop: !saving,
-        child: Padding(
-          padding:
-              EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * .9),
-            child: SingleChildScrollView(
-                padding: const EdgeInsets.all(22),
-                child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(children: [
-                        Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                                color: colors.primaryContainer,
-                                borderRadius: BorderRadius.circular(14)),
-                            child: Icon(Icons.receipt_long_outlined,
-                                color: colors.onPrimaryContainer)),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: Text('Datos de facturación',
-                                style: theme.textTheme.titleLarge
-                                    ?.copyWith(fontWeight: FontWeight.w800))),
-                        IconButton(
-                            tooltip: 'Volver',
-                            onPressed: saving
-                                ? null
-                                : () => Navigator.pop(context, false),
-                            icon: const Icon(Icons.close_rounded))
-                      ]),
-                      const SizedBox(height: 14),
-                      Text(
-                          'Registra estos datos una sola vez. Los utilizaremos para tus futuros comprobantes.',
-                          style: theme.textTheme.bodyMedium
-                              ?.copyWith(color: colors.onSurfaceVariant)),
-                      const SizedBox(height: 16),
-                      if (loading)
-                        const Center(child: CircularProgressIndicator()),
-                      if (error != null) ...[
-                        Text(error!, style: TextStyle(color: colors.error)),
-                        TextButton(
-                            onPressed: saving ? null : _load,
-                            child: const Text('Actualizar'))
+      canPop: !saving,
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SizedBox(
+          height: (MediaQuery.sizeOf(context).height -
+                  MediaQuery.viewInsetsOf(context).bottom) *
+              .94,
+          child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(
+              CostaGoSpace.lg,
+              0,
+              CostaGoSpace.lg,
+              CostaGoSpace.xl,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const CostaGoSheetHandle(),
+                CostaGoSheetHeader(
+                  icon: Icons.receipt_long_outlined,
+                  title: 'Datos de facturación',
+                  subtitle: editing
+                      ? 'Registra estos datos una sola vez. Los utilizaremos para tus futuros comprobantes.'
+                      : 'Usaremos estos datos para tus comprobantes.',
+                  onClose: saving ? null : () => Navigator.pop(context, false),
+                ),
+                const SizedBox(height: CostaGoSpace.lg),
+                if (loading)
+                  const Padding(
+                    padding: EdgeInsets.all(CostaGoSpace.xxl),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                if (error != null) ...[
+                  CostaGoInfoBanner(
+                    title: 'No pudimos cargar la información',
+                    message: error!,
+                    icon: Icons.error_outline_rounded,
+                    tone: CostaGoStatusTone.danger,
+                  ),
+                  const SizedBox(height: CostaGoSpace.sm),
+                  OutlinedButton.icon(
+                    onPressed: saving ? null : _load,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Actualizar'),
+                  ),
+                ],
+                if (!loading && editing) ...[
+                  Form(
+                    key: form,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: type,
+                          decoration: const InputDecoration(
+                            labelText: 'Tipo de identificación',
+                            prefixIcon: Icon(Icons.badge_outlined),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'CEDULA',
+                              child: Text('Cédula'),
+                            ),
+                            DropdownMenuItem(value: 'RUC', child: Text('RUC')),
+                          ],
+                          onChanged:
+                              saving ? null : (v) => setState(() => type = v!),
+                        ),
+                        const SizedBox(height: CostaGoSpace.sm),
+                        ...fields.entries.map(
+                          (entry) => Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: CostaGoSpace.sm),
+                            child: TextFormField(
+                              controller: entry.value,
+                              enabled: !saving,
+                              textInputAction: entry.key == 'billingEmail'
+                                  ? TextInputAction.done
+                                  : TextInputAction.next,
+                              keyboardType: entry.key == 'identification'
+                                  ? TextInputType.number
+                                  : entry.key == 'billingEmail'
+                                      ? TextInputType.emailAddress
+                                      : TextInputType.text,
+                              decoration: InputDecoration(
+                                labelText: {
+                                  'identification': 'Número de identificación',
+                                  'legalName': 'Nombres / Razón social',
+                                  'address': 'Dirección',
+                                  'billingEmail': 'Correo para facturación',
+                                }[entry.key],
+                                prefixIcon: Icon({
+                                  'identification': Icons.badge_outlined,
+                                  'legalName': Icons.person_outline_rounded,
+                                  'address': Icons.location_on_outlined,
+                                  'billingEmail': Icons.mail_outline_rounded,
+                                }[entry.key]),
+                              ),
+                              validator: (raw) {
+                                final value = raw?.trim() ?? '';
+                                if (value.isEmpty) {
+                                  return 'Completa este campo.';
+                                }
+                                if (entry.key == 'identification' &&
+                                    !RegExp(type == 'RUC'
+                                            ? r'^\d{13}$'
+                                            : r'^\d{10}$')
+                                        .hasMatch(value)) {
+                                  return type == 'RUC'
+                                      ? 'Ingresa 13 dígitos.'
+                                      : 'Ingresa 10 dígitos.';
+                                }
+                                if (entry.key == 'billingEmail' &&
+                                    !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+                                        .hasMatch(value)) {
+                                  return 'Ingresa un correo válido.';
+                                }
+                                if (entry.key == 'legalName' &&
+                                        value.length < 3 ||
+                                    entry.key == 'address' &&
+                                        value.length < 5) {
+                                  return 'Completa la información.';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                        ),
+                        const CostaGoInfoBanner(
+                          title: 'Tu información está segura',
+                          message:
+                              'Usaremos estos datos únicamente para facturación.',
+                          icon: Icons.verified_user_outlined,
+                        ),
+                        const SizedBox(height: CostaGoSpace.md),
+                        FilledButton.icon(
+                          onPressed: saving ? null : _save,
+                          icon: saving
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.lock_outline_rounded),
+                          label: Text(
+                            saving ? 'Guardando…' : 'Guardar y continuar',
+                          ),
+                        ),
                       ],
-                      if (notice != null)
-                        Text('✓ $notice',
-                            style: TextStyle(color: colors.primary)),
-                      if (!loading && editing)
-                        Form(
-                            key: form,
-                            child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  DropdownButtonFormField<String>(
-                                      initialValue: type,
-                                      decoration: const InputDecoration(
-                                          labelText: 'Tipo de identificación'),
-                                      items: const [
-                                        DropdownMenuItem(
-                                            value: 'CEDULA',
-                                            child: Text('Cédula')),
-                                        DropdownMenuItem(
-                                            value: 'RUC', child: Text('RUC'))
-                                      ],
-                                      onChanged: saving
-                                          ? null
-                                          : (v) => setState(() => type = v!)),
-                                  const SizedBox(height: 12),
-                                  ...fields.entries.map((e) => Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 12),
-                                      child: TextFormField(
-                                        controller: e.value,
-                                        enabled: !saving,
-                                        textInputAction: e.key == 'billingEmail'
-                                            ? TextInputAction.done
-                                            : TextInputAction.next,
-                                        keyboardType: e.key == 'identification'
-                                            ? TextInputType.number
-                                            : e.key == 'billingEmail'
-                                                ? TextInputType.emailAddress
-                                                : TextInputType.text,
-                                        decoration: InputDecoration(
-                                            labelText: {
-                                          'identification':
-                                              'Número de identificación',
-                                          'legalName': 'Nombres / Razón social',
-                                          'address': 'Dirección',
-                                          'billingEmail':
-                                              'Correo para facturación'
-                                        }[e.key]),
-                                        validator: (raw) {
-                                          final v = raw?.trim() ?? '';
-                                          if (v.isEmpty) {
-                                            return 'Completa este campo.';
-                                          }
-                                          if (e.key == 'identification' &&
-                                              !RegExp(type == 'RUC'
-                                                      ? r'^\d{13}$'
-                                                      : r'^\d{10}$')
-                                                  .hasMatch(v)) {
-                                            return type == 'RUC'
-                                                ? 'Ingresa 13 dígitos.'
-                                                : 'Ingresa 10 dígitos.';
-                                          }
-                                          if (e.key == 'billingEmail' &&
-                                              !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
-                                                  .hasMatch(v)) {
-                                            return 'Ingresa un correo válido.';
-                                          }
-                                          if (e.key == 'legalName' &&
-                                                  v.length < 3 ||
-                                              e.key == 'address' &&
-                                                  v.length < 5) {
-                                            return 'Completa la información.';
-                                          }
-                                          return null;
-                                        },
-                                      ))),
-                                  FilledButton(
-                                      onPressed: saving ? null : _save,
-                                      child: Text(saving
-                                          ? 'Guardando…'
-                                          : 'Guardar y continuar')),
-                                ])),
-                      if (!loading && !editing && profile != null) ...[
-                        Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                                color: colors.surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(16)),
-                            child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('✓ Datos registrados',
-                                      style: TextStyle(
-                                          color: colors.primary,
-                                          fontWeight: FontWeight.w700)),
-                                  const SizedBox(height: 12),
-                                  Text('${profile!['legalName']}',
-                                      style: theme.textTheme.titleMedium),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                      '${profile!['identificationType'] == 'RUC' ? 'RUC' : 'C.I.'} ${profile!['identification']}'),
-                                  Text('${profile!['billingEmail']}'),
-                                  Text('${profile!['address']}')
-                                ])),
-                        const SizedBox(height: 16),
+                    ),
+                  ),
+                ],
+                if (!loading && !editing && profile != null) ...[
+                  CostaGoSurface(
+                    padding: const EdgeInsets.all(CostaGoSpace.md),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Row(children: [
+                          const CostaGoIconBadge(
+                            icon: Icons.person_outline_rounded,
+                            size: 52,
+                          ),
+                          const SizedBox(width: CostaGoSpace.sm),
                           Expanded(
-                              child: OutlinedButton(
-                                  onPressed: () => setState(() {
-                                        editing = true;
-                                        notice = null;
-                                      }),
-                                  child: const Text('Modificar'))),
-                          const SizedBox(width: 10),
-                          Expanded(
-                              child: FilledButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text('Continuar')))
+                            child: Text(
+                              '${profile!['legalName']}',
+                              style: theme.textTheme.titleLarge,
+                            ),
+                          ),
                         ]),
+                        const Divider(),
+                        CostaGoDetailRow(
+                          icon: Icons.badge_outlined,
+                          label: profile!['identificationType'] == 'RUC'
+                              ? 'RUC'
+                              : 'Cédula',
+                          value: '${profile!['identification']}',
+                        ),
+                        CostaGoDetailRow(
+                          icon: Icons.mail_outline_rounded,
+                          label: 'Correo electrónico',
+                          value: '${profile!['billingEmail']}',
+                        ),
+                        CostaGoDetailRow(
+                          icon: Icons.location_on_outlined,
+                          label: 'Dirección',
+                          value: '${profile!['address']}',
+                        ),
                       ],
-                    ])),
+                    ),
+                  ),
+                  const SizedBox(height: CostaGoSpace.md),
+                  const CostaGoInfoBanner(
+                    title: 'Información protegida',
+                    message:
+                        'Se utilizará únicamente para la emisión de comprobantes.',
+                    icon: Icons.shield_outlined,
+                  ),
+                  const SizedBox(height: CostaGoSpace.md),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final scale = MediaQuery.textScalerOf(context).scale(1);
+                      final stacked =
+                          constraints.maxWidth < 350 || scale > 1.15;
+                      final edit = OutlinedButton.icon(
+                        onPressed: () => setState(() => editing = true),
+                        icon: const Icon(Icons.edit_outlined),
+                        label: const Text('Editar datos'),
+                      );
+                      final next = FilledButton.icon(
+                        onPressed: () => Navigator.pop(context, true),
+                        icon: const Icon(Icons.arrow_forward_rounded),
+                        iconAlignment: IconAlignment.end,
+                        label: const Text('Continuar'),
+                      );
+                      if (stacked) {
+                        return Column(children: [
+                          SizedBox(width: double.infinity, child: next),
+                          const SizedBox(height: CostaGoSpace.xs),
+                          SizedBox(width: double.infinity, child: edit),
+                        ]);
+                      }
+                      return Row(children: [
+                        Expanded(child: edit),
+                        const SizedBox(width: CostaGoSpace.sm),
+                        Expanded(child: next),
+                      ]);
+                    },
+                  ),
+                ],
+              ],
+            ),
           ),
-        ));
+        ),
+      ),
+    );
   }
 }

@@ -335,7 +335,8 @@ Future<void> openAppUpdateStore(
   if (uri == null || !const {'https', 'http'}.contains(uri.scheme)) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('La tienda todavía no está configurada para esta plataforma.')));
+          content: Text(
+              'La tienda todavía no está configurada para esta plataforma.')));
     }
     return;
   }
@@ -1086,7 +1087,8 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
     } else if (target == NotificationTarget.appStore) {
       await openAppUpdateStore(context, widget.session,
           notificationId: item['id']?.toString(),
-          storeUrl: item['deepLink']?.toString() ?? data['deepLink']?.toString());
+          storeUrl:
+              item['deepLink']?.toString() ?? data['deepLink']?.toString());
     } else if (target == NotificationTarget.fleet &&
         data['vehicleId'] != null) {
       await Navigator.push(
@@ -1693,18 +1695,17 @@ class _PassengerError extends StatelessWidget {
   final VoidCallback retry;
   @override
   Widget build(BuildContext context) => Center(
-      child: Padding(
-          padding: const EdgeInsets.all(30),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.cloud_off_outlined, size: 48),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 14),
-            FilledButton.icon(
-                onPressed: retry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Reintentar'))
-          ])));
+        child: CostaGoEmptyState(
+          icon: Icons.cloud_off_outlined,
+          title: 'No pudimos cargar la información',
+          message: message,
+          action: FilledButton.icon(
+            onPressed: retry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Reintentar'),
+          ),
+        ),
+      );
 }
 
 class _PassengerEmpty extends StatelessWidget {
@@ -1713,18 +1714,9 @@ class _PassengerEmpty extends StatelessWidget {
   final IconData icon;
   final String title, message;
   @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.all(28),
-      child: Column(children: [
-        Icon(icon, size: 58, color: Theme.of(context).colorScheme.primary),
-        const SizedBox(height: 15),
-        Text(title,
-            textAlign: TextAlign.center,
-            style: Theme.of(context)
-                .textTheme
-                .titleLarge
-                ?.copyWith(fontWeight: FontWeight.w900)),
-        const SizedBox(height: 8),
-        Text(message, textAlign: TextAlign.center)
-      ]));
+  Widget build(BuildContext context) => CostaGoEmptyState(
+        icon: icon,
+        title: title,
+        message: message,
+      );
 }
