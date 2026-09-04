@@ -32,6 +32,7 @@ beforeAll(async()=>{
     alter table trips add column destination_reference text default 'Destino';
     create table driver_memberships(id uuid primary key default gen_random_uuid(),driver_id uuid references drivers(user_id),
       status text default 'ACTIVE',cycle_closed_at timestamptz,updated_at timestamptz,
+      plan_type_snapshot text default 'PERIODIC',exhausted_at timestamptz,
       completed_trips int default 80,included_trips_snapshot int default 120,extra_trips int default 0,
       extra_trip_fee_snapshot numeric(12,4) default 0.04,base_membership_amount_snapshot numeric(12,2) default 12,
       max_renewal_amount_snapshot numeric(12,2) default 17,raw_extra_amount numeric(12,2) default 0,
@@ -78,6 +79,17 @@ async function cycle(id:string) {
 }
 
 describe('consumo de membresía y reversión por pasajero',()=>{
+  it('un paquete por viajes no genera excedentes ni renovación',()=>{
+    expect(cycleAmounts({plan_type_snapshot:'TRIP_PACK',adjustment_amount:8},10)).toEqual({used:10,extra:0,raw:0,billable:0,estimate:0,adjustment:0});
+  });
+  it('agota el paquete al aceptar el último viaje y restaura el crédito si cancela el pasajero',async()=>{
+    const cycleId=await makeCycle();const tripId=await makeTrip();
+    await pg.query("update driver_memberships set plan_type_snapshot='TRIP_PACK',completed_trips=9,included_trips_snapshot=10 where id=$1",[cycleId]);
+    await consume(tripId);
+    expect(await cycle(cycleId)).toMatchObject({completed_trips:10,status:'EXHAUSTED'});
+    await cancelPassengerTrip(passenger,tripId);
+    expect(await cycle(cycleId)).toMatchObject({completed_trips:9,status:'ACTIVE',exhausted_at:null});
+  });
   it('80 → aceptación 81 → cancelación pasajero 80, con una sola auditoría de reversión',async()=>{
     const cycleId=await makeCycle();const tripId=await makeTrip();
     await consume(tripId);expect((await cycle(cycleId)).completed_trips).toBe(81);

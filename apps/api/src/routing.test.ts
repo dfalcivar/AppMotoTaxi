@@ -31,13 +31,20 @@ describe("rutas de Google", () => {
 
     const origin = { latitude: -2.9, longitude: -79.0 };
     const destination = { latitude: -2.91, longitude: -79.01 };
-    const first = await computeRoute(origin, destination);
-    const second = await computeRoute(origin, destination);
+    const usageRecorder = vi.fn();
+    const first = await computeRoute(origin, destination, [], { usageRecorder });
+    const second = await computeRoute(origin, destination, [], { usageRecorder });
 
     expect(first).toMatchObject({ provider: "GOOGLE", cacheHit: false });
     expect(first.legs).toEqual([{ distanceMeters: 1250, durationSeconds: 240 }]);
     expect(second).toMatchObject({ provider: "GOOGLE", cacheHit: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(usageRecorder).toHaveBeenCalledTimes(1);
+    expect(usageRecorder).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "ROUTES",
+      result: "SUCCESS",
+      metadata: expect.objectContaining({ httpStatus: 200, billingUnit: "REQUEST" })
+    }));
   });
 
   it("envía las paradas intermedias en el orden indicado", async () => {

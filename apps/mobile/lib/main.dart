@@ -173,6 +173,39 @@ int? membershipPlanDurationDays(dynamic snapshot) {
   return null;
 }
 
+String membershipPlanType(dynamic snapshot) {
+  dynamic value = snapshot;
+  if (value is String) {
+    try {
+      value = jsonDecode(value);
+    } catch (_) {
+      return 'PERIODIC';
+    }
+  }
+  if (value is Map && value['planType']?.toString() == 'TRIP_PACK') {
+    return 'TRIP_PACK';
+  }
+  return 'PERIODIC';
+}
+
+String membershipPlanSummary(dynamic snapshot) {
+  dynamic value = snapshot;
+  if (value is String) {
+    try {
+      value = jsonDecode(value);
+    } catch (_) {
+      return 'Plan por período';
+    }
+  }
+  if (value is Map && membershipPlanType(value) == 'TRIP_PACK') {
+    final trips = (value['purchasedTrips'] ?? value['includedTrips'] ?? 0);
+    final validity = (value['packValidityDays'] as num?)?.toInt();
+    return 'Plan por viajes · $trips viajes${validity == null ? ' · sin caducidad' : ' · $validity días'}';
+  }
+  final duration = membershipPlanDurationDays(value);
+  return duration == null ? 'Plan por período' : 'Plan por período · $duration días';
+}
+
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
 /// by the passenger.
 class OriginSelectionGuard {
@@ -14958,6 +14991,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         'SUSPENSION_PENDING_ACTIVE_TRIP' => 'Suspensión al finalizar el viaje',
         'SUSPENDED_NON_PAYMENT' => 'Membresía vencida',
         'SUSPENDED' => 'Suspendida',
+        'EXHAUSTED' => 'Viajes agotados',
         _ => 'Pendiente de activación',
       };
 
@@ -14975,6 +15009,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       'SUSPENSION_PENDING_ACTIVE_TRIP' =>
         const Color(0xffd85b22),
       'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => const Color(0xffc93f3f),
+      'EXHAUSTED' => const Color(0xffc93f3f),
       _ => const Color(0xff607d8b),
     };
     final icon = switch (status) {
@@ -14984,6 +15019,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       'PAYMENT_DUE' => Icons.payments_outlined,
       'SUSPENSION_PENDING_ACTIVE_TRIP' => Icons.warning_amber_rounded,
       'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Icons.lock_clock_rounded,
+      'EXHAUSTED' => Icons.route_outlined,
       _ => Icons.schedule_rounded,
     };
     return Semantics(
@@ -15558,7 +15594,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _showCollectionPoints(BuildContext context) async {
+  Future<void> _showCollectionPoints(BuildContext context,
+      [Map<String, dynamic>? order]) async {
     try {
       final raw = await api.membershipCollectionPoints(
           widget.s.token, currentDriverPosition);
@@ -15593,9 +15630,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     ])),
                 const SizedBox(width: 48),
               ]),
-              const Center(
-                  child: Text(
-                      'Selecciona un punto autorizado para presentar tu QR.')),
+              Center(
+                  child: Text(order == null
+                      ? 'Selecciona un punto autorizado para presentar tu QR.'
+                      : '${membershipPlanSummary(order['plan'])}\nSelecciona un punto autorizado para presentar tu QR.',
+                      textAlign: TextAlign.center)),
               const SizedBox(height: 12),
               Expanded(
                   child: points.isEmpty
@@ -15714,6 +15753,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         .textTheme
                         .headlineSmall
                         ?.copyWith(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 7),
+                Text(membershipPlanSummary(order['plan']),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Theme.of(sheetContext).colorScheme.primary,
+                        fontWeight: FontWeight.w800)),
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -15946,6 +15991,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text('QR de pago',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 5),
+          Text(membershipPlanSummary(order['plan']),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: Theme.of(qrContext).colorScheme.primary,
+                  fontWeight: FontWeight.w800)),
           const SizedBox(height: 10),
           Container(
               padding: const EdgeInsets.all(12),
@@ -15985,8 +16036,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           showDragHandle: true,
           builder: (sheetContext) {
             final scheme = Theme.of(sheetContext).colorScheme;
-            final statusTitle = const {
-                  'PENDING': 'Renovar membresía',
+            final isTripPack = membershipPlanType(order['plan']) == 'TRIP_PACK';
+            final statusTitle = {
+                  'PENDING': isTripPack ? 'Comprar viajes' : 'Renovar membresía',
                   'PENDING_VERIFICATION': 'Pago en revisión',
                   'PAID': 'Orden pagada',
                   'REJECTED': 'Orden rechazada',
@@ -16010,7 +16062,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     : status == 'PENDING_VERIFICATION'
                         ? Colors.orange.shade800
                         : scheme.primary;
-            final durationDays = membershipPlanDurationDays(order['plan']);
             return FractionallySizedBox(
               heightFactor: .95,
               child: ListView(
@@ -16075,7 +16126,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   color: scheme.primary,
                                   fontWeight: FontWeight.w900)),
                       Text(
-                          '${membershipPlanName(order['plan'])}${durationDays == null ? '' : ' · $durationDays días'}',
+                          '${membershipPlanName(order['plan'])}\n${membershipPlanSummary(order['plan'])}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(fontWeight: FontWeight.w700)),
                       if (expiresAt != null) ...[
@@ -16099,9 +16150,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               order['baseAmount'] ??
                               0),
                       if (breakdown['includedTrips'] != null)
-                        _membershipDetailLine('Viajes incluidos',
+                        _membershipDetailLine(isTripPack ? 'Viajes a acreditar' : 'Viajes incluidos',
                             '${breakdown['includedTrips']}'),
-                      if (breakdown['extraTrips'] != null &&
+                      if (!isTripPack && breakdown['extraTrips'] != null &&
                           (breakdown['extraTrips'] as num) > 0) ...[
                         _membershipDetailLine('Viajes con excedente',
                             '${breakdown['extraTrips']}'),
@@ -16111,12 +16162,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               'Valor por viaje excedente',
                               breakdown['extraTripUnitAmount'] as num),
                       ],
-                      _membershipAmountRow(
-                          sheetContext,
-                          'Excedente',
-                          (breakdown['billableExtraAmount'] as num?) ??
-                              order['priorUsageAmount'] ??
-                              0),
+                      if (((breakdown['billableExtraAmount'] as num?) ??
+                                  order['priorUsageAmount'] ??
+                                  0) !=
+                              0)
+                        _membershipAmountRow(
+                            sheetContext,
+                            isTripPack ? 'Saldo del ciclo anterior' : 'Excedente',
+                            (breakdown['billableExtraAmount'] as num?) ??
+                                order['priorUsageAmount'] ??
+                                0),
                       if (((breakdown['adjustmentAmount'] as num?) ??
                               order['adjustmentAmount'] ??
                               0) !=
@@ -16175,7 +16230,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       title: 'En punto autorizado',
                       subtitle: 'Paga mostrando tu QR',
                       onTap: () async {
-                        await _showCollectionPoints(sheetContext);
+                        await _showCollectionPoints(sheetContext, order);
                       },
                     ),
                     const SizedBox(height: 8),
@@ -16330,6 +16385,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final amount = (plan['amount'] as num?)?.toDouble() ?? 0;
     final durationDays = (plan['durationDays'] as num?)?.toInt() ?? 0;
     final includedTrips = (plan['includedTrips'] as num?)?.toInt() ?? 0;
+    final isTripPack = plan['planType']?.toString() == 'TRIP_PACK';
+    final packValidityDays = (plan['packValidityDays'] as num?)?.toInt();
 
     return await showDialog<bool>(
           context: context,
@@ -16357,14 +16414,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         color: colors.primaryContainer,
                       ),
                       child: Icon(
-                        Icons.event_available_rounded,
+                        isTripPack ? Icons.route_rounded : Icons.event_available_rounded,
                         color: colors.onPrimaryContainer,
                         size: 30,
                       ),
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      '¿Activar membresía?',
+                      isTripPack ? '¿Comprar viajes?' : '¿Activar membresía?',
                       textAlign: TextAlign.center,
                       style: Theme.of(dialogContext)
                           .textTheme
@@ -16374,7 +16431,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     const SizedBox(height: 10),
                     Text.rich(
                       TextSpan(children: [
-                        const TextSpan(text: 'Vas a activar el plan '),
+                        TextSpan(text: isTripPack ? 'Vas a comprar el plan ' : 'Vas a activar el plan '),
                         TextSpan(
                           text: name,
                           style: const TextStyle(fontWeight: FontWeight.w800),
@@ -16407,12 +16464,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.event_available_outlined,
+                          Icon(isTripPack ? Icons.route_outlined : Icons.event_available_outlined,
                               color: colors.primary, size: 22),
                           const SizedBox(width: 9),
                           Flexible(
                             child: Text(
-                              'Plan ${name.toLowerCase()} · $durationDays días · $includedTrips viajes',
+                              isTripPack
+                                  ? '$includedTrips viajes · ${packValidityDays == null ? 'sin caducidad' : '$packValidityDays días de vigencia'}'
+                                  : 'Plan ${name.toLowerCase()} · $durationDays días · $includedTrips viajes',
                               textAlign: TextAlign.center,
                               style: Theme.of(dialogContext)
                                   .textTheme
@@ -16437,7 +16496,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         Expanded(
                           child: FilledButton(
                             onPressed: () => Navigator.pop(dialogContext, true),
-                            child: const Text('Sí, activar'),
+                            child: Text(isTripPack ? 'Sí, comprar' : 'Sí, activar'),
                           ),
                         ),
                       ],
@@ -16460,6 +16519,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     var pendingOrder = data['pendingOrder'] is Map
         ? Map<String, dynamic>.from(data['pendingOrder'] as Map)
         : null;
+    var selectedPlanType = membership['planType']?.toString() == 'TRIP_PACK'
+        ? 'TRIP_PACK'
+        : 'PERIODIC';
     var orderGenerationInProgress = false;
     await showModalBottomSheet<void>(
         context: context,
@@ -16471,6 +16533,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               final status = membership['status']?.toString() ?? 'PENDING';
               final extraAmount =
                   (membership['billableExtraAmount'] as num?)?.toDouble() ?? 0;
+              final visiblePlans = plans
+                  .map((item) => Map<String, dynamic>.from(item as Map))
+                  .where((plan) => (plan['planType']?.toString() ?? 'PERIODIC') == selectedPlanType)
+                  .toList();
               Future<void> selectPlan(Map<String, dynamic> plan) async {
                 if (pendingOrder != null || orderGenerationInProgress) return;
                 setSheetState(() => orderGenerationInProgress = true);
@@ -16554,11 +16620,22 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                         'Plan actual',
                                         membership['planName']?.toString() ??
                                             'Sin plan activo'),
-                                    _membershipDetailLine('Viajes del ciclo',
-                                        '${membership['completedTrips'] ?? 0}'),
-                                    _membershipDetailLine('Renovación estimada',
-                                        '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
-                                    if (extraAmount > 0)
+                                    _membershipDetailLine(
+                                        membership['planType'] == 'TRIP_PACK'
+                                            ? 'Modalidad'
+                                            : 'Viajes del ciclo',
+                                        membership['planType'] == 'TRIP_PACK'
+                                            ? 'Plan por viajes'
+                                            : '${membership['completedTrips'] ?? 0}'),
+                                    if (membership['planType'] == 'TRIP_PACK') ...[
+                                      _membershipDetailLine('Viajes disponibles',
+                                          '${membership['remainingTrips'] ?? 0}'),
+                                      _membershipDetailLine('Viajes consumidos',
+                                          '${membership['completedTrips'] ?? 0}'),
+                                    ] else
+                                      _membershipDetailLine('Renovación estimada',
+                                          '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
+                                    if (membership['planType'] != 'TRIP_PACK' && extraAmount > 0)
                                       _membershipDetailLine(
                                           'Excedente acumulado',
                                           '\$${extraAmount.toStringAsFixed(2)}'),
@@ -16569,6 +16646,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                               DateTime.parse(
                                                   membership['expiresAt']
                                                       .toString()))),
+                                    if (membership['planType'] == 'TRIP_PACK' && membership['expiresAt'] == null)
+                                      _membershipDetailLine('Vigencia', 'Hasta agotar los viajes'),
                                   ]))),
                           const SizedBox(height: 8),
                           OutlinedButton.icon(
@@ -16608,6 +16687,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 )),
                           ],
                           const SizedBox(height: 14),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'PERIODIC', icon: Icon(Icons.calendar_month_outlined), label: Text('Por período')),
+                              ButtonSegment(value: 'TRIP_PACK', icon: Icon(Icons.route_outlined), label: Text('Por viajes')),
+                            ],
+                            selected: {selectedPlanType},
+                            onSelectionChanged: pendingOrder == null
+                                ? (value) => setSheetState(() => selectedPlanType = value.first)
+                                : null,
+                          ),
+                          const SizedBox(height: 14),
                           Text('Planes disponibles',
                               style: Theme.of(sheetContext)
                                   .textTheme
@@ -16616,14 +16706,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           const SizedBox(height: 8),
                           SizedBox(
                               height: 178,
-                              child: ListView.separated(
+                              child: visiblePlans.isEmpty
+                                  ? Center(child: Text(selectedPlanType == 'TRIP_PACK'
+                                      ? 'Aún no hay planes por viajes disponibles.'
+                                      : 'Aún no hay planes por período disponibles.'))
+                                  : ListView.separated(
                                   scrollDirection: Axis.horizontal,
-                                  itemCount: plans.length,
+                                  itemCount: visiblePlans.length,
                                   separatorBuilder: (_, __) =>
                                       const SizedBox(width: 8),
                                   itemBuilder: (_, index) {
-                                    final plan = Map<String, dynamic>.from(
-                                        plans[index] as Map);
+                                    final plan = visiblePlans[index];
                                     final current =
                                         membership['planCode']?.toString() ==
                                             plan['code']?.toString();
@@ -16658,11 +16751,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                                 .start,
                                                         children: [
                                                           Icon(
-                                                              current
-                                                                  ? Icons
-                                                                      .event_available_outlined
-                                                                  : Icons
-                                                                      .calendar_month_outlined,
+                                                              plan['planType'] == 'TRIP_PACK'
+                                                                  ? Icons.route_outlined
+                                                                  : current
+                                                                      ? Icons.event_available_outlined
+                                                                      : Icons.calendar_month_outlined,
                                                               color: Theme.of(
                                                                       sheetContext)
                                                                   .colorScheme
@@ -16678,7 +16771,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                                       FontWeight
                                                                           .w900)),
                                                           Text(
-                                                              '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
+                                                              plan['planType'] == 'TRIP_PACK'
+                                                                  ? '${plan['includedTrips']} viajes\n${plan['packValidityDays'] == null ? 'Sin caducidad' : '${plan['packValidityDays']} días'}'
+                                                                  : '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
                                                               style: Theme.of(
                                                                       sheetContext)
                                                                   .textTheme
@@ -16740,7 +16835,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 SizedBox(width: 8),
                                 Expanded(
                                     child: Text(
-                                        'Si la membresía vence, tu cuenta y tu historial permanecen disponibles. Solo se pausa la recepción de nuevas solicitudes.'))
+                                        'Puedes elegir un plan por período o comprar viajes. Al vencer el período o agotarse el saldo, tu cuenta y tu historial permanecen disponibles; solo se pausa la recepción de nuevas solicitudes.'))
                               ]),
                         ])),
                   ]));

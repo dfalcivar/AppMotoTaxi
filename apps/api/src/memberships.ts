@@ -14,8 +14,9 @@ import {notificationPreferenceAllows} from './notification-preferences.js';
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
   "PENDING", "ACTIVE", "EXPIRING", "GRACE_PERIOD", "PAYMENT_DUE",
-  "SUSPENSION_PENDING_ACTIVE_TRIP", "SUSPENDED_NON_PAYMENT", "SUSPENDED", "CLOSED"
+  "SUSPENSION_PENDING_ACTIVE_TRIP", "SUSPENDED_NON_PAYMENT", "SUSPENDED", "EXHAUSTED", "CLOSED"
 ]);
+const membershipPlanTypeSchema = z.enum(["PERIODIC", "TRIP_PACK"]);
 const navigationProviderSchema = z.enum(["MAP_ONLY", "EXTERNAL_MAPS", "NAVIGATION_SDK"]);
 const navigationStartModeSchema = z.enum(["MANUAL", "AUTO"]);
 
@@ -34,8 +35,13 @@ const platformSettingsSchema = z.object({
   textSearchCriticalPercent: z.number().int().min(2).max(100),
   textSearchHardLimitEnabled: z.boolean(),
   navigationFreeCapReference: z.number().int().min(0).max(10_000_000),
+  navigationPricePerThousandUsd: z.number().min(0).max(10000),
   navigationWarningPercent: z.number().int().min(1).max(99),
   navigationCriticalPercent: z.number().int().min(2).max(100),
+  routesFreeCapReference: z.number().int().min(0).max(10_000_000),
+  routesPricePerThousandUsd: z.number().min(0).max(10000),
+  geocodingFreeCapReference: z.number().int().min(0).max(10_000_000),
+  geocodingPricePerThousandUsd: z.number().min(0).max(10000),
   driverMembershipsEnabled: z.boolean(),
   membershipEnforcementEnabled: z.boolean(),
   membershipUsageBillingEnabled: z.boolean(),
@@ -70,6 +76,7 @@ const platformSettingsSchema = z.object({
 const planBaseSchema = z.object({
   code: z.string().trim().min(3).max(40).regex(/^[A-Z0-9_]+$/),
   name: z.string().trim().min(3).max(100),
+  planType: membershipPlanTypeSchema.default("PERIODIC"),
   periodUnit: z.enum(["DAY", "MONTH", "QUARTER", "YEAR"]),
   periodCount: z.number().int().min(1).max(24),
   durationDays: z.number().int().min(1).max(730),
@@ -78,20 +85,27 @@ const planBaseSchema = z.object({
   includedTrips: z.number().int().min(0).max(1_000_000),
   maxRenewalAmount: z.number().min(0).max(100000),
   extraTripSharePercent: z.number().min(0).max(100),
+  packValidityDays: z.number().int().min(1).max(3650).nullable().optional(),
   enabled: z.boolean().default(true),
   effectiveFrom: z.string().datetime({ offset: true }).optional()
 });
 
-const planSchema = planBaseSchema.refine(value => value.maxRenewalAmount >= value.baseAmount, {
-  path: ["maxRenewalAmount"], message: "MAXIMUM_BELOW_BASE"
-});
+const validatePlan = <T extends z.infer<typeof planBaseSchema>>(value: T, context: z.RefinementCtx) => {
+  if (value.planType === "PERIODIC" && value.maxRenewalAmount < value.baseAmount) {
+    context.addIssue({ code: "custom", path: ["maxRenewalAmount"], message: "MAXIMUM_BELOW_BASE" });
+  }
+  if (value.planType === "TRIP_PACK" && value.includedTrips < 1) {
+    context.addIssue({ code: "custom", path: ["includedTrips"], message: "TRIP_PACK_REQUIRES_CREDITS" });
+  }
+};
+
+const planSchema = planBaseSchema.superRefine(validatePlan);
 
 const planVersionSchema = planBaseSchema.omit({
   code: true,
+  planType: true,
   enabled: true,
   effectiveFrom: true
-}).refine(value => value.maxRenewalAmount >= value.baseAmount, {
-  path: ["maxRenewalAmount"], message: "MAXIMUM_BELOW_BASE"
 });
 
 const gracePolicySchema = z.object({
@@ -299,12 +313,16 @@ export async function driverMembershipEligibility(driverId: string): Promise<Dri
   const [membership] = await database()`
     select id::text, status, starts_at as "startsAt", expires_at as "expiresAt",
       grace_ends_at as "graceEndsAt", suspension_at as "suspensionAt",
-      grace_allows_trips_applied as "graceAllowsTrips"
+      grace_allows_trips_applied as "graceAllowsTrips",plan_type_snapshot as "planType",
+      completed_trips as "completedTrips",included_trips_snapshot as "includedTrips"
     from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
     order by created_at desc limit 1
   `;
   if (!membership) return { eligible: false, reason: "MEMBERSHIP_REQUIRED", enforcementEnabled: true };
   const status = String(membership.status);
+  if (membership.planType === "TRIP_PACK" && Number(membership.completedTrips) >= Number(membership.includedTrips)) {
+    return { eligible: false, reason: "MEMBERSHIP_EXHAUSTED", membership, enforcementEnabled: true };
+  }
   const now = Date.now();
   if (membership.suspensionAt && new Date(String(membership.suspensionAt)).getTime() <= now && status !== "ACTIVE" && status !== "EXPIRING") {
     return { eligible: false, reason: "MEMBERSHIP_SUSPENDED_NON_PAYMENT", membership, enforcementEnabled: true };
@@ -341,7 +359,7 @@ export async function grantInitialDriverGrace(driverId: string, actorId?: string
       insert into driver_memberships (
         driver_id,plan_id,plan_code,status,starts_at,expires_at,grace_ends_at,suspension_at,
         suspension_timezone_snapshot,suspension_local_time_snapshot,grace_reason,
-        grace_days_applied,grace_allows_trips_applied,plan_snapshot,cycle_duration_snapshot,
+        grace_days_applied,grace_allows_trips_applied,plan_snapshot,plan_type_snapshot,cycle_duration_snapshot,
         base_membership_amount_snapshot,included_trips_snapshot,extra_trip_fee_snapshot,
         extra_trip_share_percent_snapshot,max_renewal_amount_snapshot,
         passenger_service_additional_snapshot,estimated_next_renewal_amount,payer_type,
@@ -353,8 +371,8 @@ export async function grantInitialDriverGrace(driverId: string, actorId?: string
         ${graceEnabled ? new Date(Date.now() + durationHours * 3_600_000) : null},
         ${settings.timezone},${settings.suspensionTime},${graceEnabled ? "NEW_DRIVER_ONBOARDING" : null},
         ${Math.ceil(durationHours / 24)},${graceEnabled && Boolean(settings.allowsTrips)},
-        ${JSON.stringify({ code: plan.code, name: plan.name, periodUnit: plan.period_unit, periodCount: plan.period_count })}::jsonb,
-        ${plan.duration_days},${plan.base_amount},${plan.included_trips},${extraFee},${sharePercent},
+        ${JSON.stringify({ code: plan.code, name: plan.name, planType: "PERIODIC", periodUnit: plan.period_unit, periodCount: plan.period_count })}::jsonb,
+        'PERIODIC',${plan.duration_days},${plan.base_amount},${plan.included_trips},${extraFee},${sharePercent},
         ${plan.max_renewal_amount},${passengerAdditional},${plan.base_amount},'INDIVIDUAL',
         ${plan.base_amount},${plan.currency},'PENDING',${graceEnabled ? "NEW_DRIVER_ONBOARDING" : "NORMAL"},
         ${actorId ?? null},${actorId ?? null})
@@ -366,6 +384,7 @@ async function currentMembership(driverId: string) {
   const [row] = await database()`
     select dm.id::text, dm.plan_code as "planCode", coalesce(mp.name,dm.plan_code) as "planName",
       dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",
+      dm.plan_type_snapshot as "planType",dm.exhausted_at as "exhaustedAt",
       dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",
       dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",
       greatest(0,dm.included_trips_snapshot-dm.completed_trips) as "remainingTrips",
@@ -509,7 +528,7 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
     const [plan] = await tx`select * from membership_plans where id=${input.planId} and enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())`;
     if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
     const [cycle] = await tx`
-      select id,completed_trips,included_trips_snapshot,extra_trips,
+      select id,plan_type_snapshot,completed_trips,included_trips_snapshot,extra_trips,
         passenger_service_additional_snapshot::float8,
         extra_trip_share_percent_snapshot::float8,
         extra_trip_fee_snapshot::float8,
@@ -521,10 +540,16 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
     `;
     const usageAmount = money(Math.max(0, Number(cycle?.billable_extra_amount ?? 0)));
     const adjustmentAmount = money(Number(cycle?.adjustment_amount ?? 0));
+    const planType = String(plan.plan_type ?? "PERIODIC");
     const tax = taxBreakdown(Math.max(0, Number(plan.base_amount) + usageAmount + adjustmentAmount), settings?.vatRatePercent ?? 0);
     const economicBreakdown = {
       baseAmount: money(Number(plan.base_amount)),
-      includedTrips: Number(cycle?.included_trips_snapshot ?? plan.included_trips ?? 0),
+      planType,
+      purchasedTrips: planType === "TRIP_PACK" ? Number(plan.included_trips) : undefined,
+      packValidityDays: planType === "TRIP_PACK" ? (plan.pack_validity_days == null ? null : Number(plan.pack_validity_days)) : undefined,
+      includedTrips: planType === "TRIP_PACK"
+        ? Number(plan.included_trips ?? 0)
+        : Number(cycle?.included_trips_snapshot ?? plan.included_trips ?? 0),
       completedTrips: Number(cycle?.completed_trips ?? 0),
       extraTrips: Number(cycle?.extra_trips ?? 0),
       passengerServiceAdditional: Number(cycle?.passenger_service_additional_snapshot ?? 0),
@@ -550,7 +575,7 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
         base_amount,prior_usage_amount,adjustment_amount,taxable_subtotal,vat_rate_percent,vat_amount,total_amount,currency,intended_method,receiver_scope,
         verification_channel,status,expires_at,created_by,idempotency_key,metadata
       ) values (${orderId},${sha256(rawToken)},${shortCode},${driverId},${cycle?.id ?? null},${plan.id},
-        ${JSON.stringify({ code: plan.code, name: plan.name, durationDays: plan.duration_days, includedTrips: plan.included_trips, maximumAmount: plan.max_renewal_amount, extraTripSharePercent: plan.extra_trip_share_percent })}::jsonb,
+        ${JSON.stringify({ code: plan.code, name: plan.name, planType, durationDays: planType === "PERIODIC" ? plan.duration_days : null, includedTrips: plan.included_trips, purchasedTrips: planType === "TRIP_PACK" ? plan.included_trips : null, packValidityDays: planType === "TRIP_PACK" ? plan.pack_validity_days : null, maximumAmount: plan.max_renewal_amount, extraTripSharePercent: plan.extra_trip_share_percent })}::jsonb,
         ${plan.base_amount},${usageAmount},${adjustmentAmount},${tax.subtotal},${tax.vatRatePercent},${tax.vatAmount},${tax.total},${plan.currency},${input.intendedMethod ?? null},
         ${input.intendedMethod === "BANK_TRANSFER" ? "COSTA_GO_CENTRAL" : "NOT_APPLICABLE"},
         ${input.intendedMethod === "BANK_TRANSFER" ? "REMOTE_PROOF" : null},'PENDING',
@@ -666,33 +691,61 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
     `;
     if (!payment) throw new Error("PAYMENT_NOT_CREATED");
     const [current] = await tx`select * from driver_memberships where driver_id=${order.driver_id} and cycle_closed_at is null order by created_at desc limit 1 for update`;
-    const baseDate = Math.max(Date.now(), current?.expires_at ? new Date(String(current.expires_at)).getTime() : 0, current?.grace_ends_at ? new Date(String(current.grace_ends_at)).getTime() : 0);
-    if (current) await tx`update driver_memberships set status='CLOSED',cycle_closed_at=now(),cycle_close_reason='PAID_RENEWAL',final_renewal_amount=coalesce(final_renewal_amount,estimated_next_renewal_amount),renewal_order_id=${order.id},updated_at=now() where id=${current.id}`;
+    const planType = String(plan.plan_type ?? "PERIODIC");
+    const currentPlanType = String(current?.plan_type_snapshot ?? "PERIODIC");
     const [price] = await tx`select platform_commission_cents_per_leg from pricing_versions where active_from<=now() and (active_until is null or active_until>now()) order by active_from desc limit 1`;
     const passengerAdditional = Number(price?.platform_commission_cents_per_leg ?? 5) / 100;
     const extraFee = Number((passengerAdditional * Number(plan.extra_trip_share_percent) / 100).toFixed(4));
-    const [membership] = await tx`
-      insert into driver_memberships (
-        driver_id,plan_id,plan_code,status,starts_at,expires_at,expiration_local_date,
-        suspension_timezone_snapshot,suspension_local_time_snapshot,previous_membership_cycle_id,
-        plan_snapshot,cycle_duration_snapshot,base_membership_amount_snapshot,included_trips_snapshot,
-        extra_trip_fee_snapshot,extra_trip_share_percent_snapshot,max_renewal_amount_snapshot,
-        passenger_service_additional_snapshot,estimated_next_renewal_amount,payer_type,cooperative_id,
-        amount,currency,payment_status,payment_method,payment_reference,paid_at,renewed_at,
-        opening_payment_id,source,created_by,updated_by
-      ) select ${order.driver_id},${plan.id},${plan.code},'ACTIVE',${new Date(baseDate)},
-        ${new Date(baseDate + Number(plan.duration_days) * 86_400_000)},${new Date(baseDate + Number(plan.duration_days) * 86_400_000)},
-        os.membership_timezone,os.membership_suspension_local_time,${current?.id ?? null},${order.plan_snapshot},
-        ${plan.duration_days},${plan.base_amount},${plan.included_trips},${extraFee},${plan.extra_trip_share_percent},
-        ${plan.max_renewal_amount},${passengerAdditional},${plan.base_amount},'INDIVIDUAL',null,
-        ${order.total_amount},${order.currency},'CONFIRMED',${input.method},${input.referenceDisplay ?? input.reference?.trim() ?? referenceMasked ?? null},
-        now(),now(),${payment.id},'NORMAL',${actor.id!},${actor.id!}
-      from operational_settings os where os.id=1 returning id::text,expires_at as "expiresAt",status
-    `;
+    let membership: any;
+    if (current && planType === "TRIP_PACK" && currentPlanType === "TRIP_PACK") {
+      const configuredExpiry = plan.pack_validity_days == null
+        ? null
+        : new Date(Math.max(Date.now(), current.expires_at ? new Date(String(current.expires_at)).getTime() : 0) + Number(plan.pack_validity_days) * 86_400_000);
+      [membership] = await tx`
+        update driver_memberships set
+          plan_id=${plan.id},plan_code=${plan.code},plan_snapshot=${order.plan_snapshot},plan_type_snapshot='TRIP_PACK',
+          status='ACTIVE',expires_at=${configuredExpiry},expiration_local_date=${configuredExpiry},
+          included_trips_snapshot=included_trips_snapshot+${Number(plan.included_trips)},
+          base_membership_amount_snapshot=${plan.base_amount},extra_trip_fee_snapshot=0,
+          extra_trip_share_percent_snapshot=0,max_renewal_amount_snapshot=${plan.base_amount},
+          estimated_next_renewal_amount=0,extra_trips=0,raw_extra_amount=0,billable_extra_amount=0,
+          exhausted_at=null,amount=amount+${order.total_amount},currency=${order.currency},payment_status='CONFIRMED',
+          payment_method=${input.method},payment_reference=${input.referenceDisplay ?? input.reference?.trim() ?? referenceMasked ?? null},
+          paid_at=now(),renewed_at=now(),renewal_order_id=${order.id},updated_by=${actor.id!},updated_at=now()
+        where id=${current.id}
+        returning id::text,expires_at as "expiresAt",status,included_trips_snapshot-completed_trips as "remainingTrips"
+      `;
+    } else {
+      const baseDate = planType === "PERIODIC"
+        ? Math.max(Date.now(), current?.expires_at ? new Date(String(current.expires_at)).getTime() : 0, current?.grace_ends_at ? new Date(String(current.grace_ends_at)).getTime() : 0)
+        : Date.now();
+      const expiresAt = planType === "PERIODIC"
+        ? new Date(baseDate + Number(plan.duration_days) * 86_400_000)
+        : plan.pack_validity_days == null ? null : new Date(baseDate + Number(plan.pack_validity_days) * 86_400_000);
+      const closeReason = currentPlanType === planType ? "PAID_RENEWAL" : "PLAN_CHANGED";
+      if (current) await tx`update driver_memberships set status='CLOSED',cycle_closed_at=now(),cycle_close_reason=${closeReason},final_renewal_amount=coalesce(final_renewal_amount,estimated_next_renewal_amount),renewal_order_id=${order.id},updated_at=now() where id=${current.id}`;
+      [membership] = await tx`
+        insert into driver_memberships (
+          driver_id,plan_id,plan_code,status,starts_at,expires_at,expiration_local_date,
+          suspension_timezone_snapshot,suspension_local_time_snapshot,previous_membership_cycle_id,
+          plan_snapshot,plan_type_snapshot,cycle_duration_snapshot,base_membership_amount_snapshot,included_trips_snapshot,
+          extra_trip_fee_snapshot,extra_trip_share_percent_snapshot,max_renewal_amount_snapshot,
+          passenger_service_additional_snapshot,estimated_next_renewal_amount,payer_type,cooperative_id,
+          amount,currency,payment_status,payment_method,payment_reference,paid_at,renewed_at,
+          opening_payment_id,source,created_by,updated_by
+        ) select ${order.driver_id},${plan.id},${plan.code},'ACTIVE',${new Date(baseDate)},
+          ${expiresAt},${expiresAt},os.membership_timezone,os.membership_suspension_local_time,${current?.id ?? null},${order.plan_snapshot},
+          ${planType},${planType === "PERIODIC" ? plan.duration_days : 0},${plan.base_amount},${plan.included_trips},${planType === "PERIODIC" ? extraFee : 0},${planType === "PERIODIC" ? plan.extra_trip_share_percent : 0},
+          ${planType === "PERIODIC" ? plan.max_renewal_amount : plan.base_amount},${passengerAdditional},${planType === "PERIODIC" ? plan.base_amount : 0},'INDIVIDUAL',null,
+          ${order.total_amount},${order.currency},'CONFIRMED',${input.method},${input.referenceDisplay ?? input.reference?.trim() ?? referenceMasked ?? null},
+          now(),now(),${payment.id},'NORMAL',${actor.id!},${actor.id!}
+        from operational_settings os where os.id=1 returning id::text,expires_at as "expiresAt",status,included_trips_snapshot-completed_trips as "remainingTrips"
+      `;
+    }
     if (!membership) throw new Error("MEMBERSHIP_NOT_CREATED");
     await tx`update membership_payments set membership_cycle_id=${membership.id} where id=${payment.id}`;
     await tx`update membership_payment_orders set status='PAID',paid_at=now(),updated_at=now() where id=${order.id}`;
-    await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason) values (${actor.id!},'MEMBERSHIP_PAYMENT_CONFIRMED','MEMBERSHIP_PAYMENT',${payment.id},${JSON.stringify({ orderId: String(order.id), membershipId: membership.id, method: input.method, amount: Number(order.total_amount) })}::jsonb,'Pago verificado y membresía activada')`;
+    await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason) values (${actor.id!},'MEMBERSHIP_PAYMENT_CONFIRMED','MEMBERSHIP_PAYMENT',${payment.id},${JSON.stringify({ orderId: String(order.id), membershipId: membership.id, planType, method: input.method, amount: Number(order.total_amount) })}::jsonb,${planType === "TRIP_PACK" ? 'Pago verificado y viajes acreditados' : 'Pago verificado y membresía activada'})`;
     return { alreadyProcessed: false, paymentId: payment.id, membershipId: membership.id, expiresAt: membership.expiresAt };
   });
 }
@@ -821,8 +874,13 @@ function settingsProjection(row: any) {
     textSearchCriticalPercent: Number(row.text_search_critical_percent),
     textSearchHardLimitEnabled: Boolean(row.text_search_hard_limit_enabled),
     navigationFreeCapReference: Number(row.navigation_free_cap_reference),
+    navigationPricePerThousandUsd: Number(row.navigation_price_per_thousand_usd),
     navigationWarningPercent: Number(row.navigation_warning_percent),
     navigationCriticalPercent: Number(row.navigation_critical_percent),
+    routesFreeCapReference: Number(row.routes_free_cap_reference),
+    routesPricePerThousandUsd: Number(row.routes_price_per_thousand_usd),
+    geocodingFreeCapReference: Number(row.geocoding_free_cap_reference),
+    geocodingPricePerThousandUsd: Number(row.geocoding_price_per_thousand_usd),
     driverMembershipsEnabled: Boolean(row.driver_memberships_enabled),
     membershipEnforcementEnabled: Boolean(row.membership_enforcement_enabled),
     membershipUsageBillingEnabled: Boolean(row.membership_usage_billing_enabled),
@@ -867,7 +925,8 @@ function businessError(error: unknown, reply: FastifyReply) {
     "PAYMENT_ORDER_EXPIRED", "MEMBERSHIP_PLAN_DISABLED", "PAYMENT_AMOUNT_MISMATCH",
     "INVALID_CSV_QUOTES", "INVALID_CSV_ENCODING", "INVALID_CSV_HEADERS", "EMPTY_CSV",
     "MEMBERSHIP_REQUIRED", "MEMBERSHIP_NOT_CREATED", "PAYMENT_NOT_CREATED",
-    "COLLECTION_POINT_INACTIVE", "PAYMENT_METHOD_DISABLED"
+    "COLLECTION_POINT_INACTIVE", "PAYMENT_METHOD_DISABLED", "MAXIMUM_BELOW_BASE",
+    "TRIP_PACK_REQUIRES_CREDITS", "MEMBERSHIP_EXHAUSTED"
   ];
   if (message === "NO_PAYMENTS_TO_CLOSE") return reply.code(409).send({
     error: message,
@@ -926,7 +985,12 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const membership = await currentMembership(user.id!);
     const eligibility = await driverMembershipEligibility(user.id!);
     const [plans, pendingOrder, settingsRows] = await Promise.all([
-      database()`select id::text,code,name,base_amount::float8 as amount,currency,duration_days as "durationDays",included_trips as "includedTrips",max_renewal_amount::float8 as "maximumAmount" from membership_plans where enabled=true and effective_from<=now() and (effective_until is null or effective_until>now()) order by duration_days`,
+      database()`select id::text,code,name,plan_type as "planType",base_amount::float8 as amount,currency,
+        case when plan_type='PERIODIC' then duration_days end as "durationDays",
+        included_trips as "includedTrips",pack_validity_days as "packValidityDays",
+        max_renewal_amount::float8 as "maximumAmount"
+        from membership_plans where enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())
+        order by case when plan_type='PERIODIC' then 0 else 1 end,duration_days,included_trips`,
       activePaymentOrder(user.id!),
       database()`select vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`
     ]);
@@ -967,7 +1031,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/driver/membership/history", async (request, reply) => {
     const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
-    return database()`select id::text,plan_code as "planCode",status,starts_at as "startsAt",expires_at as "expiresAt",completed_trips as "completedTrips",extra_trips as "extraTrips",final_renewal_amount::float8 as "finalAmount",estimated_next_renewal_amount::float8 as "estimatedAmount",currency,cycle_closed_at as "closedAt" from driver_memberships where driver_id=${user.id!} order by created_at desc limit 100`;
+    return database()`select id::text,plan_code as "planCode",plan_type_snapshot as "planType",status,starts_at as "startsAt",expires_at as "expiresAt",completed_trips as "completedTrips",included_trips_snapshot as "includedTrips",greatest(0,included_trips_snapshot-completed_trips) as "remainingTrips",extra_trips as "extraTrips",final_renewal_amount::float8 as "finalAmount",estimated_next_renewal_amount::float8 as "estimatedAmount",currency,cycle_closed_at as "closedAt" from driver_memberships where driver_id=${user.id!} order by created_at desc limit 100`;
   });
 
   app.get("/v1/driver/membership/payments", async (request, reply) => {
@@ -1041,7 +1105,11 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         return [created];
       });
       const [recipient] = await database()`select u.email,u.full_name as name,o.short_code as code,o.total_amount::float8 as amount,o.currency,o.plan_snapshot as plan from membership_payment_orders o join users u on u.id=o.driver_id where o.id=${id}`;
-      if (recipient?.email) void sendTransactionalEmail({to:String(recipient.email),subject:"Comprobante recibido · Costa-Go",text:`Hola ${recipient.name}. Recibimos el comprobante de la orden ${recipient.code} por ${recipient.currency} ${Number(recipient.amount).toFixed(2)}. Será revisado y te notificaremos el resultado.`,html:`<h2>Comprobante recibido</h2><p>Hola <strong>${recipient.name}</strong>.</p><p>Recibimos el comprobante de la orden <strong>${recipient.code}</strong> por <strong>${recipient.currency} ${Number(recipient.amount).toFixed(2)}</strong>.</p><p>Tu pago será revisado y te notificaremos cuando finalice el proceso.</p>`}).catch(()=>false);
+      const recipientPlan = (recipient?.plan ?? {}) as Record<string, unknown>;
+      const recipientPlanDescription = recipientPlan.planType === "TRIP_PACK"
+        ? `plan por viajes de ${Number(recipientPlan.purchasedTrips ?? recipientPlan.includedTrips ?? 0)} viajes`
+        : `plan por período ${String(recipientPlan.name ?? "Costa-Go")}`;
+      if (recipient?.email) void sendTransactionalEmail({to:String(recipient.email),subject:"Comprobante recibido · Costa-Go",text:`Hola ${recipient.name}. Recibimos el comprobante de la orden ${recipient.code}, correspondiente al ${recipientPlanDescription}, por ${recipient.currency} ${Number(recipient.amount).toFixed(2)}. Será revisado y te notificaremos el resultado.`,html:`<h2>Comprobante recibido</h2><p>Hola <strong>${recipient.name}</strong>.</p><p>Recibimos el comprobante de la orden <strong>${recipient.code}</strong>, correspondiente al <strong>${recipientPlanDescription}</strong>, por <strong>${recipient.currency} ${Number(recipient.amount).toFixed(2)}</strong>.</p><p>Tu pago será revisado y te notificaremos cuando finalice el proceso.</p>`}).catch(()=>false);
       void sendPush(user.id!,"Comprobante recibido","Tu pago será revisado. Te notificaremos cuando finalice el proceso.",{type:"MEMBERSHIP_PAYMENT_REVIEW",orderId:id}).catch(()=>undefined);
       return reply.code(201).send(proof);
     } catch (error) { return businessError(error, reply); }
@@ -1065,7 +1133,10 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
       text_search_price_per_thousand_usd=${value.textSearchPricePerThousandUsd},text_search_monthly_budget_usd=${value.textSearchMonthlyBudgetUsd},
       text_search_warning_percent=${value.textSearchWarningPercent},text_search_critical_percent=${value.textSearchCriticalPercent},
       text_search_hard_limit_enabled=${value.textSearchHardLimitEnabled},navigation_free_cap_reference=${value.navigationFreeCapReference},
+      navigation_price_per_thousand_usd=${value.navigationPricePerThousandUsd},
       navigation_warning_percent=${value.navigationWarningPercent},navigation_critical_percent=${value.navigationCriticalPercent},
+      routes_free_cap_reference=${value.routesFreeCapReference},routes_price_per_thousand_usd=${value.routesPricePerThousandUsd},
+      geocoding_free_cap_reference=${value.geocodingFreeCapReference},geocoding_price_per_thousand_usd=${value.geocodingPricePerThousandUsd},
       driver_memberships_enabled=${value.driverMembershipsEnabled},membership_enforcement_enabled=${value.membershipEnforcementEnabled},
       membership_usage_billing_enabled=${value.membershipUsageBillingEnabled},membership_suspension_scheduler_enabled=${value.membershipSuspensionSchedulerEnabled},
       collector_portal_enabled=${value.collectorPortalEnabled},bank_transfer_enabled=${value.bankTransferEnabled},
@@ -1085,7 +1156,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/membership-plans", async (request, reply) => { try {
     requirePermission(request, "memberships:view");
-    return database()`select id::text,code,version,name,period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil",(enabled=true and effective_from<=now() and effective_until is null) as "current" from membership_plans order by code,version desc`;
+    return database()`select id::text,code,version,name,plan_type as "planType",period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",pack_validity_days as "packValidityDays",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil",(enabled=true and effective_from<=now() and effective_until is null) as "current" from membership_plans order by plan_type,code,version desc`;
   } catch (error) { return businessError(error, reply); } });
 
   app.post("/v1/admin/membership-plans", async (request, reply) => { try {
@@ -1093,7 +1164,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const body = planSchema.parse(request.body);
     const [existing] = await database()`select id from membership_plans where code=${body.code} limit 1`;
     if (existing) throw new Error("MEMBERSHIP_PLAN_CODE_EXISTS");
-    const [plan] = await database()`insert into membership_plans(code,version,name,period_unit,period_count,duration_days,base_amount,currency,included_trips,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${body.code},1,${body.name},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.maxRenewalAmount},${body.extraTripSharePercent},${body.enabled},${body.effectiveFrom ?? new Date()},${actor.id!},${actor.id!}) returning id::text,code,version,name`;
+    const [plan] = await database()`insert into membership_plans(code,version,name,plan_type,period_unit,period_count,duration_days,base_amount,currency,included_trips,pack_validity_days,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${body.code},1,${body.name},${body.planType},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.planType === "TRIP_PACK" ? body.packValidityDays ?? null : null},${body.planType === "TRIP_PACK" ? body.baseAmount : body.maxRenewalAmount},${body.planType === "TRIP_PACK" ? 0 : body.extraTripSharePercent},${body.enabled},${body.effectiveFrom ?? new Date()},${actor.id!},${actor.id!}) returning id::text,code,version,name,plan_type as "planType"`;
     if (!plan) throw new Error("MEMBERSHIP_PLAN_NOT_CREATED");
     await persistAudit(actor,"MEMBERSHIP_PLAN_CREATED","MEMBERSHIP_PLAN",plan.id,body.code);
     return reply.code(201).send(plan);
@@ -1107,9 +1178,11 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
       const [previous] = await tx`select * from membership_plans where id=${planId} for update`;
       if (!previous) throw new Error("MEMBERSHIP_PLAN_NOT_FOUND");
       if (!previous.enabled || previous.effective_until) throw new Error("MEMBERSHIP_PLAN_NOT_CURRENT");
+      if (previous.plan_type === "PERIODIC" && body.maxRenewalAmount < body.baseAmount) throw new Error("MAXIMUM_BELOW_BASE");
+      if (previous.plan_type === "TRIP_PACK" && body.includedTrips < 1) throw new Error("TRIP_PACK_REQUIRES_CREDITS");
       const changedAt = new Date();
       await tx`update membership_plans set enabled=false,effective_until=${changedAt},updated_by=${actor.id!},updated_at=${changedAt} where id=${planId}`;
-      const [created] = await tx`insert into membership_plans(code,version,name,period_unit,period_count,duration_days,base_amount,currency,included_trips,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${previous.code},${Number(previous.version) + 1},${body.name},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.maxRenewalAmount},${body.extraTripSharePercent},true,${changedAt},${actor.id!},${actor.id!}) returning id::text,code,version,name`;
+      const [created] = await tx`insert into membership_plans(code,version,name,plan_type,period_unit,period_count,duration_days,base_amount,currency,included_trips,pack_validity_days,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${previous.code},${Number(previous.version) + 1},${body.name},${previous.plan_type},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${previous.plan_type === "TRIP_PACK" ? body.packValidityDays ?? null : null},${previous.plan_type === "TRIP_PACK" ? body.baseAmount : body.maxRenewalAmount},${previous.plan_type === "TRIP_PACK" ? 0 : body.extraTripSharePercent},true,${changedAt},${actor.id!},${actor.id!}) returning id::text,code,version,name,plan_type as "planType"`;
       return created;
     });
     if (!next) throw new Error("MEMBERSHIP_PLAN_NOT_CREATED");
@@ -1131,7 +1204,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     requirePermission(request, "memberships:view");
     const query = z.object({ insight: z.enum(["active","expiring7Days","grace","expired","suspended"]).optional(), status: membershipStatusSchema.optional(), cooperativeId: z.string().uuid().optional(), search: z.string().trim().max(100).optional(), page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25) }).parse(request.query);
     const offset=(query.page-1)*query.limit;
-    const rows=await database()`select dm.id::text,dm.driver_id::text as "driverId",u.full_name as driver,u.email,u.phone_e164 as phone,c.name as cooperative,dm.plan_code as plan,dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",dm.billable_extra_amount::float8 as "extraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedRenewal",dm.currency,dm.payer_type as "payerType",count(*) over()::int as total from driver_memberships dm join users u on u.id=dm.driver_id left join cooperatives c on c.id=dm.cooperative_id where u.deleted_at is null and dm.cycle_closed_at is null and (${query.status ?? null}::text is null or dm.status=${query.status ?? null}) and (${query.insight??null}::text is null or (${query.insight??null}='active' and dm.status in ('ACTIVE','EXPIRING')) or (${query.insight??null}='expiring7Days' and dm.expires_at between now() and now()+interval '7 days') or (${query.insight??null}='grace' and dm.status='GRACE_PERIOD') or (${query.insight??null}='expired' and dm.status in ('PAYMENT_DUE','SUSPENDED_NON_PAYMENT')) or (${query.insight??null}='suspended' and dm.status in ('SUSPENDED','SUSPENDED_NON_PAYMENT'))) and (${query.cooperativeId ?? null}::uuid is null or dm.cooperative_id=${query.cooperativeId ?? null}) and (${query.search ?? null}::text is null or u.full_name ilike ${query.search ? `%${query.search}%` : null} or u.email ilike ${query.search ? `%${query.search}%` : null} or u.phone_e164 ilike ${query.search ? `%${query.search}%` : null}) order by dm.expires_at nulls first,u.full_name limit ${query.limit} offset ${offset}`;
+    const rows=await database()`select dm.id::text,dm.driver_id::text as "driverId",u.full_name as driver,u.email,u.phone_e164 as phone,c.name as cooperative,dm.plan_code as plan,dm.plan_type_snapshot as "planType",dm.status,dm.starts_at as "startsAt",dm.expires_at as "expiresAt",dm.grace_ends_at as "graceEndsAt",dm.suspension_at as "suspensionAt",dm.completed_trips as "completedTrips",dm.included_trips_snapshot as "includedTrips",greatest(0,dm.included_trips_snapshot-dm.completed_trips) as "remainingTrips",dm.extra_trips as "extraTrips",dm.billable_extra_amount::float8 as "extraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedRenewal",dm.currency,dm.payer_type as "payerType",count(*) over()::int as total from driver_memberships dm join users u on u.id=dm.driver_id left join cooperatives c on c.id=dm.cooperative_id where u.deleted_at is null and dm.cycle_closed_at is null and (${query.status ?? null}::text is null or dm.status=${query.status ?? null}) and (${query.insight??null}::text is null or (${query.insight??null}='active' and dm.status in ('ACTIVE','EXPIRING')) or (${query.insight??null}='expiring7Days' and dm.expires_at between now() and now()+interval '7 days') or (${query.insight??null}='grace' and dm.status='GRACE_PERIOD') or (${query.insight??null}='expired' and dm.status in ('PAYMENT_DUE','SUSPENDED_NON_PAYMENT','EXHAUSTED')) or (${query.insight??null}='suspended' and dm.status in ('SUSPENDED','SUSPENDED_NON_PAYMENT'))) and (${query.cooperativeId ?? null}::uuid is null or dm.cooperative_id=${query.cooperativeId ?? null}) and (${query.search ?? null}::text is null or u.full_name ilike ${query.search ? `%${query.search}%` : null} or u.email ilike ${query.search ? `%${query.search}%` : null} or u.phone_e164 ilike ${query.search ? `%${query.search}%` : null}) order by dm.expires_at nulls first,u.full_name limit ${query.limit} offset ${offset}`;
     return { items: rows, page: query.page, limit: query.limit, total: Number(rows[0]?.total ?? 0) };
   } catch (error) { return businessError(error, reply); } });
 
@@ -1167,7 +1240,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
       [result]=await database()`update driver_memberships set status='SUSPENDED',suspended_at=now(),suspension_reason=${body.reason},updated_by=${actor.id!},updated_at=now() where driver_id=${driverId} and cycle_closed_at is null returning id::text,status`;
       await database()`update drivers set is_available=false where user_id=${driverId}`;
     } else if(body.action==="REACTIVATE") {
-      [result]=await database()`update driver_memberships set status=case when expires_at>now() then 'ACTIVE' when grace_ends_at>now() then 'GRACE_PERIOD' else 'PAYMENT_DUE' end,suspended_at=null,suspension_reason=null,reactivated_after_payment_at=now(),updated_by=${actor.id!},updated_at=now() where driver_id=${driverId} and cycle_closed_at is null returning id::text,status`;
+      [result]=await database()`update driver_memberships set status=case when plan_type_snapshot='TRIP_PACK' and completed_trips<included_trips_snapshot and (expires_at is null or expires_at>now()) then 'ACTIVE' when plan_type_snapshot='TRIP_PACK' then 'EXHAUSTED' when expires_at>now() then 'ACTIVE' when grace_ends_at>now() then 'GRACE_PERIOD' else 'PAYMENT_DUE' end,suspended_at=null,suspension_reason=null,reactivated_after_payment_at=now(),updated_by=${actor.id!},updated_at=now() where driver_id=${driverId} and cycle_closed_at is null returning id::text,status`;
     } else if(body.action==="GRANT_GRACE") {
       [result]=await database()`update driver_memberships dm set status='GRACE_PERIOD',grace_ends_at=greatest(coalesce(dm.grace_ends_at,now()),now())+(${body.days}*interval '1 day'),last_grace_local_date=(greatest(coalesce(dm.grace_ends_at,now()),now()) at time zone dm.suspension_timezone_snapshot)::date+${body.days},suspension_at=((((greatest(coalesce(dm.grace_ends_at,now()),now()) at time zone dm.suspension_timezone_snapshot)::date+${body.days+1})::date+dm.suspension_local_time_snapshot) at time zone dm.suspension_timezone_snapshot),grace_reason=${body.reason},grace_days_applied=dm.grace_days_applied+${body.days},grace_allows_trips_applied=${body.allowsTrips},updated_by=${actor.id!},updated_at=now() where dm.driver_id=${driverId} and dm.cycle_closed_at is null returning id::text,status,grace_ends_at as "graceEndsAt",suspension_at as "suspensionAt"`;
     } else if(body.action==="ADJUST") {
@@ -1280,7 +1353,27 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.post("/v1/admin/membership-grace-policies",async(request,reply)=>{try{const actor=requirePermission(request,"membership_grace:manage");const body=gracePolicySchema.parse(request.body);const [item]=await database()`insert into membership_grace_policies(name,reason,scope,cooperative_id,driver_id,grace_days,allows_trips,campaign_kind,starts_at,ends_at,expiry_window_start,expiry_window_end,priority,status,created_by,approved_by) values (${body.name},${body.reason},${body.scope},${body.cooperativeId ?? null},${body.driverId ?? null},${body.graceDays},${body.allowsTrips},${body.campaignKind},${body.startsAt},${body.endsAt},${body.expiryWindowStart ?? null},${body.expiryWindowEnd ?? null},${body.priority},${body.status},${actor.id!},${body.status==='ACTIVE'?actor.id!:null}) returning id::text,name,status`;if(!item)throw new Error("GRACE_POLICY_NOT_CREATED");await persistAudit(actor,"MEMBERSHIP_GRACE_POLICY_CREATED","MEMBERSHIP_GRACE_POLICY",item.id,body.reason);return reply.code(201).send(item);}catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/admin/api-usage",async(request,reply)=>{try{requirePermission(request,"api_usage:view");const [settings]=await database()`select * from operational_settings where id=1`;if(!settings)throw new Error("SETTINGS_NOT_FOUND");const rows=await database()`select provider,count(*)::int as requests,count(*) filter(where result='ERROR')::int as errors from api_usage_events where billing_period=date_trunc('month',now())::date group by provider order by provider`;const map=Object.fromEntries(rows.map(row=>[String(row.provider),Number(row.requests)]));const textSearch=map.TEXT_SEARCH_PRO??0;const navigation=map.NAVIGATION_SDK??0;return {period:new Date().toISOString().slice(0,7),providers:rows,textSearch:{used:textSearch,freeCap:Number(settings.text_search_free_cap_reference),operationalLimit:Number(settings.text_search_free_cap_reference)+Math.floor(Number(settings.text_search_monthly_budget_usd)*1000/Math.max(0.01,Number(settings.text_search_price_per_thousand_usd))),estimatedCost:Math.max(0,textSearch-Number(settings.text_search_free_cap_reference))*Number(settings.text_search_price_per_thousand_usd)/1000},navigation:{used:navigation,freeCap:Number(settings.navigation_free_cap_reference)}};}catch(error){return businessError(error,reply);} });
+  app.get("/v1/admin/api-usage",async(request,reply)=>{try{
+    requirePermission(request,"api_usage:view");
+    const [settings]=await database()`select * from operational_settings where id=1`;
+    if(!settings)throw new Error("SETTINGS_NOT_FOUND");
+    const rows=await database()`select provider,count(*)::int as requests,count(*) filter(where result like '%ERROR%')::int as errors from api_usage_events where billing_period=date_trunc('month',now())::date group by provider order by provider`;
+    const usage=Object.fromEntries(rows.map(row=>[String(row.provider),{used:Number(row.requests),errors:Number(row.errors)}]));
+    const priced=(provider:string,freeCap:number,pricePerThousand:number)=>{
+      const item=usage[provider]??{used:0,errors:0};
+      const billable=Math.max(0,item.used-freeCap);
+      return {...item,freeCap,billable,pricePerThousand,estimatedCost:billable*pricePerThousand/1000};
+    };
+    const textSearch=priced("TEXT_SEARCH_PRO",Number(settings.text_search_free_cap_reference),Number(settings.text_search_price_per_thousand_usd));
+    const navigationEnabled=settings.navigation_pickup_provider==='NAVIGATION_SDK'||settings.navigation_destination_provider==='NAVIGATION_SDK';
+    return {
+      period:new Date().toISOString().slice(0,7),providers:rows,
+      textSearch:{...textSearch,operationalLimit:Number(settings.text_search_free_cap_reference)+Math.floor(Number(settings.text_search_monthly_budget_usd)*1000/Math.max(0.01,Number(settings.text_search_price_per_thousand_usd)))},
+      routes:priced("ROUTES",Number(settings.routes_free_cap_reference),Number(settings.routes_price_per_thousand_usd)),
+      geocoding:priced("GEOCODING",Number(settings.geocoding_free_cap_reference),Number(settings.geocoding_price_per_thousand_usd)),
+      navigation:{...priced("NAVIGATION_SDK",Number(settings.navigation_free_cap_reference),Number(settings.navigation_price_per_thousand_usd)),enabled:navigationEnabled,optional:true}
+    };
+  }catch(error){return businessError(error,reply);} });
 
   app.get("/v1/collector/payment-orders/token/:token",async(request,reply)=>{try{requirePermission(request,"payments:collect");const token=(request.params as {token:string}).token;const [order]=await database()`select o.id::text,o.status,o.short_code as "shortCode",o.taxable_subtotal::float8 as "subtotalAmount",o.vat_rate_percent::float8 as "vatRatePercent",o.vat_amount::float8 as "vatAmount",o.total_amount::float8 as amount,o.currency,o.expires_at as "expiresAt",o.plan_snapshot as plan,u.full_name as driver,concat('****',right(coalesce(d.identity_number,''),4)) as identification,v.identifier as vehicle,c.name as cooperative,dm.expires_at as "currentExpiresAt" from membership_payment_orders o join users u on u.id=o.driver_id join drivers d on d.user_id=o.driver_id left join lateral(select string_agg(v.identifier,', ' order by v.identifier) as identifier from vehicles v join user_vehicle_relations r on r.vehicle_id=v.id where r.user_id=o.driver_id and r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED' and v.merged_into is null)v on true left join cooperatives c on c.id=u.cooperative_id left join lateral(select expires_at from driver_memberships where driver_id=o.driver_id and cycle_closed_at is null order by created_at desc limit 1)dm on true where o.public_token_hash=${sha256(token)} and o.status in ('PENDING','PENDING_VERIFICATION') and o.expires_at>now()`;if(!order)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});return order;}catch(error){return businessError(error,reply);} });
 
@@ -1387,7 +1480,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/collection-closures",async(request,reply)=>{try{requirePermission(request,"cash_closures:review");return database()`select c.id::text,c.status,c.period_start as "periodStart",c.period_end as "periodEnd",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point,u.full_name as collector,c.created_at as "createdAt" from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join users u on u.id=c.collector_id where c.gross_amount>0 order by c.created_at desc limit 200`; }catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/admin/membership-payments/pending",async(request,reply)=>{try{requirePermission(request,"payments:transfer_review");return database()`select proof.id::text,proof.order_id::text as "orderId",u.full_name as driver,o.total_amount::float8 as "expectedAmount",proof.declared_amount::float8 as "declaredAmount",o.currency,proof.bank_name as bank,coalesce(proof.reference_display,proof.reference_masked) as reference,proof.transfer_date as "transferDate",proof.status,proof.created_at as "createdAt" from membership_transfer_proofs proof join membership_payment_orders o on o.id=proof.order_id join users u on u.id=o.driver_id where proof.status='PENDING' order by proof.created_at`; }catch(error){return businessError(error,reply);} });
+  app.get("/v1/admin/membership-payments/pending",async(request,reply)=>{try{requirePermission(request,"payments:transfer_review");return database()`select proof.id::text,proof.order_id::text as "orderId",u.full_name as driver,o.plan_snapshot as plan,o.total_amount::float8 as "expectedAmount",proof.declared_amount::float8 as "declaredAmount",o.currency,proof.bank_name as bank,coalesce(proof.reference_display,proof.reference_masked) as reference,proof.transfer_date as "transferDate",proof.status,proof.created_at as "createdAt" from membership_transfer_proofs proof join membership_payment_orders o on o.id=proof.order_id join users u on u.id=o.driver_id where proof.status='PENDING' order by proof.created_at`; }catch(error){return businessError(error,reply);} });
 
   app.post("/v1/admin/membership-payments/:proofId/approve",async(request,reply)=>{try{const actor=requirePermission(request,"payments:transfer_review");const proofId=(request.params as {proofId:string}).proofId;const body=z.object({idempotencyKey:z.string().min(8).max(120)}).parse(request.body);const [proof]=await database()`select p.*,o.id::text as "orderId" from membership_transfer_proofs p join membership_payment_orders o on o.id=p.order_id where p.id=${proofId} and p.status='PENDING'`;if(!proof)return reply.code(404).send({error:"PAYMENT_ORDER_NOT_FOUND"});const result=await processMembershipPayment(proof.orderId,actor,{method:'BANK_TRANSFER',receiverScope:'COSTA_GO_CENTRAL',verificationChannel:'REMOTE_PROOF',referenceHash:String(proof.reference_normalized_hash),referenceMasked:String(proof.reference_masked),referenceDisplay:String(proof.reference_display ?? proof.reference_masked),idempotencyKey:body.idempotencyKey});await database()`update membership_transfer_proofs set status='APPROVED',reviewed_by=${actor.id!},reviewed_at=now() where id=${proofId} and status='PENDING'`;return result;}catch(error){return businessError(error,reply);} });
 

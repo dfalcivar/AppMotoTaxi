@@ -26,6 +26,7 @@ import { registerTripSharingRoutes } from "./trip-sharing.js";
 import { registerPassengerCancellationRoutes, releaseExpiredPassengerSuspensions, cancelPassengerTrip, cancellationConsequence, passengerCancellationPolicySchema } from "./passenger-cancellations.js";
 import { reverseLocation, searchLocations, searchLocationsInArea } from "./geocoding.js";
 import { computeRoute, type RouteResult } from "./routing.js";
+import { googleApiUsageRecorder } from "./api-usage.js";
 import { refreshDriverApprovalState } from "./driver-document-requirements.js";
 import { captureOperationalError } from "./observability.js";
 import { sendTransactionalEmail } from "./email.js";
@@ -1077,7 +1078,13 @@ export async function buildApp() {
       const { origin, destination, waypoints } = parsed.data;
       const startedAt = performance.now();
       const route = await computeRoute(origin, destination, waypoints, {
-        includeRouteToken: parsed.data.includeRouteToken
+        includeRouteToken: parsed.data.includeRouteToken,
+        usageRecorder: googleApiUsageRecorder({
+          userId: user.id!,
+          tripId: parsed.data.tripId,
+          cooperativeId: user.cooperativeId,
+          phase: parsed.data.purpose ?? "MAP"
+        })
       });
       request.log.info({
         tripId: parsed.data.tripId,
@@ -1921,7 +1928,15 @@ export async function buildApp() {
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location));
+    const route = await computeRoute(
+      input.origin,
+      finalDestination.location,
+      destinations.slice(0, -1).map(stop => stop.location),
+      { usageRecorder: googleApiUsageRecorder({
+        userId: user.id!, serviceAreaId: operationalArea.id,
+        cooperativeId: user.cooperativeId, phase: "TRIP_PREVIEW"
+      }) }
+    );
     let fare: Awaited<ReturnType<typeof calculateTerritorialFare>>;
     try {
       fare = await calculateTerritorialFare({
@@ -1998,7 +2013,11 @@ export async function buildApp() {
     const route = await computeRoute(
       input.origin,
       finalDestination.location,
-      destinations.slice(0, -1).map(stop => stop.location)
+      destinations.slice(0, -1).map(stop => stop.location),
+      { usageRecorder: googleApiUsageRecorder({
+        userId: user.id!, serviceAreaId: operationalArea.id,
+        cooperativeId: user.cooperativeId, phase: "TRIP_CREATE"
+      }) }
     ).catch(() => undefined);
     let fare: Awaited<ReturnType<typeof calculateTerritorialFare>>;
     try {
@@ -2284,7 +2303,15 @@ export async function buildApp() {
     const sql = database();
     const zones = await sql`select zone_type from service_zones where active_until is null and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography) and ST_Covers(boundary, ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography) order by case when zone_type='EXTENDED' then 0 else 1 end limit 1`;
     const zone = (zones[0]?.zone_type ?? "EXTENDED") as "URBAN" | "EXTENDED";
-    const route = await computeRoute(input.origin, finalDestination.location, destinations.slice(0, -1).map(stop => stop.location)).catch(() => undefined);
+    const route = await computeRoute(
+      input.origin,
+      finalDestination.location,
+      destinations.slice(0, -1).map(stop => stop.location),
+      { usageRecorder: googleApiUsageRecorder({
+        userId: user.id!, serviceAreaId: operationalArea.id,
+        cooperativeId: user.cooperativeId, phase: "TRIP_RESCHEDULE"
+      }) }
+    ).catch(() => undefined);
     let fare: Awaited<ReturnType<typeof calculateTerritorialFare>>;
     try {
       fare = await calculateTerritorialFare({
@@ -2792,7 +2819,10 @@ export async function buildApp() {
     const parsed = reverseLocationSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION_QUERY" });
     try {
-      return await reverseLocation(parsed.data);
+      return await reverseLocation(parsed.data, googleApiUsageRecorder({
+        userId: user.id!, cooperativeId: user.cooperativeId,
+        phase: "LOCATION_REVERSE"
+      }));
     } catch { return reply.code(502).send({ error: "GEOCODER_UNAVAILABLE" }); }
   });
 

@@ -1,3 +1,5 @@
+import type { GoogleApiUsageRecorder } from "./api-usage.js";
+
 interface FocusPoint {
   latitude: number;
   longitude: number;
@@ -244,7 +246,10 @@ export function placesSearchPageSize(bounds?: SearchBounds): number {
   return bounds ? 20 : 8;
 }
 
-async function reverseGoogleLocation(point: FocusPoint): Promise<LocationResult> {
+async function reverseGoogleLocation(
+  point: FocusPoint,
+  usageRecorder?: GoogleApiUsageRecorder
+): Promise<LocationResult> {
   const key = googleMapsKey();
   if (!key) throw new Error("GOOGLE_GEOCODING_NOT_CONFIGURED");
   const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
@@ -252,7 +257,30 @@ async function reverseGoogleLocation(point: FocusPoint): Promise<LocationResult>
   url.searchParams.set("language", "es");
   url.searchParams.set("region", "ec");
   url.searchParams.set("key", key);
-  const response = await fetch(url);
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (error) {
+    try {
+      await usageRecorder?.({
+        provider: "GEOCODING",
+        result: "NETWORK_ERROR",
+        metadata: { billingUnit: "REQUEST", operation: "REVERSE" }
+      });
+    } catch {}
+    throw error;
+  }
+  try {
+    await usageRecorder?.({
+      provider: "GEOCODING",
+      result: response.ok ? "SUCCESS" : "HTTP_ERROR",
+      metadata: {
+        billingUnit: "REQUEST",
+        operation: "REVERSE",
+        httpStatus: response.status
+      }
+    });
+  } catch {}
   if (!response.ok) throw new Error("GOOGLE_GEOCODING_UNAVAILABLE");
   const payload = (await response.json()) as {
     status?: string;
@@ -422,10 +450,13 @@ function reverseLabel(item: NominatimReverseItem): string {
   return cleanLocationLabel(parts.length ? parts.join(", ") : item.display_name).slice(0, 200);
 }
 
-export async function reverseLocation(point: FocusPoint): Promise<LocationResult> {
+export async function reverseLocation(
+  point: FocusPoint,
+  usageRecorder?: GoogleApiUsageRecorder
+): Promise<LocationResult> {
   if (googleMapsKey()) {
     try {
-      return await reverseGoogleLocation(point);
+      return await reverseGoogleLocation(point, usageRecorder);
     } catch {
       // Mantiene Nominatim como respaldo durante la transición a Google.
     }

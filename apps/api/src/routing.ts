@@ -1,3 +1,5 @@
+import type { GoogleApiUsageRecorder } from "./api-usage.js";
+
 export interface RoutePoint {
   latitude: number;
   longitude: number;
@@ -20,6 +22,7 @@ export interface RouteLegResult {
 
 export interface RouteOptions {
   includeRouteToken?: boolean;
+  usageRecorder?: GoogleApiUsageRecorder;
 }
 
 const routeCache = new Map<string, { expiresAt: number; route: RouteResult }>();
@@ -65,30 +68,50 @@ async function googleRoute(
   options: RouteOptions
 ): Promise<RouteResult> {
   const includeRouteToken = options.includeRouteToken === true;
-  const response = await fetch(
-    "https://routes.googleapis.com/directions/v2:computeRoutes",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": key,
-        "X-Goog-FieldMask":
-          `routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration,routes.polyline.encodedPolyline${includeRouteToken ? ",routes.routeToken" : ""}`
-      },
-      body: JSON.stringify({
-        origin: { location: { latLng: origin } },
-        destination: { location: { latLng: destination } },
-        ...(waypoints.length ? {
-          intermediates: waypoints.map(point => ({ location: { latLng: point } }))
-        } : {}),
-        travelMode: "DRIVE",
-        routingPreference: includeRouteToken ? "TRAFFIC_AWARE" : "TRAFFIC_UNAWARE",
-        polylineQuality: "OVERVIEW",
-        languageCode: "es",
-        units: "METRIC"
-      })
-    }
-  );
+  const usageMetadata = {
+    waypointCount: waypoints.length,
+    includeRouteToken,
+    billingUnit: "REQUEST"
+  };
+  let response: Response;
+  try {
+    response = await fetch(
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask":
+            `routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration,routes.polyline.encodedPolyline${includeRouteToken ? ",routes.routeToken" : ""}`
+        },
+        body: JSON.stringify({
+          origin: { location: { latLng: origin } },
+          destination: { location: { latLng: destination } },
+          ...(waypoints.length ? {
+            intermediates: waypoints.map(point => ({ location: { latLng: point } }))
+          } : {}),
+          travelMode: "DRIVE",
+          routingPreference: includeRouteToken ? "TRAFFIC_AWARE" : "TRAFFIC_UNAWARE",
+          polylineQuality: "OVERVIEW",
+          languageCode: "es",
+          units: "METRIC"
+        })
+      }
+    );
+  } catch (error) {
+    try {
+      await options.usageRecorder?.({ provider: "ROUTES", result: "NETWORK_ERROR", metadata: usageMetadata });
+    } catch {}
+    throw error;
+  }
+  try {
+    await options.usageRecorder?.({
+      provider: "ROUTES",
+      result: response.ok ? "SUCCESS" : "HTTP_ERROR",
+      metadata: { ...usageMetadata, httpStatus: response.status }
+    });
+  } catch {}
   if (!response.ok) throw new Error("GOOGLE_ROUTING_UNAVAILABLE");
   const payload = (await response.json()) as {
     routes?: Array<{

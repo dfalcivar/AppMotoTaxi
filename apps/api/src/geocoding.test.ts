@@ -1,11 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanLocationLabel,
   googlePlacesSearchBody,
   openRouteServiceSearchUrl,
   placesSearchPageSize,
-  preciseGoogleAddress
+  preciseGoogleAddress,
+  reverseLocation
 } from "./geocoding.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete process.env.GOOGLE_MAPS_SERVER_API_KEY;
+});
 
 describe("Google Places", () => {
   it("solicita más candidatos cuando luego se filtrarán con un polígono", () => {
@@ -75,5 +81,37 @@ describe("preciseGoogleAddress", () => {
       formatted_address: "4X2X+H56, Hermano Miguel y Gran Colombia, Cuenca",
       types: ["intersection"]
     }])).toBe("Hermano Miguel y Gran Colombia, Cuenca");
+  });
+});
+
+describe("Google Geocoding usage", () => {
+  it("registra una sola solicitud real de geocodificación inversa", async () => {
+    process.env.GOOGLE_MAPS_SERVER_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: "OK",
+      results: [{
+        formatted_address: "Calle Larga 9-76, Cuenca",
+        types: ["street_address"],
+        address_components: [
+          { long_name: "9-76", types: ["street_number"] },
+          { long_name: "Calle Larga", types: ["route"] },
+          { long_name: "Cuenca", types: ["locality"] }
+        ]
+      }]
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    const usageRecorder = vi.fn();
+
+    const result = await reverseLocation(
+      { latitude: -2.9, longitude: -79.0 },
+      usageRecorder
+    );
+
+    expect(result.label).toBe("Calle Larga 9-76, Cuenca");
+    expect(usageRecorder).toHaveBeenCalledTimes(1);
+    expect(usageRecorder).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "GEOCODING",
+      result: "SUCCESS",
+      metadata: expect.objectContaining({ operation: "REVERSE", httpStatus: 200 })
+    }));
   });
 });

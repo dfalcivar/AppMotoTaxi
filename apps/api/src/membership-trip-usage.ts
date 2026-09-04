@@ -3,6 +3,9 @@ import type { TransactionSql } from 'postgres';
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 export function cycleAmounts(cycle: Record<string, unknown>, used: number, adjustment = Number(cycle.adjustment_amount)) {
+  if (String(cycle.plan_type_snapshot ?? 'PERIODIC') === 'TRIP_PACK') {
+    return { used, extra: 0, raw: 0, billable: 0, estimate: 0, adjustment: 0 };
+  }
   const extra = Math.max(0, used - Number(cycle.included_trips_snapshot));
   const raw = money(extra * Number(cycle.extra_trip_fee_snapshot));
   const billable = Math.min(raw, Math.max(0, money(Number(cycle.max_renewal_amount_snapshot) - Number(cycle.base_membership_amount_snapshot))));
@@ -21,7 +24,15 @@ async function saveAmounts(tx: TransactionSql, cycle: Record<string, any>, used:
   const amounts = cycleAmounts(cycle, used, adjustment);
   await tx`update driver_memberships set completed_trips=${amounts.used},extra_trips=${amounts.extra},
     raw_extra_amount=${amounts.raw},billable_extra_amount=${amounts.billable},
-    estimated_next_renewal_amount=${amounts.estimate},adjustment_amount=${amounts.adjustment},updated_at=now()
+    estimated_next_renewal_amount=${amounts.estimate},adjustment_amount=${amounts.adjustment},
+    status=case
+      when plan_type_snapshot='TRIP_PACK' and cycle_closed_at is null and ${amounts.used}>=included_trips_snapshot then 'EXHAUSTED'
+      when plan_type_snapshot='TRIP_PACK' and cycle_closed_at is null and status='EXHAUSTED' then 'ACTIVE'
+      else status end,
+    exhausted_at=case
+      when plan_type_snapshot='TRIP_PACK' and cycle_closed_at is null and ${amounts.used}>=included_trips_snapshot then coalesce(exhausted_at,now())
+      when plan_type_snapshot='TRIP_PACK' and cycle_closed_at is null and ${amounts.used}<included_trips_snapshot then null
+      else exhausted_at end,updated_at=now()
     where id=${cycle.id}`;
   return amounts;
 }
@@ -52,10 +63,12 @@ export async function recordAcceptedTripMembershipUsage(tx: TransactionSql, trip
       or exists(select 1 from scheduled_trip_responses where trip_id=${tripId} and driver_id=${driverId} and accepted=true))`;
   if (!trip) return;
   await lockMembershipBilling(tx, driverId);
-  const [settings] = await tx`select membership_usage_billing_enabled as enabled from operational_settings where id=1`;
-  if (!settings?.enabled) return;
   const [cycle] = await tx`select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null for update`;
   if (!cycle || !['ACTIVE','EXPIRING','GRACE_PERIOD','PAYMENT_DUE'].includes(String(cycle.status))) return;
+  const [settings] = await tx`select membership_usage_billing_enabled as enabled from operational_settings where id=1`;
+  const isTripPack = String(cycle.plan_type_snapshot ?? 'PERIODIC') === 'TRIP_PACK';
+  if (!isTripPack && !settings?.enabled) return;
+  if (isTripPack && Number(cycle.completed_trips) >= Number(cycle.included_trips_snapshot)) throw new Error('MEMBERSHIP_EXHAUSTED');
   const used = Number(cycle.completed_trips) + 1;
   const amounts = cycleAmounts(cycle, used);
   const [usage] = await tx`insert into membership_cycle_trip_usages
@@ -63,7 +76,7 @@ export async function recordAcceptedTripMembershipUsage(tx: TransactionSql, trip
       amount_before_cap,amount_after_cap,idempotency_key)
     values(${cycle.id},${tripId},${driverId},${trip.assigned_at},
       (select coalesce(max(sequence_number),0)+1 from membership_cycle_trip_usages where membership_cycle_id=${cycle.id}),
-      ${used <= Number(cycle.included_trips_snapshot) ? 'INCLUDED' : 'EXTRA'},${cycle.extra_trip_fee_snapshot},
+      ${isTripPack || used <= Number(cycle.included_trips_snapshot) ? 'INCLUDED' : 'EXTRA'},${cycle.extra_trip_fee_snapshot},
       ${amounts.raw},${amounts.billable},${`trip-accepted:${tripId}:${driverId}`})
     on conflict(trip_id,driver_id) do nothing returning id`;
   if (!usage) return;
