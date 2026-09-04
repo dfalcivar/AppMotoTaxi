@@ -9,6 +9,7 @@ export function useConsoleState<T>(key:string,initial:T|(()=>T)): [T,Dispatch<Se
 }
 export function ConsoleIcon({name,size=20}:{name?:string;size?:number}) {
   const paths:Record<string,string>={home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9',search:'M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',menu:'M4 6h16M4 12h16M4 18h16',trips:'M3 7h17l-4-4M21 17H4l4 4',users:'M16 21v-3a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v3M16 3a4 4 0 0 1 0 8M22 21v-3a4 4 0 0 0-3-3M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',mail:'M3 5h18v14H3V5Zm0 1 9 7 9-7',phone:'M6 3h4l2 5-3 2a15 15 0 0 0 5 5l2-3 5 2v4c0 2-2 3-4 3A17 17 0 0 1 3 7c0-2 1-4 3-4Z',vehicle:'M3 15h18l-2-6H5l-2 6Zm2 0v4m14-4v4M7 19h2m6 0h2M6 9l2-4h8l2 4',calendar:'M5 3v3m14-3v3M3 8h18v13H3V8Zm4 4h3m4 0h3m-10 4h3m4 0h3',key:'M15 7a5 5 0 1 1-3 9l-3 3H6v3H2v-4l7-7a5 5 0 0 1 6-4Z',alert:'m12 3 10 18H2L12 3Zm0 5v6m0 3v1',bell:'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4',settings:'M12 3v3m0 12v3M3 12h3m12 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0',chart:'M4 3v18h18M8 16l4-5 4 2 5-8',money:'M12 2v20m6-15c0-5-12-5-12 0s12 5 12 10-12 5-12 0',map:'m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Zm6-3v15m6-12v15',shield:'m12 2 9 4v6c0 6-9 10-9 10S3 18 3 12V6l9-4Zm-4 10 3 3 5-6',document:'M5 2h10l5 5v15H5V2Zm10 0v6h5M8 12h9m-9 4h9',refresh:'M21 7v5h-5M3 17v-5h5M20 11a8 8 0 0 0-14-6M4 13a8 8 0 0 0 14 6',support:'M3 14v-3a9 9 0 0 1 18 0v7a3 3 0 0 1-3 3h-5M3 11h4v7H3v-7Zm14 0h4v7h-4v-7Z',star:'m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1 3-6Z',logout:'M9 3H3v18h6m6-14 5 5-5 5M8 12h12',database:'M3 6c0-5 18-5 18 0s-18 5-18 0Zm0 0v12c0 5 18 5 18 0V6M3 12c0 5 18 5 18 0',arrow:'m9 5 7 7-7 7',back:'m14 5-7 7 7 7M7 12h15',close:'m5 5 14 14M19 5 5 19',check:'m4 12 5 5L20 6'};
+  paths.more='M12 5h.01M12 12h.01M12 19h.01';
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name??'document']??paths.document}/></svg>;
 }
 export function ConsoleModal({title,subtitle,className='',onClose,children}:{title:string;subtitle?:string;className?:string;onClose:()=>void;children:ReactNode}) {
@@ -46,7 +47,7 @@ export function ErrorState({message,onRetry}:{message:string;onRetry:()=>void}){
 function CompactActions({children}:{children:ReactNode}) {
   const count=(node:ReactNode):number=>Children.toArray(node).reduce<number>((total,child)=>total+(isValidElement<{children?:ReactNode}>(child)?(child.type==='button'||child.type==='a'?1:count(child.props.children)):0),0);
   if(count(children)<3)return <>{children}</>;
-  return <details className="cg-row-actions"><summary title="Ver acciones disponibles">Acciones ⋯</summary><div>{children}</div></details>;
+  return <details className="cg-row-actions"><summary title="Ver acciones disponibles" aria-label="Ver acciones disponibles"><ConsoleIcon name="more" size={18}/><span>Opciones</span></summary><div>{children}</div></details>;
 }
 export function DataTable({headers,rows,label='Listado',initialSearch='',serverPaged=false,variant='default'}:{headers:string[];rows:ReactNode[][];label?:string;initialSearch?:string;serverPaged?:boolean;variant?:'default'|'directory'}) {
   const context=useContext(ConsoleContext),id=useId();

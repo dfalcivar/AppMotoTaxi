@@ -125,6 +125,15 @@ bool shouldShowDriverStatusMessage(String? message) =>
 String driverOfferOccurrenceKey(String tripId, Map<dynamic, dynamic> offer) =>
     '$tripId:${offer['offeredAt'] ?? offer['expiresAt'] ?? ''}';
 
+@visibleForTesting
+double driverSheetTargetForState({
+  required bool hasActiveTrip,
+  required bool hasOffers,
+}) {
+  if (hasOffers) return .90;
+  return hasActiveTrip ? .50 : .30;
+}
+
 FleetGateway fleetFor(Session session) => FleetGateway(
         (method, path, body) =>
             Api().call(method, path, token: session.token, body: body),
@@ -12321,6 +12330,44 @@ class Driver extends StatefulWidget {
   State<Driver> createState() => _DriverState();
 }
 
+class _MembershipReceiptIllustration extends StatelessWidget {
+  const _MembershipReceiptIllustration({
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+        dimension: size,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(
+              Icons.receipt_long_rounded,
+              size: size,
+              color: color.withValues(alpha: .16),
+            ),
+            Positioned(
+              left: size * .27,
+              top: size * .20,
+              child: Text(
+                '\$',
+                style: TextStyle(
+                  color: color.withValues(alpha: .52),
+                  fontSize: size * .27,
+                  height: 1,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
 class _DriverState extends State<Driver> with WidgetsBindingObserver {
   dynamic fleetSession;
   Timer? fleetHeartbeatTimer;
@@ -12522,6 +12569,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   final api = Api();
   final driverSheetController = DraggableScrollableController();
+  ScrollController? driverSheetScrollController;
   final offerPageController = PageController(viewportFraction: .94);
   final driverOfferSectionKey = GlobalKey();
   Timer? revealOfferTimer;
@@ -13043,9 +13091,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   void _revealIncomingOffer() {
     _moveDriverSheet(.90);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final scrollController = driverSheetScrollController;
+      if (!mounted ||
+          scrollController == null ||
+          !scrollController.hasClients) {
+        return;
+      }
+      scrollController.jumpTo(scrollController.position.minScrollExtent);
+    });
     revealOfferTimer?.cancel();
     revealOfferTimer = Timer(const Duration(milliseconds: 380), () {
       if (!mounted) return;
+      // A restore triggered by the trip that just ended can finish after the
+      // offer arrives. Reassert the expanded state once the new content exists.
+      _moveDriverSheet(.90);
+      final scrollController = driverSheetScrollController;
+      if (scrollController != null && scrollController.hasClients) {
+        scrollController.jumpTo(scrollController.position.minScrollExtent);
+      }
       final offerContext = driverOfferSectionKey.currentContext;
       if (offerContext == null) return;
       unawaited(Scrollable.ensureVisible(
@@ -13408,7 +13472,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         offers = [];
       }
     });
-    if (adjustSheet) _moveDriverSheet(active == null ? .30 : .50);
+    if (adjustSheet) {
+      final sheetTarget = driverSheetTargetForState(
+        hasActiveTrip: active != null,
+        hasOffers: offers.isNotEmpty,
+      );
+      if (sheetTarget == .90) {
+        _revealIncomingOffer();
+      } else {
+        _moveDriverSheet(sheetTarget);
+      }
+    }
     if (active == null) unawaited(checkPendingDriverRating());
     if (active != null) {
       unawaited(resolveOriginAddress(active));
@@ -15210,8 +15284,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 if (reference.text.trim().length < 3) return;
                                 setDialogState(() => sending = true);
                                 try {
-                                  await api.submitMembershipTransferProof(
-                                      widget.s.token, order['id'].toString(), {
+                                  final proofResponse = await api
+                                      .submitMembershipTransferProof(
+                                          widget.s.token,
+                                          order['id'].toString(), {
                                     'bankName': bank.text.trim(),
                                     'reference': reference.text.trim(),
                                     'transferDate': DateTime.now()
@@ -15225,6 +15301,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                     if (observation.text.trim().isNotEmpty)
                                       'observation': observation.text.trim(),
                                   });
+                                  if (proofResponse is Map) {
+                                    order.addAll(Map<String, dynamic>.from(
+                                        proofResponse));
+                                  }
+                                  // Refleja el estado confirmado por el envío antes
+                                  // de cerrar las capas, evitando acciones duplicadas.
+                                  order['status'] = 'PENDING_VERIFICATION';
                                   if (dialogContext.mounted) {
                                     Navigator.pop(dialogContext, true);
                                   }
@@ -15266,6 +15349,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     bank.dispose();
     reference.dispose();
     observation.dispose();
+    if (submitted) {
+      await refreshMembership(force: true);
+    }
     if (submitted && context.mounted) {
       await showDialog<void>(
         context: context,
@@ -15357,6 +15443,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           ),
         ),
       );
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
+      }
     }
     return submitted;
   }
@@ -16264,6 +16354,153 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     );
   }
 
+  Widget _membershipBillingSummaryCard(
+    BuildContext context, {
+    required Map<String, dynamic> order,
+    required double amount,
+    required DateTime? expiresAt,
+  }) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final planName = membershipPlanName(order['plan']);
+    final planSummary = membershipPlanSummary(order['plan']);
+    final concisePlanSummary = planSummary
+        .replaceFirst('Plan por período · ', '')
+        .replaceFirst('Plan por viajes · ', '');
+    final planBadge = concisePlanSummary == 'Plan por período'
+        ? planName
+        : '$planName · $concisePlanSummary';
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final compact = constraints.maxWidth < 340 || textScale > 1.2;
+      final illustrationSize = compact ? 98.0 : 132.0;
+      final trailingSpace = compact ? 0.0 : 132.0;
+
+      return Container(
+        constraints: const BoxConstraints(minHeight: 214),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              scheme.surface,
+              Color.alphaBlend(
+                scheme.primary.withValues(alpha: .07),
+                scheme.surface,
+              ),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: Color.alphaBlend(
+              scheme.primary.withValues(alpha: .18),
+              scheme.outlineVariant,
+            ),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.shadow.withValues(alpha: .08),
+              blurRadius: 18,
+              offset: const Offset(0, 7),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: compact ? -12 : 12,
+              top: compact ? 52 : 30,
+              child: ExcludeSemantics(
+                child: Opacity(
+                  opacity: compact ? .42 : 1,
+                  child: _MembershipReceiptIllustration(
+                    size: illustrationSize,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                20,
+                compact ? 20 : trailingSpace,
+                20,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Resumen de facturación',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Total a pagar',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '\$${amount.toStringAsFixed(2)}',
+                    style: theme.textTheme.displaySmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w900,
+                      height: 1.02,
+                      letterSpacing: -1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer.withValues(alpha: .62),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      planBadge,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.primary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  if (expiresAt != null) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.calendar_month_outlined,
+                            size: 19, color: scheme.onSurfaceVariant),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            'Válido hasta ${formatEcuadorCompactDate(expiresAt, includeTime: true)}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
   Future<bool> _showMembershipPaymentOrder(
       BuildContext hostContext, Map<String, dynamic> order) async {
     final status = order['status']?.toString() ?? 'PENDING';
@@ -16358,39 +16595,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: CostaGoSpace.md),
-                  CostaGoSurface(
-                    tone: CostaGoStatusTone.info,
-                    child: Column(children: [
-                      Text('Total a pagar',
-                          style: Theme.of(sheetContext)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: scheme.onSurfaceVariant)),
-                      Text('\$${amount.toStringAsFixed(2)}',
-                          style: Theme.of(sheetContext)
-                              .textTheme
-                              .headlineMedium
-                              ?.copyWith(
-                                  color: scheme.primary,
-                                  fontWeight: FontWeight.w900)),
-                      Text(
-                          '${membershipPlanName(order['plan'])} · ${membershipPlanSummary(order['plan'])}',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(fontWeight: FontWeight.w700)),
-                      if (expiresAt != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                            'Válido hasta ${formatEcuadorCompactDate(expiresAt, includeTime: true)}',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(sheetContext).textTheme.bodySmall),
-                      ],
-                      const SizedBox(height: 4),
-                      Text('Código ${order['shortCode'] ?? ''}',
-                          style: Theme.of(sheetContext)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: scheme.onSurfaceVariant)),
-                    ]),
+                  _membershipBillingSummaryCard(
+                    sheetContext,
+                    order: order,
+                    amount: amount,
+                    expiresAt: expiresAt,
                   ),
                   const SizedBox(height: CostaGoSpace.sm),
                   CostaGoSurface(
@@ -18133,36 +18342,39 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 maxChildSize: .92,
                 snap: true,
                 snapSizes: const [.28, .52, .9],
-                builder: (context, scrollController) => Material(
-                  color: Theme.of(context).colorScheme.surface,
-                  elevation: 16,
-                  shadowColor: Colors.black45,
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(28)),
-                  clipBehavior: Clip.antiAlias,
-                  child: ListView(
-                    controller: scrollController,
-                    padding: EdgeInsets.fromLTRB(
-                        14, 8, 14, MediaQuery.paddingOf(context).bottom + 16),
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 44,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant
-                                .withValues(alpha: .35),
-                            borderRadius: BorderRadius.circular(8),
+                builder: (context, scrollController) {
+                  driverSheetScrollController = scrollController;
+                  return Material(
+                    color: Theme.of(context).colorScheme.surface,
+                    elevation: 16,
+                    shadowColor: Colors.black45,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(28)),
+                    clipBehavior: Clip.antiAlias,
+                    child: ListView(
+                      controller: scrollController,
+                      padding: EdgeInsets.fromLTRB(
+                          14, 8, 14, MediaQuery.paddingOf(context).bottom + 16),
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 44,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant
+                                  .withValues(alpha: .35),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 7),
-                      ..._driverSheetContent(context, action),
-                    ],
-                  ),
-                ),
+                        const SizedBox(height: 7),
+                        ..._driverSheetContent(context, action),
+                      ],
+                    ),
+                  );
+                },
               ),
             ]);
           }),

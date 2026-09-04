@@ -16,15 +16,24 @@ enum MapPointSelection { origin, destination }
 enum MototaxiMarkerStatus { available, assigned, activeTrip }
 
 const _mototaxiAsset = 'assets/images/mototaxi-map-marker.png';
-const _costaGoBlue = Color(0xff0875df);
-const _costaGoAssignedBlue = Color(0xff0057c8);
-const _costaGoTripGreen = Color(0xff159447);
+const _mototaxiAvailable = Color(0xff94a3b8);
+const _costaGoAssignedBlue = Color(0xff0a84ff);
+const _costaGoTripGreen = Color(0xff22c55e);
+const _mototaxiMarkerSurface = Color(0xfff8fafc);
 
-Color _mototaxiStatusColor(MototaxiMarkerStatus status) => switch (status) {
-      MototaxiMarkerStatus.available => _costaGoBlue,
+@visibleForTesting
+Color mototaxiStatusColor(MototaxiMarkerStatus status) => switch (status) {
+      MototaxiMarkerStatus.available => _mototaxiAvailable,
       MototaxiMarkerStatus.assigned => _costaGoAssignedBlue,
       MototaxiMarkerStatus.activeTrip => _costaGoTripGreen,
     };
+
+/// La ilustración oficial es una vista lateral, no un vehículo cenital.
+/// Rotarla con el rumbo GPS puede dejarla de costado o cabeza abajo. El rumbo
+/// se sigue interpolando para conservarlo disponible, pero el arte permanece
+/// derecho mientras avanza sobre la ruta.
+@visibleForTesting
+double mototaxiVisualRotation(double bearing) => 0;
 
 /// Ajusta una lectura GPS a la vía dibujada cuando está lo bastante cerca.
 /// Si el GPS se alejó realmente, conserva su posición para que la capa superior
@@ -329,10 +338,13 @@ class _LiveMapState extends State<LiveMap> with TickerProviderStateMixin {
     final canvas = Canvas(recorder);
     final size = physicalSize.toDouble();
     final center = Offset(size / 2, size / 2);
-    final color = _mototaxiStatusColor(status);
+    final color = mototaxiStatusColor(status);
     final radius = size * .44;
-    canvas.drawCircle(
-        center, radius, Paint()..color = color.withValues(alpha: .13));
+    canvas.drawCircle(center, radius, Paint()..color = _mototaxiMarkerSurface);
+    if (status != MototaxiMarkerStatus.available) {
+      canvas.drawCircle(
+          center, radius, Paint()..color = color.withValues(alpha: .07));
+    }
     canvas.drawCircle(
       center,
       radius,
@@ -775,7 +787,7 @@ class _LiveMapState extends State<LiveMap> with TickerProviderStateMixin {
           position: gmaps.LatLng(
               _displayedDriver!.latitude, _displayedDriver!.longitude),
           flat: true,
-          rotation: _displayedBearing,
+          rotation: mototaxiVisualRotation(_displayedBearing),
           icon: _motoIcons[widget.driverMarkerStatus] ??
               gmaps.BitmapDescriptor.defaultMarkerWithHue(
                   gmaps.BitmapDescriptor.hueOrange),
@@ -1050,7 +1062,7 @@ class MototaxiMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _mototaxiStatusColor(status);
+    final color = mototaxiStatusColor(status);
     final isAssigned = status == MototaxiMarkerStatus.assigned;
     return SizedBox.square(
       dimension: size,
@@ -1063,7 +1075,7 @@ class MototaxiMarker extends StatelessWidget {
         child: Padding(
           padding: EdgeInsets.all(size * .10),
           child: Transform.rotate(
-            angle: bearing * math.pi / 180,
+            angle: mototaxiVisualRotation(bearing) * math.pi / 180,
             child: Image.asset(
               _mototaxiAsset,
               fit: BoxFit.contain,
@@ -1105,7 +1117,12 @@ class _MototaxiHaloPainter extends CustomPainter {
     canvas.drawCircle(
       center,
       radius,
-      Paint()..color = color.withValues(alpha: emphasized ? .17 : .10),
+      Paint()..color = _mototaxiMarkerSurface,
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()..color = color.withValues(alpha: emphasized ? .08 : .035),
     );
     canvas.drawCircle(
       center,

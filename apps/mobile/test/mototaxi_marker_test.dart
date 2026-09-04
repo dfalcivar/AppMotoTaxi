@@ -4,6 +4,27 @@ import 'package:latlong2/latlong.dart';
 import 'package:mototaxi_atacames/live_map.dart';
 
 void main() {
+  test('cada estado usa el color visual solicitado', () {
+    expect(
+      mototaxiStatusColor(MototaxiMarkerStatus.available),
+      const Color(0xff94a3b8),
+    );
+    expect(
+      mototaxiStatusColor(MototaxiMarkerStatus.assigned),
+      const Color(0xff0a84ff),
+    );
+    expect(
+      mototaxiStatusColor(MototaxiMarkerStatus.activeTrip),
+      const Color(0xff22c55e),
+    );
+  });
+
+  test('la mototaxi lateral permanece derecha con cualquier rumbo GPS', () {
+    for (final bearing in [-90.0, 0.0, 45.0, 90.0, 180.0, 270.0, 450.0]) {
+      expect(mototaxiVisualRotation(bearing), 0);
+    }
+  });
+
   group('ajuste de la mototaxi a la ruta', () {
     const route = [
       LatLng(-0.86880, -79.84200),

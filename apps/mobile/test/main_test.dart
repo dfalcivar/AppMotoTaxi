@@ -95,6 +95,25 @@ void main() {
   });
 
   group('reincorporación de ofertas del conductor', () {
+    test('mantiene elevada la tarjeta cuando reaparece una oferta pendiente',
+        () {
+      expect(
+        driverSheetTargetForState(hasActiveTrip: false, hasOffers: true),
+        .90,
+      );
+    });
+
+    test('solo baja la tarjeta cuando no existen ofertas pendientes', () {
+      expect(
+        driverSheetTargetForState(hasActiveTrip: false, hasOffers: false),
+        .30,
+      );
+      expect(
+        driverSheetTargetForState(hasActiveTrip: true, hasOffers: false),
+        .50,
+      );
+    });
+
     test('una reoferta del mismo viaje se reconoce como una aparición nueva',
         () {
       final first = driverOfferOccurrenceKey('trip-1', {
