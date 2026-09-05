@@ -331,6 +331,14 @@ Future<void> openAppUpdateStore(
   required String? notificationId,
   required String? storeUrl,
 }) async {
+  // Android can deliver the tap while the Flutter activity is still resuming.
+  // Waiting for the first stable frame prevents the external store intent from
+  // being ignored on devices that restore the app more slowly.
+  await WidgetsBinding.instance.endOfFrame;
+  if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+  }
+  if (!context.mounted) return;
   final uri = Uri.tryParse(storeUrl ?? '');
   if (uri == null || !const {'https', 'http'}.contains(uri.scheme)) {
     if (context.mounted) {

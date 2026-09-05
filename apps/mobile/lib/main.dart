@@ -8641,6 +8641,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<void> _handleOpenedPush(RemoteMessage push) async {
     final notificationId = push.data['internalNotificationId']?.toString();
+    String? resolvedType = push.data['type']?.toString();
+    String? resolvedRoute = push.data['notificationRoute']?.toString();
+    String? resolvedDeepLink = push.data['deepLink']?.toString();
     if (notificationId != null && notificationId.isNotEmpty) {
       try {
         final contextState =
@@ -8657,6 +8660,12 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   builder: (_) => NotificationCenterView(widget.s)));
           return;
         }
+        resolvedType ??= contextState['type']?.toString();
+        resolvedDeepLink ??= contextState['deepLink']?.toString();
+        resolvedRoute ??=
+            notificationTargetFor(resolvedType) == NotificationTarget.appStore
+                ? 'APP_STORE'
+                : null;
       } catch (_) {
         /* La navegación crítica conserva su comportamiento si la validación no responde. */
       }
@@ -8672,9 +8681,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   id: push.data['vehicleId'].toString()))));
       return;
     }
-    final target = notificationTargetFor(
-        push.data['notificationRoute'] ?? push.data['type']);
-    final notificationType = push.data['type']?.toString();
+    final target = notificationTargetFor(resolvedRoute ?? resolvedType);
+    final notificationType = resolvedType;
     final tripId = push.data['tripId']?.toString();
     if (target == NotificationTarget.smartTrip) {
       unawaited(_prepareSmartTrip({
@@ -8684,7 +8692,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     } else if (target == NotificationTarget.appStore) {
       unawaited(openAppUpdateStore(context, widget.s,
           notificationId: push.data['internalNotificationId']?.toString(),
-          storeUrl: push.data['deepLink']?.toString()));
+          storeUrl: resolvedDeepLink));
     } else if (target == NotificationTarget.chat) {
       unawaited(openPassengerChat(tripId,
           notificationId: push.data['internalNotificationId']));
@@ -13081,6 +13089,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> _handleOpenedPush(RemoteMessage push) async {
     final notificationId = push.data['internalNotificationId']?.toString();
+    String? resolvedType = push.data['type']?.toString();
+    String? resolvedRoute = push.data['notificationRoute']?.toString();
+    String? resolvedDeepLink = push.data['deepLink']?.toString();
     if (notificationId != null && notificationId.isNotEmpty) {
       try {
         final state =
@@ -13098,6 +13109,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       onOpenMembership: _openMembershipFromNotification)));
           return;
         }
+        resolvedType ??= state['type']?.toString();
+        resolvedDeepLink ??= state['deepLink']?.toString();
+        resolvedRoute ??=
+            notificationTargetFor(resolvedType) == NotificationTarget.appStore
+                ? 'APP_STORE'
+                : null;
       } catch (_) {
         /* Mantener navegación crítica si la validación está temporalmente indisponible. */
       }
@@ -13113,15 +13130,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   id: push.data['vehicleId'].toString()))));
       return;
     }
-    final target = notificationTargetFor(
-        push.data['notificationRoute'] ?? push.data['type']);
+    final target = notificationTargetFor(resolvedRoute ?? resolvedType);
     if (target == NotificationTarget.chat) {
       unawaited(openDriverChat(push.data['tripId'],
           notificationId: push.data['internalNotificationId']));
     } else if (target == NotificationTarget.appStore) {
       unawaited(openAppUpdateStore(context, widget.s,
           notificationId: push.data['internalNotificationId']?.toString(),
-          storeUrl: push.data['deepLink']?.toString()));
+          storeUrl: resolvedDeepLink));
     } else if (target == NotificationTarget.tripDetail &&
         push.data['tripId'] != null) {
       unawaited(Navigator.push(
