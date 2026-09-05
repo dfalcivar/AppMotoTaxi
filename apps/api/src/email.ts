@@ -33,9 +33,20 @@ function brandedHtml(input:{subject:string;text:string;html?:string}):string{
   return renderCostaGoEmail({title:input.subject.replace(/\s*[·|—-]\s*Costa-Go\s*$/i,""),bodyHtml:content});
 }
 
-export async function sendTransactionalEmail(input:{to:string;subject:string;text:string;html?:string}):Promise<boolean>{
+export interface TransactionalEmailResult { sent:boolean; providerMessageId?:string; errorCode?:string; errorMessage?:string; }
+
+export async function sendTransactionalEmailDetailed(input:{to:string;subject:string;text:string;html?:string}):Promise<TransactionalEmailResult>{
   const apiKey=process.env.RESEND_API_KEY,from=process.env.NOTIFICATION_FROM_EMAIL;
-  if(!apiKey||!from)return false;
-  const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({...input,html:brandedHtml(input),from})});
-  return response.ok;
+  if(!apiKey||!from)return {sent:false,errorCode:'email/not-configured',errorMessage:'Proveedor de correo no configurado'};
+  try{
+    const response=await fetch("https://api.resend.com/emails",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({...input,html:brandedHtml(input),from})});
+    let payload:{id?:string;name?:string;message?:string}={};
+    try{payload=await response.json() as typeof payload;}catch{payload={};}
+    if(response.ok)return {sent:true,providerMessageId:payload.id};
+    return {sent:false,errorCode:`resend/${response.status}`,errorMessage:String(payload.message??payload.name??'No se pudo entregar el correo').slice(0,500)};
+  }catch(error){return {sent:false,errorCode:'email/network',errorMessage:String(error instanceof Error?error.message:error).slice(0,500)};}
+}
+
+export async function sendTransactionalEmail(input:{to:string;subject:string;text:string;html?:string}):Promise<boolean>{
+  return (await sendTransactionalEmailDetailed(input)).sent;
 }

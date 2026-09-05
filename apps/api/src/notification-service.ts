@@ -2,6 +2,10 @@ import {database} from './database.js';
 import {normalizePushData,sendPush,type PushResult} from './push.js';
 import {notificationClassification,type NotificationCategory,type NotificationPriority} from './user-notifications.js';
 import {enqueueNotification,immediatePriorities,isRetriablePushError,notificationTtlMs} from './notification-reliability.js';
+import {sendTransactionalEmailDetailed,type TransactionalEmailResult} from './email.js';
+
+export type NotificationChannel='PUSH'|'IN_APP'|'EMAIL';
+export interface EmailNotificationCommand { to:string; subject:string; text:string; html:string; }
 
 export type NotificationStatus='CREATED'|'QUEUED'|'PROCESSING'|'RETRY'|'SENT'|'FAILED'|'SKIPPED'|'DEAD_LETTER'|'EXPIRED';
 export interface NotificationCommand {
@@ -49,6 +53,9 @@ function stringData(command:NotificationCommand):Record<string,string>{
 }
 
 export class NotificationService {
+  async sendEmail(command:EmailNotificationCommand):Promise<TransactionalEmailResult>{
+    return sendTransactionalEmailDetailed(command);
+  }
   async send(command:NotificationCommand):Promise<NotificationResult>{
     const classification=notificationClassification(command.type);
     const normalized={...command,category:command.category??classification.category,priority:command.priority??classification.priority};

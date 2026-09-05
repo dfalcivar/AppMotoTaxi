@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderCostaGoEmail, sendTransactionalEmail } from "./email.js";
+import { renderCostaGoEmail, sendTransactionalEmail,sendTransactionalEmailDetailed } from "./email.js";
 
 describe("correo transaccional Costa-Go",()=>{
   afterEach(()=>{vi.unstubAllGlobals();delete process.env.RESEND_API_KEY;delete process.env.NOTIFICATION_FROM_EMAIL;});
@@ -18,5 +18,10 @@ describe("correo transaccional Costa-Go",()=>{
     await sendTransactionalEmail({to:"test@example.com",subject:"Aviso · Costa-Go",text:"Contenido seguro"});
     const payload=JSON.parse(requestBody);
     expect(payload.html).toContain('data-costa-go-email="true"');expect(payload.html).toContain("Contenido seguro");
+  });
+  it("devuelve el identificador y el error sanitizado del proveedor",async()=>{
+    process.env.RESEND_API_KEY="test";process.env.NOTIFICATION_FROM_EMAIL="Costa-Go <notificaciones@costa-go.com>";
+    vi.stubGlobal("fetch",async()=>({ok:true,status:200,json:async()=>({id:'email_123'})}) as Response);
+    await expect(sendTransactionalEmailDetailed({to:'test@example.com',subject:'Prueba',text:'Prueba'})).resolves.toMatchObject({sent:true,providerMessageId:'email_123'});
   });
 });
