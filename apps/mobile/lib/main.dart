@@ -577,10 +577,12 @@ Future<String> notificationDeviceId() async {
   final current = await secureStorage.read(key: notificationDeviceIdKey);
   if (current != null && current.length >= 8) return current;
   final random = math.Random.secure();
-  final generated = '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+  final generated =
+      '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
   await secureStorage.write(key: notificationDeviceIdKey, value: generated);
   return generated;
 }
+
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 bool handlingRevokedSession = false;
 
@@ -1820,7 +1822,8 @@ class Api {
         final packageInfo = await PackageInfo.fromPlatform();
         final buildNumber = int.tryParse(packageInfo.buildNumber);
         final deviceId = await notificationDeviceId();
-        final permissionStatus = switch (notificationSettings.authorizationStatus) {
+        final permissionStatus =
+            switch (notificationSettings.authorizationStatus) {
           AuthorizationStatus.authorized => 'AUTHORIZED',
           AuthorizationStatus.provisional => 'PROVISIONAL',
           AuthorizationStatus.denied => 'DENIED',
@@ -1991,9 +1994,8 @@ class Api {
           await call('GET', '/v1/notifications/fallback', token: t));
   Future<Map<String, dynamic>> notificationActionContext(
           String t, String id) async =>
-      Map<String, dynamic>.from(await call(
-          'GET', '/v1/notifications/$id/action-context',
-          token: t));
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/notifications/$id/action-context', token: t));
   Future<Map<String, dynamic>> supportConfig(String t) async =>
       Map<String, dynamic>.from(
           await call('GET', '/v1/support/config', token: t));
@@ -8112,7 +8114,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
     unawaited(api.registerFcm(widget.s.token));
     unawaited(UserNotificationStore.instance.refresh(widget.s));
-    WidgetsBinding.instance.addPostFrameCallback((_) => showNotificationFallback());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => showNotificationFallback());
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((push) {
         unawaited(UserNotificationStore.instance.refresh(widget.s));
@@ -8618,11 +8621,13 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       InAppNotificationBanner.show(context,
           id: 'fallback-${id ?? item['type']}',
           title: item['title']?.toString() ?? 'Costa-Go',
-          message: item['message']?.toString() ?? 'Tienes una notificación importante.',
+          message: item['message']?.toString() ??
+              'Tienes una notificación importante.',
           actionLabel: 'Ver',
           icon: Icons.notifications_active_outlined,
           onTap: () => handleOpenedPush(RemoteMessage(data: {
-                ...Map<String, dynamic>.from(item['data'] is Map ? item['data'] : const {}),
+                ...Map<String, dynamic>.from(
+                    item['data'] is Map ? item['data'] : const {}),
                 'type': item['type'],
                 'deepLink': item['deepLink'],
                 'action': item['action'],
@@ -8635,19 +8640,28 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       unawaited(_handleOpenedPush(push));
 
   Future<void> _handleOpenedPush(RemoteMessage push) async {
-    final notificationId=push.data['internalNotificationId']?.toString();
-    if(notificationId!=null&&notificationId.isNotEmpty){
-      try{
-        final contextState=await api.notificationActionContext(widget.s.token,notificationId);
-        if(contextState['valid']!=true){
-          if(!mounted)return;
-          ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(const SnackBar(content:Text('Esta recomendación ya no está disponible.')));
-          await Navigator.push(context,MaterialPageRoute(builder:(_)=>NotificationCenterView(widget.s)));
+    final notificationId = push.data['internalNotificationId']?.toString();
+    if (notificationId != null && notificationId.isNotEmpty) {
+      try {
+        final contextState =
+            await api.notificationActionContext(widget.s.token, notificationId);
+        if (contextState['valid'] != true) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(const SnackBar(
+                content: Text('Esta recomendación ya no está disponible.')));
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => NotificationCenterView(widget.s)));
           return;
         }
-      }catch(_){/* La navegación crítica conserva su comportamiento si la validación no responde. */}
+      } catch (_) {
+        /* La navegación crítica conserva su comportamiento si la validación no responde. */
+      }
     }
-    if(!mounted)return;
+    if (!mounted) return;
     if (push.data['type'] == 'FLEET_SESSION' &&
         push.data['vehicleId'] != null) {
       unawaited(Navigator.push(
@@ -13040,30 +13054,55 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> showNotificationFallback() async {
     try {
-      final response=await api.notificationFallback(widget.s.token);
-      final raw=response['item'];
-      if(!mounted||raw is! Map)return;
-      final item=Map<String,dynamic>.from(raw),id=item['id']?.toString();
-      InAppNotificationBanner.show(context,id:'fallback-${id??item['type']}',title:item['title']?.toString()??'Costa-Go',message:item['message']?.toString()??'Tienes una notificación importante.',actionLabel:'Ver',icon:Icons.notifications_active_outlined,onTap:()=>handleOpenedPush(RemoteMessage(data:{...Map<String,dynamic>.from(item['data'] is Map?item['data']:const {}),'type':item['type'],'deepLink':item['deepLink'],'action':item['action'],'internalNotificationId':id})));
-    }catch(_){}
+      final response = await api.notificationFallback(widget.s.token);
+      final raw = response['item'];
+      if (!mounted || raw is! Map) return;
+      final item = Map<String, dynamic>.from(raw), id = item['id']?.toString();
+      InAppNotificationBanner.show(context,
+          id: 'fallback-${id ?? item['type']}',
+          title: item['title']?.toString() ?? 'Costa-Go',
+          message: item['message']?.toString() ??
+              'Tienes una notificación importante.',
+          actionLabel: 'Ver',
+          icon: Icons.notifications_active_outlined,
+          onTap: () => handleOpenedPush(RemoteMessage(data: {
+                ...Map<String, dynamic>.from(
+                    item['data'] is Map ? item['data'] : const {}),
+                'type': item['type'],
+                'deepLink': item['deepLink'],
+                'action': item['action'],
+                'internalNotificationId': id
+              })));
+    } catch (_) {}
   }
 
-  void handleOpenedPush(RemoteMessage push)=>unawaited(_handleOpenedPush(push));
+  void handleOpenedPush(RemoteMessage push) =>
+      unawaited(_handleOpenedPush(push));
 
   Future<void> _handleOpenedPush(RemoteMessage push) async {
-    final notificationId=push.data['internalNotificationId']?.toString();
-    if(notificationId!=null&&notificationId.isNotEmpty){
-      try{
-        final state=await api.notificationActionContext(widget.s.token,notificationId);
-        if(state['valid']!=true){
-          if(!mounted)return;
-          ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(const SnackBar(content:Text('Esta recomendación ya no está disponible.')));
-          await Navigator.push(context,MaterialPageRoute(builder:(_)=>NotificationCenterView(widget.s,onOpenMembership:_openMembershipFromNotification)));
+    final notificationId = push.data['internalNotificationId']?.toString();
+    if (notificationId != null && notificationId.isNotEmpty) {
+      try {
+        final state =
+            await api.notificationActionContext(widget.s.token, notificationId);
+        if (state['valid'] != true) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(const SnackBar(
+                content: Text('Esta recomendación ya no está disponible.')));
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => NotificationCenterView(widget.s,
+                      onOpenMembership: _openMembershipFromNotification)));
           return;
         }
-      }catch(_){/* Mantener navegación crítica si la validación está temporalmente indisponible. */}
+      } catch (_) {
+        /* Mantener navegación crítica si la validación está temporalmente indisponible. */
+      }
     }
-    if(!mounted)return;
+    if (!mounted) return;
     if (push.data['type'] == 'FLEET_SESSION' &&
         push.data['vehicleId'] != null) {
       unawaited(Navigator.push(
@@ -17829,14 +17868,31 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final brand = context.brand;
     final scheduledCount = scheduledOffers.length + scheduledTrips.length;
     final hasScheduledTrips = scheduledCount > 0;
+    final scheduledItems = [...scheduledTrips, ...scheduledOffers]
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList()
+      ..sort((a, b) {
+        final aDate = DateTime.tryParse(a['scheduledFor']?.toString() ?? '');
+        final bDate = DateTime.tryParse(b['scheduledFor']?.toString() ?? '');
+        if (aDate == null) return 1;
+        if (bDate == null) return -1;
+        return aDate.compareTo(bDate);
+      });
+    final nextScheduled = scheduledItems.firstOrNull;
+    final nextScheduledAt =
+        DateTime.tryParse(nextScheduled?['scheduledFor']?.toString() ?? '');
+    final nextScheduledTime = nextScheduledAt == null
+        ? null
+        : TimeOfDay.fromDateTime(nextScheduledAt.toLocal()).format(context);
+    final scheduledPlace = () {
+      final reference = nextScheduled?['originReference']?.toString().trim();
+      if (reference == null || reference.isEmpty) return null;
+      final parts = reference.split(',');
+      return parts.length > 1 ? parts.last.trim() : reference;
+    }();
     final scheduledAccent = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xff67d98a)
         : const Color(0xff159447);
-    final scheduledSurface = Color.alphaBlend(
-      scheduledAccent.withValues(
-          alpha: Theme.of(context).brightness == Brightness.dark ? .12 : .06),
-      colors.surfaceContainerLow,
-    );
     final status = active?['status']?.toString();
     return [
       if (driverReviewArea?.reviewLocation != null) ...[
@@ -17859,7 +17915,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       ],
       Container(
         key: const ValueKey('driver-availability-header'),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
         decoration: BoxDecoration(
           color: dark ? colors.surfaceContainerLow : Colors.white,
           borderRadius: BorderRadius.circular(20),
@@ -17872,89 +17928,252 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             ),
           ],
         ),
-        child: Row(children: [
-          Container(
-            width: 42,
-            height: 42,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: brand.softBackground,
-              borderRadius: BorderRadius.circular(14),
+        child: IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Expanded(
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: brand.softBackground,
+                    shape: BoxShape.circle,
+                  ),
+                  child: MototaxiIcon(
+                    size: 21,
+                    color: dark ? brand.primaryLight : brand.primaryDark,
+                  ),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Disponible\npara viajes',
+                          style:
+                              Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    color: colors.onSurface,
+                                    height: 1.08,
+                                    fontWeight: FontWeight.w900,
+                                  )),
+                      const SizedBox(height: 5),
+                      Text(
+                        active != null
+                            ? 'Estás atendiendo un viaje.'
+                            : 'Recibirás solicitudes de pasajeros cercanos.',
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                            height: 1.15,
+                            fontWeight: active != null
+                                ? FontWeight.w700
+                                : FontWeight.w500),
+                      ),
+                      const Spacer(),
+                      Transform.scale(
+                        scale: .82,
+                        alignment: Alignment.centerLeft,
+                        child: SwitchTheme(
+                          data: SwitchTheme.of(context).copyWith(
+                            thumbColor:
+                                WidgetStateProperty.resolveWith((states) {
+                              if (states.contains(WidgetState.disabled)) {
+                                return colors.onSurface.withValues(alpha: .38);
+                              }
+                              return dark
+                                  ? const Color(0xffe6e9ed)
+                                  : Colors.white;
+                            }),
+                            trackColor:
+                                WidgetStateProperty.resolveWith((states) {
+                              final selected =
+                                  states.contains(WidgetState.selected);
+                              final disabled =
+                                  states.contains(WidgetState.disabled);
+                              if (selected) {
+                                final activeTrack = dark
+                                    ? CostaGoPalette.darkPrimaryPressed
+                                    : CostaGoPalette.controlActive;
+                                return activeTrack.withValues(
+                                    alpha: disabled ? .48 : 1);
+                              }
+                              return colors.surfaceContainerHighest;
+                            }),
+                            trackOutlineColor: WidgetStateProperty.resolveWith(
+                                (states) =>
+                                    states.contains(WidgetState.selected)
+                                        ? Colors.transparent
+                                        : brand.border),
+                          ),
+                          child: Switch(
+                            value: available,
+                            onChanged: active == null &&
+                                    _membershipEligible &&
+                                    fleetSession != null
+                                ? toggle
+                                : null,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ]),
             ),
-            child: MototaxiIcon(
-              size: 23,
-              color: dark ? brand.primaryLight : brand.primaryDark,
+            Container(
+              width: 1,
+              margin: const EdgeInsets.symmetric(horizontal: 11, vertical: 3),
+              color: brand.border,
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Disponible para viajes',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: colors.onSurface,
-                        fontWeight: FontWeight.w900,
-                      )),
-              const SizedBox(height: 2),
-              Text(
-                  active != null
-                      ? 'Estás atendiendo un viaje.'
-                      : 'Recibirás solicitudes de pasajeros cercanos.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
-                      fontWeight:
-                          active != null ? FontWeight.w700 : FontWeight.w500)),
-            ]),
-          ),
-          const SizedBox(width: 10),
-          SwitchTheme(
-            data: SwitchTheme.of(context).copyWith(
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.disabled)) {
-                  return colors.onSurface.withValues(alpha: .38);
-                }
-                return dark ? const Color(0xffe6e9ed) : Colors.white;
-              }),
-              trackColor: WidgetStateProperty.resolveWith((states) {
-                final selected = states.contains(WidgetState.selected);
-                final disabled = states.contains(WidgetState.disabled);
-                if (selected) {
-                  final activeTrack = dark
-                      ? CostaGoPalette.darkPrimaryPressed
-                      : CostaGoPalette.controlActive;
-                  return activeTrack.withValues(alpha: disabled ? .48 : 1);
-                }
-                return colors.surfaceContainerHighest;
-              }),
-              trackOutlineColor: WidgetStateProperty.resolveWith((states) =>
-                  states.contains(WidgetState.selected)
-                      ? Colors.transparent
-                      : brand.border),
+            Expanded(
+              child: InkWell(
+                onTap: active == null ? showDriverScheduledTrips : null,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: hasScheduledTrips
+                                ? scheduledAccent.withValues(alpha: .12)
+                                : brand.softBackground,
+                          ),
+                          child: Icon(Icons.calendar_month_outlined,
+                              size: 21,
+                              color: hasScheduledTrips
+                                  ? scheduledAccent
+                                  : dark
+                                      ? brand.primaryLight
+                                      : brand.primaryDark),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Text('Viajes\nprogramados',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleSmall
+                                              ?.copyWith(
+                                                  height: 1.08,
+                                                  fontWeight: FontWeight.w900)),
+                                    ),
+                                    if (hasScheduledTrips)
+                                      Container(
+                                        constraints:
+                                            const BoxConstraints(minWidth: 23),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: scheduledAccent,
+                                          borderRadius:
+                                              BorderRadius.circular(99),
+                                        ),
+                                        child: Text('$scheduledCount',
+                                            textAlign: TextAlign.center,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                    color: Colors.white,
+                                                    fontWeight:
+                                                        FontWeight.w900)),
+                                      ),
+                                  ]),
+                              const SizedBox(height: 6),
+                              Text(
+                                hasScheduledTrips
+                                    ? '$scheduledCount ${scheduledCount == 1 ? 'pendiente' : 'pendientes'}${nextScheduledTime == null ? '' : ' · $nextScheduledTime'}'
+                                    : 'Sin viajes pendientes',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                        color: colors.onSurface,
+                                        fontWeight: FontWeight.w600),
+                              ),
+                              if (scheduledPlace != null)
+                                Text(scheduledPlace,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                            color: colors.onSurfaceVariant)),
+                              const Spacer(),
+                              Align(
+                                alignment: Alignment.bottomRight,
+                                child: Icon(Icons.chevron_right_rounded,
+                                    color: hasScheduledTrips
+                                        ? scheduledAccent
+                                        : colors.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ]),
+                ),
+              ),
             ),
-            child: Switch(
-              value: available,
-              onChanged:
-                  active == null && _membershipEligible && fleetSession != null
-                      ? toggle
-                      : null,
-            ),
-          ),
-        ]),
+          ]),
+        ),
       ),
       const SizedBox(height: 10),
       if (active == null)
         _PassengerSurface(
           padding: const EdgeInsets.all(12),
-          child: fleetSession == null
-              ? Row(children: [
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [
+                MototaxiIcon(
+                    size: 21,
+                    color: dark ? brand.primaryLight : brand.primaryDark),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Mis mototaxis',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                ),
+                TextButton.icon(
+                  onPressed: fleetChanging ? null : chooseFleet,
+                  iconAlignment: IconAlignment.end,
+                  icon: const Icon(Icons.chevron_right_rounded, size: 20),
+                  label: const Text('Ver todas'),
+                  style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 4)),
+                ),
+              ]),
+              const SizedBox(height: 9),
+              if (fleetSession == null)
+                Row(children: [
                   Container(
-                      width: 42,
-                      height: 42,
+                      width: 38,
+                      height: 38,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                           color: colors.primaryContainer.withValues(alpha: .55),
                           borderRadius: BorderRadius.circular(13)),
-                      child: MototaxiIcon(size: 23, color: colors.primary)),
+                      child: MototaxiIcon(size: 20, color: colors.primary)),
                   const SizedBox(width: 11),
                   Expanded(
                       child: Column(
@@ -17979,18 +18198,19 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             },
                       child: const Text('Seleccionar'))
                 ])
-              : Column(
-                  key: const ValueKey('driver-active-fleet-card'),
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+              else
+                Column(
+                    key: const ValueKey('driver-active-fleet-card'),
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                       Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             FleetPhoto(
                                 gateway: fleetFor(widget.s),
                                 id: fleetSession['photoId']?.toString(),
-                                size: 78,
-                                height: 62),
+                                size: 70,
+                                height: 56),
                             const SizedBox(width: 11),
                             Expanded(
                                 child: Column(
@@ -18039,19 +18259,21 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                           ?.copyWith(
                                               color: colors.onSurfaceVariant))
                                 ])),
-                            TextButton.icon(
-                                style: TextButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 8),
-                                    visualDensity: VisualDensity.compact),
-                                onPressed: fleetChanging
-                                    ? null
-                                    : () async {
-                                        await chooseFleet();
-                                      },
-                                iconAlignment: IconAlignment.end,
-                                icon: const Icon(Icons.chevron_right, size: 20),
-                                label: const Text('Cambiar'))
+                            FilledButton.tonalIcon(
+                              style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
+                                  visualDensity: VisualDensity.compact),
+                              onPressed: fleetChanging
+                                  ? null
+                                  : () async {
+                                      await chooseFleet();
+                                    },
+                              iconAlignment: IconAlignment.end,
+                              icon: const Icon(Icons.swap_horiz_rounded,
+                                  size: 19),
+                              label: const Text('Cambiar'),
+                            )
                           ]),
                       Align(
                         alignment: Alignment.centerRight,
@@ -18072,115 +18294,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             label: const Text('Finalizar jornada')),
                       )
                     ]),
+            ],
+          ),
         ),
       if (active == null) const SizedBox(height: 10),
       if (active == null) ...[
-        Container(
-          decoration: BoxDecoration(
-            color: hasScheduledTrips
-                ? scheduledSurface
-                : colors.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: hasScheduledTrips
-                  ? scheduledAccent.withValues(alpha: .34)
-                  : colors.outlineVariant.withValues(alpha: .75),
-            ),
-          ),
-          child: InkWell(
-            onTap: showDriverScheduledTrips,
-            borderRadius: BorderRadius.circular(20),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-              child: Row(children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: hasScheduledTrips
-                        ? scheduledAccent.withValues(alpha: .14)
-                        : colors.primaryContainer,
-                  ),
-                  child: Icon(Icons.calendar_month_outlined,
-                      color:
-                          hasScheduledTrips ? scheduledAccent : colors.primary),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Wrap(
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 8,
-                        runSpacing: 5,
-                        children: [
-                          Text('Viajes programados',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w800)),
-                          if (hasScheduledTrips)
-                            Container(
-                              constraints: const BoxConstraints(minWidth: 24),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 7, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: scheduledAccent,
-                                borderRadius: BorderRadius.circular(99),
-                              ),
-                              child: Text('$scheduledCount',
-                                  textAlign: TextAlign.center,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelMedium
-                                      ?.copyWith(
-                                          color: colors.onPrimary,
-                                          fontWeight: FontWeight.w900)),
-                            ),
-                          if (hasScheduledTrips)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: scheduledAccent.withValues(alpha: .15),
-                                borderRadius: BorderRadius.circular(99),
-                              ),
-                              child: Text('Nuevo',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelMedium
-                                      ?.copyWith(
-                                          color: scheduledAccent,
-                                          fontWeight: FontWeight.w900)),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        hasScheduledTrips
-                            ? scheduledCount == 1
-                                ? 'Tienes un viaje programado pendiente.'
-                                : 'Tienes $scheduledCount viajes programados pendientes.'
-                            : 'No tienes viajes programados pendientes.',
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.copyWith(color: colors.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right,
-                    color: hasScheduledTrips
-                        ? scheduledAccent
-                        : colors.onSurfaceVariant),
-              ]),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
         if (shouldShowDriverStatusMessage(driverMessage))
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),

@@ -1,6 +1,6 @@
 import {hostname} from 'node:os';
 import {database} from './database.js';
-import {sendPush} from './push.js';
+import {normalizePushData,sendPush} from './push.js';
 import type {NotificationPriority} from './user-notifications.js';
 
 export const immediatePriorities=new Set<NotificationPriority>(['SECURITY','TRIP_CRITICAL']);
@@ -66,7 +66,7 @@ export async function notificationDeliveryTick():Promise<{processed:number}> {
   for(const job of rows){
     const [notification]=await database()`select title,message,notification_type as type,reference_id as "referenceId",deep_link as "deepLink",action,data from user_notifications where id=${job.notificationId}`;
     if(!notification)continue;
-    const data:Record<string,string>={...(notification.data??{}),type:String(notification.type),internalNotificationId:String(job.notificationId),notificationPriority:String(job.priority)};
+    const data=normalizePushData({...(notification.data??{}),type:String(notification.type),internalNotificationId:String(job.notificationId),notificationPriority:String(job.priority)});
     if(notification.referenceId)data.referenceId=String(notification.referenceId);
     if(notification.deepLink)data.deepLink=String(notification.deepLink);
     if(notification.action)data.action=String(notification.action);

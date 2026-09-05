@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:mototaxi_atacames/costa_go_design.dart';
 import 'package:mototaxi_atacames/live_map.dart';
 
 void main() {
@@ -12,7 +11,7 @@ void main() {
     );
     expect(
       mototaxiStatusColor(MototaxiMarkerStatus.assigned),
-      CostaGoPalette.primary,
+      const Color(0xff0284ff),
     );
     expect(
       mototaxiStatusColor(MototaxiMarkerStatus.activeTrip),

@@ -168,7 +168,22 @@ export function pushConfigurationStatus(clientProjectId?: string): PushConfigura
   }
 }
 
-export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}, options: PushOptions = {}): Promise<PushResult> {
+export function normalizePushData(data: Record<string, unknown>): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string") {
+      normalized[key] = value;
+      continue;
+    }
+    const serialized = JSON.stringify(value);
+    if (serialized !== undefined) normalized[key] = serialized;
+  }
+  return normalized;
+}
+
+export async function sendPush(userId: string, title: string, body: string, rawData: Record<string, unknown> = {}, options: PushOptions = {}): Promise<PushResult> {
+  const data = normalizePushData(rawData);
   const startedAt = performance.now();
   const eventType = data.type ?? "UNKNOWN";
   const presentation = pushPresentationForType(eventType, title, body);

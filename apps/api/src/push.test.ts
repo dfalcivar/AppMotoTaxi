@@ -1,5 +1,38 @@
 import { describe, expect, it } from "vitest";
-import { pushDeliveryStatus, pushPresentationForType, pushRouteForType } from "./push.js";
+import { normalizePushData, pushDeliveryStatus, pushPresentationForType, pushRouteForType } from "./push.js";
+
+describe("normalizePushData", () => {
+  it("convierte metadatos APP_UPDATE al contrato de cadenas requerido por FCM", () => {
+    expect(normalizePushData({
+      type: "APP_UPDATE",
+      targetBuild: 61,
+      required: false,
+      versions: { current: "0.17.6", target: "0.18.0" },
+      omitted: null
+    })).toEqual({
+      type: "APP_UPDATE",
+      targetBuild: "61",
+      required: "false",
+      versions: '{"current":"0.17.6","target":"0.18.0"}'
+    });
+  });
+
+  it("preserva rutas y coordenadas de notificaciones inteligentes sin alterar su contenido", () => {
+    expect(normalizePushData({
+      type: "SMART_FREQUENT_TRIP",
+      deepLink: "costa-go://trip/prepare",
+      destinationLatitude: 0.8672,
+      destinationLongitude: -79.8471,
+      weekDays: [1, 2, 3]
+    })).toEqual({
+      type: "SMART_FREQUENT_TRIP",
+      deepLink: "costa-go://trip/prepare",
+      destinationLatitude: "0.8672",
+      destinationLongitude: "-79.8471",
+      weekDays: "[1,2,3]"
+    });
+  });
+});
 
 describe("pushDeliveryStatus", () => {
   it("clasifica entregas completas, parciales, fallidas y omitidas", () => {

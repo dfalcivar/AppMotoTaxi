@@ -1,5 +1,5 @@
 import {database} from './database.js';
-import {sendPush,type PushResult} from './push.js';
+import {normalizePushData,sendPush,type PushResult} from './push.js';
 import {notificationClassification,type NotificationCategory,type NotificationPriority} from './user-notifications.js';
 import {enqueueNotification,immediatePriorities,isRetriablePushError,notificationTtlMs} from './notification-reliability.js';
 
@@ -40,16 +40,12 @@ export function notificationRouteForCommand(type:string,deepLink?:string):string
 }
 
 function stringData(command:NotificationCommand):Record<string,string>{
-  const data:Record<string,string>={
+  return normalizePushData({
     type:command.type,notificationCategory:command.category,notificationPriority:command.priority,
-    notificationRoute:notificationRouteForCommand(command.type,command.deepLink)
-  };
-  if(command.referenceId)data.referenceId=command.referenceId;
-  if(command.deepLink)data.deepLink=command.deepLink;
-  if(command.action)data.action=command.action;
-  if(command.idempotencyKey)data.idempotencyKey=command.idempotencyKey;
-  for(const [key,value] of Object.entries(command.metadata??{}))if(value!==undefined&&value!==null)data[key]=typeof value==='string'?value:JSON.stringify(value);
-  return data;
+    notificationRoute:notificationRouteForCommand(command.type,command.deepLink),
+    referenceId:command.referenceId,deepLink:command.deepLink,action:command.action,idempotencyKey:command.idempotencyKey,
+    ...(command.metadata??{})
+  });
 }
 
 export class NotificationService {

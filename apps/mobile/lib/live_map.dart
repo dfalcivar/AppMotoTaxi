@@ -19,7 +19,7 @@ enum MototaxiMarkerStatus { available, assigned, activeTrip }
 
 const _mototaxiAsset = 'assets/images/mototaxi-map-marker.png';
 const _mototaxiAvailable = Color(0xff94a3b8);
-const _costaGoAssignedBlue = CostaGoPalette.primary;
+const _costaGoAssignedBlue = Color(0xff0284ff);
 const _costaGoTripGreen = Color(0xff22c55e);
 const _mototaxiMarkerSurface = CostaGoPalette.cardLight;
 
