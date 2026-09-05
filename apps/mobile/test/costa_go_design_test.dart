@@ -12,13 +12,28 @@ void main() {
     final darkBrand = dark.extension<CostaGoBrandColors>()!;
 
     expect(light.colorScheme.primary, CostaGoPalette.primary);
-    expect(light.colorScheme.primaryContainer, CostaGoPalette.softBlue);
+    expect(light.colorScheme.primaryContainer, CostaGoPalette.primaryContainer);
     expect(light.colorScheme.surfaceContainerLow, CostaGoPalette.cardLight);
-    expect(lightBrand.selected, CostaGoPalette.selectedBlue);
-    expect(lightBrand.border, CostaGoPalette.blueBorder);
+    expect(lightBrand.selected, CostaGoPalette.primaryContainer);
+    expect(lightBrand.border, CostaGoPalette.borderAccent);
+    expect(light.colorScheme.onSurface, CostaGoPalette.textPrimary);
+    expect(light.colorScheme.onSurfaceVariant, CostaGoPalette.textSecondary);
     expect(dark.colorScheme.primary, CostaGoPalette.darkPrimary);
     expect(darkBrand.selected, CostaGoPalette.darkSelectedBlue);
     expect(darkBrand.border, CostaGoPalette.darkBlueBorder);
+  });
+
+  test('los controles neutros solo usan azul cuando están seleccionados', () {
+    final theme = CostaGoTheme.build(Brightness.light);
+    final chip = theme.chipTheme;
+    final iconButton = theme.iconButtonTheme.style!;
+
+    expect(chip.backgroundColor, Colors.white);
+    expect(chip.side?.color, CostaGoPalette.borderAccent);
+    expect(
+        iconButton.foregroundColor!.resolve({}), CostaGoPalette.textSecondary);
+    expect(iconButton.foregroundColor!.resolve({WidgetState.selected}),
+        CostaGoPalette.primary);
   });
 
   test('los estados interactivos conservan contraste y cambian al presionar',
@@ -28,10 +43,11 @@ void main() {
     final lightButton = light.filledButtonTheme.style!;
     final darkButton = dark.filledButtonTheme.style!;
 
-    expect(lightButton.backgroundColor!.resolve({}), CostaGoPalette.primary);
+    expect(
+        lightButton.backgroundColor!.resolve({}), CostaGoPalette.primaryDark);
     expect(
       lightButton.backgroundColor!.resolve({WidgetState.pressed}),
-      CostaGoPalette.primaryDark,
+      Color.lerp(CostaGoPalette.primaryDark, Colors.black, .14),
     );
     expect(darkButton.backgroundColor!.resolve({}), CostaGoPalette.darkPrimary);
     expect(
@@ -53,6 +69,13 @@ void main() {
     );
     expect(
       contrast(dark.colorScheme.onPrimary, dark.colorScheme.primary),
+      greaterThanOrEqualTo(4.5),
+    );
+    expect(
+      contrast(
+        lightButton.foregroundColor!.resolve({})!,
+        lightButton.backgroundColor!.resolve({})!,
+      ),
       greaterThanOrEqualTo(4.5),
     );
   });

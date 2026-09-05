@@ -2444,8 +2444,7 @@ class CostaGoBrand extends StatelessWidget {
           SizedBox(height: compact ? 2 : 8),
           Text.rich(
             const TextSpan(children: [
-              TextSpan(
-                  text: 'COSTA-', style: TextStyle(color: Colors.white)),
+              TextSpan(text: 'COSTA-', style: TextStyle(color: Colors.white)),
               TextSpan(
                   text: 'GO',
                   style: TextStyle(color: CostaGoPalette.primaryLight)),
@@ -2936,7 +2935,7 @@ class _AuthHeader extends StatelessWidget {
               const SizedBox(width: 6),
               Text('Costa-Go',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: scheme.primary, fontWeight: FontWeight.w900)),
+                      color: scheme.onSurface, fontWeight: FontWeight.w900)),
             ],
           ])
         else
@@ -7399,7 +7398,7 @@ class _PassengerSectionTitle extends StatelessWidget {
           child: RichText(
             text: TextSpan(
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: scheme.primary, fontWeight: FontWeight.w800),
+                  color: scheme.onSurface, fontWeight: FontWeight.w800),
               children: [
                 TextSpan(text: title),
                 if (subtitle != null)
@@ -7475,7 +7474,7 @@ class _TripMeetReferenceCard extends StatelessWidget {
             Text(
               'Referencia para encontrarte',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: scheme.primary, fontWeight: FontWeight.w900),
+                  color: scheme.onSurface, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 4),
             Text(
@@ -7708,7 +7707,8 @@ class _PassengerMetric extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: scheme.primary, fontWeight: FontWeight.w800)),
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w800)),
             const SizedBox(height: 1),
             Text(value,
                 maxLines: 1,
@@ -7914,7 +7914,7 @@ Future<void> rating(
                                 ? '¿Qué podría mejorar?'
                                 : '¿Qué inconveniente ocurrió?',
                     style: Theme.of(c).textTheme.titleLarge?.copyWith(
-                        color: scheme.primary, fontWeight: FontWeight.w900)),
+                        color: scheme.onSurface, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 10),
                 if (score > 0)
                   Wrap(
@@ -10489,7 +10489,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label,
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: scheme.primary, fontWeight: FontWeight.w900)),
+                      color: scheme.onSurface, fontWeight: FontWeight.w900)),
               const SizedBox(height: 2),
               Text(value,
                   style: Theme.of(context).textTheme.bodyMedium,
@@ -10521,7 +10521,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           Expanded(
               child: Text(fareLabel,
                   style: TextStyle(
-                      color: scheme.primary, fontWeight: FontWeight.w800))),
+                      color: scheme.onSurface, fontWeight: FontWeight.w800))),
           Text('\$${(fareBreakdown['journeys']! / 100).toStringAsFixed(2)}',
               style: Theme.of(context).textTheme.titleMedium),
         ]),
@@ -10538,7 +10538,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
           Expanded(
               child: Text('Total a pagar',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: scheme.primary, fontWeight: FontWeight.w900))),
+                      color: scheme.onSurface, fontWeight: FontWeight.w900))),
           Text('\$$total',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   color: scheme.primary, fontWeight: FontWeight.w900)),
@@ -11513,7 +11513,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: scheme.primary, fontWeight: FontWeight.w900)),
+                      color: scheme.onSurface, fontWeight: FontWeight.w900)),
               if (active?['vehicle'] != null) ...[
                 const SizedBox(height: 3),
                 Text('Placa: ${active['vehicle']}',
@@ -14675,7 +14675,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: colors.primary, fontWeight: FontWeight.w800)),
+                      color: colors.onSurfaceVariant,
+                      fontWeight: FontWeight.w800)),
               const SizedBox(height: 2),
               Text(value,
                   maxLines: 2,
@@ -15081,7 +15082,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   'Desliza horizontalmente para ver más solicitudes',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                         fontWeight: FontWeight.w800,
                       ),
                 ),
@@ -18221,7 +18222,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             if (List<dynamic>.from(active['stops'] ?? const []).length > 1) ...[
               Text('Itinerario',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: colors.primary, fontWeight: FontWeight.w800)),
+                      color: colors.onSurface, fontWeight: FontWeight.w800)),
               ...List<dynamic>.from(active['stops'] ?? const [])
                   .asMap()
                   .entries

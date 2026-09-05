@@ -12,6 +12,21 @@ export interface DriverSearchBounds {
   finalRound: boolean;
 }
 
+/** Radius exposed by the availability preview; it never exceeds dispatch limits. */
+export function nearbyVisibilityRadius(
+  settings: Pick<DriverSearchSettings, "initialRadiusMeters" | "maximumRadiusMeters">,
+  requestedRadiusMeters?: number
+) {
+  const configuredInitial = Math.max(0, Math.min(
+    settings.initialRadiusMeters,
+    settings.maximumRadiusMeters
+  ));
+  if (requestedRadiusMeters === undefined || !Number.isFinite(requestedRadiusMeters)) {
+    return configuredInitial;
+  }
+  return Math.max(0, Math.min(requestedRadiusMeters, settings.maximumRadiusMeters));
+}
+
 /** UI estimate of the existing dispatch rounds; never authorizes a transition. */
 export function driverSearchProgress(settings: DriverSearchSettings, current: {
   round:number; upperMeters:number; nextRoundAt:Date; cycleStartedAt:Date;

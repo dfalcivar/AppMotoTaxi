@@ -6,6 +6,7 @@ import { userFrom, type SessionUser } from "./admin.js";
 import { database } from "./database.js";
 import { sendPush, pushPresentationForType } from "./push.js";
 import { resolveServiceArea } from "./service-areas.js";
+import { nearbyVisibilityRadius } from "./driver-search.js";
 
 const pointSchema = z.object({
   latitude: z.number().min(-90).max(90),
@@ -19,7 +20,8 @@ const incomingSchema = z.discriminatedUnion("type", [
     type: z.literal("nearby:subscribe"),
     latitude: pointSchema.shape.latitude,
     longitude: pointSchema.shape.longitude,
-    paymentMethod: paymentMethodSchema.default("CASH")
+    paymentMethod: paymentMethodSchema.default("CASH"),
+    radiusMeters: z.number().int().min(100).max(20000).optional()
   }),
   z.object({
     type: z.literal("driver:location"),
@@ -42,14 +44,17 @@ const incomingSchema = z.discriminatedUnion("type", [
 ]);
 
 const historyQuerySchema = z.object({ before: z.string().datetime().optional() });
-const nearbyQuerySchema = pointSchema.extend({ paymentMethod: paymentMethodSchema.default("CASH") });
+const nearbyQuerySchema = pointSchema.extend({
+  paymentMethod: paymentMethodSchema.default("CASH"),
+  radiusMeters: z.coerce.number().int().min(100).max(20000).optional()
+});
 const restMessageSchema = z.object({ clientMessageId: z.string().uuid(), body: z.string().trim().min(1).max(500) });
 
 interface ClientState {
   socket: WebSocket;
   user: SessionUser;
   tripIds: Set<string>;
-  nearby?: { latitude: number; longitude: number; paymentMethod: "CASH" | "DEUNA" };
+  nearby?: { latitude: number; longitude: number; paymentMethod: "CASH" | "DEUNA"; radiusMeters: number };
 }
 
 interface ChatInput {
@@ -119,15 +124,26 @@ async function tripForParticipant(user: SessionUser, tripId: string) {
   return trip as { tripId: string; passengerId: string; driverId: string | null; status: string; completedAt: Date | null } | undefined;
 }
 
+async function configuredNearbyRadius(requestedRadiusMeters?: number) {
+  const [settings] = await database()`select
+    driver_search_initial_radius_meters as "initialRadiusMeters",
+    search_radius_meters as "maximumRadiusMeters"
+    from operational_settings where id=1`;
+  return nearbyVisibilityRadius({
+    initialRadiusMeters: Number(settings?.initialRadiusMeters ?? 1000),
+    maximumRadiusMeters: Number(settings?.maximumRadiusMeters ?? 3000)
+  }, requestedRadiusMeters);
+}
+
 async function nearbyDrivers(
   latitude: number,
   longitude: number,
   paymentMethod: "CASH" | "DEUNA" = "CASH",
   excludeDriverId?: string,
-  onlyDriverId?: string
+  onlyDriverId?: string,
+  requestedRadiusMeters?: number
 ) {
-  const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
-  const radius = Number(settings?.search_radius_meters ?? 3000);
+  const radius = requestedRadiusMeters ?? await configuredNearbyRadius();
   const rows = await database()`
     select d.user_id::text as "driverId",
       ST_Y(d.last_location::geometry) as latitude,
@@ -211,13 +227,11 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
   };
 
   const broadcastNearbyLocation = async (driverId: string, location: { latitude: number; longitude: number; recordedAt: string }) => {
-    const [settings] = await database()`select search_radius_meters from operational_settings where id=1`;
     const [driver] = await database()`select deuna_enabled as "deunaEnabled" from drivers where user_id=${driverId}`;
     const eligible = await nearbyDrivers(location.latitude, location.longitude, 'CASH', undefined, driverId);
-    const radius = Number(settings?.search_radius_meters ?? 3000);
     for (const client of clients) {
       if (!client.nearby) continue;
-      if (!eligible.length || distanceMeters(client.nearby, location) > radius ||
+      if (!eligible.length || distanceMeters(client.nearby, location) > client.nearby.radiusMeters ||
           (client.nearby.paymentMethod === "DEUNA" && driver?.deunaEnabled !== true)) {
         send(client.socket, {type:'nearby:remove', driverId:publicDriverId(driverId)});
         continue;
@@ -271,15 +285,19 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
 
           if (event.type === "nearby:subscribe") {
             if (user.role !== "PASSENGER") { send(socket, { type: "error", code: "FORBIDDEN" }); return; }
+            const radiusMeters = await configuredNearbyRadius(event.radiusMeters);
             state.nearby = {
               latitude: event.latitude,
               longitude: event.longitude,
-              paymentMethod: event.paymentMethod
+              paymentMethod: event.paymentMethod,
+              radiusMeters
             };
             send(socket, {
               type: "nearby:snapshot",
               paymentMethod: event.paymentMethod,
-              drivers: await nearbyDrivers(event.latitude, event.longitude, event.paymentMethod)
+              radiusMeters,
+              drivers: await nearbyDrivers(event.latitude, event.longitude, event.paymentMethod,
+                undefined, undefined, radiusMeters)
             });
             return;
           }
@@ -394,12 +412,16 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_LOCATION" });
     const area = await resolveServiceArea(user.id!, parsed.data);
     if (!area) return reply.code(422).send({ error: "OUTSIDE_SERVICE_AREA" });
+    const radiusMeters = await configuredNearbyRadius(parsed.data.radiusMeters);
     return {
+      radiusMeters,
       drivers: await nearbyDrivers(
         parsed.data.latitude,
         parsed.data.longitude,
         parsed.data.paymentMethod,
-        user.role === "DRIVER" ? user.id : undefined
+        user.role === "DRIVER" ? user.id : undefined,
+        undefined,
+        radiusMeters
       )
     };
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
+import { firstSearchBounds, nearbyVisibilityRadius, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
 
 const settings: DriverSearchSettings = {
   initialRadiusMeters: 1000,
@@ -36,6 +36,13 @@ describe('server search progress presentation',()=>{
 });
 
 describe("progressive driver search bounds", () => {
+  it("limits the availability preview to the initial or active range", () => {
+    expect(nearbyVisibilityRadius(settings)).toBe(1000);
+    expect(nearbyVisibilityRadius(settings, 2000)).toBe(2000);
+    expect(nearbyVisibilityRadius(settings, 9000)).toBe(4500);
+    expect(nearbyVisibilityRadius({ ...settings, initialRadiusMeters: 6000 })).toBe(4500);
+  });
+
   it("starts at zero and uses the configured initial radius", () => {
     expect(firstSearchBounds(settings)).toEqual({
       round: 1, lowerMeters: 0, upperMeters: 1000, finalRound: false
