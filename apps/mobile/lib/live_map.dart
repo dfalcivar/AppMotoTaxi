@@ -942,9 +942,7 @@ class _LiveMapState extends State<LiveMap> with TickerProviderStateMixin {
         Positioned(
           right: 12,
           bottom: widget.viewportPadding.bottom + 12,
-          child: FloatingActionButton.small(
-            heroTag: null,
-            tooltip: 'Volver a mi ubicación',
+          child: _MapLocationButton(
             onPressed: () async {
               final refreshed = await widget.onCenterCurrentLocation?.call();
               if (!mounted) return;
@@ -957,16 +955,13 @@ class _LiveMapState extends State<LiveMap> with TickerProviderStateMixin {
                 widget.onUseCurrentLocation?.call();
               }
             },
-            child: const Icon(Icons.my_location),
           ),
         ),
       if (widget.editing != null) ...[
         Positioned(
           right: 12,
           bottom: widget.viewportPadding.bottom + 12,
-          child: FloatingActionButton.small(
-            heroTag: null,
-            tooltip: 'Volver a mi ubicación',
+          child: _MapLocationButton(
             onPressed: widget.onUseCurrentLocation == null
                 ? null
                 : () {
@@ -978,7 +973,6 @@ class _LiveMapState extends State<LiveMap> with TickerProviderStateMixin {
                       widget.onUseCurrentLocation!();
                     }
                   },
-            child: const Icon(Icons.my_location),
           ),
         ),
       ],
@@ -988,6 +982,40 @@ class _LiveMapState extends State<LiveMap> with TickerProviderStateMixin {
       child: widget.fillAvailable
           ? SizedBox.expand(child: mapContent)
           : SizedBox(height: widget.height, child: mapContent),
+    );
+  }
+}
+
+class _MapLocationButton extends StatelessWidget {
+  const _MapLocationButton({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return FloatingActionButton.small(
+      heroTag: null,
+      tooltip: 'Volver a mi ubicación',
+      onPressed: onPressed,
+      elevation: 2,
+      focusElevation: 3,
+      hoverElevation: 3,
+      highlightElevation: 1,
+      backgroundColor:
+          dark ? CostaGoPalette.darkSoftBlue : CostaGoPalette.surfaceAccent,
+      foregroundColor:
+          dark ? CostaGoPalette.darkPrimaryLight : CostaGoPalette.primaryDark,
+      disabledElevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: dark
+              ? CostaGoPalette.darkBlueBorder
+              : CostaGoPalette.borderAccent,
+        ),
+      ),
+      child: const Icon(Icons.my_location),
     );
   }
 }

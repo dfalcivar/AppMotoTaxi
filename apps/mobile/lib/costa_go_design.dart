@@ -27,6 +27,7 @@ abstract final class CostaGoPalette {
   static const primaryContainer = Color(0xffe7eff7);
   static const surfaceAccent = Color(0xfff4f8fb);
   static const borderAccent = Color(0xffd8e3ec);
+  static const controlActive = Color(0xff6f8eae);
   static const textPrimary = Color(0xff20242a);
   static const textSecondary = Color(0xff667085);
   static const cardLight = Colors.white;

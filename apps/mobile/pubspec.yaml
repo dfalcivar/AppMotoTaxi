@@ -45,9 +45,10 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  image_path: assets/images/costa-go-emblem.png
-  adaptive_icon_foreground: assets/images/costa-go-emblem.png
-  adaptive_icon_background: "#032B49"
+  image_path: assets/images/launcher/costa-go-launcher-legacy-v2.png
+  adaptive_icon_foreground: assets/images/launcher/costa-go-launcher-foreground-v2.png
+  adaptive_icon_background: "#F4F8FB"
+  adaptive_icon_monochrome: assets/images/launcher/costa-go-launcher-monochrome-v2.png
   adaptive_icon_foreground_inset: 18
 
 flutter:

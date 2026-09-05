@@ -17728,6 +17728,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   List<Widget> _driverSheetContent(BuildContext context, String? action) {
     final colors = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final brand = context.brand;
     final scheduledCount = scheduledOffers.length + scheduledTrips.length;
     final hasScheduledTrips = scheduledCount > 0;
     final scheduledAccent = Theme.of(context).brightness == Brightness.dark
@@ -17762,45 +17764,83 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         key: const ValueKey('driver-availability-header'),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: Color.alphaBlend(
-              colors.primary.withValues(
-                  alpha: Theme.of(context).brightness == Brightness.dark
-                      ? .10
-                      : .055),
-              colors.surfaceContainerLow),
+          color: dark ? colors.surfaceContainerLow : Colors.white,
           borderRadius: BorderRadius.circular(20),
-          border:
-              Border.all(color: colors.outlineVariant.withValues(alpha: .65)),
+          border: Border.all(color: brand.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: dark ? .16 : .055),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Row(children: [
+          Container(
+            width: 42,
+            height: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: brand.softBackground,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: MototaxiIcon(
+              size: 23,
+              color: dark ? brand.primaryLight : brand.primaryDark,
+            ),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('Disponible para viajes',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.w900)),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w900,
+                      )),
               const SizedBox(height: 2),
               Text(
                   active != null
                       ? 'Estás atendiendo un viaje.'
                       : 'Recibirás solicitudes de pasajeros cercanos.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: active != null
-                          ? colors.primary
-                          : colors.onSurfaceVariant,
+                      color: colors.onSurfaceVariant,
                       fontWeight:
                           active != null ? FontWeight.w700 : FontWeight.w500)),
             ]),
           ),
           const SizedBox(width: 10),
-          Switch(
-            value: available,
-            onChanged:
-                active == null && _membershipEligible && fleetSession != null
-                    ? toggle
-                    : null,
+          SwitchTheme(
+            data: SwitchTheme.of(context).copyWith(
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.disabled)) {
+                  return colors.onSurface.withValues(alpha: .38);
+                }
+                return dark ? const Color(0xffe6e9ed) : Colors.white;
+              }),
+              trackColor: WidgetStateProperty.resolveWith((states) {
+                final selected = states.contains(WidgetState.selected);
+                final disabled = states.contains(WidgetState.disabled);
+                if (selected) {
+                  final activeTrack = dark
+                      ? CostaGoPalette.darkPrimaryPressed
+                      : CostaGoPalette.controlActive;
+                  return activeTrack.withValues(alpha: disabled ? .48 : 1);
+                }
+                return colors.surfaceContainerHighest;
+              }),
+              trackOutlineColor: WidgetStateProperty.resolveWith((states) =>
+                  states.contains(WidgetState.selected)
+                      ? Colors.transparent
+                      : brand.border),
+            ),
+            child: Switch(
+              value: available,
+              onChanged:
+                  active == null && _membershipEligible && fleetSession != null
+                      ? toggle
+                      : null,
+            ),
           ),
         ]),
       ),
