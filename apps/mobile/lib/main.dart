@@ -1595,8 +1595,9 @@ class PasswordStrengthIndicator extends StatelessWidget {
     final label = valid
         ? (score >= 5 ? 'Contraseña fuerte' : 'Contraseña segura')
         : 'Contraseña débil';
-    final color =
-        valid ? (score >= 5 ? Colors.green : Colors.blue) : Colors.orange;
+    final color = valid
+        ? (score >= 5 ? Colors.green : CostaGoPalette.primary)
+        : Colors.orange;
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2447,10 +2448,7 @@ class CostaGoBrand extends StatelessWidget {
                   text: 'COSTA-', style: TextStyle(color: Colors.white)),
               TextSpan(
                   text: 'GO',
-                  style: TextStyle(
-                      color: compact
-                          ? const Color(0xff12bdf2)
-                          : const Color(0xff2dccff))),
+                  style: TextStyle(color: CostaGoPalette.primaryLight)),
             ]),
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -2737,10 +2735,10 @@ class _LoginState extends State<Login> {
                                                           gradient:
                                                               const LinearGradient(
                                                                   colors: [
-                                                                Color(
-                                                                    0xff087ccb),
-                                                                Color(
-                                                                    0xff032b49)
+                                                                CostaGoPalette
+                                                                    .primary,
+                                                                CostaGoPalette
+                                                                    .primaryDark
                                                               ])),
                                                       child: Image.asset(
                                                           'assets/images/costa-go-emblem.png')),
@@ -7180,7 +7178,7 @@ class AboutCostaGo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: const Color(0xff031a3a),
+        backgroundColor: CostaGoPalette.cardDark,
         extendBodyBehindAppBar: true,
         appBar: AppBar(
           toolbarHeight: 42,
@@ -7200,7 +7198,11 @@ class AboutCostaGo extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Color(0xff032b49), Color(0xff064f83), Color(0xff03213d)],
+              colors: [
+                CostaGoPalette.darkSoftBlue,
+                CostaGoPalette.primaryDark,
+                CostaGoPalette.cardDark,
+              ],
             ),
           ),
           child: const SafeArea(
@@ -7220,7 +7222,9 @@ class AboutCostaGo extends StatelessWidget {
                   'Costa-Go conecta pasajeros y conductores de mototaxi con una experiencia segura, rápida y cercana. La plataforma se adapta a cada zona de cobertura habilitada y acompaña a las comunidades en sus viajes cotidianos.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                      color: Color(0xffd9f4ff), fontSize: 16, height: 1.5),
+                      color: CostaGoPalette.onDarkBackground,
+                      fontSize: 16,
+                      height: 1.5),
                 ),
                 SizedBox(height: 30),
                 Wrap(
@@ -7263,12 +7267,12 @@ class _AboutPill extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: .1),
-          border:
-              Border.all(color: const Color(0xff12bdf2).withValues(alpha: .5)),
+          border: Border.all(
+              color: CostaGoPalette.primaryLight.withValues(alpha: .5)),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: const Color(0xff12bdf2), size: 19),
+          Icon(icon, color: CostaGoPalette.primaryLight, size: 19),
           const SizedBox(width: 7),
           Text(text,
               style: const TextStyle(
@@ -7748,7 +7752,7 @@ class _CostaGoPrimaryButton extends StatelessWidget {
             decoration: BoxDecoration(
               gradient: LinearGradient(colors: [
                 scheme.primary,
-                Color.lerp(scheme.primary, const Color(0xff073f91), .55)!,
+                Color.lerp(scheme.primary, context.brand.primaryDark, .55)!,
               ]),
               borderRadius: BorderRadius.circular(20),
               boxShadow: enabled
@@ -13393,7 +13397,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     notificationChannelName: 'Ubicación y viajes Costa-Go',
                     notificationIcon: const AndroidResource(
                         name: 'ic_notification', defType: 'drawable'),
-                    color: const Color(0xff00aeef),
+                    color: CostaGoPalette.primary,
                     setOngoing: true,
                     enableWakeLock: true)))
         .listen(sendPosition);
@@ -16350,7 +16354,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(CostaGoRadius.large),
-                    border: Border.all(color: const Color(0xffe1e7ef)),
+                    border: Border.all(color: context.brand.border),
                   ),
                   child: QrImageView(
                     data: qrUrl,

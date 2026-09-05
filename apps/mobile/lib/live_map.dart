@@ -10,6 +10,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart';
 
+import 'costa_go_design.dart';
+
 enum MapPointSelection { origin, destination }
 
 /// Los únicos estados visuales permitidos para una mototaxi en el mapa.
@@ -17,9 +19,9 @@ enum MototaxiMarkerStatus { available, assigned, activeTrip }
 
 const _mototaxiAsset = 'assets/images/mototaxi-map-marker.png';
 const _mototaxiAvailable = Color(0xff94a3b8);
-const _costaGoAssignedBlue = Color(0xff0a84ff);
+const _costaGoAssignedBlue = CostaGoPalette.primary;
 const _costaGoTripGreen = Color(0xff22c55e);
-const _mototaxiMarkerSurface = Color(0xfff8fafc);
+const _mototaxiMarkerSurface = CostaGoPalette.cardLight;
 
 @visibleForTesting
 Color mototaxiStatusColor(MototaxiMarkerStatus status) => switch (status) {
@@ -1034,7 +1036,7 @@ class _CurrentLocationMarker extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         decoration: BoxDecoration(
-          color: const Color(0xff1689d8),
+          color: Theme.of(context).colorScheme.primary,
           shape: BoxShape.circle,
           border: Border.all(color: Colors.white, width: 3),
           boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],

@@ -20,6 +20,97 @@ abstract final class CostaGoRadius {
 
 enum CostaGoStatusTone { info, success, warning, danger, neutral }
 
+abstract final class CostaGoPalette {
+  static const primary = Color(0xff2f6fed);
+  static const primaryDark = Color(0xff1f4fcc);
+  static const primaryLight = Color(0xff6ea0ff);
+  static const softBlue = Color(0xffeaf2ff);
+  static const selectedBlue = Color(0xffdcebff);
+  static const blueBorder = Color(0xffd6e4ff);
+  static const cardLight = Color(0xfff8fbff);
+
+  static const darkPrimary = Color(0xff7d9fe8);
+  static const darkPrimaryPressed = Color(0xff6386d2);
+  static const darkPrimaryLight = Color(0xff9bb7f0);
+  static const darkSoftBlue = Color(0xff1d2b42);
+  static const darkSelectedBlue = Color(0xff263c65);
+  static const darkBlueBorder = Color(0xff344a70);
+  static const cardDark = Color(0xff151e2c);
+  static const onDarkBackground = Color(0xffe3edff);
+}
+
+@immutable
+class CostaGoBrandColors extends ThemeExtension<CostaGoBrandColors> {
+  const CostaGoBrandColors({
+    required this.primaryDark,
+    required this.primaryLight,
+    required this.softBackground,
+    required this.selected,
+    required this.border,
+    required this.card,
+    required this.iconPrimary,
+  });
+
+  final Color primaryDark;
+  final Color primaryLight;
+  final Color softBackground;
+  final Color selected;
+  final Color border;
+  final Color card;
+  final Color iconPrimary;
+
+  factory CostaGoBrandColors.forBrightness(Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    return CostaGoBrandColors(
+      primaryDark:
+          dark ? CostaGoPalette.darkPrimaryPressed : CostaGoPalette.primaryDark,
+      primaryLight:
+          dark ? CostaGoPalette.darkPrimaryLight : CostaGoPalette.primaryLight,
+      softBackground:
+          dark ? CostaGoPalette.darkSoftBlue : CostaGoPalette.softBlue,
+      selected:
+          dark ? CostaGoPalette.darkSelectedBlue : CostaGoPalette.selectedBlue,
+      border: dark ? CostaGoPalette.darkBlueBorder : CostaGoPalette.blueBorder,
+      card: dark ? CostaGoPalette.cardDark : CostaGoPalette.cardLight,
+      iconPrimary: dark ? CostaGoPalette.darkPrimary : CostaGoPalette.primary,
+    );
+  }
+
+  @override
+  CostaGoBrandColors copyWith({
+    Color? primaryDark,
+    Color? primaryLight,
+    Color? softBackground,
+    Color? selected,
+    Color? border,
+    Color? card,
+    Color? iconPrimary,
+  }) =>
+      CostaGoBrandColors(
+        primaryDark: primaryDark ?? this.primaryDark,
+        primaryLight: primaryLight ?? this.primaryLight,
+        softBackground: softBackground ?? this.softBackground,
+        selected: selected ?? this.selected,
+        border: border ?? this.border,
+        card: card ?? this.card,
+        iconPrimary: iconPrimary ?? this.iconPrimary,
+      );
+
+  @override
+  CostaGoBrandColors lerp(covariant CostaGoBrandColors? other, double t) {
+    if (other == null) return this;
+    return CostaGoBrandColors(
+      primaryDark: Color.lerp(primaryDark, other.primaryDark, t)!,
+      primaryLight: Color.lerp(primaryLight, other.primaryLight, t)!,
+      softBackground: Color.lerp(softBackground, other.softBackground, t)!,
+      selected: Color.lerp(selected, other.selected, t)!,
+      border: Color.lerp(border, other.border, t)!,
+      card: Color.lerp(card, other.card, t)!,
+      iconPrimary: Color.lerp(iconPrimary, other.iconPrimary, t)!,
+    );
+  }
+}
+
 @immutable
 class CostaGoSemanticColors extends ThemeExtension<CostaGoSemanticColors> {
   const CostaGoSemanticColors({
@@ -68,8 +159,9 @@ class CostaGoSemanticColors extends ThemeExtension<CostaGoSemanticColors> {
       dangerContainer: dark ? const Color(0xff4d2028) : const Color(0xffffe9ec),
       onDangerContainer:
           dark ? const Color(0xffffb2be) : const Color(0xff9f1f38),
-      infoContainer: dark ? const Color(0xff112f4a) : const Color(0xffeaf4ff),
-      onInfoContainer: dark ? const Color(0xffa8d3ff) : const Color(0xff0757ad),
+      infoContainer:
+          dark ? CostaGoPalette.darkSoftBlue : CostaGoPalette.softBlue,
+      onInfoContainer: dark ? const Color(0xffb8cefa) : const Color(0xff214f9f),
     );
   }
 
@@ -132,23 +224,60 @@ extension CostaGoThemeContext on BuildContext {
   CostaGoSemanticColors get semantic =>
       Theme.of(this).extension<CostaGoSemanticColors>() ??
       CostaGoSemanticColors.forBrightness(Theme.of(this).brightness);
+
+  CostaGoBrandColors get brand =>
+      Theme.of(this).extension<CostaGoBrandColors>() ??
+      CostaGoBrandColors.forBrightness(Theme.of(this).brightness);
 }
 
 abstract final class CostaGoTheme {
-  static const Color brandBlue = Color(0xff087ccb);
-  static const Color deepBlue = Color(0xff064a9d);
+  static const Color brandBlue = CostaGoPalette.primary;
+  static const Color deepBlue = CostaGoPalette.primaryDark;
 
   static ThemeData build(Brightness brightness) {
     final dark = brightness == Brightness.dark;
-    final scheme = ColorScheme.fromSeed(
+    final generatedScheme = ColorScheme.fromSeed(
       seedColor: brandBlue,
       brightness: brightness,
-      surface: dark ? const Color(0xff111820) : const Color(0xfffbfdff),
+    );
+    final scheme = generatedScheme.copyWith(
+      primary: dark ? CostaGoPalette.darkPrimary : CostaGoPalette.primary,
+      onPrimary: dark ? const Color(0xff102550) : Colors.white,
+      primaryContainer:
+          dark ? CostaGoPalette.darkSoftBlue : CostaGoPalette.softBlue,
+      onPrimaryContainer:
+          dark ? const Color(0xffdce8ff) : const Color(0xff173b82),
+      secondary: dark ? const Color(0xffa7bde8) : const Color(0xff496fb9),
+      onSecondary: dark ? const Color(0xff142747) : Colors.white,
+      secondaryContainer:
+          dark ? const Color(0xff26354d) : const Color(0xffe7eefb),
+      onSecondaryContainer:
+          dark ? const Color(0xffdce7fb) : const Color(0xff243b66),
+      surface: dark ? const Color(0xff111722) : CostaGoPalette.cardLight,
+      onSurface: dark ? const Color(0xffe8edf6) : const Color(0xff13213a),
+      onSurfaceVariant:
+          dark ? const Color(0xffb8c4d8) : const Color(0xff586a84),
+      outline: dark ? const Color(0xff71809a) : const Color(0xffafc4e8),
+      outlineVariant:
+          dark ? const Color(0xff34435d) : CostaGoPalette.blueBorder,
+      surfaceContainerLowest: dark ? const Color(0xff0c111a) : Colors.white,
+      surfaceContainerLow:
+          dark ? CostaGoPalette.cardDark : CostaGoPalette.cardLight,
+      surfaceContainer:
+          dark ? const Color(0xff1a2433) : const Color(0xfff1f6ff),
+      surfaceContainerHigh:
+          dark ? const Color(0xff202c3d) : CostaGoPalette.softBlue,
+      surfaceContainerHighest:
+          dark ? const Color(0xff29364a) : CostaGoPalette.selectedBlue,
+      inverseSurface: dark ? const Color(0xffe8edf6) : const Color(0xff182640),
+      inversePrimary:
+          dark ? CostaGoPalette.primaryDark : const Color(0xffafc6ff),
     );
     final semantics = CostaGoSemanticColors.forBrightness(brightness);
-    final background = dark ? const Color(0xff0b1118) : const Color(0xfff4f8fc);
-    final surfaceLow = dark ? const Color(0xff151e28) : Colors.white;
-    final outline = dark ? const Color(0xff334252) : const Color(0xffd9e3ee);
+    final brand = CostaGoBrandColors.forBrightness(brightness);
+    final background = dark ? const Color(0xff0d131d) : const Color(0xfff4f7fb);
+    final surfaceLow = brand.card;
+    final outline = brand.border;
     final baseTextTheme = ThemeData(brightness: brightness).textTheme;
     final textTheme = baseTextTheme.copyWith(
       headlineLarge: baseTextTheme.headlineLarge
@@ -185,8 +314,13 @@ abstract final class CostaGoTheme {
       scaffoldBackgroundColor: background,
       canvasColor: background,
       textTheme: textTheme,
-      extensions: [semantics],
+      extensions: [semantics, brand],
       splashFactory: InkSparkle.splashFactory,
+      focusColor: scheme.primary.withValues(alpha: dark ? .20 : .14),
+      hoverColor: scheme.primary.withValues(alpha: dark ? .12 : .08),
+      splashColor: scheme.primary.withValues(alpha: dark ? .20 : .14),
+      highlightColor: scheme.primary.withValues(alpha: dark ? .12 : .08),
+      disabledColor: scheme.onSurface.withValues(alpha: .38),
       appBarTheme: AppBarTheme(
         centerTitle: false,
         elevation: 0,
@@ -256,7 +390,7 @@ abstract final class CostaGoTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: dark ? const Color(0xff18222d) : Colors.white,
+        fillColor: dark ? const Color(0xff182232) : Colors.white,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         floatingLabelStyle:
@@ -279,23 +413,52 @@ abstract final class CostaGoTheme {
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size.fromHeight(54),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          textStyle: textTheme.labelLarge,
-          shape: roundedButton,
-          disabledBackgroundColor: scheme.onSurface.withValues(alpha: .10),
-          disabledForegroundColor: scheme.onSurface.withValues(alpha: .42),
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size.fromHeight(54)),
+          padding: const WidgetStatePropertyAll(
+              EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
+          textStyle: WidgetStatePropertyAll(textTheme.labelLarge),
+          shape: WidgetStatePropertyAll(roundedButton),
+          foregroundColor: WidgetStateProperty.resolveWith((states) =>
+              states.contains(WidgetState.disabled)
+                  ? scheme.onSurface.withValues(alpha: .42)
+                  : scheme.onPrimary),
+          backgroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.disabled)) {
+              return scheme.onSurface.withValues(alpha: .10);
+            }
+            if (states.contains(WidgetState.pressed)) return brand.primaryDark;
+            if (states.contains(WidgetState.hovered)) {
+              return Color.lerp(scheme.primary, brand.primaryDark, .22);
+            }
+            return scheme.primary;
+          }),
+          overlayColor: WidgetStatePropertyAll(
+              scheme.onPrimary.withValues(alpha: dark ? .10 : .14)),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size.fromHeight(52),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
-          foregroundColor: scheme.primary,
-          side: BorderSide(color: scheme.primary.withValues(alpha: .72)),
-          textStyle: textTheme.labelLarge,
-          shape: roundedButton,
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size.fromHeight(52)),
+          padding: const WidgetStatePropertyAll(
+              EdgeInsets.symmetric(horizontal: 18, vertical: 13)),
+          foregroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.disabled)
+                  ? scheme.onSurface.withValues(alpha: .38)
+                  : states.contains(WidgetState.pressed)
+                      ? brand.primaryDark
+                      : scheme.primary),
+          side: WidgetStateProperty.resolveWith((states) => BorderSide(
+              color: states.contains(WidgetState.disabled)
+                  ? outline.withValues(alpha: .55)
+                  : states.contains(WidgetState.focused)
+                      ? scheme.primary
+                      : brand.border,
+              width: states.contains(WidgetState.focused) ? 1.8 : 1.2)),
+          overlayColor: WidgetStatePropertyAll(
+              scheme.primary.withValues(alpha: dark ? .14 : .08)),
+          textStyle: WidgetStatePropertyAll(textTheme.labelLarge),
+          shape: WidgetStatePropertyAll(roundedButton),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
@@ -317,17 +480,25 @@ abstract final class CostaGoTheme {
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
-        style: IconButton.styleFrom(
-          minimumSize: const Size.square(44),
-          shape: RoundedRectangleBorder(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size.square(44)),
+          foregroundColor: WidgetStateProperty.resolveWith((states) =>
+              states.contains(WidgetState.disabled)
+                  ? scheme.onSurface.withValues(alpha: .38)
+                  : scheme.primary),
+          backgroundColor: WidgetStateProperty.resolveWith((states) =>
+              states.contains(WidgetState.selected) ? brand.selected : null),
+          overlayColor: WidgetStatePropertyAll(
+              scheme.primary.withValues(alpha: dark ? .14 : .08)),
+          shape: WidgetStatePropertyAll(RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(CostaGoRadius.medium),
-          ),
+          )),
         ),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: scheme.surfaceContainerLow,
-        selectedColor: scheme.primaryContainer.withValues(alpha: .72),
-        side: BorderSide(color: outline),
+        selectedColor: brand.selected,
+        side: BorderSide(color: brand.border),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(CostaGoRadius.pill),
         ),
@@ -345,13 +516,60 @@ abstract final class CostaGoTheme {
               borderRadius: BorderRadius.circular(CostaGoRadius.medium),
             ),
           ),
-          side: WidgetStatePropertyAll(BorderSide(color: outline)),
+          side: WidgetStatePropertyAll(BorderSide(color: brand.border)),
+          backgroundColor: WidgetStateProperty.resolveWith((states) =>
+              states.contains(WidgetState.selected) ? brand.selected : null),
+          foregroundColor: WidgetStateProperty.resolveWith((states) =>
+              states.contains(WidgetState.selected)
+                  ? scheme.primary
+                  : scheme.onSurfaceVariant),
+          overlayColor: WidgetStatePropertyAll(
+              scheme.primary.withValues(alpha: dark ? .14 : .08)),
         ),
+      ),
+      tabBarTheme: TabBarThemeData(
+        labelColor: scheme.primary,
+        unselectedLabelColor: scheme.onSurfaceVariant,
+        indicatorColor: scheme.primary,
+        overlayColor: WidgetStatePropertyAll(
+            scheme.primary.withValues(alpha: dark ? .14 : .08)),
+        dividerColor: brand.border,
+      ),
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? scheme.primary : null),
+        checkColor: WidgetStatePropertyAll(scheme.onPrimary),
+        side: BorderSide(color: scheme.outline),
+      ),
+      radioTheme: RadioThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected)
+                ? scheme.primary
+                : scheme.outline),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected)
+                ? scheme.onPrimary
+                : scheme.onSurfaceVariant),
+        trackColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected)
+                ? scheme.primary
+                : scheme.surfaceContainerHighest),
+        trackOutlineColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? scheme.primary : outline),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: scheme.primary,
+        foregroundColor: scheme.onPrimary,
+        focusColor: brand.primaryDark,
+        hoverColor: Color.lerp(scheme.primary, brand.primaryLight, .22),
+        splashColor: brand.primaryDark,
       ),
       navigationBarTheme: NavigationBarThemeData(
         elevation: 0,
         backgroundColor: surfaceLow,
-        indicatorColor: scheme.primaryContainer.withValues(alpha: .72),
+        indicatorColor: brand.selected,
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => textTheme.labelSmall?.copyWith(
             color: states.contains(WidgetState.selected)
@@ -365,10 +583,9 @@ abstract final class CostaGoTheme {
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor:
-            dark ? const Color(0xffe5edf7) : const Color(0xff172536),
+        backgroundColor: scheme.inverseSurface,
         contentTextStyle: textTheme.bodyMedium?.copyWith(
-          color: dark ? const Color(0xff172536) : Colors.white,
+          color: dark ? const Color(0xff182640) : Colors.white,
           fontWeight: FontWeight.w600,
         ),
         shape: RoundedRectangleBorder(

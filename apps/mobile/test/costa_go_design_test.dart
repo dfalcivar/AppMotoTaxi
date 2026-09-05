@@ -1,8 +1,62 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mototaxi_atacames/costa_go_design.dart';
 
 void main() {
+  test('la paleta corporativa usa los tokens Costa-Go definidos', () {
+    final light = CostaGoTheme.build(Brightness.light);
+    final dark = CostaGoTheme.build(Brightness.dark);
+    final lightBrand = light.extension<CostaGoBrandColors>()!;
+    final darkBrand = dark.extension<CostaGoBrandColors>()!;
+
+    expect(light.colorScheme.primary, CostaGoPalette.primary);
+    expect(light.colorScheme.primaryContainer, CostaGoPalette.softBlue);
+    expect(light.colorScheme.surfaceContainerLow, CostaGoPalette.cardLight);
+    expect(lightBrand.selected, CostaGoPalette.selectedBlue);
+    expect(lightBrand.border, CostaGoPalette.blueBorder);
+    expect(dark.colorScheme.primary, CostaGoPalette.darkPrimary);
+    expect(darkBrand.selected, CostaGoPalette.darkSelectedBlue);
+    expect(darkBrand.border, CostaGoPalette.darkBlueBorder);
+  });
+
+  test('los estados interactivos conservan contraste y cambian al presionar',
+      () {
+    final light = CostaGoTheme.build(Brightness.light);
+    final dark = CostaGoTheme.build(Brightness.dark);
+    final lightButton = light.filledButtonTheme.style!;
+    final darkButton = dark.filledButtonTheme.style!;
+
+    expect(lightButton.backgroundColor!.resolve({}), CostaGoPalette.primary);
+    expect(
+      lightButton.backgroundColor!.resolve({WidgetState.pressed}),
+      CostaGoPalette.primaryDark,
+    );
+    expect(darkButton.backgroundColor!.resolve({}), CostaGoPalette.darkPrimary);
+    expect(
+      darkButton.backgroundColor!.resolve({WidgetState.pressed}),
+      CostaGoPalette.darkPrimaryPressed,
+    );
+
+    double contrast(Color foreground, Color background) {
+      final lighter = math.max(
+          foreground.computeLuminance(), background.computeLuminance());
+      final darker = math.min(
+          foreground.computeLuminance(), background.computeLuminance());
+      return (lighter + .05) / (darker + .05);
+    }
+
+    expect(
+      contrast(light.colorScheme.onPrimary, light.colorScheme.primary),
+      greaterThanOrEqualTo(4.5),
+    );
+    expect(
+      contrast(dark.colorScheme.onPrimary, dark.colorScheme.primary),
+      greaterThanOrEqualTo(4.5),
+    );
+  });
+
   for (final brightness in Brightness.values) {
     for (final scenario in const [
       (size: Size(320, 640), scale: 1.0),
