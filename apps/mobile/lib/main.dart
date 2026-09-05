@@ -2443,8 +2443,8 @@ class CostaGoBrand extends StatelessWidget {
               fit: BoxFit.contain),
           SizedBox(height: compact ? 2 : 8),
           Text.rich(
-            TextSpan(children: [
-              const TextSpan(
+            const TextSpan(children: [
+              TextSpan(
                   text: 'COSTA-', style: TextStyle(color: Colors.white)),
               TextSpan(
                   text: 'GO',
