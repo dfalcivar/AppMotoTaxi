@@ -576,16 +576,27 @@ abstract final class CostaGoTheme {
                 : scheme.outline),
       ),
       switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith((states) =>
-            states.contains(WidgetState.selected)
-                ? scheme.onPrimary
-                : scheme.onSurfaceVariant),
-        trackColor: WidgetStateProperty.resolveWith((states) =>
-            states.contains(WidgetState.selected)
-                ? scheme.primary
-                : scheme.surfaceContainerHighest),
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return scheme.onSurface.withValues(alpha: .38);
+          }
+          return dark ? const Color(0xffeef2f5) : Colors.white;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          final disabled = states.contains(WidgetState.disabled);
+          final color = states.contains(WidgetState.selected)
+              ? (dark
+                  ? CostaGoPalette.darkPrimaryPressed
+                  : CostaGoPalette.controlActive)
+              : (dark
+                  ? scheme.surfaceContainerHighest
+                  : CostaGoPalette.borderAccent);
+          return color.withValues(alpha: disabled ? .48 : 1);
+        }),
         trackOutlineColor: WidgetStateProperty.resolveWith((states) =>
-            states.contains(WidgetState.selected) ? scheme.primary : outline),
+            states.contains(WidgetState.selected)
+                ? Colors.transparent
+                : outline),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: scheme.primary,

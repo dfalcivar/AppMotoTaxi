@@ -44,4 +44,14 @@ describe("aprobación financiera de campañas",()=>{
     expect(migration).toContain("PAYMENT_POINT");
     expect(migration).toContain("internal_authorized_by");
   });
+
+  it("crea un pago pendiente para cada orden de renovación y repara las existentes",async()=>{
+    const api=await readFile(resolve(process.cwd(),"src/commercial.ts"),"utf8");
+    const renewalFlow=api.slice(api.indexOf('app.post("/v1/admin/commercial/campaigns/:id/renew"'),api.indexOf('app.post("/v1/admin/commercial/campaigns/:id/action"'));
+    expect(renewalFlow).toContain("insert into advertising_payments");
+    expect(renewalFlow).toContain("'PENDING','NOT_RECEIVED'");
+    const migration=await readFile(resolve(process.cwd(),"migrations/085_repair_advertising_renewal_payments.sql"),"utf8");
+    expect(migration).toContain("renewal_of_campaign_id IS NOT NULL");
+    expect(migration).toContain("NOT EXISTS");
+  });
 });

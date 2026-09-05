@@ -17931,97 +17931,65 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         child: IntrinsicHeight(
           child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Expanded(
-              child:
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: brand.softBackground,
-                    shape: BoxShape.circle,
-                  ),
-                  child: MototaxiIcon(
-                    size: 21,
-                    color: dark ? brand.primaryLight : brand.primaryDark,
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Disponible\npara viajes',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: brand.softBackground,
+                        shape: BoxShape.circle,
+                      ),
+                      child: MototaxiIcon(
+                        size: 18,
+                        color: dark ? brand.primaryLight : brand.primaryDark,
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text('Disponible\npara viajes',
                           style:
                               Theme.of(context).textTheme.titleSmall?.copyWith(
                                     color: colors.onSurface,
                                     height: 1.08,
                                     fontWeight: FontWeight.w900,
                                   )),
-                      const SizedBox(height: 5),
-                      Text(
-                        active != null
-                            ? 'Estás atendiendo un viaje.'
-                            : 'Recibirás solicitudes de pasajeros cercanos.',
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colors.onSurfaceVariant,
-                            height: 1.15,
-                            fontWeight: active != null
-                                ? FontWeight.w700
-                                : FontWeight.w500),
-                      ),
-                      const Spacer(),
-                      Transform.scale(
-                        scale: .82,
-                        alignment: Alignment.centerLeft,
-                        child: SwitchTheme(
-                          data: SwitchTheme.of(context).copyWith(
-                            thumbColor:
-                                WidgetStateProperty.resolveWith((states) {
-                              if (states.contains(WidgetState.disabled)) {
-                                return colors.onSurface.withValues(alpha: .38);
-                              }
-                              return dark
-                                  ? const Color(0xffe6e9ed)
-                                  : Colors.white;
-                            }),
-                            trackColor:
-                                WidgetStateProperty.resolveWith((states) {
-                              final selected =
-                                  states.contains(WidgetState.selected);
-                              final disabled =
-                                  states.contains(WidgetState.disabled);
-                              if (selected) {
-                                final activeTrack = dark
-                                    ? CostaGoPalette.darkPrimaryPressed
-                                    : CostaGoPalette.controlActive;
-                                return activeTrack.withValues(
-                                    alpha: disabled ? .48 : 1);
-                              }
-                              return colors.surfaceContainerHighest;
-                            }),
-                            trackOutlineColor: WidgetStateProperty.resolveWith(
-                                (states) =>
-                                    states.contains(WidgetState.selected)
-                                        ? Colors.transparent
-                                        : brand.border),
-                          ),
-                          child: Switch(
-                            value: available,
-                            onChanged: active == null &&
-                                    _membershipEligible &&
-                                    fleetSession != null
-                                ? toggle
-                                : null,
-                          ),
+                    ),
+                    SizedBox(
+                      width: 40,
+                      height: 30,
+                      child: FittedBox(
+                        fit: BoxFit.contain,
+                        child: Switch(
+                          value: available,
+                          onChanged: active == null &&
+                                  _membershipEligible &&
+                                  fleetSession != null
+                              ? toggle
+                              : null,
                         ),
                       ),
-                    ],
+                    ),
+                  ]),
+                  const SizedBox(height: 7),
+                  Text(
+                    active != null
+                        ? 'Estás atendiendo un viaje.'
+                        : 'Recibirás solicitudes de pasajeros cercanos.',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        height: 1.2,
+                        fontWeight:
+                            active != null ? FontWeight.w700 : FontWeight.w500),
                   ),
-                ),
-              ]),
+                ],
+              ),
             ),
             Container(
               width: 1,
@@ -18038,8 +18006,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
-                          width: 38,
-                          height: 38,
+                          width: 32,
+                          height: 32,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: hasScheduledTrips
@@ -18047,7 +18015,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 : brand.softBackground,
                           ),
                           child: Icon(Icons.calendar_month_outlined,
-                              size: 21,
+                              size: 18,
                               color: hasScheduledTrips
                                   ? scheduledAccent
                                   : dark
@@ -18116,17 +18084,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                         .bodySmall
                                         ?.copyWith(
                                             color: colors.onSurfaceVariant)),
-                              const Spacer(),
-                              Align(
-                                alignment: Alignment.bottomRight,
-                                child: Icon(Icons.chevron_right_rounded,
-                                    color: hasScheduledTrips
-                                        ? scheduledAccent
-                                        : colors.onSurfaceVariant),
-                              ),
                             ],
                           ),
                         ),
+                        const SizedBox(width: 2),
+                        Icon(Icons.chevron_right_rounded,
+                            size: 20,
+                            color: hasScheduledTrips
+                                ? scheduledAccent
+                                : colors.onSurfaceVariant),
                       ]),
                 ),
               ),
@@ -18155,12 +18121,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ),
                 TextButton.icon(
                   onPressed: fleetChanging ? null : chooseFleet,
-                  iconAlignment: IconAlignment.end,
-                  icon: const Icon(Icons.chevron_right_rounded, size: 20),
-                  label: const Text('Ver todas'),
+                  icon: Icon(
+                      fleetSession == null
+                          ? Icons.add_rounded
+                          : Icons.swap_horiz_rounded,
+                      size: 19),
+                  label: Text(fleetSession == null ? 'Seleccionar' : 'Cambiar'),
                   style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 4)),
+                      padding: const EdgeInsets.symmetric(horizontal: 6)),
                 ),
               ]),
               const SizedBox(height: 9),
@@ -18201,7 +18170,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               else
                 Column(
                     key: const ValueKey('driver-active-fleet-card'),
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
@@ -18209,11 +18179,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             FleetPhoto(
                                 gateway: fleetFor(widget.s),
                                 id: fleetSession['photoId']?.toString(),
-                                size: 70,
-                                height: 56),
-                            const SizedBox(width: 11),
+                                size: 64,
+                                height: 50),
+                            const SizedBox(width: 10),
                             Expanded(
                                 child: Column(
+                                    mainAxisSize: MainAxisSize.min,
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
@@ -18259,40 +18230,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                           ?.copyWith(
                                               color: colors.onSurfaceVariant))
                                 ])),
-                            FilledButton.tonalIcon(
-                              style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 8),
-                                  visualDensity: VisualDensity.compact),
-                              onPressed: fleetChanging
-                                  ? null
-                                  : () async {
-                                      await chooseFleet();
-                                    },
-                              iconAlignment: IconAlignment.end,
-                              icon: const Icon(Icons.swap_horiz_rounded,
-                                  size: 19),
-                              label: const Text('Cambiar'),
-                            )
+                            IconButton(
+                              key: const ValueKey(
+                                  'driver-finish-session-action'),
+                              tooltip: 'Finalizar jornada',
+                              visualDensity: VisualDensity.compact,
+                              color: colors.error,
+                              onPressed:
+                                  fleetChanging ? null : finishFleetSession,
+                              icon: const Icon(Icons.logout_rounded, size: 20),
+                            ),
                           ]),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                            key: const ValueKey('driver-finish-session-action'),
-                            style: TextButton.styleFrom(
-                                foregroundColor: colors.error,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                visualDensity: VisualDensity.compact,
-                                textStyle: Theme.of(context)
-                                    .textTheme
-                                    .labelLarge
-                                    ?.copyWith(fontWeight: FontWeight.w700)),
-                            onPressed:
-                                fleetChanging ? null : finishFleetSession,
-                            icon: const Icon(Icons.logout_rounded, size: 18),
-                            label: const Text('Finalizar jornada')),
-                      )
                     ]),
             ],
           ),
