@@ -571,6 +571,16 @@ String? lastFcmRegistrationMessage;
 StreamSubscription<String>? fcmTokenRefreshSubscription;
 const nativeActions = MethodChannel('ec.atacames.mototaxi/native');
 const secureStorage = FlutterSecureStorage();
+const notificationDeviceIdKey = 'notification_device_id_v1';
+
+Future<String> notificationDeviceId() async {
+  final current = await secureStorage.read(key: notificationDeviceIdKey);
+  if (current != null && current.length >= 8) return current;
+  final random = math.Random.secure();
+  final generated = '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+  await secureStorage.write(key: notificationDeviceIdKey, value: generated);
+  return generated;
+}
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 bool handlingRevokedSession = false;
 
@@ -1809,6 +1819,13 @@ class Api {
         }.contains(notificationSettings.authorizationStatus);
         final packageInfo = await PackageInfo.fromPlatform();
         final buildNumber = int.tryParse(packageInfo.buildNumber);
+        final deviceId = await notificationDeviceId();
+        final permissionStatus = switch (notificationSettings.authorizationStatus) {
+          AuthorizationStatus.authorized => 'AUTHORIZED',
+          AuthorizationStatus.provisional => 'PROVISIONAL',
+          AuthorizationStatus.denied => 'DENIED',
+          AuthorizationStatus.notDetermined => 'NOT_DETERMINED',
+        };
         final response =
             await call('PUT', '/v1/devices/fcm-token', token: token, body: {
           'token': fcm,
@@ -1819,6 +1836,8 @@ class Api {
           'firebaseProjectId': Firebase.app().options.projectId,
           'notificationProtocol': nativeAlertsSupported ? 2 : 1,
           'notificationsEnabled': notificationsEnabled,
+          'deviceId': deviceId,
+          'permissionStatus': permissionStatus,
         });
         final push = response?['push'];
         if (push is Map && push['projectMatches'] == false) {
@@ -1967,6 +1986,14 @@ class Api {
           {Map<String, dynamic> metadata = const {}}) =>
       call('POST', '/v1/notifications/$id/events',
           token: t, body: {'event': event, 'metadata': metadata});
+  Future<Map<String, dynamic>> notificationFallback(String t) async =>
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/notifications/fallback', token: t));
+  Future<Map<String, dynamic>> notificationActionContext(
+          String t, String id) async =>
+      Map<String, dynamic>.from(await call(
+          'GET', '/v1/notifications/$id/action-context',
+          token: t));
   Future<Map<String, dynamic>> supportConfig(String t) async =>
       Map<String, dynamic>.from(
           await call('GET', '/v1/support/config', token: t));
@@ -8085,6 +8112,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     });
     unawaited(api.registerFcm(widget.s.token));
     unawaited(UserNotificationStore.instance.refresh(widget.s));
+    WidgetsBinding.instance.addPostFrameCallback((_) => showNotificationFallback());
     if (firebaseReady) {
       messageSubscription = FirebaseMessaging.onMessage.listen((push) {
         unawaited(UserNotificationStore.instance.refresh(widget.s));
@@ -8537,6 +8565,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       unawaited(load());
       unawaited(checkPendingPassengerRating());
       unawaited(UserNotificationStore.instance.refresh(widget.s));
+      unawaited(showNotificationFallback());
     }
   }
 
@@ -8579,7 +8608,46 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     if (mounted) await load();
   }
 
-  void handleOpenedPush(RemoteMessage push) {
+  Future<void> showNotificationFallback() async {
+    try {
+      final response = await api.notificationFallback(widget.s.token);
+      final raw = response['item'];
+      if (!mounted || raw is! Map) return;
+      final item = Map<String, dynamic>.from(raw);
+      final id = item['id']?.toString();
+      InAppNotificationBanner.show(context,
+          id: 'fallback-${id ?? item['type']}',
+          title: item['title']?.toString() ?? 'Costa-Go',
+          message: item['message']?.toString() ?? 'Tienes una notificación importante.',
+          actionLabel: 'Ver',
+          icon: Icons.notifications_active_outlined,
+          onTap: () => handleOpenedPush(RemoteMessage(data: {
+                ...Map<String, dynamic>.from(item['data'] is Map ? item['data'] : const {}),
+                'type': item['type'],
+                'deepLink': item['deepLink'],
+                'action': item['action'],
+                'internalNotificationId': id,
+              })));
+    } catch (_) {}
+  }
+
+  void handleOpenedPush(RemoteMessage push) =>
+      unawaited(_handleOpenedPush(push));
+
+  Future<void> _handleOpenedPush(RemoteMessage push) async {
+    final notificationId=push.data['internalNotificationId']?.toString();
+    if(notificationId!=null&&notificationId.isNotEmpty){
+      try{
+        final contextState=await api.notificationActionContext(widget.s.token,notificationId);
+        if(contextState['valid']!=true){
+          if(!mounted)return;
+          ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(const SnackBar(content:Text('Esta recomendación ya no está disponible.')));
+          await Navigator.push(context,MaterialPageRoute(builder:(_)=>NotificationCenterView(widget.s)));
+          return;
+        }
+      }catch(_){/* La navegación crítica conserva su comportamiento si la validación no responde. */}
+    }
+    if(!mounted)return;
     if (push.data['type'] == 'FLEET_SESSION' &&
         push.data['vehicleId'] != null) {
       unawaited(Navigator.push(
@@ -12817,7 +12885,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       Future.microtask(restoreInitialPush);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(initializeDriverMapLocation());
+      if (mounted) {
+        unawaited(initializeDriverMapLocation());
+        unawaited(showNotificationFallback());
+      }
     });
     unawaited(initializeDriver());
     timer = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
@@ -12955,6 +13026,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       realtime.connect();
       unawaited(api.registerFcm(widget.s.token));
+      unawaited(showNotificationFallback());
       unawaited(refreshMembership(force: true));
       unawaited(refreshScheduled(force: true));
       unawaited(restore(adjustSheet: false).catchError((Object error) {
@@ -12966,7 +13038,32 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
-  void handleOpenedPush(RemoteMessage push) {
+  Future<void> showNotificationFallback() async {
+    try {
+      final response=await api.notificationFallback(widget.s.token);
+      final raw=response['item'];
+      if(!mounted||raw is! Map)return;
+      final item=Map<String,dynamic>.from(raw),id=item['id']?.toString();
+      InAppNotificationBanner.show(context,id:'fallback-${id??item['type']}',title:item['title']?.toString()??'Costa-Go',message:item['message']?.toString()??'Tienes una notificación importante.',actionLabel:'Ver',icon:Icons.notifications_active_outlined,onTap:()=>handleOpenedPush(RemoteMessage(data:{...Map<String,dynamic>.from(item['data'] is Map?item['data']:const {}),'type':item['type'],'deepLink':item['deepLink'],'action':item['action'],'internalNotificationId':id})));
+    }catch(_){}
+  }
+
+  void handleOpenedPush(RemoteMessage push)=>unawaited(_handleOpenedPush(push));
+
+  Future<void> _handleOpenedPush(RemoteMessage push) async {
+    final notificationId=push.data['internalNotificationId']?.toString();
+    if(notificationId!=null&&notificationId.isNotEmpty){
+      try{
+        final state=await api.notificationActionContext(widget.s.token,notificationId);
+        if(state['valid']!=true){
+          if(!mounted)return;
+          ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(const SnackBar(content:Text('Esta recomendación ya no está disponible.')));
+          await Navigator.push(context,MaterialPageRoute(builder:(_)=>NotificationCenterView(widget.s,onOpenMembership:_openMembershipFromNotification)));
+          return;
+        }
+      }catch(_){/* Mantener navegación crítica si la validación está temporalmente indisponible. */}
+    }
+    if(!mounted)return;
     if (push.data['type'] == 'FLEET_SESSION' &&
         push.data['vehicleId'] != null) {
       unawaited(Navigator.push(

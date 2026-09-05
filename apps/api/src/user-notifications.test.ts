@@ -15,8 +15,8 @@ describe("notificaciones internas", () => {
   });
 
   it("separa recomendaciones y campañas sin degradar alertas críticas", () => {
-    expect(notificationClassification("SMART_FREQUENT_TRIP")).toEqual({category:"SMART",priority:"NORMAL"});
-    expect(notificationClassification("PROMOTIONAL")).toEqual({category:"PROMOTIONAL",priority:"LOW"});
-    expect(notificationClassification("TRIP_CANCELLED")).toEqual({category:"TRANSACTIONAL",priority:"CRITICAL"});
+    expect(notificationClassification("SMART_FREQUENT_TRIP")).toEqual({category:"SMART",priority:"SMART"});
+    expect(notificationClassification("PROMOTIONAL")).toEqual({category:"PROMOTIONAL",priority:"PROMOTIONAL"});
+    expect(notificationClassification("TRIP_CANCELLED")).toEqual({category:"TRANSACTIONAL",priority:"TRIP_CRITICAL"});
   });
 });

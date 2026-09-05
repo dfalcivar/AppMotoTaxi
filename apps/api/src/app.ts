@@ -18,6 +18,7 @@ import { currentSession, releaseSession, releaseStaleSessions } from './fleet/se
 import { fleetError } from './fleet/routes.js';
 import {deliverFleetNotifications} from './fleet/notifications.js';
 import {compareAppVersions,registerSmartNotificationRoutes,smartNotificationSchedulerTick} from './smart-notifications.js';
+import {notificationDeliveryTick,notificationRetentionTick} from './notification-reliability.js';
 import {notificationPreferenceAllows,registerNotificationPreferenceRoutes} from './notification-preferences.js';
 import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
@@ -192,7 +193,9 @@ const deviceTokenSchema = z.object({
   buildNumber: z.number().int().min(1).max(2147483647).optional(),
   notificationProtocol: z.number().int().min(1).max(2).default(1),
   firebaseProjectId: z.string().trim().min(3).max(200).optional(),
-  notificationsEnabled: z.boolean().optional()
+  notificationsEnabled: z.boolean().optional(),
+  deviceId:z.string().trim().min(8).max(200).optional(),
+  permissionStatus:z.enum(['AUTHORIZED','PROVISIONAL','DENIED','NOT_DETERMINED','UNKNOWN']).default('UNKNOWN')
 });
 const testPushSchema = z.object({ delaySeconds: z.number().int().min(0).max(15).default(0) });
 const pageQuerySchema = z.object({
@@ -498,6 +501,15 @@ export async function buildApp() {
   },60_000);
   smartNotificationScheduler.unref();
   app.addHook('onClose',async()=>clearInterval(smartNotificationScheduler));
+  const notificationDeliveryScheduler=setInterval(()=>{
+    void notificationDeliveryTick().catch(error=>app.log.error({err:error},'notification_delivery_worker_failed'));
+  },2_000);
+  notificationDeliveryScheduler.unref();
+  const notificationRetentionScheduler=setInterval(()=>{
+    void notificationRetentionTick().catch(error=>app.log.error({err:error},'notification_retention_failed'));
+  },6*60*60_000);
+  notificationRetentionScheduler.unref();
+  app.addHook('onClose',async()=>{clearInterval(notificationDeliveryScheduler);clearInterval(notificationRetentionScheduler);});
 
   app.addHook("onError", async (request, reply, error) => {
     if (reply.statusCode >= 500) {
@@ -1563,7 +1575,7 @@ export async function buildApp() {
     }
     await database().begin(async tx => {
       await tx`update users set active_session_id=null where id=${user.id!} and active_session_id=${user.sessionId!}::uuid`;
-      await tx`delete from device_tokens where user_id=${user.id!}`;
+      await tx`update device_tokens set enabled=false,invalidated_at=now(),invalidated_reason='SESSION_LOGOUT',updated_at=now() where user_id=${user.id!} and (session_id=${user.sessionId!}::uuid or session_id is null)`;
       if (user.role === "DRIVER") await tx`update drivers set is_available=false where user_id=${user.id!}`;
     });
     return { closed: true };
@@ -1598,16 +1610,15 @@ export async function buildApp() {
       });
     }
     await database().begin(async tx => {
-      // La cuenta admite una sola sesión activa. Conservamos el token actual y
-      // retiramos tokens antiguos sin crear una ventana en la que no haya push.
-      await tx`delete from device_tokens where user_id=${user.id!} and token<>${parsed.data.token}`;
+      if(parsed.data.deviceId)await tx`delete from device_tokens where user_id=${user.id!} and device_id=${parsed.data.deviceId} and token<>${parsed.data.token}`;
       await tx`
-        insert into device_tokens (user_id, token, platform, last_seen_at, notification_protocol,enabled,invalidated_at,app_version,app_build,app_version_reported_at)
-        values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now(),${parsed.data.notificationProtocol},coalesce(${parsed.data.notificationsEnabled??null},true),null,${parsed.data.versionName??null},${parsed.data.buildNumber??null},case when ${Boolean(parsed.data.versionName||parsed.data.buildNumber)} then now() else null end)
+        insert into device_tokens (user_id, token, platform, last_seen_at, notification_protocol,enabled,invalidated_at,app_version,app_build,app_version_reported_at,device_id,session_id,permission_status,invalidated_reason,provider_error_code,updated_at)
+        values (${user.id!}, ${parsed.data.token}, ${parsed.data.platform}, now(),${parsed.data.notificationProtocol},coalesce(${parsed.data.notificationsEnabled??null},true),null,${parsed.data.versionName??null},${parsed.data.buildNumber??null},case when ${Boolean(parsed.data.versionName||parsed.data.buildNumber)} then now() else null end,${parsed.data.deviceId??null},${user.sessionId!}::uuid,${parsed.data.permissionStatus},null,null,now())
         on conflict (token) do update set user_id=excluded.user_id, platform=excluded.platform, last_seen_at=now(), notification_protocol=excluded.notification_protocol,
           enabled=coalesce(${parsed.data.notificationsEnabled??null},device_tokens.enabled),invalidated_at=null,
           app_version=coalesce(excluded.app_version,device_tokens.app_version),app_build=coalesce(excluded.app_build,device_tokens.app_build),
-          app_version_reported_at=case when excluded.app_version is not null or excluded.app_build is not null then now() else device_tokens.app_version_reported_at end
+          app_version_reported_at=case when excluded.app_version is not null or excluded.app_build is not null then now() else device_tokens.app_version_reported_at end,
+          device_id=coalesce(excluded.device_id,device_tokens.device_id),session_id=excluded.session_id,permission_status=excluded.permission_status,invalidated_reason=null,provider_error_code=null,updated_at=now()
       `;
       if(parsed.data.versionName||parsed.data.buildNumber){
         await tx`insert into notification_analytics_events(notification_id,user_id,event,metadata)
@@ -2582,15 +2593,46 @@ export async function buildApp() {
       select id::text, title, message, notification_type as type, category,priority,entity_type as "entityType",
         entity_id::text as "entityId",reference_id as "referenceId",deep_link as "deepLink",action,data,
         read_at as "readAt",opened_at as "openedAt",created_at as "createdAt"
-      from user_notifications where user_id=${user.id!} and persist_in_center=true
+      from user_notifications where user_id=${user.id!} and persist_in_center=true and (expires_at is null or expires_at>now())
         and (${cursor ?? null}::timestamptz is null or created_at < ${cursor ?? null}::timestamptz)
       order by created_at desc, id desc limit ${limit + 1}
     `;
-    const unreadRows = await database()`select count(*)::int count from user_notifications where user_id=${user.id!} and persist_in_center=true and read_at is null`;
+    const unreadRows = await database()`select count(*)::int count from user_notifications where user_id=${user.id!} and persist_in_center=true and read_at is null and (expires_at is null or expires_at>now())`;
     const unreadCount = Number(unreadRows[0]?.count ?? 0);
     const hasMore = rows.length > limit;
     const items = hasMore ? rows.slice(0, limit) : rows;
     return { items, unreadCount, nextCursor: hasMore ? items.at(-1)?.createdAt ?? null : null };
+  });
+
+  app.get('/v1/notifications/fallback',async(request,reply)=>{
+    const user=await authenticatedUser(request,reply,{allowPendingDriver:true});if(!user)return;
+    const [permission]=await database()`select not coalesce(bool_or(permission_status in ('AUTHORIZED','PROVISIONAL') and enabled and invalidated_at is null),false) unavailable from device_tokens where user_id=${user.id!} and (session_id=${user.sessionId!}::uuid or session_id is null)`;
+    if(!permission?.unavailable)return {item:null};
+    const [item]=await database().begin(async tx=>{
+      const [row]=await tx`select id::text,title,message,notification_type as type,category,priority,deep_link as "deepLink",action,data,created_at as "createdAt" from user_notifications
+        where user_id=${user.id!} and persist_in_center=true and read_at is null and category in ('SYSTEM','OPERATIONAL','REMINDER')
+          and (expires_at is null or expires_at>now()) and (fallback_shown_at is null or fallback_shown_at<now()-interval '6 hours')
+        order by case priority when 'SECURITY' then 1 when 'TRIP_CRITICAL' then 2 when 'OPERATIONAL' then 3 when 'SYSTEM' then 4 else 5 end,created_at desc limit 1 for update skip locked`;
+      if(!row)return [undefined];
+      await tx`update user_notifications set fallback_shown_at=now() where id=${row.id}`;
+      await tx`insert into notification_analytics_events(notification_id,user_id,event) values(${row.id},${user.id!},'FALLBACK_SHOWN')`;
+      return [row];
+    });
+    return {item:item??null};
+  });
+
+  app.get('/v1/notifications/:notificationId/action-context',async(request,reply)=>{
+    const user=await authenticatedUser(request,reply,{allowPendingDriver:true});if(!user)return;
+    const notificationId=(request.params as {notificationId:string}).notificationId;
+    if(!z.string().uuid().safeParse(notificationId).success)return reply.code(400).send({error:'INVALID_NOTIFICATION'});
+    const [item]=await database()`select id::text,notification_type as type,reference_id as "referenceId",deep_link as "deepLink",action,data,expires_at as "expiresAt" from user_notifications where id=${notificationId} and user_id=${user.id!}`;
+    if(!item)return reply.code(404).send({error:'NOTIFICATION_NOT_FOUND'});
+    let valid=!item.expiresAt||new Date(item.expiresAt).getTime()>Date.now();
+    let reason=valid?'VALID':'EXPIRED';
+    const data=item.data??{},tripId=data.tripId;
+    if(valid&&tripId){const [trip]=await database()`select status from trips where id=${tripId} and (passenger_id=${user.id!} or driver_id=${user.id!})`;valid=Boolean(trip);reason=valid?'VALID':'TRIP_NOT_AVAILABLE';}
+    if(valid&&String(item.type).startsWith('SMART_')){const [active]=await database()`select 1 from trips where (passenger_id=${user.id!} or driver_id=${user.id!}) and status in ('SEARCHING','ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS') limit 1`;if(active){valid=false;reason='ACTIVE_TRIP_EXISTS';}}
+    return {valid,reason,type:item.type,deepLink:item.deepLink,action:item.action,data};
   });
 
   app.patch("/v1/notifications/:notificationId/read", async (request, reply) => {
@@ -2623,7 +2665,15 @@ export async function buildApp() {
     const parsed=z.object({event:z.enum(['DEEP_LINK_OPENED','STORE_OPENED','TRIP_PREPARATION_OPENED','TRIP_REQUESTED','TRIP_COMPLETED']),metadata:z.record(z.string(),z.unknown()).default({})}).safeParse(request.body);
     if(!z.string().uuid().safeParse(notificationId).success||!parsed.success)return reply.code(400).send({error:'INVALID_NOTIFICATION_EVENT'});
     const [owned]=await database()`select id from user_notifications where id=${notificationId} and user_id=${user.id!}`;if(!owned)return reply.code(404).send({error:'NOTIFICATION_NOT_FOUND'});
-    await database()`insert into notification_analytics_events(notification_id,user_id,event,metadata) values (${notificationId},${user.id!},${parsed.data.event},${JSON.stringify(parsed.data.metadata)}::jsonb)`;
+    await database().begin(async tx=>{
+      await tx`insert into notification_analytics_events(notification_id,user_id,event,metadata) values (${notificationId},${user.id!},${parsed.data.event},${JSON.stringify(parsed.data.metadata)}::jsonb)`;
+      if(['TRIP_PREPARATION_OPENED','TRIP_REQUESTED','TRIP_COMPLETED'].includes(parsed.data.event)){
+        const tripId=typeof parsed.data.metadata.tripId==='string'&&z.string().uuid().safeParse(parsed.data.metadata.tripId).success?parsed.data.metadata.tripId:null;
+        await tx`insert into notification_trip_attributions(notification_id,user_id,trip_id,prepared_at,requested_at,completed_at,attribution_expires_at)
+          select ${notificationId},${user.id!},${tripId},case when ${parsed.data.event}='TRIP_PREPARATION_OPENED' then now() end,case when ${parsed.data.event}='TRIP_REQUESTED' then now() end,case when ${parsed.data.event}='TRIP_COMPLETED' then now() end,now()+(attribution_window_hours||' hours')::interval from notification_delivery_config where id=1
+          on conflict(notification_id) do update set trip_id=coalesce(excluded.trip_id,notification_trip_attributions.trip_id),prepared_at=coalesce(excluded.prepared_at,notification_trip_attributions.prepared_at),requested_at=coalesce(excluded.requested_at,notification_trip_attributions.requested_at),completed_at=coalesce(excluded.completed_at,notification_trip_attributions.completed_at)`;
+      }
+    });
     return reply.code(201).send({tracked:true});
   });
 
@@ -2687,6 +2737,7 @@ export async function buildApp() {
         from notification_analytics_events requested
         where requested.event='TRIP_REQUESTED' and requested.metadata->>'tripId'=${tripId}
           and not exists(select 1 from notification_analytics_events completed where completed.notification_id=requested.notification_id and completed.event='TRIP_COMPLETED')`;
+      await database()`update notification_trip_attributions set completed_at=now() where trip_id=${tripId} and requested_at is not null and completed_at is null and now()<=attribution_expires_at`;
       const eligibility = await driverMembershipEligibility(user.id!);
       if (!eligibility.eligible) await database()`update drivers set is_available=false where user_id=${user.id!}`;
       else void redispatchOldestTrip()

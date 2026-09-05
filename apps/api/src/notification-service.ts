@@ -1,8 +1,9 @@
 import {database} from './database.js';
 import {sendPush,type PushResult} from './push.js';
 import {notificationClassification,type NotificationCategory,type NotificationPriority} from './user-notifications.js';
+import {enqueueNotification,immediatePriorities,isRetriablePushError,notificationTtlMs} from './notification-reliability.js';
 
-export type NotificationStatus='CREATED'|'QUEUED'|'SENT'|'FAILED'|'SKIPPED';
+export type NotificationStatus='CREATED'|'QUEUED'|'PROCESSING'|'RETRY'|'SENT'|'FAILED'|'SKIPPED'|'DEAD_LETTER'|'EXPIRED';
 export interface NotificationCommand {
   userId:string;
   type:string;
@@ -74,9 +75,24 @@ export class NotificationService {
     }
     const notificationId=String(claimed?.id??'');
     await database()`insert into notification_analytics_events(notification_id,user_id,event) values (${notificationId},${normalized.userId},'CREATED')`;
-    if(normalized.scheduledAt&&normalized.scheduledAt.getTime()>Date.now())return {notificationId,accepted:true,pushSent:false,persisted:true,status:'QUEUED'};
     if(!normalized.sendPush)return {notificationId,accepted:true,pushSent:false,persisted:true,status:'CREATED'};
-    const push=await sendPush(normalized.userId,normalized.title,normalized.body,{...stringData(normalized),internalNotificationId:notificationId});
+    const expiresAt=new Date((normalized.scheduledAt?.getTime()??Date.now())+notificationTtlMs(normalized.priority,normalized.type));
+    const collapseKey=normalized.referenceId?`${normalized.type}:${normalized.referenceId}`:`${normalized.type}:${normalized.userId}`;
+    const future=Boolean(normalized.scheduledAt&&normalized.scheduledAt.getTime()>Date.now());
+    if(future||!immediatePriorities.has(normalized.priority)){
+      await enqueueNotification({notificationId,userId:normalized.userId,priority:normalized.priority,expiresAt,collapseKey});
+      if(normalized.scheduledAt)await database()`update notification_delivery_jobs set next_attempt_at=${normalized.scheduledAt} where notification_id=${notificationId}`;
+      await database()`insert into notification_analytics_events(notification_id,user_id,event) values (${notificationId},${normalized.userId},'QUEUED')`;
+      return {notificationId,accepted:true,pushSent:false,persisted:true,status:'QUEUED'};
+    }
+    const push=await sendPush(normalized.userId,normalized.title,normalized.body,{...stringData(normalized),internalNotificationId:notificationId},{expiresAt,collapseKey,priority:normalized.priority});
+    const immediateError=push.errorCode??push.errors?.[0]?.code;
+    if(push.sent===0&&!push.skipped&&isRetriablePushError(immediateError)){
+      await enqueueNotification({notificationId,userId:normalized.userId,priority:normalized.priority,expiresAt,collapseKey});
+      await database()`update user_notifications set error_code=${immediateError??null},error_message=${push.errors?.[0]?.message??null} where id=${notificationId}`;
+      await database()`insert into notification_analytics_events(notification_id,user_id,event,metadata) values(${notificationId},${normalized.userId},'RETRY',${JSON.stringify({immediate:true,errorCode:immediateError})}::jsonb)`;
+      return {notificationId,accepted:true,pushSent:false,persisted:true,status:'RETRY',errorCode:immediateError,errorMessage:push.errors?.[0]?.message};
+    }
     const status:NotificationStatus=push.sent>0?'SENT':push.skipped?'SKIPPED':'FAILED';
     await database()`update user_notifications set status=${status},push_sent_at=case when ${push.sent}>0 then now() else push_sent_at end,
       error_code=${push.errorCode??push.errors?.[0]?.code??null},error_message=${push.errors?.[0]?.message??null} where id=${notificationId}`;

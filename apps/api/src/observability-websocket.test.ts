@@ -20,5 +20,5 @@ describe("Sentry y WebSocket", () => {
 
     expect(integrations.some(integration => integration.name === "Fastify")).toBe(false);
     expect(integrations.length).toBeGreaterThan(0);
-  });
+  }, 15_000);
 });

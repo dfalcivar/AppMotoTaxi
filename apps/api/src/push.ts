@@ -40,6 +40,14 @@ export type PushResult = {
   errorCode?: string;
   errors?: Array<{ code: string; message: string }>;
   durationMs?: number;
+  deliveries?: Array<{ deviceTokenId: string; deviceId?: string; success: boolean; code?: string }>;
+};
+
+export type PushOptions = {
+  expiresAt?: Date;
+  collapseKey?: string;
+  priority?: "SECURITY" | "TRIP_CRITICAL" | "OPERATIONAL" | "REMINDER" | "SMART" | "SYSTEM" | "CAMPAIGN" | "PROMOTIONAL";
+  excludeDeviceIds?: string[];
 };
 
 export function pushDeliveryStatus(result: { skipped?: boolean; sent: number; failed?: number }): PushDeliveryStatus {
@@ -160,7 +168,7 @@ export function pushConfigurationStatus(clientProjectId?: string): PushConfigura
   }
 }
 
-export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}): Promise<PushResult> {
+export async function sendPush(userId: string, title: string, body: string, data: Record<string, string> = {}, options: PushOptions = {}): Promise<PushResult> {
   const startedAt = performance.now();
   const eventType = data.type ?? "UNKNOWN";
   const presentation = pushPresentationForType(eventType, title, body);
@@ -169,7 +177,7 @@ export async function sendPush(userId: string, title: string, body: string, data
   data.eventType ??= eventType;
   data.notificationRoute ??= pushRouteForType(eventType);
   try {
-    const notificationId = eventType === 'OFFER_CLOSED' ? undefined : await persistUserNotification({ userId, title, message: body, type: eventType, data });
+    const notificationId = eventType === 'OFFER_CLOSED' || data.internalNotificationId ? undefined : await persistUserNotification({ userId, title, message: body, type: eventType, data });
     if (notificationId) data.internalNotificationId = notificationId;
   } catch (error) {
     console.warn("No se pudo guardar la notificación interna.", {
@@ -199,11 +207,13 @@ export async function sendPush(userId: string, title: string, body: string, data
       return finish({ sent: 0, skipped: true, errorCode: "firebase/not-configured" });
     }
     const rows = await database()`
-      select distinct device.token, device.notification_protocol as protocol, device.platform, account.role::text as "userType"
+      select distinct device.id::text,device.device_id as "deviceId",device.token, device.notification_protocol as protocol, device.platform, account.role::text as "userType"
       from device_tokens device
       join users account on account.id=device.user_id
       where device.user_id=${userId} and device.last_seen_at > now() - interval '90 days'
         and device.enabled=true and device.invalidated_at is null
+        and (device.session_id is null or device.session_id=account.active_session_id)
+        and not(coalesce(device.device_id,'')=any(${options.excludeDeviceIds??[]}::text[]))
     `;
     if (rows[0]?.userType) data.userType ??= String(rows[0].userType);
     const tokens = rows.map(row => String(row.token));
@@ -221,10 +231,12 @@ export async function sendPush(userId: string, title: string, body: string, data
       data.expiresAt=new Date(offer.expires_at).toISOString();
     }
     data.title=title; data.body=body;
-    const notificationTag = data.tripId
+    const notificationTag = options.collapseKey ?? (data.tripId
       ? `${isChat ? "chat" : "trip"}-${data.tripId}`
-      : `costa-go-${data.type ?? "general"}`;
-    const ttl = isTripOffer ? Math.max(0,new Date(data.expiresAt!).getTime()-Date.now()) : isChat ? 86_400_000 : 900_000;
+      : `costa-go-${data.type ?? "general"}`);
+    const ttl = Math.max(0, options.expiresAt
+      ? options.expiresAt.getTime()-Date.now()
+      : isTripOffer ? new Date(data.expiresAt!).getTime()-Date.now() : isChat ? 86_400_000 : 900_000);
     // Older APKs keep their existing FCM presentation. Protocol 2 owns offer
     // rendering/dismissal in a native bridge registered with the headless engine.
     const result = await client.sendEach(rows.map(device => {
@@ -235,7 +247,7 @@ export async function sendPush(userId: string, title: string, body: string, data
       ...(!lifecycle && !silent ? {notification: { title, body }} : {}),
       data,
       android: {
-        priority: "high" as const,
+        priority: (options.priority==='PROMOTIONAL'||options.priority==='CAMPAIGN') ? "normal" as const : "high" as const,
         collapseKey: silent ? `close-${data.tripId}` : notificationTag,
         ttl,
         ...(!lifecycle && !silent ? {notification: {
@@ -269,10 +281,10 @@ export async function sendPush(userId: string, title: string, body: string, data
     }; }));
     const invalid = result.responses.flatMap((response, index) =>
       !response.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(response.error?.code ?? "")
-        ? [tokens[index]!]
+        ? [{token:tokens[index]!,code:response.error?.code??'messaging/invalid-registration-token'}]
         : []
     );
-    if (invalid.length) await database()`update device_tokens set enabled=false,invalidated_at=now() where token = any(${invalid})`;
+    for(const entry of invalid)await database()`update device_tokens set enabled=false,invalidated_at=now(),invalidated_reason='PROVIDER_REJECTED',provider_error_code=${entry.code},updated_at=now() where token=${entry.token}`;
     const errors = result.responses
       .filter(response => !response.success)
       .map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" }));
@@ -285,7 +297,8 @@ export async function sendPush(userId: string, title: string, body: string, data
       failed: result.failureCount,
       durationMs
     });
-    return finish({ sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors, durationMs });
+    const deliveries=result.responses.map((response,index)=>({deviceTokenId:String(rows[index]!.id),...(rows[index]!.deviceId?{deviceId:String(rows[index]!.deviceId)}:{}),success:response.success,...(!response.success?{code:response.error?.code??'unknown'}:{})}));
+    return finish({ sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors, durationMs,deliveries });
   } catch (error) {
     console.error("Firebase no pudo enviar la notificación.", {
       type: data.type ?? "unknown",

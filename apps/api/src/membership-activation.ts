@@ -62,7 +62,7 @@ export async function sendMembershipActivationConfirmation(paymentId:string,memb
   if(!record)return;
   const presentation=membershipActivationPresentation(record);
   const deliveries:Promise<unknown>[]=[notificationService.send({
-    userId:record.userId,type:'MEMBERSHIP_ACTIVATED',category:'OPERATIONAL',priority:'HIGH',
+    userId:record.userId,type:'MEMBERSHIP_ACTIVATED',category:'OPERATIONAL',priority:'OPERATIONAL',
     title:presentation.title,body:presentation.body,referenceId:record.membershipId,
     deepLink:'costa-go://membership',action:'OPEN_MEMBERSHIP',persistInCenter:true,sendPush:true,
     idempotencyKey:`MEMBERSHIP_ACTIVATED:${record.membershipId}:${record.paymentId}`,

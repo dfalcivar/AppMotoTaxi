@@ -34,17 +34,18 @@ const persistentTypes = new Set([
 ]);
 
 export type NotificationCategory = "TRANSACTIONAL" | "OPERATIONAL" | "REMINDER" | "SYSTEM" | "SMART" | "CAMPAIGN" | "PROMOTIONAL";
-export type NotificationPriority = "CRITICAL" | "HIGH" | "NORMAL" | "LOW";
+export type NotificationPriority = "SECURITY" | "TRIP_CRITICAL" | "OPERATIONAL" | "REMINDER" | "SMART" | "SYSTEM" | "CAMPAIGN" | "PROMOTIONAL";
 
 export function notificationClassification(type: string): { category: NotificationCategory; priority: NotificationPriority } {
   const normalized=type.toUpperCase();
-  if(normalized.startsWith("SMART_"))return {category:"SMART",priority:"NORMAL"};
-  if(normalized==="CAMPAIGN"||normalized==="EVENT")return {category:"CAMPAIGN",priority:"NORMAL"};
-  if(normalized==="PROMOTIONAL")return {category:"PROMOTIONAL",priority:"LOW"};
-  if(normalized==='APP_UPDATE'||normalized==='SYSTEM')return {category:'SYSTEM',priority:'HIGH'};
-  if(normalized==='SCHEDULED_TRIP_REMINDER'||normalized==='MEMBERSHIP_EXPIRING')return {category:'REMINDER',priority:'NORMAL'};
-  if(normalized.startsWith("MEMBERSHIP_")||normalized.startsWith("SUPPORT_")||normalized==="FLEET_SESSION")return {category:"OPERATIONAL",priority:"HIGH"};
-  return {category:"TRANSACTIONAL",priority:["TRIP_OFFER","TRIP_CANCELLED","DRIVER_ARRIVED","NO_DRIVER"].includes(normalized)?"CRITICAL":"HIGH"};
+  if(normalized.startsWith("SECURITY_")||normalized.includes("PASSWORD")||normalized.includes("ACCOUNT_LOCK"))return {category:"SYSTEM",priority:"SECURITY"};
+  if(normalized.startsWith("SMART_"))return {category:"SMART",priority:"SMART"};
+  if(normalized==="CAMPAIGN"||normalized==="EVENT")return {category:"CAMPAIGN",priority:"CAMPAIGN"};
+  if(normalized==="PROMOTIONAL")return {category:"PROMOTIONAL",priority:"PROMOTIONAL"};
+  if(normalized==='APP_UPDATE'||normalized==='SYSTEM')return {category:'SYSTEM',priority:'SYSTEM'};
+  if(normalized==='SCHEDULED_TRIP_REMINDER'||normalized==='SCHEDULED_DRIVER_REMINDER'||normalized==='MEMBERSHIP_EXPIRING')return {category:'REMINDER',priority:'REMINDER'};
+  if(normalized.startsWith("MEMBERSHIP_")||normalized.startsWith("SUPPORT_")||normalized==="FLEET_SESSION")return {category:"OPERATIONAL",priority:"OPERATIONAL"};
+  return {category:"TRANSACTIONAL",priority:["TRIP_OFFER","TRIP_OFFER_CANCELLED","TRIP_ASSIGNED","DRIVER_EN_ROUTE","DRIVER_ARRIVED","IN_PROGRESS","COMPLETED","TRIP_CANCELLED","DRIVER_CANCELLED_REASSIGNING","NO_DRIVER"].includes(normalized)?"TRIP_CRITICAL":"OPERATIONAL"};
 }
 
 function uuid(value: string | undefined): string | null {
