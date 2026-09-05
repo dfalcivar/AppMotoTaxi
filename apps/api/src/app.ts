@@ -187,7 +187,7 @@ const routeSchema = z.object({
   includeRouteToken: z.boolean().default(false)
 });
 const deviceTokenSchema = z.object({
-  token: z.string().min(20).max(4096),
+  token: z.string().trim().min(20).max(4096),
   platform: z.enum(["ANDROID", "IOS"]).default("ANDROID"),
   versionName: z.string().trim().regex(/^\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/).max(50).optional(),
   buildNumber: z.number().int().min(1).max(2147483647).optional(),

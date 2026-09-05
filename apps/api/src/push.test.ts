@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePushData, pushDeliveryStatus, pushPresentationForType, pushRouteForType } from "./push.js";
+import { invalidFcmTokenError, normalizePushData, pushDeliveryStatus, pushPresentationForType, pushRouteForType } from "./push.js";
 
 describe("normalizePushData", () => {
   it("convierte metadatos APP_UPDATE al contrato de cadenas requerido por FCM", () => {
@@ -40,6 +40,24 @@ describe("pushDeliveryStatus", () => {
     expect(pushDeliveryStatus({ sent: 1, failed: 1 })).toBe("PARTIAL");
     expect(pushDeliveryStatus({ sent: 0, failed: 2 })).toBe("FAILED");
     expect(pushDeliveryStatus({ sent: 0, skipped: true })).toBe("SKIPPED");
+  });
+});
+
+describe("invalidFcmTokenError", () => {
+  it("reconoce las variantes de token inválido que devuelve FCM HTTP v1", () => {
+    expect(invalidFcmTokenError({ code: "messaging/invalid-registration-token" })).toBe(true);
+    expect(invalidFcmTokenError({ code: "messaging/registration-token-not-registered" })).toBe(true);
+    expect(invalidFcmTokenError({
+      code: "messaging/invalid-argument",
+      message: "The registration token is not a valid FCM registration token"
+    })).toBe(true);
+  });
+
+  it("no invalida dispositivos cuando el argumento incorrecto pertenece al payload", () => {
+    expect(invalidFcmTokenError({
+      code: "messaging/invalid-argument",
+      message: "Invalid value at 'message.data[0].value' (TYPE_STRING), 61"
+    })).toBe(false);
   });
 });
 

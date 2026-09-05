@@ -103,7 +103,17 @@ export async function notificationSystemHealth(){
   const [delivery]=await database()`select count(*)::int attempted,count(*) filter(where status in ('SENT','PARTIAL'))::int successful,count(*) filter(where status='FAILED')::int failed from push_delivery_events where created_at>now()-interval '24 hours'`;
   const [tokens]=await database()`select count(*) filter(where enabled and invalidated_at is null)::int valid,count(*) filter(where invalidated_at is not null)::int invalid from device_tokens`;
   const incidents=await database()`select id,state,reason,failure_count as "failureCount",opened_at as "openedAt",closed_at as "closedAt" from notification_provider_incidents order by opened_at desc limit 10`;
-  const errors=await database()`select event_type as "type",error_codes as "errorCodes",created_at as "createdAt" from push_delivery_events where status in ('FAILED','PARTIAL') order by created_at desc limit 20`;
+  const errors=await database()`select delivery.event_type as "type",delivery.error_codes as "errorCodes",detail.error_message as "errorMessage",delivery.created_at as "createdAt"
+    from push_delivery_events delivery
+    left join lateral(
+      select notification.error_message
+      from user_notifications notification
+      where notification.user_id=delivery.user_id and notification.notification_type=delivery.event_type
+        and notification.error_message is not null
+        and notification.last_attempt_at between delivery.created_at-interval '2 minutes' and delivery.created_at+interval '2 minutes'
+      order by abs(extract(epoch from notification.last_attempt_at-delivery.created_at)) limit 1
+    ) detail on true
+    where delivery.status in ('FAILED','PARTIAL') order by delivery.created_at desc limit 20`;
   const attempted=Number(delivery?.attempted??0),successful=Number(delivery?.successful??0);
   return {provider:'FCM',circuit:incidents[0]?.state==='OPEN'?'OPEN':'CLOSED',queue:queue??{},delivery:{...(delivery??{}),successRate:attempted?Math.round(successful/attempted*10000)/100:100},tokens:tokens??{},incidents,errors};
 }

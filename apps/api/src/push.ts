@@ -31,6 +31,14 @@ function firebaseErrorCode(error: unknown): string {
   return "unknown";
 }
 
+export function invalidFcmTokenError(error: { code?: string; message?: string } | undefined): boolean {
+  const code = String(error?.code ?? "");
+  if (["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(code)) return true;
+  if (code !== "messaging/invalid-argument") return false;
+  const message = String(error?.message ?? "");
+  return /registration token/i.test(message) && /not (?:a )?valid|invalid/i.test(message);
+}
+
 export type PushDeliveryStatus = "SENT" | "PARTIAL" | "FAILED" | "SKIPPED";
 export type PushResult = {
   sent: number;
@@ -231,7 +239,7 @@ export async function sendPush(userId: string, title: string, body: string, rawD
         and not(coalesce(device.device_id,'')=any(${options.excludeDeviceIds??[]}::text[]))
     `;
     if (rows[0]?.userType) data.userType ??= String(rows[0].userType);
-    const tokens = rows.map(row => String(row.token));
+    const tokens = rows.map(row => String(row.token).trim());
     if (!tokens.length) {
       console.warn("Push omitido: el usuario no tiene un dispositivo registrado.", { type: data.type ?? "unknown" });
       return finish({ sent: 0, attempted: 0, errorCode: "firebase/device-not-registered" });
@@ -295,14 +303,17 @@ export async function sendPush(userId: string, title: string, body: string, rawD
       }
     }; }));
     const invalid = result.responses.flatMap((response, index) =>
-      !response.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(response.error?.code ?? "")
-        ? [{token:tokens[index]!,code:response.error?.code??'messaging/invalid-registration-token'}]
+      !response.success && invalidFcmTokenError(response.error)
+        ? [{token:String(rows[index]!.token),code:'messaging/invalid-registration-token'}]
         : []
     );
     for(const entry of invalid)await database()`update device_tokens set enabled=false,invalidated_at=now(),invalidated_reason='PROVIDER_REJECTED',provider_error_code=${entry.code},updated_at=now() where token=${entry.token}`;
     const errors = result.responses
       .filter(response => !response.success)
-      .map(response => ({ code: response.error?.code ?? "unknown", message: response.error?.message ?? "" }));
+      .map(response => ({
+        code: invalidFcmTokenError(response.error) ? "messaging/invalid-registration-token" : response.error?.code ?? "unknown",
+        message: response.error?.message ?? ""
+      }));
     if (result.failureCount) console.warn("Firebase rechazó una o más notificaciones.", errors.map(error => error.code));
     const durationMs = Math.round(performance.now() - startedAt);
     console.info("Push procesado.", {
@@ -312,7 +323,7 @@ export async function sendPush(userId: string, title: string, body: string, rawD
       failed: result.failureCount,
       durationMs
     });
-    const deliveries=result.responses.map((response,index)=>({deviceTokenId:String(rows[index]!.id),...(rows[index]!.deviceId?{deviceId:String(rows[index]!.deviceId)}:{}),success:response.success,...(!response.success?{code:response.error?.code??'unknown'}:{})}));
+    const deliveries=result.responses.map((response,index)=>({deviceTokenId:String(rows[index]!.id),...(rows[index]!.deviceId?{deviceId:String(rows[index]!.deviceId)}:{}),success:response.success,...(!response.success?{code:invalidFcmTokenError(response.error)?'messaging/invalid-registration-token':response.error?.code??'unknown'}:{})}));
     return finish({ sent: result.successCount, attempted: tokens.length, failed: result.failureCount, errors, durationMs,deliveries });
   } catch (error) {
     console.error("Firebase no pudo enviar la notificación.", {
