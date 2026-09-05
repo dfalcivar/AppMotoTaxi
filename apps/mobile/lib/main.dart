@@ -218,6 +218,59 @@ String membershipPlanSummary(dynamic snapshot) {
       : 'Plan por período · $duration días';
 }
 
+@visibleForTesting
+int compareMembershipPlans(
+  Map<String, dynamic> left,
+  Map<String, dynamic> right,
+) {
+  final leftType = left['planType']?.toString() == 'TRIP_PACK' ? 1 : 0;
+  final rightType = right['planType']?.toString() == 'TRIP_PACK' ? 1 : 0;
+  final typeComparison = leftType.compareTo(rightType);
+  if (typeComparison != 0) return typeComparison;
+
+  int number(Map<String, dynamic> plan, String key) =>
+      (plan[key] as num?)?.toInt() ?? 0;
+  final primaryComparison = (leftType == 1
+          ? number(left, 'includedTrips')
+          : number(left, 'durationDays'))
+      .compareTo(leftType == 1
+          ? number(right, 'includedTrips')
+          : number(right, 'durationDays'));
+  if (primaryComparison != 0) return primaryComparison;
+
+  final amountComparison = ((left['amount'] as num?)?.toDouble() ?? 0)
+      .compareTo((right['amount'] as num?)?.toDouble() ?? 0);
+  if (amountComparison != 0) return amountComparison;
+  return (left['name']?.toString() ?? '')
+      .compareTo(right['name']?.toString() ?? '');
+}
+
+@visibleForTesting
+List<Map<String, dynamic>> sortedMembershipPlans(
+  Iterable<Map<String, dynamic>> plans,
+) =>
+    plans.toList()..sort(compareMembershipPlans);
+
+@visibleForTesting
+({int included, int used, int remaining, double progress})
+    membershipTripPackProgress(Map<String, dynamic> membership) {
+  final included =
+      math.max(0, (membership['includedTrips'] as num?)?.toInt() ?? 0);
+  final rawUsed =
+      math.max(0, (membership['completedTrips'] as num?)?.toInt() ?? 0);
+  final used = included == 0 ? rawUsed : math.min(rawUsed, included);
+  final suppliedRemaining = (membership['remainingTrips'] as num?)?.toInt();
+  final remaining = included == 0
+      ? math.max(0, suppliedRemaining ?? 0)
+      : math.min(included, math.max(0, suppliedRemaining ?? included - used));
+  return (
+    included: included,
+    used: used,
+    remaining: remaining,
+    progress: included == 0 ? 0 : remaining / included,
+  );
+}
+
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
 /// by the passenger.
 class OriginSelectionGuard {
@@ -17212,12 +17265,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   CostaGoStatusTone.danger,
                 _ => CostaGoStatusTone.info,
               };
-              final visiblePlans = plans
+              final visiblePlans = sortedMembershipPlans(plans
                   .map((item) => Map<String, dynamic>.from(item as Map))
                   .where((plan) =>
                       (plan['planType']?.toString() ?? 'PERIODIC') ==
-                      selectedPlanType)
-                  .toList();
+                      selectedPlanType));
+              final tripPackProgress = membershipTripPackProgress(membership);
               Future<void> selectPlan(Map<String, dynamic> plan) async {
                 if (pendingOrder != null || orderGenerationInProgress) return;
                 setSheetState(() => orderGenerationInProgress = true);
@@ -17278,9 +17331,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 CostaGoSpace.lg,
                                 CostaGoSpace.xxl),
                             children: [
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: CostaGoStatusChip(
+                          Wrap(spacing: 10, runSpacing: 8, children: [
+                            CostaGoStatusChip(
                               label: _membershipStatusLabel(status),
                               icon: status == 'ACTIVE'
                                   ? Icons.verified_rounded
@@ -17289,99 +17341,143 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                       : Icons.schedule_rounded,
                               tone: statusTone,
                             ),
-                          ),
+                            CostaGoStatusChip(
+                              label: currentIsTripPack
+                                  ? 'Por viajes'
+                                  : 'Por período',
+                              icon: currentIsTripPack
+                                  ? Icons.route_outlined
+                                  : Icons.event_repeat_outlined,
+                            ),
+                          ]),
                           const SizedBox(height: CostaGoSpace.sm),
                           CostaGoSurface(
+                            tone: CostaGoStatusTone.info,
+                            padding: const EdgeInsets.all(CostaGoSpace.lg),
                             child: Column(children: [
-                              Row(children: [
-                                CostaGoIconBadge(
-                                  icon: currentIsTripPack
-                                      ? Icons.route_outlined
-                                      : Icons.calendar_month_outlined,
-                                  size: 52,
-                                ),
-                                const SizedBox(width: CostaGoSpace.sm),
-                                Expanded(
-                                  child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Plan actual',
-                                            style: Theme.of(sheetContext)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                    color:
-                                                        Theme.of(sheetContext)
-                                                            .colorScheme
-                                                            .onSurfaceVariant)),
-                                        Text(
-                                          membership['planName']?.toString() ??
-                                              'Sin plan activo',
-                                          style: Theme.of(sheetContext)
-                                              .textTheme
-                                              .titleLarge,
-                                        ),
-                                      ]),
-                                ),
-                                CostaGoStatusChip(
-                                  label: currentIsTripPack
-                                      ? 'Por viajes'
-                                      : 'Por período',
-                                  icon: currentIsTripPack
-                                      ? Icons.route_outlined
-                                      : Icons.event_repeat_outlined,
-                                ),
-                              ]),
-                              const Divider(),
-                              if (currentIsTripPack)
-                                CostaGoSurface(
-                                  tone: CostaGoStatusTone.info,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: CostaGoSpace.md,
-                                      vertical: CostaGoSpace.sm),
-                                  child: Row(children: [
+                              Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                                     Expanded(
                                       child: Column(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Text('Viajes disponibles',
+                                            Text('Plan actual',
                                                 style: Theme.of(sheetContext)
                                                     .textTheme
-                                                    .bodySmall),
+                                                    .bodyMedium
+                                                    ?.copyWith(
+                                                        color: Theme.of(
+                                                                sheetContext)
+                                                            .colorScheme
+                                                            .onSurfaceVariant)),
+                                            const SizedBox(height: 2),
                                             Text(
-                                              '${membership['remainingTrips'] ?? 0}',
+                                              membership['planName']
+                                                      ?.toString() ??
+                                                  'Sin plan activo',
                                               style: Theme.of(sheetContext)
                                                   .textTheme
-                                                  .headlineMedium
+                                                  .titleLarge
                                                   ?.copyWith(
-                                                    color:
-                                                        Theme.of(sheetContext)
-                                                            .colorScheme
-                                                            .primary,
-                                                    fontWeight: FontWeight.w900,
-                                                  ),
+                                                      fontWeight:
+                                                          FontWeight.w900),
                                             ),
                                           ]),
                                     ),
-                                    Text(
-                                      '${membership['completedTrips'] ?? 0} consumidos',
-                                      style: Theme.of(sheetContext)
-                                          .textTheme
-                                          .bodyMedium,
+                                    CostaGoIconBadge(
+                                      icon: currentIsTripPack
+                                          ? Icons.route_outlined
+                                          : Icons.calendar_month_outlined,
+                                      size: 52,
                                     ),
                                   ]),
-                                )
-                              else
+                              if (currentIsTripPack) ...[
+                                const SizedBox(height: CostaGoSpace.md),
+                                Row(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text('${tripPackProgress.remaining}',
+                                          style: Theme.of(sheetContext)
+                                              .textTheme
+                                              .displaySmall
+                                              ?.copyWith(
+                                                  color: Theme.of(sheetContext)
+                                                      .colorScheme
+                                                      .primary,
+                                                  fontWeight: FontWeight.w900,
+                                                  height: .95)),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Padding(
+                                          padding:
+                                              const EdgeInsets.only(bottom: 4),
+                                          child: Text('viajes disponibles',
+                                              style: Theme.of(sheetContext)
+                                                  .textTheme
+                                                  .titleMedium
+                                                  ?.copyWith(
+                                                      color:
+                                                          Theme.of(sheetContext)
+                                                              .colorScheme
+                                                              .primary,
+                                                      fontWeight:
+                                                          FontWeight.w800)),
+                                        ),
+                                      ),
+                                    ]),
+                                const SizedBox(height: CostaGoSpace.sm),
+                                Row(children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(99),
+                                      child: LinearProgressIndicator(
+                                        minHeight: 11,
+                                        value: tripPackProgress.progress,
+                                        backgroundColor: Theme.of(sheetContext)
+                                            .colorScheme
+                                            .outlineVariant
+                                            .withValues(alpha: .65),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                      '${tripPackProgress.remaining} de ${tripPackProgress.included}',
+                                      style: Theme.of(sheetContext)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                              color: Theme.of(sheetContext)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
+                                              fontWeight: FontWeight.w700)),
+                                ]),
+                                const SizedBox(height: 6),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                      '${tripPackProgress.used} utilizados de ${tripPackProgress.included}',
+                                      style: Theme.of(sheetContext)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                              color: Theme.of(sheetContext)
+                                                  .colorScheme
+                                                  .onSurfaceVariant)),
+                                ),
+                              ] else ...[
+                                const Divider(height: CostaGoSpace.lg),
                                 _membershipDetailLine('Viajes del ciclo',
                                     '${membership['completedTrips'] ?? 0}'),
-                              if (!currentIsTripPack)
                                 _membershipDetailLine('Renovación estimada',
                                     '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
+                              ],
                               if (!currentIsTripPack && extraAmount > 0)
                                 _membershipDetailLine('Excedente acumulado',
                                     '\$${extraAmount.toStringAsFixed(2)}'),
+                              const Divider(height: CostaGoSpace.lg),
                               if (membership['expiresAt'] != null)
                                 _membershipDetailLine(
                                     'Vigente hasta',
@@ -17394,11 +17490,23 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             ]),
                           ),
                           const SizedBox(height: 8),
-                          OutlinedButton.icon(
-                              onPressed: () =>
-                                  _showMembershipPaymentHistory(sheetContext),
-                              icon: const Icon(Icons.receipt_long_outlined),
-                              label: const Text('Mis pagos')),
+                          CostaGoSurface(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: CostaGoSpace.md,
+                                vertical: CostaGoSpace.sm),
+                            onTap: () =>
+                                _showMembershipPaymentHistory(sheetContext),
+                            child: const Row(children: [
+                              CostaGoIconBadge(
+                                  icon: Icons.receipt_long_outlined, size: 42),
+                              SizedBox(width: CostaGoSpace.sm),
+                              Expanded(
+                                  child: Text('Mis pagos',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w800))),
+                              Icon(Icons.chevron_right_rounded),
+                            ]),
+                          ),
                           if (pendingOrder != null) ...[
                             const SizedBox(height: 10),
                             Card(
@@ -17432,6 +17540,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           ],
                           const SizedBox(height: 14),
                           SegmentedButton<String>(
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.standard,
+                              padding: WidgetStatePropertyAll(
+                                  EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 11)),
+                              textStyle: WidgetStatePropertyAll(
+                                  TextStyle(fontWeight: FontWeight.w800)),
+                            ),
                             segments: const [
                               ButtonSegment(
                                   value: 'PERIODIC',
@@ -17452,121 +17568,126 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           Text('Planes disponibles',
                               style: Theme.of(sheetContext)
                                   .textTheme
-                                  .titleMedium
+                                  .titleLarge
                                   ?.copyWith(fontWeight: FontWeight.w900)),
                           const SizedBox(height: 8),
-                          SizedBox(
-                              height: 178,
-                              child: visiblePlans.isEmpty
-                                  ? Center(
-                                      child: Text(selectedPlanType ==
-                                              'TRIP_PACK'
-                                          ? 'Aún no hay planes por viajes disponibles.'
-                                          : 'Aún no hay planes por período disponibles.'))
-                                  : ListView.separated(
-                                      scrollDirection: Axis.horizontal,
-                                      itemCount: visiblePlans.length,
-                                      separatorBuilder: (_, __) =>
-                                          const SizedBox(width: 8),
-                                      itemBuilder: (_, index) {
-                                        final plan = visiblePlans[index];
-                                        final current = membership['planCode']
-                                                ?.toString() ==
-                                            plan['code']?.toString();
-                                        return SizedBox(
-                                            width: 150,
-                                            child: Card(
-                                                shape: RoundedRectangleBorder(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            16),
-                                                    side: BorderSide(
-                                                        color: current
-                                                            ? Theme.of(sheetContext)
-                                                                .colorScheme
-                                                                .primary
-                                                            : Theme.of(sheetContext)
-                                                                .colorScheme
-                                                                .outlineVariant)),
-                                                child: InkWell(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            16),
-                                                    onTap: pendingOrder ==
-                                                                null &&
-                                                            !orderGenerationInProgress
-                                                        ? () => selectPlan(plan)
-                                                        : null,
-                                                    child: Padding(
-                                                        padding:
-                                                            const EdgeInsets.all(
-                                                                12),
-                                                        child: Column(
-                                                            crossAxisAlignment:
-                                                                CrossAxisAlignment
-                                                                    .start,
-                                                            children: [
-                                                              Icon(
-                                                                  plan['planType'] ==
-                                                                          'TRIP_PACK'
-                                                                      ? Icons
-                                                                          .route_outlined
-                                                                      : current
-                                                                          ? Icons
-                                                                              .event_available_outlined
-                                                                          : Icons
-                                                                              .calendar_month_outlined,
-                                                                  color: Theme.of(
-                                                                          sheetContext)
-                                                                      .colorScheme
-                                                                      .primary),
-                                                              const SizedBox(
-                                                                  height: 8),
-                                                              Text(
-                                                                  plan['name']
-                                                                          ?.toString() ??
-                                                                      'Plan',
-                                                                  style: const TextStyle(
-                                                                      fontWeight:
-                                                                          FontWeight
-                                                                              .w900)),
-                                                              Text(
-                                                                  plan['planType'] ==
-                                                                          'TRIP_PACK'
-                                                                      ? '${plan['includedTrips']} viajes\n${plan['packValidityDays'] == null ? 'Sin caducidad' : '${plan['packValidityDays']} días'}'
-                                                                      : '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
-                                                                  style: Theme.of(
-                                                                          sheetContext)
-                                                                      .textTheme
-                                                                      .bodySmall),
-                                                              const Spacer(),
-                                                              Text.rich(
-                                                                  TextSpan(
-                                                                      children: [
-                                                                        TextSpan(
-                                                                            text:
-                                                                                '\$${(plan['amount'] as num).toStringAsFixed(2)}',
-                                                                            style:
-                                                                                const TextStyle(fontWeight: FontWeight.w900)),
-                                                                        TextSpan(
-                                                                            text:
-                                                                                ' + IVA',
-                                                                            style:
-                                                                                TextStyle(fontSize: 12, color: Theme.of(sheetContext).colorScheme.onSurfaceVariant)),
-                                                                      ]),
-                                                                  style: Theme.of(
-                                                                          sheetContext)
-                                                                      .textTheme
-                                                                      .titleMedium),
-                                                              if (pendingOrder ==
-                                                                  null)
-                                                                const Text(
-                                                                    'Toca para elegir',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                            ])))));
-                                      })),
+                          if (visiblePlans.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 24),
+                              child: Center(
+                                child: Text(selectedPlanType == 'TRIP_PACK'
+                                    ? 'Aún no hay planes por viajes disponibles.'
+                                    : 'Aún no hay planes por período disponibles.'),
+                              ),
+                            )
+                          else
+                            LayoutBuilder(builder: (context, constraints) {
+                              final twoColumns = constraints.maxWidth >= 330;
+                              final cardWidth = twoColumns
+                                  ? (constraints.maxWidth - 10) / 2
+                                  : constraints.maxWidth;
+                              return Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: visiblePlans.map((plan) {
+                                  final current =
+                                      membership['planCode']?.toString() ==
+                                          plan['code']?.toString();
+                                  final isTripPack =
+                                      plan['planType'] == 'TRIP_PACK';
+                                  return SizedBox(
+                                    width: cardWidth,
+                                    height: 184,
+                                    child: CostaGoSurface(
+                                      borderColor: current
+                                          ? Theme.of(sheetContext)
+                                              .colorScheme
+                                              .primary
+                                          : null,
+                                      padding: const EdgeInsets.all(12),
+                                      onTap: pendingOrder == null &&
+                                              !orderGenerationInProgress
+                                          ? () => selectPlan(plan)
+                                          : null,
+                                      child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(children: [
+                                              CostaGoIconBadge(
+                                                icon: isTripPack
+                                                    ? Icons.route_outlined
+                                                    : current
+                                                        ? Icons
+                                                            .event_available_outlined
+                                                        : Icons
+                                                            .calendar_month_outlined,
+                                                size: 40,
+                                              ),
+                                              if (current) ...[
+                                                const Spacer(),
+                                                const Icon(Icons.check_circle,
+                                                    size: 20),
+                                              ],
+                                            ]),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                                plan['name']?.toString() ??
+                                                    'Plan',
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w900)),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              isTripPack
+                                                  ? '${plan['includedTrips']} viajes · ${plan['packValidityDays'] == null ? 'sin caducidad' : '${plan['packValidityDays']} días'}'
+                                                  : '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(sheetContext)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                      color: Theme.of(
+                                                              sheetContext)
+                                                          .colorScheme
+                                                          .onSurfaceVariant),
+                                            ),
+                                            const Spacer(),
+                                            Text.rich(
+                                              TextSpan(children: [
+                                                TextSpan(
+                                                    text:
+                                                        '\$${(plan['amount'] as num).toStringAsFixed(2)}',
+                                                    style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.w900)),
+                                                TextSpan(
+                                                    text: ' + IVA',
+                                                    style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: Theme.of(
+                                                                sheetContext)
+                                                            .colorScheme
+                                                            .onSurfaceVariant)),
+                                              ]),
+                                              style: Theme.of(sheetContext)
+                                                  .textTheme
+                                                  .titleMedium,
+                                            ),
+                                            if (pendingOrder == null)
+                                              Text('Toca para elegir',
+                                                  style: Theme.of(sheetContext)
+                                                      .textTheme
+                                                      .labelSmall),
+                                          ]),
+                                    ),
+                                  );
+                                }).toList(),
+                              );
+                            }),
                           const SizedBox(height: 12),
                           Row(
                               crossAxisAlignment: CrossAxisAlignment.start,

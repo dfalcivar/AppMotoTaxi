@@ -3,6 +3,71 @@ import 'package:latlong2/latlong.dart';
 import 'package:mototaxi_atacames/main.dart';
 
 void main() {
+  group('planes de membresía', () {
+    test('ordena los paquetes por cantidad de viajes', () {
+      final plans = sortedMembershipPlans([
+        {
+          'name': 'Paquete 50',
+          'planType': 'TRIP_PACK',
+          'includedTrips': 50,
+          'amount': 8
+        },
+        {
+          'name': 'Paquete 10',
+          'planType': 'TRIP_PACK',
+          'includedTrips': 10,
+          'amount': 2
+        },
+        {
+          'name': 'Paquete 25',
+          'planType': 'TRIP_PACK',
+          'includedTrips': 25,
+          'amount': 5
+        },
+      ]);
+
+      expect(plans.map((plan) => plan['includedTrips']), [10, 25, 50]);
+    });
+
+    test('ordena los planes por período según su duración', () {
+      final plans = sortedMembershipPlans([
+        {
+          'name': 'Anual',
+          'planType': 'PERIODIC',
+          'durationDays': 365,
+          'amount': 120
+        },
+        {
+          'name': 'Mensual',
+          'planType': 'PERIODIC',
+          'durationDays': 30,
+          'amount': 12
+        },
+        {
+          'name': 'Trimestral',
+          'planType': 'PERIODIC',
+          'durationDays': 90,
+          'amount': 36
+        },
+      ]);
+
+      expect(plans.map((plan) => plan['durationDays']), [30, 90, 365]);
+    });
+
+    test('calcula el saldo visible del paquete activo', () {
+      final progress = membershipTripPackProgress({
+        'includedTrips': 10,
+        'completedTrips': 3,
+        'remainingTrips': 7,
+      });
+
+      expect(progress.included, 10);
+      expect(progress.used, 3);
+      expect(progress.remaining, 7);
+      expect(progress.progress, .7);
+    });
+  });
+
   group('layout de pasajeros y método de pago', () {
     test('mantiene las secciones a ancho completo en todos los teléfonos', () {
       for (final width in [280.0, 320.0, 360.0, 390.0, 430.0, 720.0]) {
