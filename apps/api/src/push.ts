@@ -190,6 +190,28 @@ export function normalizePushData(data: Record<string, unknown>): Record<string,
   return normalized;
 }
 
+const compactCampaignTypes = new Set(["APP_UPDATE", "CAMPAIGN", "EVENT", "PROMOTIONAL"]);
+const campaignDeliveryKeys = new Set([
+  "type",
+  "notificationCategory",
+  "notificationPriority",
+  "notificationRoute",
+  "referenceId",
+  "deepLink",
+  "action",
+  "campaignId",
+  "internalNotificationId",
+  "publishedVersion",
+  "publishedBuild",
+  "targetPlatform",
+  "updateAction"
+]);
+
+export function providerPushData(data: Record<string, string>): Record<string, string> {
+  if (!compactCampaignTypes.has(String(data.type ?? "").toUpperCase())) return data;
+  return Object.fromEntries(Object.entries(data).filter(([key]) => campaignDeliveryKeys.has(key)));
+}
+
 export async function sendPush(userId: string, title: string, body: string, rawData: Record<string, unknown> = {}, options: PushOptions = {}): Promise<PushResult> {
   const data = normalizePushData(rawData);
   const startedAt = performance.now();
@@ -254,6 +276,7 @@ export async function sendPush(userId: string, title: string, body: string, rawD
       data.expiresAt=new Date(offer.expires_at).toISOString();
     }
     data.title=title; data.body=body;
+    const deliveryData=providerPushData(data);
     const notificationTag = options.collapseKey ?? (data.tripId
       ? `${isChat ? "chat" : "trip"}-${data.tripId}`
       : `costa-go-${data.type ?? "general"}`);
@@ -268,8 +291,8 @@ export async function sendPush(userId: string, title: string, body: string, rawD
       return {
       token: String(device.token),
       ...(!lifecycle && !silent ? {notification: { title, body }} : {}),
-      data,
-      android: {
+      data:deliveryData,
+      ...(device.platform==='ANDROID'?{android: {
         priority: (options.priority==='PROMOTIONAL'||options.priority==='CAMPAIGN') ? "normal" as const : "high" as const,
         collapseKey: silent ? `close-${data.tripId}` : notificationTag,
         ttl,
@@ -289,8 +312,8 @@ export async function sendPush(userId: string, title: string, body: string, rawD
           defaultVibrateTimings: true,
           visibility: "private" as const,
         }} : {})
-      },
-      apns: {
+      }}:{}),
+      ...(device.platform==='IOS'?{apns: {
         headers: { "apns-priority": silent ? "5" : "10", "apns-push-type": silent ? "background" : "alert" },
         payload: {
           aps: {
@@ -300,7 +323,7 @@ export async function sendPush(userId: string, title: string, body: string, rawD
             threadId: notificationTag
           }
         }
-      }
+      }}:{})
     }; }));
     const invalid = result.responses.flatMap((response, index) =>
       !response.success && invalidFcmTokenError(response.error)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invalidFcmTokenError, normalizePushData, pushDeliveryStatus, pushPresentationForType, pushRouteForType } from "./push.js";
+import { invalidFcmTokenError, normalizePushData, providerPushData, pushDeliveryStatus, pushPresentationForType, pushRouteForType } from "./push.js";
 
 describe("normalizePushData", () => {
   it("convierte metadatos APP_UPDATE al contrato de cadenas requerido por FCM", () => {
@@ -31,6 +31,38 @@ describe("normalizePushData", () => {
       destinationLongitude: "-79.8471",
       weekDays: "[1,2,3]"
     });
+  });
+});
+
+describe("providerPushData", () => {
+  it("envía campañas APP_UPDATE con datos operativos mínimos y conserva el contenido completo en backend", () => {
+    expect(providerPushData({
+      type: "APP_UPDATE",
+      notificationRoute: "APP_STORE",
+      deepLink: "https://play.google.com/store/apps/details?id=ec.costa.go",
+      internalNotificationId: "notification-id",
+      campaignId: "campaign-id",
+      publishedVersion: "0.18.1",
+      publishedBuild: "61",
+      storeUrl: "https://play.google.com/store/apps/details?id=ec.costa.go",
+      audienceMode: "TESTERS",
+      title: "Título duplicado",
+      body: "Mensaje duplicado",
+      idempotencyKey: "CAMPAIGN:campaign-id:user-id"
+    })).toEqual({
+      type: "APP_UPDATE",
+      notificationRoute: "APP_STORE",
+      deepLink: "https://play.google.com/store/apps/details?id=ec.costa.go",
+      internalNotificationId: "notification-id",
+      campaignId: "campaign-id",
+      publishedVersion: "0.18.1",
+      publishedBuild: "61"
+    });
+  });
+
+  it("no altera los datos críticos de viajes y chat", () => {
+    const trip = { type: "TRIP_OFFER", tripId: "trip-id", title: "Nuevo viaje", body: "Detalle" };
+    expect(providerPushData(trip)).toBe(trip);
   });
 });
 
