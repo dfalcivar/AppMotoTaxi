@@ -382,9 +382,11 @@ class RoleAwareHeaderIsland extends StatelessWidget {
     super.key,
     required this.session,
     required this.onAccount,
+    this.onOpenMembership,
   });
   final Session session;
   final Future<void> Function() onAccount;
+  final Future<void> Function()? onOpenMembership;
 
   String get firstName {
     final value = session.name.trim().split(RegExp(r'\s+')).firstOrNull ??
@@ -438,7 +440,8 @@ class RoleAwareHeaderIsland extends StatelessWidget {
                       await Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (_) => NotificationCenterView(session)));
+                              builder: (_) => NotificationCenterView(session,
+                                  onOpenMembership: onOpenMembership)));
                       await UserNotificationStore.instance.refresh(session);
                     },
                     icon: const Icon(Icons.notifications_none_rounded),
@@ -941,10 +944,14 @@ class _ActivityTile extends StatelessWidget {
 
 class NotificationCenterView extends StatefulWidget {
   const NotificationCenterView(this.session,
-      {super.key, this.initialNotificationId, this.initialNotification});
+      {super.key,
+      this.initialNotificationId,
+      this.initialNotification,
+      this.onOpenMembership});
   final Session session;
   final String? initialNotificationId;
   final Map<String, dynamic>? initialNotification;
+  final Future<void> Function()? onOpenMembership;
   @override
   State<NotificationCenterView> createState() => _NotificationCenterViewState();
 }
@@ -1108,6 +1115,11 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
                 builder: (_) =>
                     SupportIncidentDetail(widget.session, incidentId)));
       }
+    } else if (target == NotificationTarget.membership &&
+        widget.session.role == 'DRIVER' &&
+        widget.onOpenMembership != null) {
+      Navigator.pop(context);
+      await widget.onOpenMembership!();
     } else if (target == NotificationTarget.offers &&
         widget.session.role == 'DRIVER') {
       if (mounted) Navigator.pop(context);

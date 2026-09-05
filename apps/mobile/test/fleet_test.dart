@@ -103,6 +103,10 @@ void main() {
       expect(fleetToken(Uri.parse(bad)), '');
     }
   });
+  test('membership deep link accepts only the internal Costa-Go route', () {
+    expect(membershipLink(Uri.parse('costa-go://membership')), isTrue);
+    expect(membershipLink(Uri.parse('costa-go://vehicle/token')), isFalse);
+  });
   test('empty selection has dedicated light and dark coastal artwork',
       () async {
     for (final asset in const [
@@ -591,8 +595,7 @@ void main() {
           (method, path, body) async => {'items': <dynamic>[]},
           (_) async => Uint8List(0));
       await tester.pumpWidget(MaterialApp(
-          theme: theme(brightness),
-          home: FleetScreen(gateway: gateway)));
+          theme: theme(brightness), home: FleetScreen(gateway: gateway)));
       await tester.pumpAndSettle();
       expect(find.text('Mis mototaxis'), findsOneWidget);
       expect(find.text('Aún no tienes mototaxis disponibles'), findsOneWidget);

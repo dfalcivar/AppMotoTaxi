@@ -65,3 +65,83 @@
 .control-panel .cg-row-actions summary::-webkit-details-marker{display:none}
 .control-panel .cg-row-actions summary::marker{content:''}
 .control-panel .cg-row-actions[open] summary{background:var(--cg-primary);border-color:var(--cg-primary);color:#fff}
+
+/* Unified administrative tables: compact, readable and consistent across modules. */
+.control-panel .cg-data-table{
+  position:relative;
+  min-width:0;
+  overflow:visible;
+  border:1px solid var(--cg-border);
+  border-radius:13px;
+  background:var(--cg-surface);
+}
+.control-panel .cg-table-tools{
+  min-height:54px;
+  padding:9px 11px;
+  border-bottom:1px solid var(--cg-border);
+  background:color-mix(in srgb,var(--cg-bg) 68%,var(--cg-surface));
+}
+.control-panel .cg-table-scroll{margin:0!important;border-radius:0 0 13px 13px;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--cg-primary) 35%,var(--cg-border)) transparent}
+.control-panel .cg-table-scroll table{table-layout:auto}
+.control-panel .cg-table-scroll thead th{height:38px;padding:8px 12px;background:color-mix(in srgb,var(--cg-bg) 82%,var(--cg-surface));font-size:9px;font-weight:750;letter-spacing:.055em;text-transform:uppercase}
+.control-panel .cg-table-scroll thead th>button{display:flex;align-items:center;gap:5px;width:100%;padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;text-transform:inherit;letter-spacing:inherit}
+.control-panel .cg-table-scroll thead th>button span{color:color-mix(in srgb,var(--cg-muted) 65%,transparent);font-size:10px}
+.control-panel .cg-table-scroll tbody td{height:52px;padding:9px 12px;line-height:1.35;max-width:310px;font-size:11px}
+.control-panel .cg-table-scroll tbody td strong{display:block;color:var(--cg-ink);font-size:11px;font-weight:720;line-height:1.35}
+.control-panel .cg-table-scroll tbody td small{display:block;margin-top:3px;color:var(--cg-muted);font-size:9px;line-height:1.4}
+.control-panel .cg-table-scroll tbody tr:last-child td{border-bottom:0}
+.control-panel .cg-table-scroll tbody tr{transition:background-color .14s ease,box-shadow .14s ease}
+.control-panel .cg-table-scroll tbody tr:hover{background:color-mix(in srgb,var(--cg-soft) 52%,transparent);box-shadow:inset 3px 0 var(--cg-primary)}
+.control-panel .cg-identity-column{min-width:185px}
+.control-panel .cg-status-column{min-width:108px;white-space:normal}
+.control-panel .cg-date-column{min-width:132px;font-variant-numeric:tabular-nums}
+.control-panel .cg-number-column{text-align:right;min-width:90px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.control-panel th.cg-number-column>button{justify-content:flex-end}
+.control-panel .cg-action-column{width:1%;min-width:104px;max-width:none!important;text-align:right;white-space:nowrap}
+.control-panel th.cg-action-column{text-align:right}
+.control-panel td.cg-action-column>.cg-row-actions,.control-panel td.cg-action-column>.cg-single-action{display:flex;justify-content:flex-end}
+.control-panel .cg-single-action .row-actions,.control-panel .cg-single-action .table-actions{justify-content:flex-end}
+.control-panel .cg-actions-trigger{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:88px;min-height:31px;padding:5px 9px;border:1px solid color-mix(in srgb,var(--cg-primary) 26%,var(--cg-border));border-radius:8px;background:var(--cg-soft);color:var(--cg-primary);font-size:10px;font-weight:720;white-space:nowrap}
+.control-panel .cg-actions-trigger:hover,.control-panel .cg-actions-trigger[aria-expanded="true"]{border-color:var(--cg-primary);background:var(--cg-primary);color:#fff;box-shadow:0 5px 14px color-mix(in srgb,var(--cg-primary) 22%,transparent)}
+.cg-row-action-menu{position:fixed;z-index:10000;display:grid;gap:3px;width:220px;max-height:min(360px,calc(100vh - 24px));overflow:auto;padding:7px;border:1px solid var(--cg-border);border-radius:12px;background:var(--cg-surface);color:var(--cg-ink);box-shadow:0 18px 46px rgba(4,28,55,.23);animation:cg-menu-in .12s ease-out}
+.cg-row-action-menu .row-actions,.cg-row-action-menu .table-actions,.cg-row-action-menu .fleet-row-actions{display:contents}
+.cg-row-action-menu button,.cg-row-action-menu a,.cg-row-action-menu .table-button{display:flex!important;align-items:center;width:100%;min-height:34px;margin:0!important;padding:8px 10px!important;border:0!important;border-radius:8px!important;background:transparent!important;color:var(--cg-ink)!important;font-family:inherit;font-size:11px!important;font-weight:620!important;text-align:left;text-decoration:none;white-space:normal!important}
+.cg-row-action-menu button:hover,.cg-row-action-menu a:hover{background:var(--cg-soft)!important;color:var(--cg-primary)!important}
+.cg-row-action-menu .danger,.cg-row-action-menu .danger-link,.cg-row-action-menu button.danger,.cg-row-action-menu a.danger{color:var(--cg-danger)!important}
+.cg-row-action-menu .danger:hover,.cg-row-action-menu .danger-link:hover{background:color-mix(in srgb,var(--cg-danger) 9%,var(--cg-surface))!important}
+.cg-row-action-menu small,.cg-row-action-menu .filter-placeholder,.cg-row-action-menu .commercial-review-lock{padding:8px 10px;color:var(--cg-muted);font-size:9px;line-height:1.4}
+@keyframes cg-menu-in{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
+
+/* One semantic badge language, including module-specific badge components. */
+.control-panel :is(.badge,.commercial-badge,.membership-badge,.smart-badge,.fleet-badge,.coverage-badge){display:inline-flex;align-items:center;justify-content:center;width:max-content;max-width:100%;min-height:22px;padding:4px 9px;border:1px solid transparent;border-radius:999px;font-size:9px;font-weight:750;line-height:1.25;white-space:nowrap}
+.control-panel :is(.badge,.commercial-badge,.membership-badge,.smart-badge,.fleet-badge,.coverage-badge):is(.active,.approved,.aprobado,.paid,.pagada,.completed,.resolved,.enabled,.verified,.sent,.enviada,.abierta,.reconciled,.confirmado){background:#e7f8ee;color:#08794d;border-color:#c8ebd7}
+.control-panel :is(.badge,.commercial-badge,.membership-badge,.smart-badge,.fleet-badge,.coverage-badge):is(.expired,.exhausted,.suspended,.suspended_non_payment,.rejected,.cancelled,.closed,.anulada,.vencida,.failed,.no-entregada,.token-invalido,.disabled){background:#ffebee;color:#b6283f;border-color:#f4ced5}
+.control-panel :is(.badge,.commercial-badge,.membership-badge,.smart-badge,.fleet-badge,.coverage-badge):is(.pending,.pending_review,.payment_due,.grace_period,.expiring,.payment_review,.under_review,.in-review,.en-revision,.scheduled,.skipped,.omitida,.en-cola,.pending_closure,.pending_reconciliation,.pending-settlement,.pending-reconciliation){background:#fff4e0;color:#925907;border-color:#f2dfb8}
+.control-panel :is(.badge,.commercial-badge,.membership-badge,.smart-badge,.fleet-badge,.coverage-badge):is(.in_progress,.driver_en_route,.qualified,.eligible,.elegible,.queued,.test){background:#e8f2ff;color:#075dcc;border-color:#cbdff9}
+
+/* Fleet detail tables are intentionally embedded, but share the same density and hierarchy. */
+.control-panel .fleet-table-card{border-color:var(--cg-border);border-radius:13px;background:var(--cg-surface);scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--cg-primary) 35%,var(--cg-border)) transparent}
+.control-panel .fleet-table-card table{min-width:680px;font-size:11px}
+.control-panel .fleet-table-card th{height:38px;padding:8px 12px;background:color-mix(in srgb,var(--cg-bg) 82%,var(--cg-surface));color:var(--cg-muted);font-size:9px;font-weight:750;letter-spacing:.055em;text-transform:uppercase}
+.control-panel .fleet-table-card td{height:52px;padding:9px 12px;font-size:11px;line-height:1.35}
+.control-panel .fleet-table-card td strong{font-size:11px;line-height:1.35}
+.control-panel .fleet-table-card td small{margin-top:3px;font-size:9px;line-height:1.4}
+.control-panel .fleet-table-card tbody tr{transition:background-color .14s ease,box-shadow .14s ease}
+.control-panel .fleet-table-card tbody tr:hover{background:color-mix(in srgb,var(--cg-soft) 52%,transparent);box-shadow:inset 3px 0 var(--cg-primary)}
+.control-panel .fleet-table-card th:last-child,.control-panel .fleet-table-card td:last-child{text-align:right}
+.control-panel .fleet-table-card .fleet-row-actions{justify-content:flex-end;flex-wrap:nowrap}
+.control-panel .fleet-table-card .fleet-row-actions button{min-height:31px;border-radius:8px;font-size:10px;white-space:nowrap}
+
+@media(max-width:700px){
+  .control-panel .cg-data-table{border-radius:11px}
+  .control-panel .cg-table-tools{align-items:stretch}
+  .control-panel .cg-table-search{flex:1 1 100%;max-width:none}
+  .control-panel .cg-count{margin-right:auto}
+  .control-panel .cg-table-scroll tbody td{height:auto;padding:9px 10px!important}
+  .control-panel .cg-action-column{min-width:96px}
+  .control-panel .cg-actions-trigger{min-width:34px}
+  .control-panel .cg-actions-trigger span{display:none}
+  .cg-row-action-menu{left:12px!important;right:12px;width:auto;max-height:55vh;padding:9px;border-radius:14px}
+  .cg-row-action-menu button,.cg-row-action-menu a,.cg-row-action-menu .table-button{min-height:42px;font-size:12px!important}
+}
+@media(prefers-reduced-motion:reduce){.cg-row-action-menu{animation:none}.control-panel .cg-table-scroll tbody tr{transition:none}}

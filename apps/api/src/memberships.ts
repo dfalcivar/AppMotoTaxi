@@ -4,12 +4,13 @@ import { z } from "zod";
 import { database } from "./database.js";
 import { persistAudit, requirePermission, userFrom, type SessionUser } from "./admin.js";
 import { legacyPhoneAliases, normalizeEmail, normalizePhone } from "./auth-security.js";
-import { sendTransactionalEmail } from "./email.js";
+import { renderCostaGoEmail, sendTransactionalEmail } from "./email.js";
 import { sendPush } from "./push.js";
 import { lockMembershipBilling } from './membership-trip-usage.js';
 import { requireOrderFiscalProfile } from './fiscal/clients.js';
 import { taxBreakdown } from './taxes.js';
 import {notificationPreferenceAllows} from './notification-preferences.js';
+import {sendMembershipActivationConfirmation} from './membership-activation.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
@@ -654,7 +655,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
   referenceDisplay?: string;
   idempotencyKey: string;
 }) {
-  return database().begin(async tx => {
+  const result=await database().begin(async tx => {
     const [priorPayment] = await tx`select id::text,"status",membership_cycle_id::text as "membershipId" from membership_payments where idempotency_key=${input.idempotencyKey}`;
     if (priorPayment) return { alreadyProcessed: true, paymentId: priorPayment.id, membershipId: priorPayment.membershipId };
     const [orderOwner] = await tx`select driver_id from membership_payment_orders where id=${orderId}`;
@@ -748,6 +749,14 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
     await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason) values (${actor.id!},'MEMBERSHIP_PAYMENT_CONFIRMED','MEMBERSHIP_PAYMENT',${payment.id},${JSON.stringify({ orderId: String(order.id), membershipId: membership.id, planType, method: input.method, amount: Number(order.total_amount) })}::jsonb,${planType === "TRIP_PACK" ? 'Pago verificado y viajes acreditados' : 'Pago verificado y membresía activada'})`;
     return { alreadyProcessed: false, paymentId: payment.id, membershipId: membership.id, expiresAt: membership.expiresAt };
   });
+  if(!result.alreadyProcessed&&result.paymentId&&result.membershipId){
+    try{
+      await sendMembershipActivationConfirmation(String(result.paymentId),String(result.membershipId));
+    }catch(error){
+      console.error('membership_activation_notification_failed',{paymentId:result.paymentId,membershipId:result.membershipId,error});
+    }
+  }
+  return result;
 }
 
 async function confirmCollectorPayment(orderId: string, actor: SessionUser, body: z.infer<typeof paymentConfirmSchema>) {
@@ -1109,7 +1118,18 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
       const recipientPlanDescription = recipientPlan.planType === "TRIP_PACK"
         ? `plan por viajes de ${Number(recipientPlan.purchasedTrips ?? recipientPlan.includedTrips ?? 0)} viajes`
         : `plan por período ${String(recipientPlan.name ?? "Costa-Go")}`;
-      if (recipient?.email) void sendTransactionalEmail({to:String(recipient.email),subject:"Comprobante recibido · Costa-Go",text:`Hola ${recipient.name}. Recibimos el comprobante de la orden ${recipient.code}, correspondiente al ${recipientPlanDescription}, por ${recipient.currency} ${Number(recipient.amount).toFixed(2)}. Será revisado y te notificaremos el resultado.`,html:`<h2>Comprobante recibido</h2><p>Hola <strong>${recipient.name}</strong>.</p><p>Recibimos el comprobante de la orden <strong>${recipient.code}</strong>, correspondiente al <strong>${recipientPlanDescription}</strong>, por <strong>${recipient.currency} ${Number(recipient.amount).toFixed(2)}</strong>.</p><p>Tu pago será revisado y te notificaremos cuando finalice el proceso.</p>`}).catch(()=>false);
+      if (recipient?.email) void sendTransactionalEmail({
+        to:String(recipient.email),subject:"Comprobante recibido — Orden "+String(recipient.code),
+        text:`Hola ${recipient.name}. Recibimos el comprobante de la orden ${recipient.code}, correspondiente al ${recipientPlanDescription}, por ${recipient.currency} ${Number(recipient.amount).toFixed(2)}. Será revisado y te notificaremos el resultado.`,
+        html:renderCostaGoEmail({title:'Comprobante recibido',greeting:String(recipient.name),
+          lead:'Recibimos correctamente el comprobante de tu transferencia. Revisaremos tu pago y te notificaremos cuando sea aprobado o rechazado.',
+          badge:{label:'En revisión',tone:'warning'},rows:[
+            {label:'Orden',value:String(recipient.code),emphasis:true},{label:'Concepto',value:recipientPlanDescription},
+            {label:'Método',value:'Transferencia bancaria'},{label:'Total',value:`${recipient.currency} ${Number(recipient.amount).toFixed(2)}`,emphasis:true},
+            {label:'Estado',value:'En revisión'}],
+          notice:{title:'Tu información está protegida',text:'No necesitas responder este correo.',tone:'info'},
+          primaryAction:{label:'Ver mi pago',url:'costa-go://membership'},secondaryAction:{label:'Abrir Costa-Go',url:'costa-go://membership'}})
+      }).catch(()=>false);
       void sendPush(user.id!,"Comprobante recibido","Tu pago será revisado. Te notificaremos cuando finalice el proceso.",{type:"MEMBERSHIP_PAYMENT_REVIEW",orderId:id}).catch(()=>undefined);
       return reply.code(201).send(proof);
     } catch (error) { return businessError(error, reply); }
@@ -1261,7 +1281,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     }
     if(!result)return reply.code(409).send({error:"MEMBERSHIP_REQUIRED"});
     await persistAudit(actor,`MEMBERSHIP_${body.action}`,"DRIVER_MEMBERSHIP",driverId,body.reason);
-    void sendPush(driverId,"Membresía Costa-Go","Tu membresía fue actualizada. Revisa el detalle en la aplicación.",{type:"MEMBERSHIP_UPDATED"}).catch(()=>undefined);
+    if(body.action!=="COURTESY_RENEW")void sendPush(driverId,"Membresía Costa-Go","Tu membresía fue actualizada. Revisa el detalle en la aplicación.",{type:"MEMBERSHIP_UPDATED"}).catch(()=>undefined);
     return result;
   }catch(error){return businessError(error,reply);} });
 

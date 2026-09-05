@@ -29,7 +29,7 @@ import { computeRoute, type RouteResult } from "./routing.js";
 import { googleApiUsageRecorder } from "./api-usage.js";
 import { refreshDriverApprovalState } from "./driver-document-requirements.js";
 import { captureOperationalError } from "./observability.js";
-import { sendTransactionalEmail } from "./email.js";
+import { renderCostaGoEmail, sendTransactionalEmail } from "./email.js";
 import { registerCollectionAdminRoutes } from "./collection-admin.js";
 import { advertisingSchedulerTick, registerCommercialRoutes } from "./commercial.js";
 import { registerCooperativeDemoRoutes } from "./cooperative-demo.js";
@@ -275,7 +275,7 @@ async function issueEmailVerificationCode(userId: string, email: string): Promis
     to: email,
     subject: "Verifica tu correo en Costa-Go",
     text: `Tu código de verificación es ${code}. Caduca en 15 minutos.`,
-    html: `<p>Tu código de verificación de Costa-Go es:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>Caduca en 15 minutos. Si no creaste esta cuenta, ignora este mensaje.</p>`
+    html: renderCostaGoEmail({title:'Verifica tu correo',lead:'Usa este código para verificar tu correo en Costa-Go.',bodyHtml:`<div style="margin:22px auto;padding:18px;text-align:center;background:#edf5ff;border-radius:12px;color:#075dcc;font-size:38px;font-weight:800;letter-spacing:10px">${code}</div>`,notice:{title:'Este código caduca en 15 minutos',text:'Si no creaste esta cuenta, ignora este mensaje.',tone:'info'}})
   });
 }
 
@@ -1208,7 +1208,7 @@ export async function buildApp() {
           to: account.email as string,
           subject: "Código para recuperar tu cuenta Costa-Go",
           text: `Tu código de recuperación es ${code}. Caduca en 15 minutos. Si no solicitaste este cambio, ignora este mensaje.`,
-          html: `<p>Tu código de recuperación de Costa-Go es:</p><p style="font-size:28px;font-weight:700;letter-spacing:5px">${code}</p><p>Caduca en 15 minutos. Si no solicitaste este cambio, ignora este mensaje.</p>`
+          html: renderCostaGoEmail({title:'Recupera tu cuenta',lead:'Tu código de recuperación de Costa-Go es:',bodyHtml:`<div style="margin:22px auto;padding:18px;text-align:center;background:#edf5ff;border-radius:12px;color:#075dcc;font-size:38px;font-weight:800;letter-spacing:10px">${code}</div>`,notice:{title:'Este código caduca en 15 minutos',text:'Si no solicitaste este cambio, ignora este mensaje.',tone:'info'}})
         });
         request.log.info({ delivered }, "password_reset_requested");
       }
@@ -1277,7 +1277,7 @@ export async function buildApp() {
         to: account.email as string,
         subject: "Confirma la eliminación de tu cuenta Costa-Go",
         text: `Confirma la eliminación de tu cuenta dentro de las próximas 24 horas: ${url}`,
-        html: `<p>Solicitaste eliminar tu cuenta Costa-Go y sus datos asociados.</p><p><a href="${url}">Confirmar eliminación de cuenta</a></p><p>El enlace caduca en 24 horas. Si no fuiste tú, ignora este mensaje.</p>`
+        html: renderCostaGoEmail({title:'Confirma la eliminación de tu cuenta',lead:'Solicitaste eliminar tu cuenta Costa-Go y sus datos asociados.',badge:{label:'Acción sensible',tone:'danger'},notice:{title:'El enlace caduca en 24 horas',text:'Si no realizaste esta solicitud, ignora este mensaje y tu cuenta seguirá activa.',tone:'danger'},primaryAction:{label:'Confirmar eliminación de cuenta',url}})
       });
       request.log.info({ delivered }, "external_account_deletion_requested");
     }

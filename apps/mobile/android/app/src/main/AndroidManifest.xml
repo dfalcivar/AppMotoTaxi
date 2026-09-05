@@ -54,6 +54,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="costa-go" android:host="vehicle" />
+                <data android:scheme="costa-go" android:host="membership" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

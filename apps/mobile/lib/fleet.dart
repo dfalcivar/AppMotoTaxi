@@ -72,14 +72,25 @@ String fleetToken(Uri uri) {
       : '';
 }
 
+bool membershipLink(Uri uri) =>
+    uri.scheme == 'costa-go' && uri.host == 'membership';
+
 class FleetLinks {
   static final pending = ValueNotifier<String>('');
+  static final membershipPending = ValueNotifier<bool>(false);
   static StreamSubscription<Uri>? subscription;
   static Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
     pending.value = prefs.getString('fleet.pendingQr') ?? '';
+    membershipPending.value =
+        prefs.getBool('navigation.pendingMembership') ?? false;
     final links = AppLinks();
     Future<void> receive(Uri uri) async {
+      if (membershipLink(uri)) {
+        await prefs.setBool('navigation.pendingMembership', true);
+        membershipPending.value = true;
+        return;
+      }
       final token = fleetToken(uri);
       if (token.isEmpty) return;
       await prefs.setString('fleet.pendingQr', token);
@@ -95,6 +106,12 @@ class FleetLinks {
   static Future<void> clear() async {
     pending.value = '';
     await (await SharedPreferences.getInstance()).remove('fleet.pendingQr');
+  }
+
+  static Future<void> clearMembership() async {
+    membershipPending.value = false;
+    await (await SharedPreferences.getInstance())
+        .remove('navigation.pendingMembership');
   }
 }
 

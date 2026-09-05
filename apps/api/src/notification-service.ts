@@ -30,10 +30,18 @@ export interface NotificationResult {
   errorMessage?:string;
 }
 
+export function notificationRouteForCommand(type:string,deepLink?:string):string{
+  const normalized=type.trim().toUpperCase();
+  if(normalized==='APP_UPDATE')return 'APP_STORE';
+  if(normalized.startsWith('MEMBERSHIP_'))return 'MEMBERSHIP';
+  if(deepLink?.startsWith('costa-go://trip/prepare'))return 'SMART_TRIP';
+  return 'NOTIFICATIONS';
+}
+
 function stringData(command:NotificationCommand):Record<string,string>{
   const data:Record<string,string>={
     type:command.type,notificationCategory:command.category,notificationPriority:command.priority,
-    notificationRoute:command.type==='APP_UPDATE'?'APP_STORE':command.deepLink?.startsWith('costa-go://trip/prepare')?'SMART_TRIP':'NOTIFICATIONS'
+    notificationRoute:notificationRouteForCommand(command.type,command.deepLink)
   };
   if(command.referenceId)data.referenceId=command.referenceId;
   if(command.deepLink)data.deepLink=command.deepLink;

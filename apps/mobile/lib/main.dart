@@ -12507,6 +12507,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
+  void pendingMembershipLink() {
+    if (!mounted || !FleetLinks.membershipPending.value) return;
+    unawaited(FleetLinks.clearMembership().then((_) async {
+      if (mounted) await _openMembershipFromNotification();
+    }));
+  }
+
   Future<void> handleFleetLink() async {
     if (fleetChanging || !mounted) return;
     fleetChanging = true;
@@ -12713,7 +12720,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         }
         if (message.data['type']?.toString().startsWith('MEMBERSHIP_') ==
             true) {
-          unawaited(refreshMembership(force: true));
+          final membershipType = message.data['type']?.toString();
+          unawaited(refreshMembership(force: true).then((_) {
+            if (!mounted || membershipType != 'MEMBERSHIP_ACTIVATED') return;
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(const SnackBar(
+                  content: Text('✓ Membresía activada correctamente')));
+          }));
         }
         if (const {
           'SCHEDULED_TRIP_AVAILABLE',
@@ -12783,7 +12797,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
     await restore();
     FleetLinks.pending.addListener(pendingFleetLink);
+    FleetLinks.membershipPending.addListener(pendingMembershipLink);
     pendingFleetLink();
+    pendingMembershipLink();
   }
 
   Future<void> refreshMembership({bool force = false}) async {
@@ -12858,6 +12874,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     FleetLinks.pending.removeListener(pendingFleetLink);
+    FleetLinks.membershipPending.removeListener(pendingMembershipLink);
     fleetHeartbeatTimer?.cancel();
     timer?.cancel();
     messageSubscription?.cancel();
@@ -12937,8 +12954,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         if (mounted) return _showMembershipDetails();
       }));
     } else if (target == NotificationTarget.inbox) {
-      unawaited(Navigator.push(context,
-          MaterialPageRoute(builder: (_) => NotificationCenterView(widget.s))));
+      unawaited(Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => NotificationCenterView(widget.s,
+                  onOpenMembership: _openMembershipFromNotification))));
     } else {
       unawaited(refresh().then((_) {
         if (!mounted) return;
@@ -17150,6 +17170,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         false;
   }
 
+  Future<void> _openMembershipFromNotification() async {
+    await refreshMembership(force: true);
+    if (mounted) await _showMembershipDetails();
+  }
+
   Future<void> _showMembershipDetails() async {
     final data = membershipData;
     if (data == null || !mounted) return;
@@ -18305,6 +18330,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 right: 12,
                 child: RoleAwareHeaderIsland(
                   session: widget.s,
+                  onOpenMembership: _openMembershipFromNotification,
                   onAccount: () async {
                     await profile(context, widget.s);
                   },
