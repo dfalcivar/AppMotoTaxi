@@ -7206,107 +7206,294 @@ class AboutCostaGo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: CostaGoPalette.cardDark,
-        extendBodyBehindAppBar: true,
-        appBar: AppBar(
-          toolbarHeight: 42,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
-          titleSpacing: 0,
-          title: const Text('Acerca de',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-        ),
-        body: Container(
-          width: double.infinity,
-          constraints:
-              BoxConstraints(minHeight: MediaQuery.sizeOf(context).height),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                CostaGoPalette.darkSoftBlue,
-                CostaGoPalette.primaryDark,
-                CostaGoPalette.cardDark,
-              ],
-            ),
-          ),
-          child: const SafeArea(
-            child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(28, 58, 28, 36),
-              child: Column(children: [
-                CostaGoBrand(),
-                SizedBox(height: 28),
-                Text('Movilidad que conecta la costa',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800)),
-                SizedBox(height: 12),
-                Text(
-                  'Costa-Go conecta pasajeros y conductores de mototaxi con una experiencia segura, rápida y cercana. La plataforma se adapta a cada zona de cobertura habilitada y acompaña a las comunidades en sus viajes cotidianos.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: CostaGoPalette.onDarkBackground,
-                      fontSize: 16,
-                      height: 1.5),
+        backgroundColor: const Color(0xff020f24),
+        body: Stack(children: [
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(.18, -.42),
+                  radius: 1.18,
+                  colors: [
+                    Color(0xff07346a),
+                    Color(0xff031b3b),
+                    Color(0xff020d20)
+                  ],
+                  stops: [0, .52, 1],
                 ),
-                SizedBox(height: 30),
-                Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      _AboutPill(
-                          icon: Icons.verified_user_outlined,
-                          text: 'Viajes seguros'),
-                      _AboutPill(
-                          icon: Icons.speed_outlined, text: 'Respuesta rápida'),
-                      _AboutPill(
-                          icon: Icons.people_alt_outlined,
-                          text: 'Siempre contigo'),
-                    ]),
-                SizedBox(height: 42),
-                Text('Desarrollado por',
-                    style: TextStyle(color: Colors.white70, fontSize: 12)),
-                SizedBox(height: 4),
-                Text('DFAR SYSTEM',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 2)),
-              ]),
+              ),
             ),
           ),
+          const Positioned.fill(
+              child: CustomPaint(painter: _AboutPatternPainter())),
+          SafeArea(
+            child: Stack(children: [
+              SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 56, 24, 34),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 620),
+                    child: Column(children: [
+                      Image.asset('assets/images/costa-go-emblem.png',
+                          width: 142, height: 142, fit: BoxFit.contain),
+                      const SizedBox(height: 12),
+                      const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text.rich(
+                          TextSpan(children: [
+                            TextSpan(text: 'COSTA-'),
+                            TextSpan(
+                                text: 'GO',
+                                style: TextStyle(color: Color(0xff18bdf5))),
+                          ]),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 52,
+                            height: 1,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 1.5,
+                            shadows: [
+                              Shadow(color: Color(0xaa000000), blurRadius: 16)
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text('Tu viaje, nuestra prioridad.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Color(0xff1bbbf3),
+                              fontSize: 20,
+                              fontStyle: FontStyle.italic,
+                              letterSpacing: .5)),
+                      const SizedBox(height: 26),
+                      const _AboutDivider(icon: Icons.waves_rounded),
+                      const SizedBox(height: 26),
+                      const Text('Movilidad que conecta la costa',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 29,
+                              height: 1.15,
+                              fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 18),
+                      const Text(
+                        'Nacimos para hacer más fácil la forma de movilizarnos. Costa-Go conecta pasajeros y conductores con una experiencia cercana, segura y pensada para cada comunidad.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Color(0xffc8d4e5),
+                            fontSize: 17,
+                            height: 1.5,
+                            fontWeight: FontWeight.w400),
+                      ),
+                      const SizedBox(height: 30),
+                      const Row(children: [
+                        Expanded(
+                            child: _AboutFeature(
+                                icon: Icons.verified_user_outlined,
+                                label: 'Viajes\nseguros')),
+                        SizedBox(width: 10),
+                        Expanded(
+                            child: _AboutFeature(
+                                icon: Icons.how_to_reg_outlined,
+                                label: 'Conductores\nverificados')),
+                        SizedBox(width: 10),
+                        Expanded(
+                            child: _AboutFeature(
+                                icon: Icons.location_on_outlined,
+                                label: 'Cerca\nde ti')),
+                      ]),
+                      const SizedBox(height: 34),
+                      const _AboutDivider(icon: Icons.park_outlined),
+                      const SizedBox(height: 22),
+                      const Text('Hecho para la costa. Pensado para su gente.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Color(0xff18bdf5),
+                              fontSize: 18,
+                              height: 1.3,
+                              fontStyle: FontStyle.italic)),
+                      const SizedBox(height: 28),
+                      Container(
+                          height: 1,
+                          width: 330,
+                          color:
+                              const Color(0xff159ed4).withValues(alpha: .25)),
+                      const SizedBox(height: 22),
+                      const Wrap(
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 9,
+                          children: [
+                            Text('Desarrollado por',
+                                style: TextStyle(
+                                    color: Color(0xffd7dfeb), fontSize: 14)),
+                            Text('DFAR SYSTEM',
+                                style: TextStyle(
+                                    color: Color(0xff18bdf5),
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 1.8)),
+                          ]),
+                      const SizedBox(height: 11),
+                      const _AboutVersion(),
+                      const SizedBox(height: 12),
+                      Wrap(
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 3,
+                          children: [
+                            TextButton(
+                                onPressed: () =>
+                                    openExternalPage(context, privacyPolicyUrl),
+                                child: const Text('Privacidad')),
+                            const Text('•',
+                                style: TextStyle(color: Color(0xff18bdf5))),
+                            TextButton(
+                                onPressed: () => openExternalPage(
+                                    context, 'https://costa-go.com/terms.html'),
+                                child: const Text('Términos')),
+                            const Text('•',
+                                style: TextStyle(color: Color(0xff18bdf5))),
+                            TextButton(
+                                onPressed: () => showLicensePage(
+                                    context: context,
+                                    applicationName: 'Costa-Go',
+                                    applicationIcon: Image.asset(
+                                        'assets/images/costa-go-emblem.png',
+                                        width: 54,
+                                        height: 54)),
+                                child: const Text('Licencias')),
+                          ]),
+                    ]),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 4,
+                left: 4,
+                child: IconButton.filledTonal(
+                  tooltip: 'Volver',
+                  onPressed: () => Navigator.pop(context),
+                  style: IconButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: .08),
+                      foregroundColor: Colors.white),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+              ),
+            ]),
+          ),
+        ]),
+      );
+}
+
+class _AboutFeature extends StatelessWidget {
+  const _AboutFeature({required this.icon, required this.label});
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        constraints: const BoxConstraints(minHeight: 116),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xff031a38).withValues(alpha: .72),
+          border: Border.all(color: const Color(0xff27bff3), width: 1.2),
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: const [
+            BoxShadow(color: Color(0x4416aee4), blurRadius: 18)
+          ],
+        ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, color: const Color(0xff25c3f5), size: 36),
+          const SizedBox(height: 8),
+          Text(label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  height: 1.2,
+                  fontWeight: FontWeight.w600)),
+        ]),
+      );
+}
+
+class _AboutDivider extends StatelessWidget {
+  const _AboutDivider({required this.icon});
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        Expanded(
+            child: Container(
+                height: 1,
+                color: const Color(0xff19b9ed).withValues(alpha: .25))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: Icon(icon, size: 26, color: const Color(0xff19b9ed)),
+        ),
+        Expanded(
+            child: Container(
+                height: 1,
+                color: const Color(0xff19b9ed).withValues(alpha: .25))),
+      ]);
+}
+
+class _AboutVersion extends StatelessWidget {
+  const _AboutVersion();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<PackageInfo>(
+        future: PackageInfo.fromPlatform(),
+        builder: (context, snapshot) => Text(
+          snapshot.hasData
+              ? 'Versión ${snapshot.data!.version} (${snapshot.data!.buildNumber})'
+              : 'Costa-Go',
+          style: const TextStyle(color: Color(0xff8ea3bd), fontSize: 12),
         ),
       );
 }
 
-class _AboutPill extends StatelessWidget {
-  const _AboutPill({required this.icon, required this.text});
-  final IconData icon;
-  final String text;
+class _AboutPatternPainter extends CustomPainter {
+  const _AboutPatternPainter();
+
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .1),
-          border: Border.all(
-              color: CostaGoPalette.primaryLight.withValues(alpha: .5)),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: CostaGoPalette.primaryLight, size: 19),
-          const SizedBox(width: 7),
-          Text(text,
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w700)),
-        ]),
-      );
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xff1aaee8).withValues(alpha: .09)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (var line = 0; line < 7; line++) {
+      final path = ui.Path();
+      for (double x = -30; x <= size.width * .34; x += 10) {
+        final y = size.height * (.1 + line * .018) +
+            math.sin((x / 52) + line * .7) * 18;
+        if (x == -30) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+      canvas.drawPath(path, paint);
+    }
+    for (var line = 0; line < 8; line++) {
+      final path = ui.Path();
+      for (double x = size.width * .68; x <= size.width + 30; x += 10) {
+        final y = size.height * (.3 + line * .018) +
+            math.sin((x / 58) + line * .62) * 20;
+        if (x == size.width * .68) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class TripsPanel extends StatefulWidget {
@@ -11837,34 +12024,32 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ),
         const SizedBox(width: 6),
         Expanded(
-          child: _PassengerSurface(
-            padding: const EdgeInsets.symmetric(horizontal: 3),
-            child: TextField(
-              controller: controller,
-              onTap: () => _movePassengerSheet(.78),
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                labelText: 'Destino ${index + 1}',
-                hintText: 'Dirección o punto en el mapa',
-                fillColor: Colors.transparent,
-                suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
-                  if (controller.text.isNotEmpty)
-                    IconButton(
-                        tooltip: 'Borrar destino',
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: () => clearDestination(index)),
+          child: TextField(
+            controller: controller,
+            onTap: () => _movePassengerSheet(.78),
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Destino ${index + 1}',
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (controller.text.isNotEmpty)
                   IconButton(
-                      tooltip: 'Ajustar en el mapa',
-                      icon: const Icon(Icons.edit_outlined, size: 20),
-                      onPressed: () => beginMapSelection(
-                          MapPointSelection.destination,
-                          destinationIndex: index)),
-                  IconButton(
-                      tooltip: 'Buscar dirección',
-                      icon: const Icon(Icons.search, size: 20),
-                      onPressed: () => locate(false, destinationIndex: index)),
-                ]),
-              ),
+                      tooltip: 'Borrar destino',
+                      icon: const Icon(Icons.close, size: 19),
+                      onPressed: () => clearDestination(index)),
+                IconButton(
+                    tooltip: 'Ajustar en el mapa',
+                    icon: const Icon(Icons.edit_outlined, size: 19),
+                    onPressed: () => beginMapSelection(
+                        MapPointSelection.destination,
+                        destinationIndex: index)),
+                IconButton(
+                    tooltip: 'Buscar dirección',
+                    icon: const Icon(Icons.search, size: 19),
+                    onPressed: () => locate(false, destinationIndex: index)),
+              ]),
             ),
           ),
         ),
