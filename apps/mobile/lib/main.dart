@@ -2459,28 +2459,41 @@ class ThemeSelector extends StatelessWidget {
 }
 
 class CostaGoBrand extends StatelessWidget {
-  const CostaGoBrand({super.key, this.compact = false});
+  const CostaGoBrand({
+    super.key,
+    this.compact = false,
+    this.emblemSize,
+    this.wordmarkSize,
+    this.gap,
+    this.accentColor,
+  });
   final bool compact;
+  final double? emblemSize;
+  final double? wordmarkSize;
+  final double? gap;
+  final Color? accentColor;
 
   @override
   Widget build(BuildContext context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Image.asset('assets/images/costa-go-emblem.png',
-              width: compact ? 82 : 142,
-              height: compact ? 82 : 142,
+              width: emblemSize ?? (compact ? 82 : 142),
+              height: emblemSize ?? (compact ? 82 : 142),
               fit: BoxFit.contain),
-          SizedBox(height: compact ? 2 : 8),
+          SizedBox(height: gap ?? (compact ? 2 : 8)),
           Text.rich(
-            const TextSpan(children: [
-              TextSpan(text: 'COSTA-', style: TextStyle(color: Colors.white)),
+            TextSpan(children: [
+              const TextSpan(
+                  text: 'COSTA-', style: TextStyle(color: Colors.white)),
               TextSpan(
                   text: 'GO',
-                  style: TextStyle(color: CostaGoPalette.primaryLight)),
+                  style: TextStyle(
+                      color: accentColor ?? CostaGoPalette.primaryLight)),
             ]),
             textAlign: TextAlign.center,
             style: TextStyle(
-                fontSize: compact ? 26 : 36,
+                fontSize: wordmarkSize ?? (compact ? 26 : 36),
                 fontWeight: FontWeight.w900,
                 fontStyle: FontStyle.italic,
                 letterSpacing: -.8,
@@ -7227,186 +7240,187 @@ class AboutCostaGo extends StatelessWidget {
           const Positioned.fill(
               child: CustomPaint(painter: _AboutPatternPainter())),
           SafeArea(
-            child: Stack(children: [
-              SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 56, 24, 34),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 620),
-                    child: Column(children: [
-                      Image.asset('assets/images/costa-go-emblem.png',
-                          width: 142, height: 142, fit: BoxFit.contain),
-                      const SizedBox(height: 12),
-                      const FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text.rich(
-                          TextSpan(children: [
-                            TextSpan(text: 'COSTA-'),
-                            TextSpan(
-                                text: 'GO',
-                                style: TextStyle(color: Color(0xff18bdf5))),
-                          ]),
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 52,
-                            height: 1,
-                            fontWeight: FontWeight.w900,
-                            fontStyle: FontStyle.italic,
-                            letterSpacing: 1.5,
-                            shadows: [
-                              Shadow(color: Color(0xaa000000), blurRadius: 16)
-                            ],
-                          ),
-                        ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 30),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 620),
+                  child: Column(children: [
+                    const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: CostaGoBrand(
+                        emblemSize: 142,
+                        wordmarkSize: 52,
+                        gap: 12,
+                        accentColor: Color(0xff18bdf5),
                       ),
-                      const SizedBox(height: 12),
-                      const Text('Tu viaje, nuestra prioridad.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: Color(0xff1bbbf3),
-                              fontSize: 20,
-                              fontStyle: FontStyle.italic,
-                              letterSpacing: .5)),
-                      const SizedBox(height: 26),
-                      const _AboutDivider(icon: Icons.waves_rounded),
-                      const SizedBox(height: 26),
-                      const Text('Movilidad que conecta la costa',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 29,
-                              height: 1.15,
-                              fontWeight: FontWeight.w900)),
-                      const SizedBox(height: 18),
-                      const Text(
-                        'Nacimos para hacer más fácil la forma de movilizarnos. Costa-Go conecta pasajeros y conductores con una experiencia cercana, segura y pensada para cada comunidad.',
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Tu viaje, nuestra prioridad.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                            color: Color(0xffc8d4e5),
-                            fontSize: 17,
-                            height: 1.5,
-                            fontWeight: FontWeight.w400),
-                      ),
-                      const SizedBox(height: 30),
-                      const Row(children: [
-                        Expanded(
-                            child: _AboutFeature(
-                                icon: Icons.verified_user_outlined,
-                                label: 'Viajes\nseguros')),
-                        SizedBox(width: 10),
-                        Expanded(
-                            child: _AboutFeature(
-                                icon: Icons.how_to_reg_outlined,
-                                label: 'Conductores\nverificados')),
-                        SizedBox(width: 10),
-                        Expanded(
-                            child: _AboutFeature(
-                                icon: Icons.location_on_outlined,
-                                label: 'Cerca\nde ti')),
-                      ]),
-                      const SizedBox(height: 34),
-                      const _AboutDivider(icon: Icons.park_outlined),
-                      const SizedBox(height: 22),
-                      const Text('Hecho para la costa. Pensado para su gente.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: Color(0xff18bdf5),
-                              fontSize: 18,
-                              height: 1.3,
-                              fontStyle: FontStyle.italic)),
-                      const SizedBox(height: 28),
-                      Container(
-                          height: 1,
-                          width: 330,
-                          color:
-                              const Color(0xff159ed4).withValues(alpha: .25)),
-                      const SizedBox(height: 22),
-                      const Wrap(
-                          alignment: WrapAlignment.center,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 9,
-                          children: [
-                            Text('Desarrollado por',
-                                style: TextStyle(
-                                    color: Color(0xffd7dfeb), fontSize: 14)),
-                            Text('DFAR SYSTEM',
-                                style: TextStyle(
-                                    color: Color(0xff18bdf5),
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 1.8)),
-                          ]),
-                      const SizedBox(height: 11),
-                      const _AboutVersion(),
-                      const SizedBox(height: 12),
-                      Wrap(
-                          alignment: WrapAlignment.center,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 3,
-                          children: [
-                            TextButton(
-                                onPressed: () =>
-                                    openExternalPage(context, privacyPolicyUrl),
-                                child: const Text('Privacidad')),
-                            const Text('•',
-                                style: TextStyle(color: Color(0xff18bdf5))),
-                            TextButton(
-                                onPressed: () => openExternalPage(
-                                    context, 'https://costa-go.com/terms.html'),
-                                child: const Text('Términos')),
-                            const Text('•',
-                                style: TextStyle(color: Color(0xff18bdf5))),
-                            TextButton(
-                                onPressed: () => showLicensePage(
-                                    context: context,
-                                    applicationName: 'Costa-Go',
-                                    applicationIcon: Image.asset(
-                                        'assets/images/costa-go-emblem.png',
-                                        width: 54,
-                                        height: 54)),
-                                child: const Text('Licencias')),
-                          ]),
-                    ]),
-                  ),
+                            color: Color(0xff1bbbf3),
+                            fontSize: 20,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: .5)),
+                    const SizedBox(height: 26),
+                    const _AboutDivider(),
+                    const SizedBox(height: 26),
+                    const Text('Movilidad que conecta',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 29,
+                            height: 1.15,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Nacimos para hacer más fácil la forma de movilizarnos. Costa-Go conecta pasajeros y conductores con una experiencia cercana, segura y pensada para cada comunidad.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: Color(0xffc8d4e5),
+                          fontSize: 16,
+                          height: 1.5,
+                          fontWeight: FontWeight.w400),
+                    ),
+                    const SizedBox(height: 30),
+                    const _AboutFeatures(),
+                    const SizedBox(height: 34),
+                    const _AboutDivider(),
+                    const SizedBox(height: 22),
+                    const Text('Cada viaje nos conecta.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Color(0xff18bdf5),
+                            fontSize: 20,
+                            height: 1.3,
+                            fontStyle: FontStyle.italic)),
+                    const SizedBox(height: 28),
+                    Container(
+                        height: 1,
+                        width: 330,
+                        color: const Color(0xff159ed4).withValues(alpha: .25)),
+                    const SizedBox(height: 22),
+                    const Wrap(
+                        alignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 9,
+                        runSpacing: 4,
+                        children: [
+                          Text('Desarrollado por',
+                              style: TextStyle(
+                                  color: Color(0xffd7dfeb), fontSize: 14)),
+                          Text('DFAR SYSTEM',
+                              style: TextStyle(
+                                  color: Color(0xff18bdf5),
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.8)),
+                        ]),
+                    const SizedBox(height: 12),
+                    Wrap(
+                        alignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 3,
+                        children: [
+                          TextButton(
+                              onPressed: () =>
+                                  openExternalPage(context, privacyPolicyUrl),
+                              style: _aboutLinkStyle,
+                              child: const Text('Privacidad')),
+                          const Text('•',
+                              style: TextStyle(color: Color(0xff18bdf5))),
+                          TextButton(
+                              onPressed: () => openExternalPage(
+                                  context, 'https://costa-go.com/terms.html'),
+                              style: _aboutLinkStyle,
+                              child: const Text('Términos')),
+                        ]),
+                    const SizedBox(height: 4),
+                    const _AboutVersion(),
+                  ]),
                 ),
               ),
-              Positioned(
-                top: 4,
-                left: 4,
-                child: IconButton.filledTonal(
-                  tooltip: 'Volver',
-                  onPressed: () => Navigator.pop(context),
-                  style: IconButton.styleFrom(
-                      backgroundColor: Colors.white.withValues(alpha: .08),
-                      foregroundColor: Colors.white),
-                  icon: const Icon(Icons.arrow_back_rounded),
-                ),
-              ),
-            ]),
+            ),
           ),
         ]),
+      );
+
+  static final ButtonStyle _aboutLinkStyle = TextButton.styleFrom(
+    foregroundColor: const Color(0xff18bdf5),
+    visualDensity: VisualDensity.compact,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+  );
+}
+
+class _AboutFeatures extends StatelessWidget {
+  const _AboutFeatures();
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (context, constraints) {
+          final textScale = MediaQuery.textScalerOf(context).scale(1);
+          final stackCards = constraints.maxWidth < 330 || textScale > 1.3;
+          final cardWidth = stackCards
+              ? math.min(constraints.maxWidth, 280.0)
+              : (constraints.maxWidth - 20) / 3;
+          final cardHeight =
+              (104 + ((textScale - 1).clamp(0, 1) * 100)).toDouble();
+          return Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 12,
+            children: [
+              _AboutFeature(
+                  width: cardWidth,
+                  height: cardHeight,
+                  icon: Icons.shield_outlined,
+                  label: 'Viajes seguros'),
+              _AboutFeature(
+                  width: cardWidth,
+                  height: cardHeight,
+                  icon: Icons.verified_user_outlined,
+                  label: 'Conductores verificados'),
+              _AboutFeature(
+                  width: cardWidth,
+                  height: cardHeight,
+                  icon: Icons.location_on_outlined,
+                  label: 'Cerca de ti'),
+            ],
+          );
+        },
       );
 }
 
 class _AboutFeature extends StatelessWidget {
-  const _AboutFeature({required this.icon, required this.label});
+  const _AboutFeature({
+    required this.width,
+    required this.height,
+    required this.icon,
+    required this.label,
+  });
+  final double width;
+  final double height;
   final IconData icon;
   final String label;
 
   @override
-  Widget build(BuildContext context) => Container(
-        constraints: const BoxConstraints(minHeight: 116),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+  Widget build(BuildContext context) => SizedBox(
+      width: width,
+      height: height,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
         decoration: BoxDecoration(
           color: const Color(0xff031a38).withValues(alpha: .72),
-          border: Border.all(color: const Color(0xff27bff3), width: 1.2),
+          border: Border.all(color: const Color(0xff27bff3), width: 1),
           borderRadius: BorderRadius.circular(22),
           boxShadow: const [
-            BoxShadow(color: Color(0x4416aee4), blurRadius: 18)
+            BoxShadow(color: Color(0x2416aee4), blurRadius: 14)
           ],
         ),
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, color: const Color(0xff25c3f5), size: 36),
+          Icon(icon, color: const Color(0xff25c3f5), size: 34),
           const SizedBox(height: 8),
           Text(label,
               textAlign: TextAlign.center,
@@ -7416,12 +7430,11 @@ class _AboutFeature extends StatelessWidget {
                   height: 1.2,
                   fontWeight: FontWeight.w600)),
         ]),
-      );
+      ));
 }
 
 class _AboutDivider extends StatelessWidget {
-  const _AboutDivider({required this.icon});
-  final IconData icon;
+  const _AboutDivider();
 
   @override
   Widget build(BuildContext context) => Row(children: [
@@ -7429,9 +7442,9 @@ class _AboutDivider extends StatelessWidget {
             child: Container(
                 height: 1,
                 color: const Color(0xff19b9ed).withValues(alpha: .25))),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          child: Icon(icon, size: 26, color: const Color(0xff19b9ed)),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 18),
+          child: Icon(Icons.waves_rounded, size: 26, color: Color(0xff19b9ed)),
         ),
         Expanded(
             child: Container(
@@ -7447,9 +7460,7 @@ class _AboutVersion extends StatelessWidget {
   Widget build(BuildContext context) => FutureBuilder<PackageInfo>(
         future: PackageInfo.fromPlatform(),
         builder: (context, snapshot) => Text(
-          snapshot.hasData
-              ? 'Versión ${snapshot.data!.version} (${snapshot.data!.buildNumber})'
-              : 'Costa-Go',
+          'Costa-Go v${snapshot.data?.version ?? '0.18.1'}',
           style: const TextStyle(color: Color(0xff8ea3bd), fontSize: 12),
         ),
       );
@@ -18320,18 +18331,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           .titleMedium
                           ?.copyWith(fontWeight: FontWeight.w900)),
                 ),
-                TextButton.icon(
-                  onPressed: fleetChanging ? null : chooseFleet,
-                  icon: Icon(
-                      fleetSession == null
-                          ? Icons.add_rounded
-                          : Icons.swap_horiz_rounded,
-                      size: 19),
-                  label: Text(fleetSession == null ? 'Seleccionar' : 'Cambiar'),
-                  style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 6)),
-                ),
+                if (fleetSession != null)
+                  TextButton.icon(
+                    onPressed: fleetChanging ? null : chooseFleet,
+                    icon: const Icon(Icons.swap_horiz_rounded, size: 19),
+                    label: const Text('Cambiar'),
+                    style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 6)),
+                  ),
               ]),
               const SizedBox(height: 9),
               if (fleetSession == null)
