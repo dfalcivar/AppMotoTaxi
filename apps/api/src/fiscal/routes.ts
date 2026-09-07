@@ -175,7 +175,14 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     requirePermission(req,'FACTURACION_VER');const q=fiscalFilterSchema.parse(req.query);
     const rows=await database()`select o.id::text,o.payment_id::text as "paymentId",o.source,o.concept,o.amount::float8,o.currency,
       o.paid_at as "paidAt",o.payment_reversed as reversed,o.client_id::text as "clientId",o.fiscal_snapshot as profile,coalesce(i.status,'PENDIENTE_INTEGRACION') as "billingStatus",i.id::text as "invoiceId",count(*) over()::int as "totalCount"
+      ,case when o.source='MEMBRESIA' then mo.short_code when o.source='PUBLICIDAD' then ao.code end as reference
+      ,case when o.source='MEMBRESIA' then coalesce(mo.plan_snapshot->>'name',o.concept)
+        when o.source='PUBLICIDAD' then coalesce(ao.plan_snapshot->>'name',o.concept) else o.concept end as detail
       from fiscal_billing_outbox o left join fiscal_invoices i on i.source=o.source and i.payment_id=o.payment_id and i.document_type=o.document_type
+      left join membership_payments mp on o.source='MEMBRESIA' and mp.id=o.payment_id
+      left join membership_payment_orders mo on mo.id=mp.order_id
+      left join advertising_payments ap on o.source='PUBLICIDAD' and ap.id=o.payment_id
+      left join advertising_orders ao on ao.id=ap.order_id
       where (${q.clientId??null}::uuid is null or o.client_id=${q.clientId??null}) and (${q.source??null}::text is null or o.source=${q.source??null})
       and (${q.start??null}::date is null or o.paid_at>=(${q.start??null}::date::timestamp at time zone 'America/Guayaquil'))
       and (${q.end??null}::date is null or o.paid_at<((${q.end??null}::date+1)::timestamp at time zone 'America/Guayaquil'))
@@ -184,7 +191,8 @@ export async function registerFiscalRoutes(app:FastifyInstance){
       and (${q.status??null}::text is null or coalesce(i.status,'PENDIENTE_INTEGRACION')=${q.status??null}
         or (${q.status??null}='COLLECTED' and not o.payment_reversed)
         or (${q.status??null}='UNBILLED' and not o.payment_reversed and coalesce(i.status,'PENDIENTE_INTEGRACION')<>'AUTORIZADA'))
-      and (${q.search}='' or concat_ws(' ',o.payment_id,o.fiscal_snapshot->>'legalName',o.fiscal_snapshot->>'identification') ilike ${'%'+q.search+'%'})
+      and (${q.search}='' or concat_ws(' ',o.payment_id,o.concept,o.fiscal_snapshot->>'legalName',o.fiscal_snapshot->>'identification',
+        mo.short_code,mo.plan_snapshot->>'name',ao.code,ao.plan_snapshot->>'name') ilike ${'%'+q.search+'%'})
       order by o.paid_at desc limit ${q.limit} offset ${q.offset}`;
     return {items:rows,total:Number(rows[0]?.totalCount??0)};
   }catch(e){return fiscalError(e,reply);}});

@@ -25,8 +25,8 @@ beforeAll(async()=>{
     create table service_areas(id uuid primary key,name text);
     create table operational_settings(id int primary key,vat_rate_percent numeric(6,3) not null default 15,updated_at timestamptz default now(),updated_by uuid);
     insert into operational_settings(id) values(1);
-    create table membership_payment_orders(id uuid primary key,driver_id uuid,status text default 'PENDING',expires_at timestamptz default now()+interval '1 day');
-    create table advertising_orders(id uuid primary key,advertiser_id uuid,status text default 'PENDING_PAYMENT',assigned_commercial_id uuid);
+    create table membership_payment_orders(id uuid primary key,driver_id uuid,short_code text default 'MEM-TEST',plan_snapshot jsonb default '{"name":"Plan mensual"}',status text default 'PENDING',expires_at timestamptz default now()+interval '1 day');
+    create table advertising_orders(id uuid primary key,advertiser_id uuid,code text default 'PUB-TEST',plan_snapshot jsonb default '{"name":"Plan publicitario"}',status text default 'PENDING_PAYMENT',assigned_commercial_id uuid);
     create table affiliate_banners(id uuid primary key,order_id uuid,service_area_id uuid);
     create table membership_payments(id uuid primary key default gen_random_uuid(),driver_id uuid,order_id uuid,collection_point_id uuid,status text default 'CONFIRMED',method text default 'CASH',amount numeric,currency text default 'USD',confirmed_at timestamptz default now());
     create table advertising_payments(id uuid primary key default gen_random_uuid(),advertiser_id uuid,order_id uuid,status text default 'PENDING',settlement_status text default 'NOT_RECEIVED',payment_method_id uuid,amount numeric,currency text default 'USD',reviewed_at timestamptz,created_at timestamptz default now());
@@ -201,6 +201,9 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     for(const path of [`clients/${client}`,`clients/${client}/profile`,`payments?clientId=${client}&status=UNBILLED`,`invoices?status=PENDING_ALL`]){
       const res=await app.inject({url:`/v1/admin/fiscal/${path}`,headers});expect(res.json(),path).not.toHaveProperty('error');
     }
+    const paymentList=(await app.inject({url:'/v1/admin/fiscal/payments',headers})).json();
+    expect(paymentList.items[0]).toMatchObject({reference:'MEM-TEST',detail:'Plan mensual'});
+    expect((await app.inject({url:'/v1/admin/fiscal/payments?search=MEM-TEST',headers})).json().items).toHaveLength(1);
     expect((await app.inject({url:'/v1/admin/fiscal/payments?source=PUBLICIDAD',headers})).json().items).toHaveLength(0);
     expect((await app.inject({url:'/v1/admin/fiscal/payments?search=nonexistent',headers})).json().items).toHaveLength(0);
     await pg.query("update membership_payments set status='REVERSED' where id=$1",[payment]);
