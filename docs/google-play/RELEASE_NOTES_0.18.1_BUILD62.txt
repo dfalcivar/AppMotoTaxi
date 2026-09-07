@@ -1,0 +1,10 @@
+<es-419>
+Renovamos Costa-Go con una experiencia más clara, moderna y cercana.
+
+• Mejoras en membresías por período y paquetes de viajes.
+• Consulta más clara del plan activo y viajes disponibles.
+• Nueva presentación de la jornada y mototaxi del conductor.
+• Notificaciones y confirmaciones más confiables.
+• Nuevo diseño de Acerca de Costa-Go.
+• Ajustes generales de estabilidad y experiencia visual.
+</es-419>

@@ -1,12 +1,12 @@
 # Versión actual para pruebas cerradas
 
-Actualizado el 5 de septiembre de 2026.
+Actualizado el 6 de septiembre de 2026.
 
 - Aplicación: Costa-Go
-- Versión de referencia: `0.18.0 (60)`
+- Versión de referencia: `0.18.1 (62)`
 - Canal: prueba cerrada
 - Estado documental: políticas, ficha y declaraciones revisadas contra el código actual.
-- Imágenes: deben regenerarse desde esta compilación final; no usar el set histórico eliminado.
+- Imágenes: set actualizado disponible en `docs/google-play/screenshots-0.18.1`.
 
 ## Cambios de esta versión
 
@@ -20,15 +20,32 @@ Actualizado el 5 de septiembre de 2026.
 - Mejoras en la presentación y reintegración de solicitudes de viaje para conductores disponibles.
 - Nuevo ícono oficial de Costa-Go compatible con adaptive icons, máscaras del launcher e íconos temáticos de Android 13 o superior.
 - Ajustes visuales del botón de ubicación y de la tarjeta de disponibilidad del conductor.
+- Nuevo diseño institucional de Acerca de Costa-Go, adaptable y sin exponer datos personales.
+- Mejoras visuales en la jornada del conductor y eliminación del selector duplicado de mototaxi.
+- Sistema de notificaciones inteligentes más robusto, con campañas, enlaces y confirmaciones mejoradas.
 - Compilación y validación con Flutter `3.47.2` y Dart `3.13.2`.
 
 ## Artefactos esperados
 
-- AAB: `Costa-Go-0.18.0-build60.aab`
+- AAB: `Costa-Go-0.18.1-build62.aab`
 - APK universal: no generado en esta entrega.
 - Firma: clave de publicación Costa-Go existente.
 - API: `https://mototaxi-atacames-api.onrender.com`, sin proxy.
 - Mapas: proveedor Google con clave Android restringida suministrada al compilar.
 - Seguridad de los datos y permisos: sin nuevas categorías ni permisos respecto de la versión anterior.
+
+## Verificación final del AAB
+
+- Estado: compilado correctamente y listo para Play Console.
+- Tamaño: `111077475` bytes (`105.9 MB`).
+- SHA-256: `6C1E6922F7E3C3442C2385D9D7739799ACF33D78550719827796DD4521BBF532`.
+- Firma JAR: válida y verificada.
+- Certificado de firma: coincide con el utilizado en el build 61.
+- Version name: `0.18.1`.
+- Version code: `62`.
+- Arquitecturas incluidas: `arm64-v8a`, `armeabi-v7a` y `x86_64`.
+- API de producción: incluida.
+- Proxy de laboratorio: no incluido.
+- Clave restringida de Google Maps: incluida.
 
 Antes de cada AAB nuevo, actualizar este archivo con `versionName`, `versionCode`, notas, AAB validado, permisos y cambios que afecten Seguridad de los datos o acceso del revisor.
