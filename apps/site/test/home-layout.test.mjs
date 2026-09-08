@@ -32,9 +32,10 @@ test("usa una sola imagen generada para el mapa costero y conserva Costi", () =>
   assert.doesNotMatch(styles, /\.v2-audience-icon/);
 });
 
-test("publica el launcher vigente como identidad web y favicon", () => {
-  assert.match(home, /rel="icon"[^>]+costa-go-app-icon-v2\.png/);
+test("publica la marca transparente en la web y reserva el icono sólido para tiendas", () => {
+  assert.match(home, /rel="icon"[^>]+costa-go-brand-mark-v2\.png/);
   assert.match(home, /rel="apple-touch-icon"[^>]+costa-go-app-icon-v2\.png/);
-  assert.ok((home.match(/costa-go-app-icon-v2\.png/g) ?? []).length >= 4);
+  assert.ok((home.match(/costa-go-brand-mark-v2\.png/g) ?? []).length >= 3);
+  assert.match(home, /v2-launch[^]*costa-go-app-icon-v2\.png/);
   assert.doesNotMatch(home, /costa-go-emblem\.png/);
 });
