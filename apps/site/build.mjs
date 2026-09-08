@@ -51,6 +51,10 @@ await cp(
   resolve(output, "assets/costa-go-emblem.png")
 );
 await cp(
+  resolve(root, "apps/mobile/assets/images/launcher/costa-go-play-store-512-v2.png"),
+  resolve(output, "assets/costa-go-app-icon-v2.png")
+);
+await cp(
   resolve(root, "apps/mobile/assets/images/mototaxi-map-marker.png"),
   resolve(output, "assets/mototaxi-map-marker.png")
 );

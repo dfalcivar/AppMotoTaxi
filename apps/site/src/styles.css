@@ -39,7 +39,7 @@ button { color: inherit; }
 .site-header { position: absolute; inset: 0 0 auto; z-index: 30; color: #fff; border-bottom: 1px solid rgba(255,255,255,.17); }
 .nav-shell { height: 82px; display: flex; align-items: center; justify-content: space-between; gap: 26px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 750; letter-spacing: -.03em; }
-.brand img { object-fit: contain; }
+.brand img { object-fit: contain; border-radius:22%; }
 .brand b { color: #16bcec; }
 .nav-links { display: flex; align-items: center; gap: 29px; font-size: 14px; font-weight: 650; }
 .nav-links > a:not(.nav-cta) { opacity: .88; }

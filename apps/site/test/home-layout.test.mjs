@@ -31,3 +31,10 @@ test("usa una sola imagen generada para el mapa costero y conserva Costi", () =>
   assert.match(styles, /\.landing-v2 \.v2-early-access/);
   assert.doesNotMatch(styles, /\.v2-audience-icon/);
 });
+
+test("publica el launcher vigente como identidad web y favicon", () => {
+  assert.match(home, /rel="icon"[^>]+costa-go-app-icon-v2\.png/);
+  assert.match(home, /rel="apple-touch-icon"[^>]+costa-go-app-icon-v2\.png/);
+  assert.ok((home.match(/costa-go-app-icon-v2\.png/g) ?? []).length >= 4);
+  assert.doesNotMatch(home, /costa-go-emblem\.png/);
+});
