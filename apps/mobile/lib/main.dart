@@ -54,6 +54,8 @@ enum PassengerRequestSectionLayout { stacked }
 
 enum FavoritePlaceAction { origin, destination, rename, delete }
 
+enum MembershipPaymentOrderResult { closed, cancelled, transferSubmitted }
+
 PassengerRequestSectionLayout passengerRequestSectionLayoutFor(
   double logicalAvailableWidth, {
   double textScale = 1,
@@ -15869,10 +15871,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           ),
         ),
       );
-      if (context.mounted) {
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
-      }
     }
     return submitted;
   }
@@ -16369,14 +16367,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _showBankTransfer(
+  Future<bool> _showBankTransfer(
       BuildContext context, Map<String, dynamic> order) async {
     final confirmed = await showFiscalProfileModal(context,
         load: () =>
             api.call('GET', '/v1/driver/fiscal-profile', token: widget.s.token),
         save: (data) => api.call('PUT', '/v1/driver/fiscal-profile',
             token: widget.s.token, body: data));
-    if (!context.mounted || !confirmed) return;
+    if (!context.mounted || !confirmed) return false;
     Map<String, dynamic>? account;
     String? accountError;
     try {
@@ -16385,7 +16383,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       accountError =
           'La cuenta para transferencias de membresías no está activa o está incompleta. Configúrala en Administración > Membresías > Parámetros.';
     }
-    if (!context.mounted) return;
+    if (!context.mounted) return false;
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
     final subtotal =
         ((order['breakdown'] as Map?)?['subtotalAmount'] as num?)?.toDouble() ??
@@ -16399,7 +16397,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ((order['breakdown'] as Map?)?['vatAmount'] as num?)?.toDouble() ??
             (order['vatAmount'] as num?)?.toDouble() ??
             0;
-    await showModalBottomSheet<void>(
+    final submitted = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -16563,7 +16561,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               await _submitMembershipTransferProof(
                                   sheetContext, order);
                           if (submitted && sheetContext.mounted) {
-                            Navigator.pop(sheetContext);
+                            Navigator.pop(sheetContext, true);
                           }
                         },
                   icon: const Icon(Icons.upload_file_outlined),
@@ -16581,6 +16579,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ]),
       ),
     );
+    return submitted ?? false;
   }
 
   Widget _membershipDetailLine(String label, String value) => Padding(
@@ -16927,14 +16926,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     });
   }
 
-  Future<bool> _showMembershipPaymentOrder(
+  Future<MembershipPaymentOrderResult> _showMembershipPaymentOrder(
       BuildContext hostContext, Map<String, dynamic> order) async {
     final status = order['status']?.toString() ?? 'PENDING';
     final amount = (order['totalAmount'] as num?)?.toDouble() ?? 0;
     final expiresAt = DateTime.tryParse(order['expiresAt']?.toString() ?? '');
     final breakdown = Map<String, dynamic>.from(
         order['breakdown'] as Map? ?? const <String, dynamic>{});
-    final cancelled = await showModalBottomSheet<bool>(
+    final result = await showModalBottomSheet<MembershipPaymentOrderResult>(
           context: hostContext,
           isScrollControlled: true,
           useSafeArea: true,
@@ -16991,7 +16990,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   Row(children: [
                     IconButton.filledTonal(
                         tooltip: 'Regresar',
-                        onPressed: () => Navigator.pop(sheetContext, false),
+                        onPressed: () => Navigator.pop(
+                            sheetContext, MembershipPaymentOrderResult.closed),
                         icon: const Icon(Icons.arrow_back_rounded)),
                     const Expanded(
                         child: Row(
@@ -17150,7 +17150,12 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       title: 'Transferencia bancaria',
                       subtitle: 'Realiza tu pago y sube el comprobante',
                       onTap: () async {
-                        await _showBankTransfer(sheetContext, order);
+                        final submitted =
+                            await _showBankTransfer(sheetContext, order);
+                        if (submitted && sheetContext.mounted) {
+                          Navigator.pop(sheetContext,
+                              MembershipPaymentOrderResult.transferSubmitted);
+                        }
                       },
                     ),
                     const SizedBox(height: 8),
@@ -17170,7 +17175,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         final didCancel =
                             await _cancelMembershipOrder(sheetContext, order);
                         if (didCancel && sheetContext.mounted) {
-                          Navigator.pop(sheetContext, true);
+                          Navigator.pop(sheetContext,
+                              MembershipPaymentOrderResult.cancelled);
                         }
                       },
                       icon: Icon(Icons.cancel_outlined, color: scheme.error),
@@ -17183,25 +17189,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             );
           },
         ) ??
-        false;
-    if (cancelled) {
+        MembershipPaymentOrderResult.closed;
+    if (result == MembershipPaymentOrderResult.cancelled) {
       await refreshMembership(force: true);
       if (hostContext.mounted) {
         ScaffoldMessenger.of(hostContext).showSnackBar(const SnackBar(
             content: Text('La orden fue anulada correctamente.')));
       }
     }
-    return cancelled;
+    return result;
   }
 
-  Future<void> _showMembershipPaymentHistory(BuildContext hostContext) async {
+  Future<bool> _showMembershipPaymentHistory(BuildContext hostContext) async {
     try {
       final raw = await api.membershipPaymentOrders(widget.s.token);
       final orders =
           raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
-      if (!hostContext.mounted) return;
+      if (!hostContext.mounted) return false;
       var filter = 'ALL';
-      await showModalBottomSheet<void>(
+      final transferSubmitted = await showModalBottomSheet<bool>(
         context: hostContext,
         isScrollControlled: true,
         useSafeArea: true,
@@ -17322,8 +17328,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                           status == 'REJECTED'
                                       ? CostaGoStatusTone.danger
                                       : CostaGoStatusTone.neutral,
-                                  onTap: () => _showMembershipPaymentOrder(
-                                      context, order),
+                                  onTap: () async {
+                                    final result =
+                                        await _showMembershipPaymentOrder(
+                                            context, order);
+                                    if (result ==
+                                            MembershipPaymentOrderResult
+                                                .transferSubmitted &&
+                                        context.mounted) {
+                                      Navigator.pop(context, true);
+                                    }
+                                  },
                                   child: Row(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
@@ -17424,11 +17439,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           },
         ),
       );
+      return transferSubmitted ?? false;
     } catch (error) {
       if (hostContext.mounted) {
         ScaffoldMessenger.of(hostContext)
             .showSnackBar(SnackBar(content: Text(error.toString())));
       }
+      return false;
     }
   }
 
@@ -17641,12 +17658,19 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   if (!sheetContext.mounted) return;
                   final created = Map<String, dynamic>.from(response as Map);
                   setSheetState(() => pendingOrder = created);
-                  final cancelled =
+                  final result =
                       await _showMembershipPaymentOrder(sheetContext, created);
-                  if (cancelled && sheetContext.mounted) {
+                  if (result == MembershipPaymentOrderResult.cancelled &&
+                      sheetContext.mounted) {
                     setSheetState(() => pendingOrder = null);
                   }
                   await refreshMembership(force: true);
+                  if (result ==
+                          MembershipPaymentOrderResult.transferSubmitted &&
+                      sheetContext.mounted) {
+                    Navigator.pop(sheetContext);
+                    return;
+                  }
                 } catch (error) {
                   if (sheetContext.mounted) {
                     ScaffoldMessenger.of(sheetContext).showSnackBar(
@@ -17847,8 +17871,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: CostaGoSpace.md,
                                 vertical: CostaGoSpace.sm),
-                            onTap: () =>
-                                _showMembershipPaymentHistory(sheetContext),
+                            onTap: () async {
+                              final submitted =
+                                  await _showMembershipPaymentHistory(
+                                      sheetContext);
+                              if (submitted && sheetContext.mounted) {
+                                await refreshMembership(force: true);
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              }
+                            },
                             child: const Row(children: [
                               CostaGoIconBadge(
                                   icon: Icons.receipt_long_outlined, size: 42),
@@ -17882,11 +17915,23 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                       'Código ${pendingOrder!['shortCode']}\nToca para continuar con el pago'),
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: () async {
-                                    final cancelled =
+                                    final result =
                                         await _showMembershipPaymentOrder(
                                             sheetContext, pendingOrder!);
-                                    if (cancelled && sheetContext.mounted) {
+                                    if (result ==
+                                            MembershipPaymentOrderResult
+                                                .cancelled &&
+                                        sheetContext.mounted) {
                                       setSheetState(() => pendingOrder = null);
+                                    }
+                                    if (result ==
+                                            MembershipPaymentOrderResult
+                                                .transferSubmitted &&
+                                        sheetContext.mounted) {
+                                      await refreshMembership(force: true);
+                                      if (sheetContext.mounted) {
+                                        Navigator.pop(sheetContext);
+                                      }
                                     }
                                   },
                                 )),
