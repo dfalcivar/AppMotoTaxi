@@ -196,6 +196,31 @@ async function openRouteServiceRoute(
   };
 }
 
+function localRoute(origin: RoutePoint, destination: RoutePoint, waypoints: RoutePoint[]): RouteResult {
+  const points = [origin, ...waypoints, destination];
+  const factor = Number(process.env.LOCAL_ROUTE_DISTANCE_FACTOR ?? 1.25);
+  const safeFactor = Number.isFinite(factor) && factor >= 1 ? factor : 1.25;
+  const legs = points.slice(1).map((point, index) => {
+    const previous = points[index]!;
+    const latitudeDelta = (point.latitude - previous.latitude) * Math.PI / 180;
+    const longitudeDelta = (point.longitude - previous.longitude) * Math.PI / 180;
+    const latitudeA = previous.latitude * Math.PI / 180;
+    const latitudeB = point.latitude * Math.PI / 180;
+    const haversine = Math.sin(latitudeDelta / 2) ** 2
+      + Math.cos(latitudeA) * Math.cos(latitudeB) * Math.sin(longitudeDelta / 2) ** 2;
+    const distanceMeters = Math.round(2 * 6_371_000 * Math.asin(Math.sqrt(haversine)) * safeFactor);
+    return { distanceMeters, durationSeconds: Math.max(1, Math.round(distanceMeters / 6.94)) };
+  });
+  return {
+    points,
+    distanceMeters: legs.reduce((sum, leg) => sum + leg.distanceMeters, 0),
+    durationSeconds: legs.reduce((sum, leg) => sum + leg.durationSeconds, 0),
+    legs,
+    provider: "ORS",
+    cacheHit: false
+  };
+}
+
 async function computeFreshRoute(
   origin: RoutePoint,
   destination: RoutePoint,
@@ -211,7 +236,19 @@ async function computeFreshRoute(
     }
   }
   const orsKey = process.env.ORS_API_KEY?.trim();
-  if (orsKey) return openRouteServiceRoute(origin, destination, waypoints, orsKey);
+  if (orsKey) {
+    try {
+      return await openRouteServiceRoute(origin, destination, waypoints, orsKey);
+    } catch {
+      if (process.env.LOCAL_ROUTING_FALLBACK_ENABLED === "true") {
+        return localRoute(origin, destination, waypoints);
+      }
+      throw new Error("ORS_ROUTING_UNAVAILABLE");
+    }
+  }
+  if (process.env.LOCAL_ROUTING_FALLBACK_ENABLED === "true") {
+    return localRoute(origin, destination, waypoints);
+  }
   throw new Error("ROUTING_NOT_CONFIGURED");
 }
 

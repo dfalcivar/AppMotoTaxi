@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'driver_wallet_sheet.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -197,7 +198,45 @@ String membershipPlanType(dynamic snapshot) {
   if (value is Map && value['planType']?.toString() == 'TRIP_PACK') {
     return 'TRIP_PACK';
   }
+  if (value is Map && value['planType']?.toString() == 'WALLET_TOPUP') {
+    return 'WALLET_TOPUP';
+  }
   return 'PERIODIC';
+}
+
+String? transferProofMime(List<int> bytes) {
+  if (bytes.length >= 5 &&
+      bytes[0] == 0x25 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x44 &&
+      bytes[3] == 0x46 &&
+      bytes[4] == 0x2d) {
+    return 'application/pdf';
+  }
+  if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47 &&
+      bytes[4] == 0x0d &&
+      bytes[5] == 0x0a &&
+      bytes[6] == 0x1a &&
+      bytes[7] == 0x0a) {
+    return 'image/png';
+  }
+  if (bytes.length >= 12 &&
+      String.fromCharCodes(bytes.sublist(0, 4)) == 'RIFF' &&
+      String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') {
+    return 'image/webp';
+  }
+  if (bytes.length >= 4 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[bytes.length - 2] == 0xff &&
+      bytes[bytes.length - 1] == 0xd9) {
+    return 'image/jpeg';
+  }
+  return null;
 }
 
 String membershipPlanSummary(dynamic snapshot) {
@@ -213,6 +252,9 @@ String membershipPlanSummary(dynamic snapshot) {
     final trips = (value['purchasedTrips'] ?? value['includedTrips'] ?? 0);
     final validity = (value['packValidityDays'] as num?)?.toInt();
     return 'Plan por viajes · $trips viajes${validity == null ? ' · sin caducidad' : ' · $validity días'}';
+  }
+  if (membershipPlanType(value) == 'WALLET_TOPUP') {
+    return 'Recarga sin caducidad';
   }
   final duration = membershipPlanDurationDays(value);
   return duration == null
@@ -271,6 +313,26 @@ List<Map<String, dynamic>> sortedMembershipPlans(
     remaining: remaining,
     progress: included == 0 ? 0 : remaining / included,
   );
+}
+
+@visibleForTesting
+bool prepaidModalityIsCurrent({
+  required Map<String, dynamic> membership,
+  required Map<String, dynamic> eligibility,
+  required Map<String, dynamic> wallet,
+}) {
+  final available =
+      double.tryParse(wallet['available']?.toString() ?? '0') ?? 0;
+  if (wallet['enabled'] != true || available <= 0) return false;
+  if (eligibility['eligible'] != true) return false;
+
+  final status = membership['status']?.toString() ?? 'PENDING';
+  return !const {
+    'ACTIVE',
+    'EXPIRING',
+    'GRACE_PERIOD',
+    'PAYMENT_DUE',
+  }.contains(status);
 }
 
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
@@ -1440,6 +1502,15 @@ class ApiException implements Exception {
 
 String mensajeApi(dynamic code) =>
     const {
+      'PRICE_CONFIRMATION_REQUIRED':
+          'El precio cambió. Revisa y confirma nuevamente el resumen del viaje.',
+      'INSUFFICIENT_AVAILABLE_BALANCE':
+          'Tu saldo disponible no alcanza para esta solicitud. Recarga saldo Costa-Go.',
+      'WALLET_NOT_ENABLED': 'Pago por uso todavía no está habilitado.',
+      'TOPUP_OUTSIDE_LIMITS':
+          'El importe está fuera de los límites de recarga configurados.',
+      'RULE_OR_CONFIGURATION_REQUIRED':
+          'Este paquete requiere configuración comercial. Contacta a soporte.',
       'INVALID_CREDENTIALS': 'Correo o contraseña incorrectos.',
       'INVALID_BIOMETRIC_CREDENTIAL':
           'El acceso biométrico fue revocado. Ingresa con tu contraseña y actívalo nuevamente.',
@@ -10798,7 +10869,9 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       required String fareLabel,
       required String total}) {
     final scheme = Theme.of(context).colorScheme;
-    final showDetails = fareBreakdown['stops']! > 0 ||
+    final showDetails = preview['scheduledArrivalFeeCents'] != null ||
+        preview['arrivalMinimumCents'] != null ||
+        fareBreakdown['stops']! > 0 ||
         fareBreakdown['adjustments']! != 0 ||
         List<dynamic>.from(preview['fareLegs'] ?? const []).length > 1;
     return _PassengerSurface(
@@ -10817,6 +10890,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ]),
         if (showDetails) ...[
           const SizedBox(height: 10),
+          if (preview['scheduledArrivalFeeCents'] != null)
+            _fareLine(
+                context, 'Tarifa de llegada', fareBreakdown['arrival'] ?? 0),
+          if (preview['arrivalMinimumCents'] != null)
+            Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Row(children: [
+                  const Expanded(child: Text('Tarifa de llegada')),
+                  Text(
+                      '\$${((preview['arrivalMinimumCents'] as num) / 100).toStringAsFixed(2)} – \$${((preview['arrivalMaximumCents'] as num) / 100).toStringAsFixed(2)}'),
+                ])),
           if (fareBreakdown['stops']! > 0)
             _fareLine(
                 context, 'Adicional por paradas', fareBreakdown['stops']!),
@@ -10826,12 +10910,19 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         const Divider(height: 24),
         Row(children: [
           Expanded(
-              child: Text('Total a pagar',
+              child: Text(
+                  preview['totalMaximumCents'] != null
+                      ? 'Total estimado'
+                      : 'Total a pagar',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       color: scheme.onSurface, fontWeight: FontWeight.w900))),
-          Text('\$$total',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: scheme.primary, fontWeight: FontWeight.w900)),
+          Flexible(
+              child: Text(
+                  preview['totalMaximumCents'] != null
+                      ? '\$$total – \$${((preview['totalMaximumCents'] as num) / 100).toStringAsFixed(2)}'
+                      : '\$$total',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: scheme.primary, fontWeight: FontWeight.w900))),
         ]),
       ]),
     );
@@ -10849,6 +10940,10 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     setState(() => message = 'Calculando el resumen del viaje…');
     try {
       final preview = await api.previewTrip(widget.s.token, payload);
+      payload.remove('quoteConfirmation');
+      if (preview['quoteConfirmation'] != null) {
+        payload['quoteConfirmation'] = preview['quoteConfirmation'];
+      }
       if (!mounted) return false;
       final previewPoints =
           List<dynamic>.from(preview['routePoints'] ?? const [])
@@ -10987,6 +11082,19 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                               fareBreakdown: fareBreakdown,
                               fareLabel: fareLabel,
                               total: total),
+                          if (preview['economicSnapshot'] != null) ...[
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Este total quedará confirmado al reservar. Solo se recalculará si modificas el viaje y aceptas el nuevo precio.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                          if (preview['arrivalMinimumCents'] != null)
+                            const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: Text(
+                                    'El valor final se confirmará cuando un conductor acepte tu viaje.',
+                                    textAlign: TextAlign.center)),
                           const SizedBox(height: 6),
                           TextButton(
                               onPressed: () =>
@@ -11660,24 +11768,29 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               const SizedBox(width: 12),
               SizedBox(
                 width: 94,
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text(
-                    active?['status'] == 'SEARCHING'
-                        ? 'Tarifa estimada'
-                        : 'Valor a pagar',
-                    maxLines: 1,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w700,
+                child: active?['status'] == 'SEARCHING'
+                    ? const Text(
+                        'Valor final\nSe confirma al asignar conductor',
+                        textAlign: TextAlign.center)
+                    : Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text(
+                          'Valor a pagar',
+                          maxLines: 1,
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                         ),
-                  ),
-                  const SizedBox(height: 4),
-                  _TripFareBadge(
-                    cents: fareCents,
-                    label: '',
-                    width: 92,
-                  ),
-                ]),
+                        const SizedBox(height: 4),
+                        _TripFareBadge(
+                          cents: fareCents,
+                          label: '',
+                          width: 92,
+                        ),
+                      ]),
               ),
             ],
           ]),
@@ -12975,6 +13088,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   };
   Map<String, dynamic>? membershipData;
+  Map<String, dynamic>? driverWalletSummary;
   DateTime? lastMembershipRefreshAt;
   @override
   void initState() {
@@ -13131,6 +13245,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       // El mapa y el estado del conductor siguen disponibles con valores seguros.
     }
     try {
+      final wallet = Map<String, dynamic>.from(await api
+          .call('GET', '/v1/driver/wallet', token: widget.s.token) as Map);
+      if (mounted) setState(() => driverWalletSummary = wallet);
+    } catch (_) {
+      // El distintivo conserva el estado de membresía si el saldo no responde.
+    }
+    try {
       final response = Map<String, dynamic>.from(
           await api.serviceAreas(widget.s.token) as Map);
       final catalog = ServiceAreaCatalog.fromJson(response);
@@ -13178,6 +13299,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           });
         }
       }
+    } catch (_) {}
+    try {
+      final wallet = Map<String, dynamic>.from(await api
+          .call('GET', '/v1/driver/wallet', token: widget.s.token) as Map);
+      if (mounted) setState(() => driverWalletSummary = wallet);
     } catch (_) {}
   }
 
@@ -15263,7 +15389,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text('Tarifa estimada',
+                      Text('Valor a cobrar',
                           textAlign: TextAlign.center,
                           style: Theme.of(context)
                               .textTheme
@@ -15459,7 +15585,18 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final membership =
         Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final status = membership['status']?.toString() ?? 'PENDING';
-    final color = switch (status) {
+    final currentIsTripPack = membership['planType']?.toString() == 'TRIP_PACK';
+    final wallet = driverWalletSummary?['wallet'] is Map
+        ? Map<String, dynamic>.from(driverWalletSummary!['wallet'] as Map)
+        : <String, dynamic>{};
+    final prepaidIsCurrent = prepaidModalityIsCurrent(
+      membership: membership,
+      eligibility:
+          Map<String, dynamic>.from(data['eligibility'] as Map? ?? const {}),
+      wallet: wallet,
+    );
+    final effectiveStatus = prepaidIsCurrent ? 'ACTIVE' : status;
+    final color = switch (effectiveStatus) {
       'ACTIVE' => const Color(0xff24964f),
       'EXPIRING' => const Color(0xffd58a00),
       'GRACE_PERIOD' => const Color(0xffe17313),
@@ -15470,19 +15607,27 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       'EXHAUSTED' => const Color(0xffc93f3f),
       _ => const Color(0xff607d8b),
     };
-    final icon = switch (status) {
-      'ACTIVE' => Icons.verified_rounded,
-      'EXPIRING' => Icons.timer_outlined,
-      'GRACE_PERIOD' => Icons.hourglass_bottom_rounded,
-      'PAYMENT_DUE' => Icons.payments_outlined,
-      'SUSPENSION_PENDING_ACTIVE_TRIP' => Icons.warning_amber_rounded,
-      'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Icons.lock_clock_rounded,
-      'EXHAUSTED' => Icons.route_outlined,
-      _ => Icons.schedule_rounded,
-    };
+    final icon = prepaidIsCurrent
+        ? Icons.workspace_premium_outlined
+        : switch (effectiveStatus) {
+            'ACTIVE' => currentIsTripPack
+                ? Icons.electric_rickshaw_rounded
+                : Icons.verified_rounded,
+            'EXPIRING' => Icons.timer_outlined,
+            'GRACE_PERIOD' => Icons.hourglass_bottom_rounded,
+            'PAYMENT_DUE' => Icons.payments_outlined,
+            'SUSPENSION_PENDING_ACTIVE_TRIP' => Icons.warning_amber_rounded,
+            'SUSPENDED_NON_PAYMENT' || 'SUSPENDED' => Icons.lock_clock_rounded,
+            'EXHAUSTED' => Icons.route_outlined,
+            _ => Icons.schedule_rounded,
+          };
     return Semantics(
       button: true,
-      label: 'Membresía Costa-Go, ${_membershipStatusLabel(status)}',
+      label: prepaidIsCurrent
+          ? 'Membresía Costa-Go, pago por uso activo'
+          : currentIsTripPack
+              ? 'Paquete por viajes, ${_membershipStatusLabel(effectiveStatus)}'
+              : 'Membresía por período, ${_membershipStatusLabel(effectiveStatus)}',
       child: Material(
         color: color.withValues(alpha: .18),
         elevation: 4,
@@ -15528,7 +15673,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (action == null || !context.mounted) return false;
     late Uint8List bytes;
     late String filename;
-    late String reportedMime;
     if (action == 'DOCUMENT') {
       final selected = await nativeActions
           .invokeMapMethod<String, dynamic>('pickDocument', const {
@@ -15539,7 +15683,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       if (rawBytes is! Uint8List) return false;
       bytes = rawBytes;
       filename = selected['name']?.toString().toLowerCase() ?? '';
-      reportedMime = selected['mime']?.toString() ?? '';
     } else {
       final image = await ImagePicker().pickImage(
           source: action == 'CAMERA' ? ImageSource.camera : ImageSource.gallery,
@@ -15549,11 +15692,6 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       if (image == null || !context.mounted) return false;
       bytes = await image.readAsBytes();
       filename = image.name.toLowerCase();
-      reportedMime = filename.endsWith('.png')
-          ? 'image/png'
-          : filename.endsWith('.webp')
-              ? 'image/webp'
-              : 'image/jpeg';
     }
     if (bytes.length < 100 || bytes.length > 5242880) {
       if (context.mounted) {
@@ -15562,13 +15700,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       }
       return false;
     }
-    final mime = reportedMime == 'application/pdf' || filename.endsWith('.pdf')
-        ? 'application/pdf'
-        : reportedMime == 'image/png' || filename.endsWith('.png')
-            ? 'image/png'
-            : reportedMime == 'image/webp' || filename.endsWith('.webp')
-                ? 'image/webp'
-                : 'image/jpeg';
+    final mime = transferProofMime(bytes);
+    if (mime == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('El archivo seleccionado no es JPG, PNG, WEBP o PDF.')));
+      }
+      return false;
+    }
     if (!context.mounted) return false;
     final bank = TextEditingController(text: 'Transferencia bancaria');
     final reference =
@@ -16941,9 +17081,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           builder: (sheetContext) {
             final scheme = Theme.of(sheetContext).colorScheme;
             final isTripPack = membershipPlanType(order['plan']) == 'TRIP_PACK';
+            final isTopUp = membershipPlanType(order['plan']) == 'WALLET_TOPUP';
             final statusTitle = {
-                  'PENDING':
-                      isTripPack ? 'Comprar viajes' : 'Renovar membresía',
+                  'PENDING': isTopUp
+                      ? 'Recargar saldo'
+                      : isTripPack
+                          ? 'Comprar viajes'
+                          : 'Renovar membresía',
                   'PENDING_VERIFICATION': 'Pago en revisión',
                   'PAID': 'Orden pagada',
                   'REJECTED': 'Orden rechazada',
@@ -17034,11 +17178,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     child: Column(children: [
                       _membershipAmountRow(
                           sheetContext,
-                          'Membresía',
+                          isTopUp ? 'Valor de recarga' : 'Membresía',
                           (breakdown['baseAmount'] as num?) ??
                               order['baseAmount'] ??
                               0),
-                      if (breakdown['includedTrips'] != null)
+                      if (isTopUp)
+                        _membershipAmountRow(sheetContext, 'Saldo a acreditar',
+                            order['baseAmount'] ?? 0),
+                      if (!isTopUp && breakdown['includedTrips'] != null)
                         _membershipDetailLine(
                             isTripPack
                                 ? 'Viajes a acreditar'
@@ -17106,11 +17253,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                       ),
                     ),
                   if (status == 'PAID')
-                    const Padding(
-                      padding: EdgeInsets.only(top: CostaGoSpace.sm),
+                    Padding(
+                      padding: const EdgeInsets.only(top: CostaGoSpace.sm),
                       child: CostaGoInfoBanner(
                         title: 'Pago realizado con éxito',
-                        message: 'Tu membresía fue procesada correctamente.',
+                        message: isTopUp
+                            ? 'Tu saldo fue acreditado correctamente.'
+                            : 'Tu membresía fue procesada correctamente.',
                         icon: Icons.check_circle_outline_rounded,
                         tone: CostaGoStatusTone.success,
                       ),
@@ -17601,6 +17750,15 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Future<void> _showMembershipDetails() async {
     final data = membershipData;
     if (data == null || !mounted) return;
+    Map<String, dynamic>? walletSummary;
+    try {
+      walletSummary = Map<String, dynamic>.from(await api
+          .call('GET', '/v1/driver/wallet', token: widget.s.token) as Map);
+      driverWalletSummary = walletSummary;
+    } catch (_) {
+      // La membresía sigue disponible aunque el resumen del saldo no cargue.
+    }
+    if (!mounted) return;
     final membership =
         Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final plans = List<dynamic>.from(data['plans'] ?? const []);
@@ -17623,8 +17781,23 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   (membership['billableExtraAmount'] as num?)?.toDouble() ?? 0;
               final currentIsTripPack =
                   membership['planType']?.toString() == 'TRIP_PACK';
-              final statusTone = switch (status) {
-                'ACTIVE' => CostaGoStatusTone.success,
+              final wallet = walletSummary?['wallet'] is Map
+                  ? Map<String, dynamic>.from(walletSummary!['wallet'] as Map)
+                  : <String, dynamic>{};
+              final walletAvailable =
+                  double.tryParse(wallet['available']?.toString() ?? '0') ?? 0;
+              final planName = membership['planName']?.toString().trim() ?? '';
+              final prepaidIsCurrent = prepaidModalityIsCurrent(
+                membership: membership,
+                eligibility: Map<String, dynamic>.from(
+                    data['eligibility'] as Map? ?? const {}),
+                wallet: wallet,
+              );
+              final effectiveStatus = prepaidIsCurrent ? 'ACTIVE' : status;
+              final statusTone = switch (effectiveStatus) {
+                'ACTIVE' => currentIsTripPack
+                    ? CostaGoStatusTone.info
+                    : CostaGoStatusTone.success,
                 'EXPIRING' ||
                 'GRACE_PERIOD' ||
                 'PAYMENT_DUE' =>
@@ -17710,26 +17883,35 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             children: [
                           Wrap(spacing: 10, runSpacing: 8, children: [
                             CostaGoStatusChip(
-                              label: _membershipStatusLabel(status),
-                              icon: status == 'ACTIVE'
+                              label: _membershipStatusLabel(effectiveStatus),
+                              icon: effectiveStatus == 'ACTIVE'
                                   ? Icons.verified_rounded
-                                  : status == 'EXHAUSTED'
+                                  : effectiveStatus == 'EXHAUSTED'
                                       ? Icons.route_outlined
                                       : Icons.schedule_rounded,
                               tone: statusTone,
                             ),
                             CostaGoStatusChip(
-                              label: currentIsTripPack
-                                  ? 'Por viajes'
-                                  : 'Por período',
-                              icon: currentIsTripPack
-                                  ? Icons.route_outlined
-                                  : Icons.event_repeat_outlined,
+                              label: prepaidIsCurrent
+                                  ? 'Pago por uso'
+                                  : currentIsTripPack
+                                      ? 'Por viajes'
+                                      : 'Por período',
+                              icon: prepaidIsCurrent
+                                  ? Icons.account_balance_wallet_outlined
+                                  : currentIsTripPack
+                                      ? Icons.route_outlined
+                                      : Icons.event_repeat_outlined,
+                              tone: prepaidIsCurrent
+                                  ? CostaGoStatusTone.success
+                                  : CostaGoStatusTone.info,
                             ),
                           ]),
                           const SizedBox(height: CostaGoSpace.sm),
                           CostaGoSurface(
-                            tone: CostaGoStatusTone.info,
+                            tone: prepaidIsCurrent
+                                ? CostaGoStatusTone.success
+                                : CostaGoStatusTone.info,
                             padding: const EdgeInsets.all(CostaGoSpace.lg),
                             child: Column(children: [
                               Row(
@@ -17740,7 +17922,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Text('Plan actual',
+                                            Text(
+                                                prepaidIsCurrent
+                                                    ? 'Modalidad actual'
+                                                    : 'Plan actual',
                                                 style: Theme.of(sheetContext)
                                                     .textTheme
                                                     .bodyMedium
@@ -17751,9 +17936,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                             .onSurfaceVariant)),
                                             const SizedBox(height: 2),
                                             Text(
-                                              membership['planName']
-                                                      ?.toString() ??
-                                                  'Sin plan activo',
+                                              prepaidIsCurrent
+                                                  ? 'Pago por uso'
+                                                  : planName.isNotEmpty
+                                                      ? planName
+                                                      : 'Sin plan activo',
                                               style: Theme.of(sheetContext)
                                                   .textTheme
                                                   .titleLarge
@@ -17764,13 +17951,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                           ]),
                                     ),
                                     CostaGoIconBadge(
-                                      icon: currentIsTripPack
-                                          ? Icons.route_outlined
-                                          : Icons.calendar_month_outlined,
+                                      icon: prepaidIsCurrent
+                                          ? Icons
+                                              .account_balance_wallet_outlined
+                                          : currentIsTripPack
+                                              ? Icons.route_outlined
+                                              : Icons.calendar_month_outlined,
+                                      tone: prepaidIsCurrent
+                                          ? CostaGoStatusTone.success
+                                          : CostaGoStatusTone.info,
                                       size: 52,
                                     ),
                                   ]),
-                              if (currentIsTripPack) ...[
+                              if (prepaidIsCurrent) ...[
+                                const Divider(height: CostaGoSpace.lg),
+                                _membershipDetailLine(
+                                  'Saldo prepago disponible',
+                                  '\$${walletAvailable.toStringAsFixed(2)}',
+                                ),
+                              ] else if (currentIsTripPack) ...[
                                 const SizedBox(height: CostaGoSpace.md),
                                 Row(
                                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -17851,19 +18050,23 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 _membershipDetailLine('Renovación estimada',
                                     '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
                               ],
-                              if (!currentIsTripPack && extraAmount > 0)
+                              if (!prepaidIsCurrent &&
+                                  !currentIsTripPack &&
+                                  extraAmount > 0)
                                 _membershipDetailLine('Excedente acumulado',
                                     '\$${extraAmount.toStringAsFixed(2)}'),
-                              const Divider(height: CostaGoSpace.lg),
-                              if (membership['expiresAt'] != null)
-                                _membershipDetailLine(
-                                    'Vigente hasta',
-                                    formatEcuadorCompactDate(DateTime.parse(
-                                        membership['expiresAt'].toString()))),
-                              if (currentIsTripPack &&
-                                  membership['expiresAt'] == null)
-                                _membershipDetailLine(
-                                    'Vigencia', 'Hasta agotar los viajes'),
+                              if (!prepaidIsCurrent) ...[
+                                const Divider(height: CostaGoSpace.lg),
+                                if (membership['expiresAt'] != null)
+                                  _membershipDetailLine(
+                                      'Vigente hasta',
+                                      formatEcuadorCompactDate(DateTime.parse(
+                                          membership['expiresAt'].toString()))),
+                                if (currentIsTripPack &&
+                                    membership['expiresAt'] == null)
+                                  _membershipDetailLine(
+                                      'Vigencia', 'Hasta agotar los viajes'),
+                              ],
                             ]),
                           ),
                           const SizedBox(height: 8),
@@ -17892,6 +18095,89 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                           fontWeight: FontWeight.w800))),
                               Icon(Icons.chevron_right_rounded),
                             ]),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: CostaGoSpace.md,
+                                  vertical: CostaGoSpace.sm),
+                            ),
+                            onPressed: () async {
+                              final order =
+                                  await showModalBottomSheet<
+                                          Map<String, dynamic>>(
+                                      context: sheetContext,
+                                      isScrollControlled: true,
+                                      useSafeArea: true,
+                                      showDragHandle: true,
+                                      builder: (_) => DriverWalletSheet(
+                                            load: () async =>
+                                                Map<String, dynamic>.from(
+                                                    await api.call('GET',
+                                                        '/v1/driver/wallet',
+                                                        token: widget
+                                                            .s.token) as Map),
+                                            setEnabled: (enabled) async {
+                                              await api.call('PUT',
+                                                  '/v1/driver/wallet/preference',
+                                                  token: widget.s.token,
+                                                  body: {'enabled': enabled});
+                                            },
+                                            createOrder: (amount, key) async =>
+                                                Map<String, dynamic>.from(
+                                                    await api.call('POST',
+                                                        '/v1/driver/membership/payment-orders',
+                                                        token: widget.s.token,
+                                                        body: {
+                                                  'topUpAmount': amount,
+                                                  'idempotencyKey': key,
+                                                  'intendedMethod': 'CASH'
+                                                }) as Map),
+                                          ));
+                              if (order != null && sheetContext.mounted) {
+                                setSheetState(() => pendingOrder = order);
+                                final result =
+                                    await _showMembershipPaymentOrder(
+                                        sheetContext, order);
+                                await refreshMembership(force: true);
+                                if (result ==
+                                        MembershipPaymentOrderResult
+                                            .transferSubmitted &&
+                                    sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              }
+                            },
+                            child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                      Icons.account_balance_wallet_outlined,
+                                      size: 17),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                      child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                        const Text(
+                                            'Saldo Costa-Go · Pago por uso',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.w800)),
+                                        if (walletSummary?['wallet'] is Map)
+                                          Text(
+                                            '\$${Map<String, dynamic>.from(walletSummary!['wallet'] as Map)['available'] ?? '0.00'} disponibles',
+                                            textAlign: TextAlign.center,
+                                            style: Theme.of(sheetContext)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w700),
+                                          ),
+                                      ])),
+                                ]),
                           ),
                           if (pendingOrder != null) ...[
                             const SizedBox(height: 10),

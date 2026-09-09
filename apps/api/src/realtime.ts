@@ -9,8 +9,8 @@ import { resolveServiceArea } from "./service-areas.js";
 import { nearbyVisibilityRadius } from "./driver-search.js";
 
 const pointSchema = z.object({
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180)
+  latitude: z.coerce.number().min(-90).max(90),
+  longitude: z.coerce.number().min(-180).max(180)
 });
 const paymentMethodSchema = z.enum(["CASH", "DEUNA"]);
 
@@ -160,12 +160,19 @@ async function nearbyDrivers(
         where dd.driver_id=d.user_id and dd.status='SUSPENDED'
       )
       and ((select not membership_enforcement_enabled from operational_settings where id=1)
+        or exists(select 1 from driver_wallets w cross join operational_settings os
+          where os.id=1 and os.arrival_commercial_configuration->>'enabled'='true' and w.driver_id=d.user_id and w.enabled
+            and w.total-w.reserved>=coalesce((select round(platform_commission_cents_per_leg::numeric/100*os.membership_extra_trip_share_percent/100,2)
+              from pricing_versions where active_from<=now() and (active_until is null or active_until>now()) order by active_from desc limit 1),0)
+            and not exists(select 1 from driver_memberships blocked where blocked.driver_id=d.user_id and blocked.cycle_closed_at is null
+              and blocked.status in ('SUSPENDED','SUSPENDED_NON_PAYMENT','SUSPENSION_PENDING_ACTIVE_TRIP')))
         or exists (
           select 1 from driver_memberships dm
           where dm.driver_id=d.user_id and dm.cycle_closed_at is null
             and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE')
               or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
             and (dm.suspension_at is null or dm.suspension_at>now())
+            and (dm.plan_type_snapshot<>'TRIP_PACK' or dm.completed_trips<dm.included_trips_snapshot)
         ))
       and (${excludeDriverId ?? null}::uuid is null or d.user_id <> ${excludeDriverId ?? null}::uuid)
       and d.last_location_at > now() - interval '5 minutes'

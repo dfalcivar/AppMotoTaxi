@@ -5,6 +5,8 @@ afterEach(() => {
   clearRouteCacheForTests();
   vi.unstubAllGlobals();
   delete process.env.GOOGLE_MAPS_SERVER_API_KEY;
+  delete process.env.ORS_API_KEY;
+  delete process.env.LOCAL_ROUTING_FALLBACK_ENABLED;
 });
 
 describe("rutas de Google", () => {
@@ -97,5 +99,20 @@ describe("rutas de Google", () => {
     expect(body.routingPreference).toBe("TRAFFIC_AWARE");
     expect(headers["X-Goog-FieldMask"]).toContain("routes.routeToken");
     expect(route.routeToken).toBe("encrypted-navigation-token");
+  });
+
+  it("usa una estimación determinista solo cuando el laboratorio la habilita", async () => {
+    process.env.ORS_API_KEY = "blocked-local-key";
+    process.env.LOCAL_ROUTING_FALLBACK_ENABLED = "true";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("blocked", { status: 403 })));
+
+    const route = await computeRoute(
+      { latitude: -2.9, longitude: -79.0 },
+      { latitude: -2.905, longitude: -79.005 }
+    );
+
+    expect(route.provider).toBe("ORS");
+    expect(route.distanceMeters).toBeGreaterThan(700);
+    expect(route.legs).toHaveLength(1);
   });
 });

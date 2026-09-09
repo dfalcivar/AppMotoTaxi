@@ -151,7 +151,7 @@ class _DriverSearchIndicatorState extends State<DriverSearchIndicator>
                     semanticsLabel: 'Progreso de búsqueda')),
           ])),
       const SizedBox(height: 20),
-      Text('Buscando un conductor cercano',
+      Text('Buscando una mototaxi cercana',
           textAlign: TextAlign.center,
           style: theme.textTheme.headlineSmall
               ?.copyWith(color: colors.primary, fontWeight: FontWeight.w900)),
@@ -159,7 +159,7 @@ class _DriverSearchIndicatorState extends State<DriverSearchIndicator>
       Text(
           progress == null
               ? 'Sincronizando búsqueda…'
-              : 'Rango ${progress.round} de ${progress.totalRounds} · $time restantes',
+              : 'Ampliando búsqueda · $time restantes',
           textAlign: TextAlign.center,
           style: theme.textTheme.bodyMedium
               ?.copyWith(color: colors.primary, fontWeight: FontWeight.w700)),
@@ -168,11 +168,6 @@ class _DriverSearchIndicatorState extends State<DriverSearchIndicator>
             textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: colors.onSurfaceVariant)),
-      const SizedBox(height: 6),
-      Text('Estamos buscando el mototaxi más cercano para ti.',
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodyLarge
-              ?.copyWith(color: colors.onSurfaceVariant)),
     ]);
   }
 }

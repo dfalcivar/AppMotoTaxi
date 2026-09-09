@@ -3,6 +3,19 @@ import 'package:latlong2/latlong.dart';
 import 'package:mototaxi_atacames/main.dart';
 
 void main() {
+  group('comprobantes de transferencia', () {
+    test('detecta el formato por el contenido y no por el nombre del archivo',
+        () {
+      expect(
+          transferProofMime([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          'image/png');
+      expect(transferProofMime([0xff, 0xd8, 0x00, 0xff, 0xd9]), 'image/jpeg');
+      expect(transferProofMime('%PDF-1.7'.codeUnits), 'application/pdf');
+      expect(transferProofMime('RIFF0000WEBP'.codeUnits), 'image/webp');
+      expect(transferProofMime('archivo inválido'.codeUnits), isNull);
+    });
+  });
+
   group('planes de membresía', () {
     test('ordena los paquetes por cantidad de viajes', () {
       final plans = sortedMembershipPlans([
@@ -65,6 +78,47 @@ void main() {
       expect(progress.used, 3);
       expect(progress.remaining, 7);
       expect(progress.progress, .7);
+    });
+
+    test('muestra pago por uso cuando el saldo es la modalidad vigente', () {
+      expect(
+        prepaidModalityIsCurrent(
+          membership: {'status': 'PENDING'},
+          eligibility: {'eligible': true},
+          wallet: {'enabled': true, 'available': '10.00'},
+        ),
+        isTrue,
+      );
+    });
+
+    test('prioriza un plan tradicional vigente sobre el saldo guardado', () {
+      expect(
+        prepaidModalityIsCurrent(
+          membership: {'status': 'ACTIVE', 'planName': 'Paquete 50 viajes'},
+          eligibility: {'eligible': true},
+          wallet: {'enabled': true, 'available': '10.00'},
+        ),
+        isFalse,
+      );
+    });
+
+    test('no muestra prepago activo sin saldo o sin elegibilidad', () {
+      expect(
+        prepaidModalityIsCurrent(
+          membership: {'status': 'PENDING'},
+          eligibility: {'eligible': true},
+          wallet: {'enabled': true, 'available': '0.00'},
+        ),
+        isFalse,
+      );
+      expect(
+        prepaidModalityIsCurrent(
+          membership: {'status': 'SUSPENDED'},
+          eligibility: {'eligible': false},
+          wallet: {'enabled': true, 'available': '10.00'},
+        ),
+        isFalse,
+      );
     });
   });
 
@@ -337,6 +391,21 @@ void main() {
         friendlyLocationFailure(const ApiException(
             'Activa la ubicación GPS del teléfono para continuar.')),
         contains('Activa la ubicación'));
+  });
+
+  test('la llegada programada se muestra separada sin duplicar cargos', () {
+    final summary = tripFareBreakdown({
+      'baseFareCents': 300,
+      'platformCommissionCents': 0,
+      'stopSurchargeCents': 25,
+      'scheduledArrivalFeeCents': 75,
+      'quotedTotalCents': 400,
+    });
+    expect(summary['journeys'], 300);
+    expect(summary['arrival'], 75);
+    expect(summary['stops'], 25);
+    expect(summary['adjustments'], 0);
+    expect(summary['total'], 400);
   });
 
   test('el total de tarifa coincide con todos los conceptos mostrados', () {

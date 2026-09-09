@@ -11,6 +11,9 @@ import { requireOrderFiscalProfile } from './fiscal/clients.js';
 import { taxBreakdown } from './taxes.js';
 import {notificationPreferenceAllows} from './notification-preferences.js';
 import {sendMembershipActivationConfirmation} from './membership-activation.js';
+import {commercialContext} from './arrival-commercial.js';
+import {exactTaxBreakdown} from './commercial-economics.js';
+import {calculatePackageEconomics} from './package-economics.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
@@ -131,10 +134,11 @@ const gracePolicySchema = z.object({
 });
 
 const paymentOrderSchema = z.object({
-  planId: z.string().uuid(),
+  planId: z.string().uuid().optional(),
+  topUpAmount:z.string().regex(/^\d{1,6}(\.\d{1,2})?$/).optional(),
   intendedMethod: z.enum(["CASH", "DEUNA", "BANK_TRANSFER"]).optional(),
   idempotencyKey: z.string().trim().min(8).max(120)
-});
+}).refine(value=>Boolean(value.planId)!==Boolean(value.topUpAmount),{message:'SELECT_PLAN_OR_TOPUP'});
 const paymentOrderCancellationSchema = z.object({
   reason: z.enum([
     "ORDER_GENERATION_ERROR", "WRONG_MEMBERSHIP", "CHANGED_MIND",
@@ -294,7 +298,7 @@ export interface DriverEligibility {
   enforcementEnabled: boolean;
 }
 
-export async function driverMembershipEligibility(driverId: string): Promise<DriverEligibility> {
+export async function driverMembershipEligibility(driverId: string, tripId?:string): Promise<DriverEligibility> {
   const [settings] = await database()`
     select driver_memberships_enabled as "membershipsEnabled",
       membership_enforcement_enabled as "enforcementEnabled"
@@ -319,10 +323,22 @@ export async function driverMembershipEligibility(driverId: string): Promise<Dri
     from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
     order by created_at desc limit 1
   `;
-  if (!membership) return { eligible: false, reason: "MEMBERSHIP_REQUIRED", enforcementEnabled: true };
+  const [wallet]=await database()`select w.enabled and w.total-w.reserved>=round(
+    coalesce((select platform_commission_cents_per_leg::numeric/100 from pricing_versions where active_from<=now()
+      and (active_until is null or active_until>now()) order by active_from desc limit 1),0)*os.membership_extra_trip_share_percent/100,2) as eligible
+    from driver_wallets w cross join operational_settings os where w.driver_id=${driverId} and os.id=1
+      and os.arrival_commercial_configuration->>'enabled'='true'`;
+  let walletEligible=Boolean(wallet?.eligible);
+  if(tripId&&wallet) {
+    const [check]=await database()`select commercial_driver_can_accept(${driverId},${tripId},1) as eligible`;
+    walletEligible=Boolean(check?.eligible);
+  }
+  if (!membership) return { eligible: walletEligible, reason: walletEligible?undefined:"MEMBERSHIP_REQUIRED", enforcementEnabled: true };
   const status = String(membership.status);
+  if(['SUSPENDED','SUSPENDED_NON_PAYMENT','SUSPENSION_PENDING_ACTIVE_TRIP'].includes(status))
+    return {eligible:false,reason:'MEMBERSHIP_SUSPENDED_NON_PAYMENT',membership,enforcementEnabled:true};
   if (membership.planType === "TRIP_PACK" && Number(membership.completedTrips) >= Number(membership.includedTrips)) {
-    return { eligible: false, reason: "MEMBERSHIP_EXHAUSTED", membership, enforcementEnabled: true };
+    return { eligible: walletEligible, reason: walletEligible?undefined:"MEMBERSHIP_EXHAUSTED", membership, enforcementEnabled: true };
   }
   const now = Date.now();
   if (membership.suspensionAt && new Date(String(membership.suspensionAt)).getTime() <= now && status !== "ACTIVE" && status !== "EXPIRING") {
@@ -330,7 +346,7 @@ export async function driverMembershipEligibility(driverId: string): Promise<Dri
   }
   const permitted = ["ACTIVE", "EXPIRING", "PAYMENT_DUE"].includes(status)
     || (status === "GRACE_PERIOD" && Boolean(membership.graceAllowsTrips));
-  return { eligible: permitted, reason: permitted ? undefined : `MEMBERSHIP_${status}`, membership, enforcementEnabled: true };
+  return { eligible: permitted||walletEligible, reason: permitted||walletEligible ? undefined : `MEMBERSHIP_${status}`, membership, enforcementEnabled: true };
 }
 
 export async function grantInitialDriverGrace(driverId: string, actorId?: string): Promise<void> {
@@ -390,7 +406,8 @@ async function currentMembership(driverId: string) {
       dm.included_trips_snapshot as "includedTrips",dm.extra_trips as "extraTrips",
       greatest(0,dm.included_trips_snapshot-dm.completed_trips) as "remainingTrips",
       dm.extra_trip_fee_snapshot::float8 as "extraTripFee",dm.raw_extra_amount::float8 as "rawExtraAmount",
-      dm.billable_extra_amount::float8 as "billableExtraAmount",dm.estimated_next_renewal_amount::float8 as "estimatedNextRenewalAmount",
+      dm.billable_extra_amount::float8 as "billableExtraAmount",greatest(0,dm.estimated_next_renewal_amount+dm.prior_cycle_due)::float8 as "estimatedNextRenewalAmount",
+      dm.prior_cycle_due::text as "priorCycleDue",
       dm.final_renewal_amount::float8 as "finalRenewalAmount",dm.base_membership_amount_snapshot::float8 as "baseAmount",
       dm.max_renewal_amount_snapshot::float8 as "maximumAmount",dm.passenger_service_additional_snapshot::float8 as "passengerAdditional",
       dm.currency,dm.payer_type as "payerType",coalesce(c.name,'Individual') as "payerName",
@@ -507,7 +524,7 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
         total_amount::float8 as "totalAmount",
         currency,expires_at as "expiresAt",plan_snapshot as "plan",metadata
       from membership_payment_orders
-      where driver_id=${driverId} and status in ('PENDING','PENDING_VERIFICATION') and expires_at>now()
+      where driver_id=${driverId} and ((status in ('PENDING','PENDING_VERIFICATION') and expires_at>now()) or idempotency_key=${input.idempotencyKey})
       order by case when status='PENDING_VERIFICATION' then 0 else 1 end,created_at desc limit 1 for update
     `;
     if (existing) {
@@ -525,24 +542,40 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
       return { order: existing as Record<string, unknown>, reused: true };
     }
 
-    const [settings] = await tx`select membership_qr_duration_hours as hours,vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`;
-    const [plan] = await tx`select * from membership_plans where id=${input.planId} and enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())`;
+    const [settings] = await tx`select membership_qr_duration_hours as hours,vat_rate_percent::text as "vatRatePercent" from operational_settings where id=1`;
+    const context=await commercialContext(tx);
+    if(input.topUpAmount) {
+      if(!context)throw new Error('WALLET_NOT_ENABLED');
+      const [limit]=await tx`select ${input.topUpAmount}::numeric>0 and ${input.topUpAmount}::numeric between
+        ${context.config.minimumTopUp}::numeric and ${context.config.maximumTopUp}::numeric as valid`;
+      if(!limit!.valid)throw new Error('TOPUP_OUTSIDE_LIMITS');
+    }
+    const [selectedPlan] = input.planId?await tx`select * from membership_plans where id=${input.planId} and enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())`:[];
+    const plan=selectedPlan??(input.topUpAmount?{id:null,code:'WALLET_TOPUP',name:'Saldo Costa-Go',plan_type:'WALLET_TOPUP',
+      base_amount:input.topUpAmount,currency:'USD',included_trips:0,max_renewal_amount:input.topUpAmount,extra_trip_share_percent:0,duration_days:0}:null);
     if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
-    const [cycle] = await tx`
-      select id,plan_type_snapshot,completed_trips,included_trips_snapshot,extra_trips,
+    const [currentCycle] = await tx`
+      select id,plan_type_snapshot,completed_trips,included_trips_snapshot,extra_trips,prior_cycle_due,
         passenger_service_additional_snapshot::float8,
         extra_trip_share_percent_snapshot::float8,
         extra_trip_fee_snapshot::float8,
-        raw_extra_amount::float8,billable_extra_amount::float8,
-        adjustment_amount::float8,base_membership_amount_snapshot::float8,
+        raw_extra_amount::text,billable_extra_amount::text,
+        adjustment_amount::text,base_membership_amount_snapshot::text,
         max_renewal_amount_snapshot::float8
       from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
       order by created_at desc limit 1
     `;
-    const usageAmount = money(Math.max(0, Number(cycle?.billable_extra_amount ?? 0)));
+    const cycle=input.topUpAmount?undefined:currentCycle;
+    const [due]=await tx`select greatest(-${plan.base_amount}::numeric-${cycle?.adjustment_amount??0}::numeric,
+      ${cycle?.billable_extra_amount??0}::numeric+${cycle?.prior_cycle_due??0}::numeric)::text as amount`;
+    const usageAmount = Number(due!.amount);
     const adjustmentAmount = money(Number(cycle?.adjustment_amount ?? 0));
     const planType = String(plan.plan_type ?? "PERIODIC");
-    const tax = taxBreakdown(Math.max(0, Number(plan.base_amount) + usageAmount + adjustmentAmount), settings?.vatRatePercent ?? 0);
+    const priceEconomics=context&&planType==='TRIP_PACK'?await calculatePackageEconomics(String(plan.id),tx):null;
+    if(context&&planType==='TRIP_PACK'&&!priceEconomics)throw new Error('RULE_OR_CONFIGURATION_REQUIRED');
+    const [net]=await tx`select greatest(0,${plan.base_amount}::numeric+${due!.amount}::numeric+${cycle?.adjustment_amount??0}::numeric)::text as amount`;
+    const tax = context?exactTaxBreakdown(net!.amount,String(settings?.vatRatePercent??0)):
+      taxBreakdown(Math.max(0, Number(plan.base_amount) + usageAmount + adjustmentAmount), settings?.vatRatePercent ?? 0);
     const economicBreakdown = {
       baseAmount: money(Number(plan.base_amount)),
       planType,
@@ -562,10 +595,12 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
         Number(cycle?.base_membership_amount_snapshot ?? plan.base_amount))),
       billableExtraAmount: usageAmount,
       adjustmentAmount,
-      subtotalAmount: tax.subtotal,
-      vatRatePercent: tax.vatRatePercent,
-      vatAmount: tax.vatAmount,
-      totalAmount: tax.total
+      // Existing mobile presentation contract uses numbers; authoritative
+      // arithmetic and persisted order amounts above remain exact decimals.
+      subtotalAmount: Number(tax.subtotal),
+      vatRatePercent: Number(tax.vatRatePercent),
+      vatAmount: Number(tax.vatAmount),
+      totalAmount: Number(tax.total)
     };
     const orderId = randomUUID();
     const rawToken = paymentOrderPublicToken(orderId);
@@ -574,14 +609,17 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
       insert into membership_payment_orders (
         id,public_token_hash,short_code,driver_id,membership_cycle_id,plan_id,plan_snapshot,
         base_amount,prior_usage_amount,adjustment_amount,taxable_subtotal,vat_rate_percent,vat_amount,total_amount,currency,intended_method,receiver_scope,
-        verification_channel,status,expires_at,created_by,idempotency_key,metadata
+        verification_channel,status,expires_at,created_by,idempotency_key,metadata,purpose
       ) values (${orderId},${sha256(rawToken)},${shortCode},${driverId},${cycle?.id ?? null},${plan.id},
-        ${JSON.stringify({ code: plan.code, name: plan.name, planType, durationDays: planType === "PERIODIC" ? plan.duration_days : null, includedTrips: plan.included_trips, purchasedTrips: planType === "TRIP_PACK" ? plan.included_trips : null, packValidityDays: planType === "TRIP_PACK" ? plan.pack_validity_days : null, maximumAmount: plan.max_renewal_amount, extraTripSharePercent: plan.extra_trip_share_percent })}::jsonb,
+        ${JSON.stringify({ packageId:plan.id,version:plan.version,publishedPrice:String(plan.base_amount),priceEconomics,
+          unitPrice:priceEconomics?priceEconomics.unitPublishedPrice:null,
+          priceBeforeVat:tax.subtotal,vatRatePercent:tax.vatRatePercent,vatAmount:tax.vatAmount,totalPaid:tax.total,
+          code: plan.code, name: plan.name, planType, durationDays: planType === "PERIODIC" ? plan.duration_days : null, includedTrips: plan.included_trips, purchasedTrips: planType === "TRIP_PACK" ? plan.included_trips : null, packValidityDays: planType === "TRIP_PACK" ? plan.pack_validity_days : null, maximumAmount: plan.max_renewal_amount, extraTripSharePercent: plan.extra_trip_share_percent })}::jsonb,
         ${plan.base_amount},${usageAmount},${adjustmentAmount},${tax.subtotal},${tax.vatRatePercent},${tax.vatAmount},${tax.total},${plan.currency},${input.intendedMethod ?? null},
         ${input.intendedMethod === "BANK_TRANSFER" ? "COSTA_GO_CENTRAL" : "NOT_APPLICABLE"},
         ${input.intendedMethod === "BANK_TRANSFER" ? "REMOTE_PROOF" : null},'PENDING',
         now()+(${Number(settings?.hours ?? 24)}*interval '1 hour'),${driverId},${input.idempotencyKey},
-        ${JSON.stringify({ tokenVersion: 1, economicBreakdown })}::jsonb)
+        ${JSON.stringify({ tokenVersion: 1, economicBreakdown,arrivalBillingEnabled:Boolean(context) })}::jsonb,${input.topUpAmount?'WALLET_TOPUP':'MEMBERSHIP'})
       returning id::text,status,short_code as "shortCode",base_amount::float8 as "baseAmount",
         prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",
         taxable_subtotal::float8 as "taxableSubtotal",vat_rate_percent::float8 as "vatRatePercent",
@@ -671,7 +709,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
     }
     if(input.receiverScope==='COLLECTION_POINT')await requireOrderFiscalProfile(tx,'MEMBRESIA',orderId);
     const [plan] = await tx`select * from membership_plans where id=${order.plan_id}`;
-    if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
+    if (!plan && order.purpose!=='WALLET_TOPUP') throw new Error("MEMBERSHIP_PLAN_DISABLED");
     const normalizedReference = input.reference ? normalizeReference(input.reference) : undefined;
     const referenceHash = input.referenceHash
       ?? (normalizedReference ? sha256(`${input.method}:${input.receiverScope}:${normalizedReference}`) : undefined);
@@ -691,6 +729,16 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
       returning id::text
     `;
     if (!payment) throw new Error("PAYMENT_NOT_CREATED");
+    if(order.purpose==='WALLET_TOPUP') {
+      await tx`select apply_driver_wallet_movement(${order.driver_id},'TOPUP',${order.base_amount}::numeric,
+        ${`topup:${order.id}`},null,${payment.id},${actor.id!},'Recarga aprobada; IVA no acreditado como saldo')`;
+      await tx`update membership_payment_orders set status='PAID',paid_at=now(),updated_at=now() where id=${order.id}`;
+      await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason)
+        values(${actor.id!},'WALLET_TOPUP_CONFIRMED','MEMBERSHIP_PAYMENT',${payment.id},
+          ${JSON.stringify({orderId:order.id,creditedAmount:order.base_amount,vat:order.vat_amount})}::jsonb,'Recarga aprobada por canal existente')`;
+      return {alreadyProcessed:false,paymentId:payment.id,membershipId:null,walletDriverId:String(order.driver_id),creditedAmount:String(order.base_amount)};
+    }
+    if(!plan)throw new Error('MEMBERSHIP_PLAN_DISABLED');
     const [current] = await tx`select * from driver_memberships where driver_id=${order.driver_id} and cycle_closed_at is null order by created_at desc limit 1 for update`;
     const planType = String(plan.plan_type ?? "PERIODIC");
     const currentPlanType = String(current?.plan_type_snapshot ?? "PERIODIC");
@@ -744,11 +792,30 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
       `;
     }
     if (!membership) throw new Error("MEMBERSHIP_NOT_CREATED");
+    if(planType==='TRIP_PACK')await tx`insert into package_purchases(order_id,driver_id,membership_id,quantity,snapshot)
+      values(${order.id},${order.driver_id},${membership.id},${plan.included_trips},${JSON.stringify(order.plan_snapshot)}::jsonb)
+      on conflict(order_id) do nothing`;
+    if(order.metadata?.arrivalBillingEnabled&&!(current&&planType==='TRIP_PACK'&&currentPlanType==='TRIP_PACK'))
+      await tx`update driver_memberships set arrival_billing_enabled=true where id=${membership.id}`;
+    if(current&&(order.metadata?.arrivalBillingEnabled||current.arrival_billing_enabled||Number(current.prior_cycle_due??0)!==0)) {
+      // Debt/credit from a prior period is independent from the next package's
+      // credits and next period's cap. It cannot disappear on a plan switch.
+      await tx`update driver_memberships set prior_cycle_due=
+        ${current.billable_extra_amount}::numeric+${current.prior_cycle_due}::numeric-${order.prior_usage_amount}::numeric where id=${membership.id}`;
+    }
     await tx`update membership_payments set membership_cycle_id=${membership.id} where id=${payment.id}`;
     await tx`update membership_payment_orders set status='PAID',paid_at=now(),updated_at=now() where id=${order.id}`;
     await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason) values (${actor.id!},'MEMBERSHIP_PAYMENT_CONFIRMED','MEMBERSHIP_PAYMENT',${payment.id},${JSON.stringify({ orderId: String(order.id), membershipId: membership.id, planType, method: input.method, amount: Number(order.total_amount) })}::jsonb,${planType === "TRIP_PACK" ? 'Pago verificado y viajes acreditados' : 'Pago verificado y membresía activada'})`;
     return { alreadyProcessed: false, paymentId: payment.id, membershipId: membership.id, expiresAt: membership.expiresAt };
   });
+  if('walletDriverId' in result&&result.walletDriverId) {
+    await sendPush(result.walletDriverId,'Recarga acreditada',`Se acreditaron $${result.creditedAmount} a tu saldo Costa-Go.`,{type:'MEMBERSHIP_WALLET_TOPUP',target:'MEMBERSHIP'}).catch(()=>undefined);
+    const [recipient]=await database()`select email from users where id=${result.walletDriverId}`;
+    if(recipient?.email)await sendTransactionalEmail({to:String(recipient.email),subject:'Tu recarga Costa-Go fue acreditada',
+      text:`Se acreditaron USD ${result.creditedAmount} a tu saldo operativo. El IVA no forma parte del saldo. Revisa Saldo Costa-Go y Mis pagos en la app.`,
+      html:renderCostaGoEmail({title:'Recarga acreditada',lead:`Se acreditaron USD ${result.creditedAmount} a tu saldo Costa-Go.`,
+        bodyHtml:'<p>El IVA no forma parte del saldo operativo. Puedes consultar el detalle y comprobante en Mis pagos.</p>'})}).catch(()=>false);
+  }
   if(!result.alreadyProcessed&&result.paymentId&&result.membershipId){
     try{
       await sendMembershipActivationConfirmation(String(result.paymentId),String(result.membershipId));
@@ -927,7 +994,8 @@ function businessError(error: unknown, reply: FastifyReply) {
     "PAYMENT_ORDER_NOT_CANCELLABLE",
     "TRANSFER_PROOF_ALREADY_SUBMITTED",
     "PAYMENT_REFERENCE_ALREADY_USED", "MEMBERSHIP_PLAN_CODE_EXISTS",
-    "MEMBERSHIP_PLAN_NOT_CURRENT"
+    "MEMBERSHIP_PLAN_NOT_CURRENT", "INSUFFICIENT_AVAILABLE_BALANCE", "WALLET_NOT_ENABLED",
+    "COMMERCIAL_MODEL_DISABLED", "PACKAGE_COMMERCIAL_RULE_REQUIRED", "IDEMPOTENCY_CONFLICT"
   ];
   const notFound = ["PAYMENT_ORDER_NOT_FOUND", "MEMBERSHIP_PLAN_NOT_FOUND"];
   const badRequest = [
@@ -935,7 +1003,7 @@ function businessError(error: unknown, reply: FastifyReply) {
     "INVALID_CSV_QUOTES", "INVALID_CSV_ENCODING", "INVALID_CSV_HEADERS", "EMPTY_CSV",
     "MEMBERSHIP_REQUIRED", "MEMBERSHIP_NOT_CREATED", "PAYMENT_NOT_CREATED",
     "COLLECTION_POINT_INACTIVE", "PAYMENT_METHOD_DISABLED", "MAXIMUM_BELOW_BASE",
-    "TRIP_PACK_REQUIRES_CREDITS", "MEMBERSHIP_EXHAUSTED"
+    "TRIP_PACK_REQUIRES_CREDITS", "MEMBERSHIP_EXHAUSTED", "TOPUP_OUTSIDE_LIMITS"
   ];
   if (message === "NO_PAYMENTS_TO_CLOSE") return reply.code(409).send({
     error: message,
@@ -953,6 +1021,25 @@ function businessError(error: unknown, reply: FastifyReply) {
 }
 
 export async function registerMembershipRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/v1/driver/wallet',async(request,reply)=>{
+    const user=await requireMobileUser(request,reply,'DRIVER');if(!user)return;
+    const context=await commercialContext();
+    const [wallet]=await database()`select total::text,reserved::text,(total-reserved)::text as available,enabled
+      from driver_wallets where driver_id=${user.id!}`;
+    const movements=await database()`select id,kind,amount::text,total_after::text as "totalAfter",reserved_after::text as "reservedAfter",
+      trip_id as "tripId",reason,created_at as "createdAt" from driver_wallet_movements where driver_id=${user.id!} order by created_at desc limit 100`;
+    return {wallet:wallet??{total:'0.00',reserved:'0.00',available:'0.00',enabled:false},movements,
+      configuration:context?{minimumTopUp:context.config.minimumTopUp,maximumTopUp:context.config.maximumTopUp,lowBalanceThreshold:context.config.lowBalanceThreshold}:null};
+  });
+  app.put('/v1/driver/wallet/preference',async(request,reply)=>{
+    const user=await requireMobileUser(request,reply,'DRIVER');if(!user)return;
+    const parsed=z.object({enabled:z.boolean()}).safeParse(request.body);
+    if(!parsed.success)return reply.code(400).send({error:'INVALID_REQUEST'});
+    if(!await commercialContext())return reply.code(409).send({error:'WALLET_NOT_ENABLED'});
+    await database()`insert into driver_wallets(driver_id,enabled) values(${user.id!},${parsed.data.enabled})
+      on conflict(driver_id) do update set enabled=excluded.enabled,updated_at=now()`;
+    return {enabled:parsed.data.enabled};
+  });
   app.get("/v1/mobile/config", async (request, reply) => {
     const user = await requireMobileUser(request, reply); if (!user) return;
     const [row] = await database()`select * from operational_settings where id=1`;

@@ -50,6 +50,19 @@ beforeAll(async()=>{
   await pg.exec(await readFile(new URL('../migrations/070_membership_usage_passenger_reversal.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../migrations/069_passenger_cancellations_and_trip_integrity.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../migrations/071_passenger_cancellation_cycles.sql',import.meta.url),'utf8'));
+  await pg.exec(`create table service_areas(id uuid primary key);
+    create table membership_plans(id uuid primary key);
+    create table membership_payments(id uuid primary key);
+    alter table membership_payment_orders add column plan_id uuid not null default '00000000-0000-4000-8000-000000000010';
+    alter table driver_memberships add column plan_id uuid default '00000000-0000-4000-8000-000000000010';
+    alter table driver_memberships add column suspension_at timestamptz;
+    alter table driver_memberships add column grace_allows_trips_applied boolean default true;
+    alter table trips add column pricing_snapshot jsonb default '{}';
+    alter table trips add column quoted_total_cents integer;
+    alter table trips add column driver_search_round integer default 1;
+    alter table driver_offers add column search_round integer default 1;
+    alter table driver_offers add column offered_at timestamptz default now();`);
+  await pg.exec(await readFile(new URL('../migrations/088_arrival_commercial_model.sql',import.meta.url),'utf8'));
 },30000);
 beforeEach(async()=>{
   await pg.exec('truncate audit_log,passenger_cancellations,trip_events,driver_offers,scheduled_trip_responses,trips,drivers,operational_settings,users cascade');
@@ -77,6 +90,79 @@ async function consume(tripId:string,driverId=driver) {
 async function cycle(id:string) {
   return (await pg.query<any>('select * from driver_memberships where id=$1',[id])).rows[0]!;
 }
+
+async function economicTrip(commission='0.20') {
+  const id=await makeTrip();
+  await pg.query(`update driver_offers set economic_snapshot=$1::jsonb where trip_id=$2`,[JSON.stringify({isScheduledTrip:false,
+    matchedRound:2,arrivalFee:'0.50',journeyFare:'3.00',passengerTotal:'3.50',costaGoPercent:'40',
+    theoreticalCommission:commission,economicConfigurationVersion:'test-v1'}),id]);
+  return id;
+}
+const assignment=async(id:string)=>(await pg.query<any>('select snapshot from trip_commercial_assignments where trip_id=$1',[id])).rows[0]?.snapshot;
+
+describe('commercial acceptance integrated with existing membership usage',()=>{
+  it('charges only the partial remainder of a period cap, then zero',async()=>{
+    const c=await makeCycle();
+    await pg.query(`update driver_memberships set arrival_billing_enabled=true,completed_trips=0,included_trips_snapshot=1,
+      max_renewal_amount_snapshot=12.30 where id=$1`,[c]);
+    const ids=[];
+    for(let i=0;i<4;i++){const id=await economicTrip();ids.push(id);await consume(id);}
+    expect((await assignment(ids[0]!)).billingMode).toBe('PERIOD_PLAN_INCLUDED');
+    expect((await assignment(ids[1]!)).appliedCommission).toBe('0.20');
+    expect((await assignment(ids[2]!)).appliedCommission).toBe('0.10');
+    expect(await assignment(ids[3]!)).toMatchObject({billingMode:'PERIOD_PLAN_CAP_REACHED',appliedCommission:'0'});
+    expect(await cycle(c)).toMatchObject({completed_trips:4,raw_extra_amount:'0.60',billable_extra_amount:'0.30',estimated_next_renewal_amount:'12.30'});
+    await consume(ids[2]!);
+    expect((await cycle(c)).completed_trips).toBe(4);
+  });
+  it('does not overwrite a generated order while accumulating variable commissions',async()=>{
+    const c=await makeCycle();
+    await pg.query('update driver_memberships set arrival_billing_enabled=true,completed_trips=120 where id=$1',[c]);
+    await pg.query(`insert into membership_payment_orders(membership_cycle_id,total_amount,metadata) values($1,12,'{"arrivalBillingEnabled":true}')`,[c]);
+    await consume(await economicTrip());
+    expect((await cycle(c)).billable_extra_amount).toBe('0.20');
+    expect((await pg.query<any>('select total_amount from membership_payment_orders')).rows[0].total_amount).toBe('12.00');
+  });
+  it('preserves legacy period economics despite a higher round commission',async()=>{
+    const c=await makeCycle();await pg.query('update driver_memberships set completed_trips=120 where id=$1',[c]);
+    const id=await economicTrip();await consume(id);
+    expect(await assignment(id)).toMatchObject({theoreticalCommission:'0.20',appliedCommission:'0.0400',legacyTerms:true});
+    expect((await cycle(c)).billable_extra_amount).toBe('0.04');
+  });
+  it('preserves a wallet reservation when a plan is activated during the trip',async()=>{
+    await pg.query(`select apply_driver_wallet_movement($1,'TOPUP',5,'test-topup',null,null,$1,'Prueba')`,[driver]);
+    await pg.query('update driver_wallets set enabled=true');
+    const id=await economicTrip();await consume(id);
+    expect((await assignment(id)).billingMode).toBe('PAY_PER_USE');
+    await makeCycle();await consume(id);
+    await pg.query(`update trips set status='COMPLETED',completed_at=now() where id=$1`,[id]);
+    expect((await pg.query<any>('select total::text,reserved::text from driver_wallets')).rows[0]).toEqual({total:'4.80',reserved:'0.00'});
+    expect((await pg.query('select * from membership_cycle_trip_usages')).rows).toHaveLength(0);
+  });
+  it('consumes package credit before wallet funds and requires opt-in after exhaustion',async()=>{
+    const c=await makeCycle();
+    await pg.query(`update driver_memberships set plan_type_snapshot='TRIP_PACK',completed_trips=0,included_trips_snapshot=1 where id=$1`,[c]);
+    await pg.query(`select apply_driver_wallet_movement($1,'TOPUP',5,'test-topup',null,null,$1,'Prueba')`,[driver]);
+    const first=await economicTrip();await consume(first);
+    expect(await assignment(first)).toMatchObject({billingMode:'TRIP_PACKAGE',appliedCommission:'0'});
+    expect((await pg.query<any>('select total::text,reserved::text from driver_wallets')).rows[0]).toEqual({total:'5.00',reserved:'0.00'});
+    const next=await economicTrip();await expect(consume(next)).rejects.toThrow('MEMBERSHIP_REQUIRED');
+    await pg.query('update driver_wallets set enabled=true');await consume(next);
+    expect((await assignment(next)).billingMode).toBe('PAY_PER_USE');
+    expect((await cycle(c)).completed_trips).toBe(1);
+  });
+  it('carries a closed-period refund independently of new package credits',async()=>{
+    const old=await makeCycle();
+    await pg.query('update driver_memberships set arrival_billing_enabled=true,completed_trips=120 where id=$1',[old]);
+    const id=await economicTrip();await consume(id);
+    await pg.query(`update driver_memberships set cycle_closed_at=now(),status='CLOSED',final_renewal_amount=12.20 where id=$1`,[old]);
+    const current=await makeCycle();
+    await pg.query(`update driver_memberships set plan_type_snapshot='TRIP_PACK',completed_trips=0,included_trips_snapshot=50,prior_cycle_due=.30 where id=$1`,[current]);
+    await cancelPassengerTrip(passenger,id);await cancelPassengerTrip(passenger,id);
+    expect(await cycle(current)).toMatchObject({completed_trips:0,included_trips_snapshot:50,prior_cycle_due:'0.10'});
+    expect((await cycle(old)).final_renewal_amount).toBe('12.20');
+  });
+});
 
 describe('consumo de membresía y reversión por pasajero',()=>{
   it('un paquete por viajes no genera excedentes ni renovación',()=>{

@@ -4,6 +4,10 @@ import Fastify from "fastify";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { calculateTerritorialFare } from "./fare-engine.js";
+import { configuredScheduledQuote, legacyScheduledConfirmation, registerScheduledArrivalRoutes } from './scheduled-arrival.js';
+import { immediateQuote, ensureSearchSession } from './arrival-commercial.js';
+import {registerCommercialEconomicsRoutes} from './commercial-economics-admin.js';
+import {packageEconomicsTick} from './package-economics.js';
 import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
 import { cancellationSuspensionResponse } from './suspension-presentation.js';
 import { registerFiscalRoutes } from './fiscal/routes.js';
@@ -150,6 +154,7 @@ const tripRequestSchema = z.object({
   destinationReference: z.string().max(200).optional(),
   notes: z.string().trim().max(300).optional(),
   scheduledFor: z.string().datetime({ offset: true }).optional(),
+  quoteConfirmation: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   idempotencyKey: z.string().trim().min(8).max(120).optional()
 }).refine(value => Boolean(value.destination) !== Boolean(value.destinations), {
   message: "ONE_DESTINATION_FORMAT_REQUIRED",
@@ -395,11 +400,11 @@ export function scheduledTimeError(scheduledFor: Date, policy: ScheduledTripPoli
 
 async function tripSearchProgress(tripId:string) {
   const [row]=await database()`select driver_search_round as round,driver_search_upper_meters as "upperMeters",
-    driver_search_next_round_at as "nextRoundAt",clock_timestamp() as "serverNow",
+    driver_search_next_round_at as "nextRoundAt",clock_timestamp() as "serverNow",pricing_snapshot->'economicQuote'->'settings' as settings,
     coalesce((select max(occurred_at) from trip_events where trip_id=t.id and to_status='SEARCHING'),t.requested_at) as "cycleStartedAt"
     from trips t where t.id=${tripId} and t.status='SEARCHING'`;
   if(!row?.nextRoundAt)return null;
-  return driverSearchProgress(await configuredDriverSearch(),{round:Number(row.round),upperMeters:Number(row.upperMeters),
+  return driverSearchProgress(row.settings??await configuredDriverSearch(),{round:Number(row.round),upperMeters:Number(row.upperMeters),
     nextRoundAt:new Date(row.nextRoundAt as string),cycleStartedAt:new Date(row.cycleStartedAt as string)},new Date(row.serverNow as string));
 }
 
@@ -454,6 +459,8 @@ async function authenticatedUser(request: { headers: Record<string, string | str
 export async function buildApp() {
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
   app.setErrorHandler((error:Error & {statusCode?:number},request,reply)=>{
+    if(['PRICE_CONFIRMATION_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','MEMBERSHIP_REQUIRED','MEMBERSHIP_EXHAUSTED','MEMBERSHIP_SUSPENDED','WALLET_NOT_ENABLED','TOPUP_OUTSIDE_LIMITS','RULE_OR_CONFIGURATION_REQUIRED'].includes(error.message))
+      return reply.code(409).send({error:error.message});
     if(['VEHICLE_SESSION_REQUIRED','VEHICLE_NOT_VERIFIED','VEHICLE_HAS_ACTIVE_TRIP'].includes(error.message)){
       return reply.code(409).send({error:error.message,message:'Tu mototaxi o jornada cambió. Actualiza la pantalla y verifica tu unidad antes de continuar.'});
     }
@@ -475,6 +482,8 @@ export async function buildApp() {
   await registerTripSharingRoutes(app);
   await registerPassengerCancellationRoutes(app);
   await registerMembershipRoutes(app);
+  await registerScheduledArrivalRoutes(app);
+  await registerCommercialEconomicsRoutes(app);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
   await registerCooperativeDemoRoutes(app);
@@ -488,6 +497,7 @@ export async function buildApp() {
   app.addHook('onClose',async()=>clearInterval(fleetScheduler));
   const membershipScheduler = setInterval(() => {
     void membershipSchedulerTick().catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
+    void packageEconomicsTick().catch(error=>app.log.error({err:error},'package_economics_failed'));
   }, 60_000);
   membershipScheduler.unref();
   app.addHook("onClose", async () => clearInterval(membershipScheduler));
@@ -616,14 +626,14 @@ export async function buildApp() {
     lowerMeters?: number;
     upperMeters?: number;
   } | null> {
-    const settings = await configuredDriverSearch();
+    let settings = await configuredDriverSearch();
     const dispatched = await database().begin(async tx => {
       const [trip] = await tx`
         select t.id::text as "tripId", t.passenger_id::text as "passengerId",
           t.passengers, t.payment_method as "paymentMethod",
           t.origin_reference as "originReference", t.destination_reference as "destinationReference",
           ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
-          t.driver_search_round as "searchRound",
+          t.driver_search_round as "searchRound",t.pricing_snapshot as "pricingSnapshot",
           t.driver_search_upper_meters as "searchUpperMeters",
           t.driver_search_next_round_at as "nextRoundAt"
         from trips t
@@ -635,6 +645,7 @@ export async function buildApp() {
         limit 1 for update skip locked
       `;
       if (!trip) return null;
+      settings=trip.pricingSnapshot?.economicQuote?.settings??settings;
 
       const currentRound = Number(trip.searchRound ?? 0);
       const nextRoundAt = trip.nextRoundAt == null ? undefined : new Date(trip.nextRoundAt as string | Date);
@@ -656,6 +667,8 @@ export async function buildApp() {
               and d.last_location is not null
               and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
               and ((select not membership_enforcement_enabled from operational_settings where id=1)
+                or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
+                  and trip_offer_economics(${trip.tripId},1) is not null and commercial_driver_can_accept(d.user_id,${trip.tripId},1))
                 or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
                   and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
                   and (dm.suspension_at is null or dm.suspension_at>now())))
@@ -708,6 +721,8 @@ export async function buildApp() {
           where d.is_available=true and fleet_driver_can_receive(d.user_id) and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
           and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
+            or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
+              and trip_offer_economics(${trip.tripId},${bounds.round}) is not null and commercial_driver_can_accept(d.user_id,${trip.tripId},${bounds.round}))
             or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
               and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
               and (dm.suspension_at is null or dm.suspension_at>now())))
@@ -788,6 +803,8 @@ export async function buildApp() {
             where dd.driver_id=d.user_id and dd.status='SUSPENDED'
           )
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
+            or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
+              and trip_offer_economics(t.id,t.driver_search_round) is not null and commercial_driver_can_accept(d.user_id,t.id,t.driver_search_round))
             or exists (
               select 1 from driver_memberships dm
               where dm.driver_id=d.user_id and dm.cycle_closed_at is null
@@ -811,6 +828,7 @@ export async function buildApp() {
           accepted=null,
           response_reason=null,
           search_round=excluded.search_round,
+          economic_snapshot=excluded.economic_snapshot,
           distance_meters=excluded.distance_meters,
           notification_sent_at=null
         -- Only offers closed automatically because this driver accepted
@@ -1959,25 +1977,35 @@ export async function buildApp() {
     } catch (error) {
       return fareErrorResponse(error, reply);
     }
+    const scheduledQuote = await configuredScheduledQuote(fare, scheduledFor,
+      {passengerId:user.id,origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod});
+    const arrivalQuote=scheduledFor?null:await immediateQuote(fare,user.id!,[input.origin,...destinations.map(stop=>stop.location)],
+      {origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod});
     return {
       scheduledFor: scheduledFor?.toISOString() ?? null,
+      quoteConfirmation: arrivalQuote?.confirmation ?? scheduledQuote?.confirmation ?? (scheduledFor ? legacyScheduledConfirmation(fare,scheduledFor,
+        {passengerId:user.id,origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod}) : null),
+      economicSnapshot: scheduledQuote?.economic ?? null,
+      scheduledArrivalFeeCents: scheduledQuote?.arrivalCents ?? null,
+      arrivalMinimumCents:arrivalQuote?.minimumArrivalCents??null,arrivalMaximumCents:arrivalQuote?.maximumArrivalCents??null,
+      totalMinimumCents:arrivalQuote?.minimumTotalCents??null,totalMaximumCents:arrivalQuote?.maximumTotalCents??null,
       serviceArea: { id: operationalArea.id, code: operationalArea.code, name: operationalArea.name },
       zone,
       stops: destinations,
       passengers: input.passengers,
       paymentMethod: input.paymentMethod,
-      quotedTotalCents: fare.totalCents,
+      quotedTotalCents: arrivalQuote?.minimumTotalCents ?? scheduledQuote?.totalCents ?? fare.totalCents,
       baseFareCents: fare.baseCents,
-      journeyFareCents: fare.baseCents + fare.platformCommissionCents,
-      platformCommissionCents: fare.platformCommissionCents,
+      journeyFareCents: fare.baseCents + (scheduledQuote || arrivalQuote ? 0 : fare.platformCommissionCents),
+      platformCommissionCents: scheduledQuote || arrivalQuote ? 0 : fare.platformCommissionCents,
       stopSurchargeCents: fare.stopSurchargeCents,
       fareIsSuggested: fare.suggested,
       fareDistancePolicy: fare.distancePolicy,
       fareLegs: fare.legs.map(leg => ({
         order: leg.order,
         fareCents: leg.fareCents,
-        commissionCents: leg.commissionCents,
-        totalCents: leg.fareCents + leg.commissionCents,
+        commissionCents: scheduledQuote || arrivalQuote ? 0 : leg.commissionCents,
+        totalCents: leg.fareCents + (scheduledQuote || arrivalQuote ? 0 : leg.commissionCents),
         suggested: leg.suggested,
         method: leg.method,
         distanceMeters: leg.distanceMeters
@@ -2041,29 +2069,42 @@ export async function buildApp() {
     } catch (error) {
       return fareErrorResponse(error, reply);
     }
-    const total = fare.totalCents;
+    const scheduledQuote = await configuredScheduledQuote(fare, scheduledFor,
+      {passengerId:user.id,origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod});
+    if (scheduledQuote && input.quoteConfirmation !== scheduledQuote.confirmation)
+      return reply.code(409).send({error:'PRICE_CONFIRMATION_REQUIRED',message:'Revisa y confirma el precio actualizado antes de reservar.'});
+    const arrivalQuote=scheduledFor?null:await immediateQuote(fare,user.id!,[input.origin,...destinations.map(stop=>stop.location)],
+      {origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod});
+    if(arrivalQuote&&input.quoteConfirmation!==arrivalQuote.confirmation)return reply.code(409).send({error:'PRICE_CONFIRMATION_REQUIRED',message:'Revisa y confirma el intervalo actualizado antes de solicitar.'});
+    const total = arrivalQuote?.minimumTotalCents ?? scheduledQuote?.totalCents ?? fare.totalCents;
     const trip = await sql.begin(async tx => {
       const [account] = await tx`select status from users where id=${user.id!} for update`;
       if (account?.status !== 'ACTIVE') return { error: 'ACCOUNT_NOT_ACTIVE' };
+      if(arrivalQuote) {
+        const currentQuote=await immediateQuote(fare,user.id!,[input.origin,...destinations.map(stop=>stop.location)],
+          {origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod},tx);
+        if(currentQuote?.confirmation!==arrivalQuote.confirmation)throw new Error('PRICE_CONFIRMATION_REQUIRED');
+      }
+      const sessionId=arrivalQuote?await ensureSearchSession(tx,user.id!,[input.origin,...destinations.map(stop=>stop.location)],arrivalQuote):null;
       const [created] = await tx`
         insert into trips (
           passenger_id, passengers, payment_method, origin, destination,
           origin_reference, destination_reference, passenger_notes, service_zone,
           pricing_version, pricing_snapshot, quoted_total_cents, scheduled_for,
           schedule_status, estimated_distance_meters, estimated_duration_seconds,
-          service_area_id, service_area_version_id, route_snapshot, client_request_id
+          service_area_id, service_area_version_id, route_snapshot, client_request_id,arrival_search_session_id
         ) values (
           ${user.id!}, ${input.passengers}, ${input.paymentMethod},
           ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
           ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           ${input.originReference ?? null}, ${finalDestination.reference}, ${input.notes || null}, ${zone},
-           ${fare.pricingVersion}, ${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: fare.legs })}::jsonb,
+           ${fare.pricingVersion}, ${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: scheduledQuote || arrivalQuote ? 0 : fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: scheduledQuote || arrivalQuote ? fare.legs.map(leg=>({...leg,commissionCents:0})) : fare.legs, economic: scheduledQuote?.economic, economicQuote:arrivalQuote?.quote,quoteConfirmation:arrivalQuote?.confirmation??scheduledQuote?.confirmation })}::jsonb,
           ${total}, ${scheduledFor ?? null}, ${scheduledFor ? "SCHEDULED" : null},
           ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
           ${operationalArea.id}::uuid, ${operationalArea.versionId}::uuid,
           ${route ? JSON.stringify({ points: route.points, provider: route.provider }) : null}::jsonb,
-          ${input.idempotencyKey ?? null}
+          ${input.idempotencyKey ?? null},${sessionId}
         )
         on conflict (passenger_id, client_request_id) where client_request_id is not null
         do nothing returning id
@@ -2148,7 +2189,10 @@ export async function buildApp() {
     const tripId = (request.params as { tripId: string }).tripId;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
-        t.final_total_cents as "finalTotalCents", t.requested_at as "requestedAt", t.assigned_at as "assignedAt",
+        t.final_total_cents as "finalTotalCents", visible_trip_economics(t.pricing_snapshot->'economic',${user.role}='DRIVER') as "economicSnapshot",
+        case when ${user.role}='DRIVER' then (select jsonb_build_object('balanceAfter',m.total_after::text,'availableAfter',(m.total_after-m.reserved_after)::text)
+          from driver_wallet_movements m where m.trip_id=t.id and m.driver_id=${user.id!} and m.kind='TRIP_COMMISSION' limit 1) end as "walletSettlement",
+        t.requested_at as "requestedAt", t.assigned_at as "assignedAt",
         t.started_at as "startedAt", t.completed_at as "completedAt", t.cancelled_at as "cancelledAt",
         t.driver_id::text as "driverId", d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
         coalesce(d.rating, 0)::float8 as "driverRating", (d_user.profile_photo_data is not null) as "driverHasPhoto",
@@ -2188,6 +2232,7 @@ export async function buildApp() {
     const user = await authenticatedUser(request, reply); if (!user) return;
     const rows = await database()`
       select t.id::text as "tripId", t.status, t.payment_method as "paymentMethod", t.quoted_total_cents as "quotedTotalCents",
+        visible_trip_economics(t.pricing_snapshot->'economic',${user.role}='DRIVER') as "economicSnapshot",
         t.driver_id::text as "driverId", d_user.full_name as "driverName", d_user.phone_e164 as "driverPhone",
         coalesce(d.rating, 0)::float8 as "driverRating", (d_user.profile_photo_data is not null) as "driverHasPhoto",
         t.passenger_id::text as "passengerId", p_user.full_name as "passengerName", p_user.phone_e164 as "passengerPhone",
@@ -2232,6 +2277,7 @@ export async function buildApp() {
         t.completed_at as "completedAt", t.cancelled_at as "cancelledAt",
         t.origin_reference as "originReference", t.destination_reference as "destinationReference",
         t.quoted_total_cents as "quotedTotalCents", t.final_total_cents as "finalTotalCents",
+        visible_trip_economics(t.pricing_snapshot->'economic',${user.role}='DRIVER') as "economicSnapshot",
         passenger.full_name as "passengerName", driver.full_name as "driverName",
         ST_Y(t.origin::geometry) as "originLatitude", ST_X(t.origin::geometry) as "originLongitude",
         ST_Y(t.destination::geometry) as "destinationLatitude", ST_X(t.destination::geometry) as "destinationLongitude",
@@ -2334,16 +2380,30 @@ export async function buildApp() {
     } catch (error) {
       return fareErrorResponse(error, reply);
     }
-    const total = fare.totalCents;
+    const scheduledQuote = await configuredScheduledQuote(fare, scheduledFor,
+      {passengerId:user.id,origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod});
+    if (scheduledQuote && input.quoteConfirmation !== scheduledQuote.confirmation)
+      return reply.code(409).send({error:'PRICE_CONFIRMATION_REQUIRED',message:'Revisa y confirma el precio actualizado antes de reprogramar.'});
+    const total = scheduledQuote?.totalCents ?? fare.totalCents;
     const tripId = (request.params as { tripId: string }).tripId;
     const updated = await sql.begin(async tx => {
+      const [previous] = await tx`select pricing_snapshot,scheduled_for from trips where id=${tripId}
+        and passenger_id=${user.id!} and status='SEARCHING' and schedule_status='SCHEDULED'
+        and driver_id is null and scheduled_for>now() for update`;
+      if (!previous) return undefined;
+      // Even after disabling the new tariff, a previously confirmed economic
+      // quote cannot silently fall back to legacy pricing during rescheduling.
+      if (previous.pricing_snapshot?.economic && !scheduledQuote && input.quoteConfirmation !==
+        legacyScheduledConfirmation(fare,scheduledFor,
+          {passengerId:user.id,origin:input.origin,destinations,passengers:input.passengers,paymentMethod:input.paymentMethod}))
+        return {priceConfirmationRequired:true};
       const [trip] = await tx`
         update trips set passengers=${input.passengers}, payment_method=${input.paymentMethod},
           origin=ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
           destination=ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           origin_reference=${input.originReference ?? null}, destination_reference=${finalDestination.reference},
           passenger_notes=${input.notes || null}, service_zone=${zone}, pricing_version=${fare.pricingVersion},
-          pricing_snapshot=${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: fare.legs })}::jsonb,
+          pricing_snapshot=${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: scheduledQuote ? 0 : fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: scheduledQuote ? fare.legs.map(leg=>({...leg,commissionCents:0})) : fare.legs, economic:scheduledQuote?.economic, quoteConfirmation:scheduledQuote?.confirmation })}::jsonb,
           quoted_total_cents=${total}, scheduled_for=${scheduledFor},
           estimated_distance_meters=${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
@@ -2363,10 +2423,11 @@ export async function buildApp() {
           values (${tripId}, ${index + 1}, ST_SetSRID(ST_MakePoint(${stop.location.longitude}, ${stop.location.latitude}),4326)::geography, ${stop.reference})`;
       }
       await tx`insert into trip_events (trip_id, from_status, to_status, actor_id, reason_code, metadata)
-        values (${tripId}, 'SEARCHING', 'SEARCHING', ${user.id!}, 'SCHEDULED_UPDATED', ${JSON.stringify({ scheduledFor: scheduledFor.toISOString(), stops: destinations.length })}::jsonb)`;
+        values (${tripId}, 'SEARCHING', 'SEARCHING', ${user.id!}, 'SCHEDULED_UPDATED', ${JSON.stringify({ scheduledFor: scheduledFor.toISOString(), stops: destinations.length, previousScheduledFor:previous.scheduled_for, previousPricingSnapshot:previous.pricing_snapshot, economic:scheduledQuote?.economic, quoteConfirmation:scheduledQuote?.confirmation })}::jsonb)`;
       return trip;
     });
     if (!updated) return reply.code(409).send({ error: "SCHEDULED_TRIP_NOT_EDITABLE" });
+    if ('priceConfirmationRequired' in updated) return reply.code(409).send({error:'PRICE_CONFIRMATION_REQUIRED',message:'Revisa y confirma el precio actualizado antes de reprogramar.'});
     return { tripId, scheduledFor: scheduledFor.toISOString(), quotedTotalCents: total, fareIsSuggested: fare.suggested, stops: destinations };
   });
 
@@ -2393,6 +2454,7 @@ export async function buildApp() {
       left join service_area_versions area_version on area_version.id=t.service_area_version_id
       where t.scheduled_for is not null and t.schedule_status='SCHEDULED'
         and t.status='SEARCHING' and t.driver_id is null
+        and commercial_driver_can_accept(${user.id!},t.id,1)
         and (t.payment_method='CASH' or d.deuna_enabled=true)
         and (t.service_area_id is null or (d.last_location is not null
         and ST_Covers(area_version.geometry, d.last_location::geometry)
@@ -2418,7 +2480,7 @@ export async function buildApp() {
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_OFFER_RESPONSE" });
     const tripId = (request.params as { tripId: string }).tripId;
     if (parsed.data.accept) {
-      const eligibility = await driverMembershipEligibility(user.id!);
+      const eligibility = await driverMembershipEligibility(user.id!,tripId);
       if (!eligibility.eligible) return reply.code(403).send({ error: eligibility.reason ?? "MEMBERSHIP_REQUIRED", membership: eligibility.membership });
     }
     if (!parsed.data.accept) {
@@ -2839,7 +2901,7 @@ export async function buildApp() {
     return database()`
       select o.id::text as "offerId", t.id::text as "tripId", t.passengers,
         t.payment_method as "paymentMethod", t.service_zone as zone,
-        t.quoted_total_cents as "quotedTotalCents",
+        coalesce(round((o.economic_snapshot->>'passengerTotal')::numeric*100)::int,t.quoted_total_cents) as "quotedTotalCents",
         t.origin_reference as "originReference",
         t.destination_reference as "destinationReference", t.passenger_notes as notes,
         ST_X(t.origin::geometry) as "originLongitude", ST_Y(t.origin::geometry) as "originLatitude",
@@ -2904,6 +2966,9 @@ export async function buildApp() {
       if (!offer) return { error: "OFFER_UNAVAILABLE" };
       if (!body.data.accept) {
         await tx`update driver_offers set responded_at=now(), accepted=false, response_reason='DRIVER_REJECTED' where id=${offerId}`;
+        await tx`insert into arrival_search_exclusions(session_id,driver_id)
+          select arrival_search_session_id,${user.id!} from trips where id=${offer.trip_id} and arrival_search_session_id is not null
+          on conflict do nothing`;
         return { status: "REJECTED", tripId: String(offer.trip_id), otherDriverIds: [] as string[] };
       }
       const activeTrips = await tx`select id from trips where driver_id=${user.id!} and status in ('ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS') limit 1 for update`;

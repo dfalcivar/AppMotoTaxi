@@ -1,0 +1,120 @@
+.economic-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1250;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 31, 54, .62);
+  backdrop-filter: blur(7px);
+}
+
+.economic-modal {
+  width: min(1180px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  display: grid;
+  gap: 16px;
+  padding: 28px 32px 24px;
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 22px;
+  color: #17345c;
+  background: #fff;
+  box-shadow: 0 30px 90px rgba(8, 27, 48, .34);
+}
+
+.economic-modal-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.economic-modal-heading h2 { margin: 6px 0 4px; color: #17345c; font-size: clamp(1.55rem, 2.5vw, 2rem); }
+.economic-modal-heading p,
+.economic-section-heading p { margin: 0; color: #667b9b; line-height: 1.45; }
+
+.economic-activation {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr);
+  align-items: center;
+  gap: 18px;
+  padding: 16px 20px;
+  border: 1px solid #bcd9ff;
+  border-radius: 15px;
+  background: linear-gradient(105deg, #f0f7ff, #f8fbff);
+}
+
+.economic-activation label { display: flex; align-items: center; gap: 14px; }
+.economic-toggle > input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.economic-toggle > i { position: relative; flex: 0 0 50px; height: 28px; border-radius: 99px; background: #aab9c8; box-shadow: inset 0 0 0 1px rgba(25,53,83,.08); transition: background .18s ease; }
+.economic-toggle > i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(12,40,69,.25); transition: transform .18s ease; }
+.economic-toggle > input:checked + i { background: #2f6fed; }
+.economic-toggle > input:checked + i::after { transform: translateX(22px); }
+.economic-toggle > input:focus-visible + i { outline: 3px solid rgba(47,111,237,.24); outline-offset: 2px; }
+.economic-activation label span,
+.economic-activation p span,
+.economic-notice span { display: grid; gap: 3px; }
+.economic-activation small,
+.economic-notice small { color: #667b9b; font-weight: 500; line-height: 1.4; }
+.economic-activation p { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 10px 13px; border: 1px solid #cee1f8; border-radius: 10px; color: #3f6387; background: rgba(255,255,255,.72); }
+
+.economic-rate-card,
+.economic-config-card {
+  padding: 18px;
+  border: 1px solid #d5e2ef;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(40, 75, 110, .045);
+}
+
+.economic-section-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.economic-section-heading h3 { margin: 0 0 2px; color: #17345c; font-size: 1.05rem; }
+.economic-section-icon { flex: 0 0 43px; height: 43px; display: grid; place-items: center; border-radius: 50%; color: #1769d2; background: #e5f1ff; font-size: 1.25rem; font-weight: 900; }
+.economic-rate-layout { display: grid; grid-template-columns: minmax(190px, .65fr) minmax(190px, .65fr) minmax(360px, 1.7fr); gap: 14px; align-items: start; }
+
+.economic-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.economic-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.economic-fields.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.economic-field { display: grid; align-content: start; gap: 6px; color: #17345c; font-size: .78rem; font-weight: 800; }
+.economic-input { display: flex; align-items: stretch; min-width: 0; border: 1px solid #c9d9e9; border-radius: 10px; overflow: hidden; background: #fff; }
+.economic-input:focus-within { border-color: #527da8; box-shadow: 0 0 0 3px rgba(82,125,168,.14); }
+.economic-input b { display: grid; place-items: center; min-width: 42px; color: #3f6387; background: #f1f6fa; border-right: 1px solid #d8e3ec; }
+.economic-input input { width: 100%; min-width: 0; border: 0; outline: 0; padding: 11px 12px; color: #17345c; background: transparent; font: inherit; font-size: .9rem; }
+.economic-field small { color: #6b7f9d; font-weight: 500; line-height: 1.35; }
+.economic-rate-source { display: grid; gap: 6px; padding: 13px 14px; border: 1px solid #bcd9f8; border-radius: 11px; background: #f3f8fd; }
+.economic-rate-source > span { color: #526b8d; font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .035em; }
+.economic-rate-source > strong { color: #17345c; font-size: 1.35rem; }
+.economic-rate-source > strong small { color: #667b9b; font-size: .75rem; font-weight: 600; }
+.economic-rate-source p { margin: 0; color: #667b9b; font-size: .75rem; line-height: 1.4; }
+
+.economic-round-preview { display: grid; gap: 8px; }
+.economic-round-preview > span { color: #526b8d; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+.economic-round-preview > div { display: flex; gap: 8px; overflow-x: auto; padding: 1px 1px 5px; }
+.economic-round-preview article { min-width: 104px; display: grid; gap: 2px; padding: 10px; border: 1px solid #d8e6f5; border-radius: 11px; background: #f7fbff; }
+.economic-round-preview article.last-round { border-color: #9fc7f4; background: #edf6ff; }
+.economic-round-preview article small { color: #667b9b; }
+.economic-round-preview article strong { color: #17345c; font-size: 1rem; }
+.economic-round-preview article em { color: #278050; font-size: .68rem; font-style: normal; font-weight: 700; }
+.economic-round-preview > small { color: #6b7f9d; }
+
+.economic-reference { display: grid; gap: 3px; margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; color: #526b8d; background: #f4f8fb; font-size: .78rem; }
+.economic-reference small { color: #6b7f9d; }
+.economic-notice { display: flex; gap: 12px; padding: 13px 16px; border: 1px solid #bad8fb; border-radius: 12px; color: #1769d2; background: #eef7ff; }
+.economic-modal-actions { position: sticky; bottom: -24px; display: flex; justify-content: flex-end; gap: 10px; margin: 0 -32px -24px; padding: 13px 32px 24px; border-top: 1px solid #e1eaf3; background: rgba(255,255,255,.97); }
+
+@media (max-width: 920px) {
+  .economic-rate-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .economic-round-preview { grid-column: 1 / -1; }
+  .economic-config-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .economic-modal-backdrop { place-items: end center; padding: max(10px, env(safe-area-inset-top)) 0 0; }
+  .economic-modal { width: 100%; max-height: calc(100dvh - max(10px, env(safe-area-inset-top))); padding: 21px 17px 18px; border-radius: 22px 22px 0 0; }
+  .economic-activation,
+  .economic-rate-layout,
+  .economic-fields,
+  .economic-fields.three { grid-template-columns: 1fr; }
+  .economic-modal-actions { bottom: -18px; display: grid; grid-template-columns: 1fr 1fr; margin: 0 -17px -18px; padding: 12px 17px max(15px, env(safe-area-inset-bottom)); }
+}

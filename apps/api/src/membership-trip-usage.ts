@@ -1,4 +1,5 @@
 import type { TransactionSql } from 'postgres';
+import {prepareCommercialAcceptance,persistCommercialAssignment} from './arrival-commercial.js';
 
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -21,7 +22,15 @@ export async function markMembershipTripCompleted(tx: TransactionSql, tripId: st
 }
 
 async function saveAmounts(tx: TransactionSql, cycle: Record<string, any>, used: number, adjustment?: number) {
-  const amounts = cycleAmounts(cycle, used, adjustment);
+  let amounts = cycleAmounts(cycle, used, adjustment);
+  if(cycle.arrival_billing_enabled&&cycle.plan_type_snapshot!=='TRIP_PACK') {
+    const [sum]=await tx`select coalesce(sum(theoretical_commission) filter(where usage_kind='EXTRA'),0)::text as raw,
+      coalesce(sum(applied_commission),0)::text as billable from membership_cycle_trip_usages
+      where membership_cycle_id=${cycle.id} and reversed_at is null`;
+    const [value]=await tx`select greatest(0,least(${cycle.max_renewal_amount_snapshot}::numeric,
+      ${cycle.base_membership_amount_snapshot}::numeric+${sum!.billable}::numeric+${adjustment??cycle.adjustment_amount}::numeric))::text as estimate`;
+    amounts={...amounts,raw:Number(sum!.raw),billable:Number(sum!.billable),estimate:Number(value!.estimate)};
+  }
   await tx`update driver_memberships set completed_trips=${amounts.used},extra_trips=${amounts.extra},
     raw_extra_amount=${amounts.raw},billable_extra_amount=${amounts.billable},
     estimated_next_renewal_amount=${amounts.estimate},adjustment_amount=${amounts.adjustment},
@@ -44,6 +53,9 @@ export async function lockMembershipBilling(tx: TransactionSql, driverId: string
 }
 
 async function refreshPendingOrders(tx: TransactionSql, cycle: Record<string, any>, amounts: ReturnType<typeof cycleAmounts>) {
+  // New-model orders are quotes with immutable prices; later usage carries into
+  // the next cycle at settlement instead of silently rewriting the order.
+  if(cycle.arrival_billing_enabled)return;
   // Keep proof and verification state. Finance still checks the actual amount paid.
   // Already paid orders are immutable; closed-cycle corrections become a credit.
   await tx`update membership_payment_orders set prior_usage_amount=${amounts.billable},
@@ -52,7 +64,8 @@ async function refreshPendingOrders(tx: TransactionSql, cycle: Record<string, an
       jsonb_build_object('completedTrips',${amounts.used}::int,'extraTrips',${amounts.extra}::int,
         'rawExtraAmount',${amounts.raw}::numeric,'billableExtraAmount',${amounts.billable}::numeric,
         'adjustmentAmount',${amounts.adjustment}::numeric,'totalAmount',greatest(0,base_amount+${amounts.billable}+${amounts.adjustment}))),
-    updated_at=now() where membership_cycle_id=${cycle.id} and status in ('PENDING','PENDING_VERIFICATION')`;
+    updated_at=now() where membership_cycle_id=${cycle.id} and status in ('PENDING','PENDING_VERIFICATION')
+      and coalesce(metadata->>'arrivalBillingEnabled','false')<>'true'`;
 }
 
 export async function recordAcceptedTripMembershipUsage(tx: TransactionSql, tripId: string, driverId: string) {
@@ -63,24 +76,57 @@ export async function recordAcceptedTripMembershipUsage(tx: TransactionSql, trip
       or exists(select 1 from scheduled_trip_responses where trip_id=${tripId} and driver_id=${driverId} and accepted=true))`;
   if (!trip) return;
   await lockMembershipBilling(tx, driverId);
+  const commercial=await prepareCommercialAcceptance(tx,tripId,driverId);
+  if(commercial?.wallet||commercial?.replay)return;
   const [cycle] = await tx`select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null for update`;
   if (!cycle || !['ACTIVE','EXPIRING','GRACE_PERIOD','PAYMENT_DUE'].includes(String(cycle.status))) return;
   const [settings] = await tx`select membership_usage_billing_enabled as enabled from operational_settings where id=1`;
   const isTripPack = String(cycle.plan_type_snapshot ?? 'PERIODIC') === 'TRIP_PACK';
-  if (!isTripPack && !settings?.enabled) return;
+  if (!isTripPack && !settings?.enabled && !cycle.arrival_billing_enabled) {
+    if(commercial)await persistCommercialAssignment(tx,tripId,driverId,String(cycle.id),{...commercial.economic,
+      billingMode:'PERIOD_PLAN_INCLUDED',appliedCommission:'0.00',membershipId:String(cycle.id),planId:String(cycle.plan_id)});
+    return;
+  }
   if (isTripPack && Number(cycle.completed_trips) >= Number(cycle.included_trips_snapshot)) throw new Error('MEMBERSHIP_EXHAUSTED');
   const used = Number(cycle.completed_trips) + 1;
-  const amounts = cycleAmounts(cycle, used);
+  let amounts = cycleAmounts(cycle, used);
+  const theoretical=String(commercial?.economic.theoreticalCommission??cycle.extra_trip_fee_snapshot);
+  const [charge]=await tx`select case when ${isTripPack||used<=Number(cycle.included_trips_snapshot)} then 0
+    else least(${cycle.arrival_billing_enabled?theoretical:String(cycle.extra_trip_fee_snapshot)}::numeric,
+      greatest(0,${cycle.max_renewal_amount_snapshot}::numeric-${cycle.base_membership_amount_snapshot}::numeric-${cycle.billable_extra_amount}::numeric)) end::text as applied`;
   const [usage] = await tx`insert into membership_cycle_trip_usages
     (membership_cycle_id,trip_id,driver_id,accepted_at,sequence_number,usage_kind,extra_trip_fee_snapshot,
-      amount_before_cap,amount_after_cap,idempotency_key)
+      amount_before_cap,amount_after_cap,idempotency_key,theoretical_commission,applied_commission)
     values(${cycle.id},${tripId},${driverId},${trip.assigned_at},
       (select coalesce(max(sequence_number),0)+1 from membership_cycle_trip_usages where membership_cycle_id=${cycle.id}),
       ${isTripPack || used <= Number(cycle.included_trips_snapshot) ? 'INCLUDED' : 'EXTRA'},${cycle.extra_trip_fee_snapshot},
-      ${amounts.raw},${amounts.billable},${`trip-accepted:${tripId}:${driverId}`})
+      ${amounts.raw},${amounts.billable},${`trip-accepted:${tripId}:${driverId}`},${theoretical},${charge!.applied})
     on conflict(trip_id,driver_id) do nothing returning id`;
   if (!usage) return;
-  await saveAmounts(tx, cycle, used);
+  amounts=await saveAmounts(tx, cycle, used);
+  if(cycle.arrival_billing_enabled)await tx`update membership_cycle_trip_usages
+    set amount_before_cap=${amounts.raw},amount_after_cap=${amounts.billable} where id=${usage.id}`;
+  if(commercial) {
+    let packagePurchaseId:string|null=null;
+    if(isTripPack) {
+      const [credits]=await tx`select coalesce(sum(quantity-used),0)::int as remaining from package_purchases where membership_id=${cycle.id}`;
+      if(Number(credits!.remaining)>=Number(cycle.included_trips_snapshot)-Number(cycle.completed_trips)) {
+        const [purchase]=await tx`select id from package_purchases where membership_id=${cycle.id} and used<quantity order by created_at,id limit 1 for update`;
+        if(purchase) {
+          await tx`update package_purchases set used=used+1 where id=${purchase.id}`;
+          packagePurchaseId=String(purchase.id);
+        }
+      }
+    }
+    const [cap]=await tx`select greatest(0,${cycle.max_renewal_amount_snapshot}::numeric-${cycle.base_membership_amount_snapshot}::numeric)::text as cap`;
+    await persistCommercialAssignment(tx,tripId,driverId,String(cycle.id),{...commercial.economic,
+      billingMode:isTripPack?'TRIP_PACKAGE':used<=Number(cycle.included_trips_snapshot)?'PERIOD_PLAN_INCLUDED':
+        Number(cycle.billable_extra_amount)>=Number(cap!.cap)?'PERIOD_PLAN_CAP_REACHED':'PERIOD_PLAN_OVERAGE',
+      appliedCommission:charge!.applied,membershipId:String(cycle.id),planId:String(cycle.plan_id),
+      packageId:isTripPack?String(cycle.plan_id):null,packagePurchaseId,periodCap:cap!.cap,accruedBefore:String(cycle.billable_extra_amount),
+      accruedAfter:String(amounts.billable),usedTrips:used,includedTrips:Number(cycle.included_trips_snapshot),
+      legacyTerms:!cycle.arrival_billing_enabled});
+  }
   await refreshPendingOrders(tx, cycle, amounts);
   await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason)
     values(${driverId},'MEMBERSHIP_TRIP_ACCEPTED','MEMBERSHIP_CYCLE',${cycle.id},
@@ -100,6 +146,8 @@ export async function reversePassengerCancelledMembershipUsage(tx: TransactionSq
   const [cycle] = await tx`select * from driver_memberships where id=${usage.membership_cycle_id} for update`;
   if (!cycle || Number(cycle.completed_trips) <= 0) throw new Error('MEMBERSHIP_USAGE_INCONSISTENT');
   await tx`update membership_cycle_trip_usages set reversed_at=now(),reversal_reason='PASSENGER_CANCELLED',reversed_by=${passengerId} where id=${usage.id}`;
+  await tx`update package_purchases p set used=used-1 from trip_commercial_assignments a
+    where a.trip_id=${tripId} and a.driver_id=${driverId} and a.snapshot->>'packagePurchaseId'=p.id::text and p.used>0`;
   const amounts = await saveAmounts(tx, cycle, Number(cycle.completed_trips) - 1);
   let credit = 0;
   if (!cycle.cycle_closed_at) {
@@ -113,8 +161,12 @@ export async function reversePassengerCancelledMembershipUsage(tx: TransactionSq
       if (!current) throw new Error('MEMBERSHIP_CREDIT_CYCLE_REQUIRED');
       await tx`insert into membership_cycle_adjustments(membership_cycle_id,adjustment_type,amount,reason,reference,created_by)
         values(${current.id},'TRIP_REVERSAL',${-credit},'Cancelación del pasajero en ciclo anterior',${String(usage.id)},${passengerId})`;
-      const adjusted = await saveAmounts(tx, current, Number(current.completed_trips), money(Number(current.adjustment_amount) - credit));
-      await refreshPendingOrders(tx, current, adjusted);
+      if(current.arrival_billing_enabled||current.plan_type_snapshot==='TRIP_PACK') {
+        await tx`update driver_memberships set prior_cycle_due=prior_cycle_due-${credit}::numeric,updated_at=now() where id=${current.id}`;
+      } else {
+        const adjusted = await saveAmounts(tx, current, Number(current.completed_trips), money(Number(current.adjustment_amount) - credit));
+        await refreshPendingOrders(tx, current, adjusted);
+      }
     }
   }
   const result = {tripId,driverId,usageId:String(usage.id),cycleId:String(cycle.id),before:Number(cycle.completed_trips),...amounts,credit};
