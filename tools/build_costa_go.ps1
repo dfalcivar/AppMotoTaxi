@@ -35,6 +35,23 @@ $artifactBase = "Costa-Go-$versionName-build$versionCode"
 
 if ($Production) {
   $googleMapsAndroidApiKey = [Environment]::GetEnvironmentVariable("GOOGLE_MAPS_ANDROID_API_KEY")
+  # Gradle also accepts this key from gradle.properties. Use the active
+  # Gradle user home first, then the Android project, without logging secrets.
+  if ([string]::IsNullOrWhiteSpace($googleMapsAndroidApiKey)) {
+    foreach ($propertiesPath in @(
+      (Join-Path $gradleCache "gradle.properties"),
+      (Join-Path $mobile "android\gradle.properties")
+    )) {
+      if (Test-Path -LiteralPath $propertiesPath) {
+        foreach ($line in Get-Content -LiteralPath $propertiesPath) {
+          if ($line -match '^\s*GOOGLE_MAPS_ANDROID_API_KEY\s*[=:]\s*(\S+)\s*$') {
+            $googleMapsAndroidApiKey = $matches[1]
+          }
+        }
+      }
+      if (-not [string]::IsNullOrWhiteSpace($googleMapsAndroidApiKey)) { break }
+    }
+  }
   if ([string]::IsNullOrWhiteSpace($googleMapsAndroidApiKey)) {
     throw "GOOGLE_MAPS_ANDROID_API_KEY no está configurada. Se cancela la compilación para evitar publicar una aplicación con el mapa en blanco."
   }

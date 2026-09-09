@@ -1,15 +1,18 @@
-# Versión actual para pruebas cerradas
+# Versión candidata a producción
 
-Actualizado el 6 de septiembre de 2026.
+Actualizado el 9 de septiembre de 2026.
 
 - Aplicación: Costa-Go
-- Versión de referencia: `0.18.1 (62)`
-- Canal: prueba cerrada
+- Versión de referencia: `0.18.2 (63)`
+- Canal: producción
 - Estado documental: políticas, ficha y declaraciones revisadas contra el código actual.
 - Imágenes: set actualizado disponible en `docs/google-play/screenshots-0.18.1`.
 
 ## Cambios de esta versión
 
+- Corrección del flujo de comprobantes de transferencia para evitar una pantalla negra después del envío.
+- Cierre ordenado de las pantallas de pago y regreso seguro a la pantalla principal del conductor.
+- Actualización inmediata del estado del comprobante para impedir acciones o envíos duplicados.
 - Nueva modalidad de membresías por paquetes de viajes, configurable y separada de los planes por período.
 - Consulta clara del tipo de membresía activa, viajes utilizados y saldo de viajes disponible.
 - Planes por viajes ordenados por cantidad y vigencias flexibles definidas por el negocio.
@@ -27,7 +30,7 @@ Actualizado el 6 de septiembre de 2026.
 
 ## Artefactos esperados
 
-- AAB: `Costa-Go-0.18.1-build62.aab`
+- AAB: `Costa-Go-0.18.2-build63.aab`
 - APK universal: no generado en esta entrega.
 - Firma: clave de publicación Costa-Go existente.
 - API: `https://mototaxi-atacames-api.onrender.com`, sin proxy.
@@ -36,16 +39,27 @@ Actualizado el 6 de septiembre de 2026.
 
 ## Verificación final del AAB
 
-- Estado: compilado correctamente y listo para Play Console.
-- Tamaño: `111077475` bytes (`105.9 MB`).
-- SHA-256: `6C1E6922F7E3C3442C2385D9D7739799ACF33D78550719827796DD4521BBF532`.
-- Firma JAR: válida y verificada.
-- Certificado de firma: coincide con el utilizado en el build 61.
-- Version name: `0.18.1`.
-- Version code: `62`.
+- Estado: compilado y verificado localmente; pendiente de carga a Play Console.
+- Tamaño: `111084290` bytes.
+- SHA-256: `F4FDDB9A2A97E9E15093D20E330AB78A9124F5E042659DF9E60F0555E097CD89`.
+- Firma JAR: verificada. El verificador muestra advertencias de certificado autofirmado y orden del manifiesto ZIP/JAR.
+- Certificado de firma: coincide con el utilizado en el build 62.
+- Version name: `0.18.2`.
+- Version code: `63`.
 - Arquitecturas incluidas: `arm64-v8a`, `armeabi-v7a` y `x86_64`.
 - API de producción: incluida.
 - Proxy de laboratorio: no incluido.
-- Clave restringida de Google Maps: incluida.
+- Clave de Google Maps: incluida y coincide con la configuración existente de Gradle.
+
+## Nombre y notas para Play Console
+
+Nombre: `Costa-Go 0.18.2 (63)`
+
+```text
+<es-419>
+Corregimos un problema que podía dejar la pantalla negra al enviar un comprobante de transferencia.
+Mejoramos el regreso al inicio después del envío y la actualización del estado del pago.
+</es-419>
+```
 
 Antes de cada AAB nuevo, actualizar este archivo con `versionName`, `versionCode`, notas, AAB validado, permisos y cambios que afecten Seguridad de los datos o acceso del revisor.

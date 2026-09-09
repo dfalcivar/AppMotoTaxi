@@ -7462,7 +7462,7 @@ class _AboutVersion extends StatelessWidget {
   Widget build(BuildContext context) => FutureBuilder<PackageInfo>(
         future: PackageInfo.fromPlatform(),
         builder: (context, snapshot) => Text(
-          'Costa-Go v${snapshot.data?.version ?? '0.18.1'}',
+          'Costa-Go v${snapshot.data?.version ?? '0.18.2'}',
           style: const TextStyle(color: Color(0xff8ea3bd), fontSize: 12),
         ),
       );
