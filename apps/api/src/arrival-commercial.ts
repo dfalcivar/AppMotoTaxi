@@ -8,6 +8,7 @@ import { arrivalSearchBounds, immediateArrival } from './commercial-economics.js
 export const commercialConfigurationSchema=z.object({
   enabled:z.boolean(),searchSessionMinutes:z.number().int().min(1).max(1440),
   sameRouteToleranceMeters:z.number().int().min(1).max(1000),
+  preserveCancelledSearchRound:z.boolean().default(true),
   lowBalanceThreshold:z.string().regex(/^\d{1,6}(\.\d{1,2})?$/),
   minimumTopUp:z.string().regex(/^\d{1,6}(\.\d{1,2})?$/),
   maximumTopUp:z.string().regex(/^\d{1,6}(\.\d{1,2})?$/),
@@ -59,9 +60,14 @@ export async function matchingSearchSession(tx:any,passengerId:string,points:Poi
     order by started_at desc limit 1`;
   return session;
 }
+export function canReuseArrivalSearchSession(session:any,preserveCancelledSearchRound=true) {
+  if(!session||Number(session.cancel_count??0)===0)return Boolean(session);
+  return preserveCancelledSearchRound;
+}
 export async function immediateQuote(fare:TerritorialFare,passengerId:string,points:Point[],requestIdentity:unknown,tx:any=database()) {
   const context=await commercialContext(tx);if(!context)return null;
-  const session=await matchingSearchSession(tx,passengerId,points,context.config.sameRouteToleranceMeters);
+  const candidate=await matchingSearchSession(tx,passengerId,points,context.config.sameRouteToleranceMeters);
+  const session=canReuseArrivalSearchSession(candidate,context.config.preserveCancelledSearchRound)?candidate:undefined;
   const source=session?.configuration??context;
   const minimumRound=Math.min(source.totalRounds,Math.max(1,Number(session?.max_round_reached??1)));
   const journeyFare=centsToAmount(fare.baseCents+fare.stopSurchargeCents);
@@ -73,7 +79,8 @@ export async function immediateQuote(fare:TerritorialFare,passengerId:string,poi
     minimumArrivalCents:amountToCents(minimum.arrivalFee),maximumArrivalCents:amountToCents(minimum.arrivalFeeMaximum)};
 }
 export async function ensureSearchSession(tx:TransactionSql,passengerId:string,points:Point[],quote:NonNullable<Awaited<ReturnType<typeof immediateQuote>>>) {
-  const existing=await matchingSearchSession(tx,passengerId,points,quote.quote.config.sameRouteToleranceMeters);
+  const candidate=await matchingSearchSession(tx,passengerId,points,quote.quote.config.sameRouteToleranceMeters);
+  const existing=canReuseArrivalSearchSession(candidate,quote.quote.config.preserveCancelledSearchRound)?candidate:undefined;
   if(existing) {
     const [locked]=await tx`select * from arrival_search_sessions where id=${existing.id} for update`;
     if(!locked||locked.status!=='OPEN'||new Date(locked.expires_at).getTime()<=Date.now()

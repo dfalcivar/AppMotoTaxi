@@ -56,6 +56,8 @@ flutter:
   assets:
     - assets/images/atacames-login-hero.png
     - assets/images/costa-go-emblem.png
+    - assets/images/trip-pack-membership.png
+    - assets/images/trip-history-mototaxi.png
     - assets/images/advertising-placeholder.png
     - assets/images/mototaxi-map-marker.png
     - assets/images/fleet-empty-light.png

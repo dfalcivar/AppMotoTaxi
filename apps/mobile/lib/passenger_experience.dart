@@ -238,7 +238,8 @@ Map<String, int> tripFareBreakdown(Map<String, dynamic> preview) {
   final service = cents('platformCommissionCents');
   final stops = cents('stopSurchargeCents');
   final arrival = preview['scheduledArrivalFeeCents'] != null
-      ? cents('scheduledArrivalFeeCents') : cents('arrivalMinimumCents');
+      ? cents('scheduledArrivalFeeCents')
+      : cents('arrivalMinimumCents');
   final quoted = cents('quotedTotalCents');
   final journeys = base + service;
   return {
@@ -246,7 +247,9 @@ Map<String, int> tripFareBreakdown(Map<String, dynamic> preview) {
     // concepto independiente al pasajero.
     'journeys': journeys,
     'stops': stops,
-    if (preview['scheduledArrivalFeeCents'] != null || preview['arrivalMinimumCents'] != null) 'arrival': arrival,
+    if (preview['scheduledArrivalFeeCents'] != null ||
+        preview['arrivalMinimumCents'] != null)
+      'arrival': arrival,
     'adjustments': quoted - journeys - stops - arrival,
     'total': quoted,
   };
@@ -771,7 +774,12 @@ class _CompactTripTile extends StatelessWidget {
                 decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primaryContainer,
                     borderRadius: BorderRadius.circular(16)),
-                child: const MototaxiIcon()),
+                padding: const EdgeInsets.all(4),
+                child: Image.asset(
+                  'assets/images/trip-history-mototaxi.png',
+                  fit: BoxFit.contain,
+                  semanticLabel: 'Mototaxi',
+                )),
             const SizedBox(width: 12),
             Expanded(
                 child: Column(
@@ -1550,7 +1558,10 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
                     const SizedBox(height: 12),
                     _summaryRow('Estado', estadoViaje(item['status'])),
                     if (item['economicSnapshot'] is Map)
-                      _economicSummary(Map<String,dynamic>.from(item['economicSnapshot'] as Map), item),
+                      _economicSummary(
+                          Map<String, dynamic>.from(
+                              item['economicSnapshot'] as Map),
+                          item),
                     _summaryRow(
                         'Método de pago',
                         item['paymentMethod'] == 'DEUNA'
@@ -1647,35 +1658,50 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
     ]);
   }
 
-  Widget _economicSummary(Map<String,dynamic> e, Map<String,dynamic> item) {
-    final driver=widget.session.role=='DRIVER';
-    final mode=e['billingMode'];
-    return Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-      _summaryRow('Tarifa del trayecto','\$${e['journeyFare']}'),
-      _summaryRow('Tarifa de llegada','\$${e['arrivalFee']??e['scheduledArrivalFee']}'),
-      if(driver)...[
-        if(mode=='PAY_PER_USE')...[
-          _summaryRow(item['status']=='COMPLETED'?'Comisión Costa-Go':'Comisión reservada','\$${e['appliedCommission']}'),
-          if(item['status']=='COMPLETED')_summaryRow('Ganancia económica del viaje','\$${e['economicProfit']}'),
-          _summaryRow('Saldo anterior','\$${e['balanceBefore']}'),
-          if(item['walletSettlement'] is Map)_summaryRow('Saldo disponible al finalizar','\$${item['walletSettlement']['availableAfter']}'),
+  Widget _economicSummary(Map<String, dynamic> e, Map<String, dynamic> item) {
+    final driver = widget.session.role == 'DRIVER';
+    final mode = e['billingMode'];
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _summaryRow('Tarifa del trayecto', '\$${e['journeyFare']}'),
+      _summaryRow('Tarifa de llegada',
+          '\$${e['arrivalFee'] ?? e['scheduledArrivalFee']}'),
+      if (driver) ...[
+        if (mode == 'PAY_PER_USE') ...[
+          _summaryRow(
+              item['status'] == 'COMPLETED'
+                  ? 'Comisión Costa-Go'
+                  : 'Comisión reservada',
+              '\$${e['appliedCommission']}'),
+          if (item['status'] == 'COMPLETED')
+            _summaryRow(
+                'Ganancia económica del viaje', '\$${e['economicProfit']}'),
+          _summaryRow('Saldo anterior', '\$${e['balanceBefore']}'),
+          if (item['walletSettlement'] is Map)
+            _summaryRow('Saldo disponible al finalizar',
+                '\$${item['walletSettlement']['availableAfter']}'),
           const Text('Comisión calculada sobre la tarifa de llegada.'),
-        ]else if(mode=='TRIP_PACKAGE')...[
+        ] else if (mode == 'TRIP_PACKAGE') ...[
           const Text('Comisión incluida en tu paquete.'),
-          _summaryRow('Viajes utilizados al aceptar','${e['usedTrips']} / ${e['includedTrips']}'),
-        ]else if(mode=='PERIOD_PLAN_INCLUDED')...[
-          _summaryRow('Comisión teórica Costa-Go','\$${e['theoreticalCommission']}'),
-          _summaryRow('Cargo adicional','\$${e['appliedCommission']}'),
+          _summaryRow('Viajes utilizados al aceptar',
+              '${e['usedTrips']} / ${e['includedTrips']}'),
+        ] else if (mode == 'PERIOD_PLAN_INCLUDED') ...[
+          _summaryRow(
+              'Comisión teórica Costa-Go', '\$${e['theoreticalCommission']}'),
+          _summaryRow('Cargo adicional', '\$${e['appliedCommission']}'),
           const Text('Incluido en tu plan.'),
-        ]else if(mode=='PERIOD_PLAN_OVERAGE'||mode=='PERIOD_PLAN_CAP_REACHED')...[
-          _summaryRow('Comisión Costa-Go aplicada','\$${e['appliedCommission']}'),
-          _summaryRow('Acumulado del período','\$${e['accruedAfter']} / \$${e['periodCap']}'),
-          Text(mode=='PERIOD_PLAN_CAP_REACHED'
-            ? 'Has alcanzado el tope de cargos adicionales de este período. Los siguientes viajes no generarán cargos adicionales.'
-            : 'Este valor se incluirá en tu próxima renovación.'),
+        ] else if (mode == 'PERIOD_PLAN_OVERAGE' ||
+            mode == 'PERIOD_PLAN_CAP_REACHED') ...[
+          _summaryRow(
+              'Comisión Costa-Go aplicada', '\$${e['appliedCommission']}'),
+          _summaryRow('Acumulado del período',
+              '\$${e['accruedAfter']} / \$${e['periodCap']}'),
+          Text(mode == 'PERIOD_PLAN_CAP_REACHED'
+              ? 'Has alcanzado el tope de cargos adicionales de este período. Los siguientes viajes no generarán cargos adicionales.'
+              : 'Este valor se incluirá en tu próxima renovación.'),
         ],
-      ]else const Text('Valor confirmado. No cambiará durante este viaje.'),
-      const SizedBox(height:8),
+      ] else
+        const Text('Valor confirmado. No cambiará durante este viaje.'),
+      const SizedBox(height: 8),
     ]);
   }
 

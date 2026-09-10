@@ -15643,15 +15643,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
             dimension: 46,
             child: showTripPackEmblem
                 ? Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: ClipOval(
-                      child: Transform.scale(
-                        scale: 1.42,
-                        child: Image.asset(
-                          'assets/images/costa-go-emblem.png',
-                          fit: BoxFit.cover,
-                        ),
-                      ),
+                    padding: const EdgeInsets.all(5),
+                    child: Image.asset(
+                      'assets/images/trip-pack-membership.png',
+                      fit: BoxFit.contain,
                     ),
                   )
                 : Icon(icon, color: color, size: 27),

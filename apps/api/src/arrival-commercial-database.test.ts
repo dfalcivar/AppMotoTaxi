@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
+import {canReuseArrivalSearchSession,commercialConfigurationSchema} from './arrival-commercial.js';
 
 const driver='00000000-0000-4000-8000-000000000001',trip='00000000-0000-4000-8000-000000000002';
 let pg:PGlite;
@@ -26,6 +27,15 @@ const move=(kind:string,amount:string,key:string)=>pg.query(`select apply_driver
 const balance=async()=>(await pg.query(`select total::text,reserved::text,(total-reserved)::text as available from driver_wallets where driver_id=$1`,[driver])).rows[0];
 
 describe('transactional wallet and immutable offers',()=>{
+  it('preserves legacy cancellation continuity and allows explicitly disabling it',()=>{
+    expect(commercialConfigurationSchema.parse({enabled:true,searchSessionMinutes:30,sameRouteToleranceMeters:100,
+      lowBalanceThreshold:'1.00',minimumTopUp:'1.00',maximumTopUp:'100.00',historicalWindowDays:30,
+      minimumSamples:10,fullConfidenceSamples:100,recalculateMinutes:60,referenceDistribution:[{round:1,count:1}]})
+      .preserveCancelledSearchRound).toBe(true);
+    expect(canReuseArrivalSearchSession({cancel_count:1},true)).toBe(true);
+    expect(canReuseArrivalSearchSession({cancel_count:1},false)).toBe(false);
+    expect(canReuseArrivalSearchSession({cancel_count:0},false)).toBe(true);
+  });
   it('starts a new economic search after NO_DRIVER but preserves cancellation continuity',async()=>{
     await pg.exec(await readFile(new URL('../migrations/090_expire_exhausted_arrival_search.sql',import.meta.url),'utf8'));
     const exhausted=await pg.query<any>(`insert into arrival_search_sessions(passenger_id,expires_at,route_points,configuration,max_round_reached)
