@@ -11118,11 +11118,50 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                             ),
                           ],
                           if (preview['arrivalMinimumCents'] != null)
-                            const Padding(
-                                padding: EdgeInsets.only(top: 8),
-                                child: Text(
+                            Container(
+                              margin: const EdgeInsets.only(top: 10),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 13),
+                              decoration: BoxDecoration(
+                                color: const Color(0xffffa000)
+                                    .withValues(alpha: .10),
+                                border: Border.all(
+                                    color: const Color(0xffffa000)
+                                        .withValues(alpha: .75)),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(children: [
+                                const CircleAvatar(
+                                  radius: 20,
+                                  backgroundColor: Color(0xffff9800),
+                                  foregroundColor: Colors.white,
+                                  child: Icon(Icons.priority_high_rounded,
+                                      size: 25),
+                                ),
+                                Container(
+                                  width: 1,
+                                  height: 42,
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 12),
+                                  color: const Color(0xffffa000)
+                                      .withValues(alpha: .55),
+                                ),
+                                Expanded(
+                                  child: Text(
                                     'El valor final se confirmará cuando un conductor acepte tu viaje.',
-                                    textAlign: TextAlign.center)),
+                                    style: TextStyle(
+                                      color:
+                                          Theme.of(dialogContext).brightness ==
+                                                  Brightness.dark
+                                              ? const Color(0xffffcc80)
+                                              : const Color(0xff784000),
+                                      fontWeight: FontWeight.w800,
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                ),
+                              ]),
+                            ),
                           const SizedBox(height: 6),
                           TextButton(
                               onPressed: () =>
@@ -11767,24 +11806,40 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         child: _PassengerSurface(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            Icon(Icons.route_outlined,
-                size: 29, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Ruta estimada',
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.primary,
-                            fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 2),
-                    Text(routeLabel,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800)),
-                  ]),
+              flex: 5,
+              child: Row(children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primaryContainer
+                        .withValues(alpha: .48),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.route_outlined,
+                      size: 29, color: Theme.of(context).colorScheme.primary),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Ruta estimada',
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 3),
+                        Text(routeLabel,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w900)),
+                      ]),
+                ),
+              ]),
             ),
             if (fareCents != null) ...[
               const SizedBox(width: 12),
@@ -11794,12 +11849,46 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 color: Theme.of(context).colorScheme.outlineVariant,
               ),
               const SizedBox(width: 12),
-              SizedBox(
-                width: 94,
+              Expanded(
+                flex: 4,
                 child: active?['status'] == 'SEARCHING'
-                    ? const Text(
-                        'Valor final\nSe confirma al asignar conductor',
-                        textAlign: TextAlign.center)
+                    ? Row(children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primaryContainer
+                                .withValues(alpha: .48),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.payments_outlined,
+                              size: 26,
+                              color: Theme.of(context).colorScheme.primary),
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('Valor final',
+                                    style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                        fontWeight: FontWeight.w900)),
+                                const SizedBox(height: 3),
+                                Text('Se confirma al asignar conductor',
+                                    style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                        height: 1.2)),
+                              ]),
+                        ),
+                      ])
                     : Column(mainAxisSize: MainAxisSize.min, children: [
                         Text(
                           'Valor a pagar',
