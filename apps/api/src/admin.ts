@@ -47,6 +47,7 @@ export interface SessionUser {
   availableRoles?: Array<"PASSENGER" | "DRIVER">;
   permissions?: Permission[];
   cooperativeId?: string;
+  administrativeSource?: "WEB_ADMIN" | "MOBILE_ADMIN";
   expiresAt?: number;
 }
 interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
@@ -159,6 +160,7 @@ const faqSchema = z.object({
 });
 const adminTripActionSchema = z.object({ action: z.enum(["CANCEL"]), reason: z.string().trim().min(3).max(300) });
 const operationalSettingsSchema = z.object({
+  expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
   searchRadiusMeters: z.number().int().min(500).max(20000),
   driverSearchInitialRadiusMeters: z.number().int().min(100).max(20000),
   driverSearchRadiusIncrementMeters: z.number().int().min(100).max(20000),
@@ -330,7 +332,7 @@ export async function persistAudit(user: SessionUser, action: string, entityType
   if (!process.env.DATABASE_URL || !user.id) return;
   await database()`
     insert into audit_log (actor_id, action, entity_type, entity_id, next_value, reason)
-    values (${user.id}, ${action}, ${entityType}, ${entityId}, ${JSON.stringify({ detail })}::jsonb, ${detail})
+    values (${user.id}, ${action}, ${entityType}, ${entityId}, ${JSON.stringify({ detail, source: user.administrativeSource ?? "WEB_ADMIN" })}::jsonb, ${detail})
   `;
 }
 function requireUser(request: FastifyRequest) { const user = userFrom(request); if (!user) throw new Error("UNAUTHORIZED"); return user; }
@@ -1602,6 +1604,12 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   app.patch("/v1/admin/settings", async (request, reply) => { try {
     const user = requirePermission(request, "settings:manage");
     const body = operationalSettingsSchema.parse(request.body);
+    if (body.expectedUpdatedAt) {
+      const [current] = await database()`select updated_at as "updatedAt" from operational_settings where id=1`;
+      if (!current || new Date(current.updatedAt).getTime() !== new Date(body.expectedUpdatedAt).getTime()) {
+        return reply.code(409).send({ error:"SETTINGS_VERSION_CONFLICT", message:"La configuración fue modificada por otro administrador. Actualiza antes de guardar." });
+      }
+    }
     const [settings] = await database()`
       insert into operational_settings (id, search_radius_meters, driver_search_initial_radius_meters,
         driver_search_radius_increment_meters, driver_search_round_wait_seconds,

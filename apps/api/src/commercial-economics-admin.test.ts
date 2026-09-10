@@ -113,3 +113,20 @@ it('queries the dashboard on the real schema and distinguishes fiscal receipts f
   expect(result.statusCode).toBe(200);
   expect(result.json()).toMatchObject({modalities:[],rounds:[],packages:[],receipts:[],receiptsScope:'GLOBAL_DATE_WINDOW'});
 });
+it('records an administrative balance adjustment as a movement and common audit entry',async()=>{
+  await pg.query(`insert into driver_wallets(driver_id,total,reserved,enabled) values($1,10,2,true)
+    on conflict(driver_id) do update set total=10,reserved=2,enabled=true`,[user]);
+  const result=await app.inject({method:'POST',url:`/v1/admin/commercial-economics/wallets/${user}/adjust`,payload:{
+    amount:'1.25',reason:'Corrección verificada en caja',idempotencyKey:'mobile-test-adjustment'
+  }});
+  expect(result.statusCode,result.body).toBe(200);
+  expect(result.json()).toMatchObject({amount:'1.25',totalBefore:'10.00',totalAfter:'11.25'});
+  expect((await pg.query<any>(`select kind,amount::text,total_before::text,total_after::text
+    from driver_wallet_movements where driver_id=$1`,[user])).rows).toEqual([
+    {kind:'ADMIN_ADJUSTMENT',amount:'1.25',total_before:'10.00',total_after:'11.25'}
+  ]);
+  expect((await pg.query<any>(`select action,next_value->>'source' as source from audit_log
+    where entity_id=$1`,[user])).rows).toEqual([
+    {action:'DRIVER_WALLET_ADMIN_ADJUSTMENT',source:'WEB_ADMIN'}
+  ]);
+});

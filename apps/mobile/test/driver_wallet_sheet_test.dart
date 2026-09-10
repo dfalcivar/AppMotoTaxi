@@ -33,13 +33,21 @@ void main() {
             )))));
     await tester.pumpAndSettle();
     expect(find.text(r'$4.90 disponibles'), findsOneWidget);
+    final walletScroll = find
+        .descendant(
+            of: find.byType(ListView).first, matching: find.byType(Scrollable))
+        .first;
+    await tester.scrollUntilVisible(find.byType(TextField), 150,
+        scrollable: walletScroll);
     expect(find.text('Valor de recarga'), findsOneWidget);
     expect(find.text(r'Puedes recargar desde $1.00 hasta $100.00'),
         findsOneWidget);
     expect(find.text('Recarga sin IVA'), findsNothing);
     expect(tester.takeException(), isNull);
-    await tester.scrollUntilVisible(find.text('Recargar saldo'), 150,
-        scrollable: find.byType(Scrollable).first);
+    final rechargeButton = find.widgetWithText(FilledButton, 'Recargar saldo');
+    await tester.scrollUntilVisible(rechargeButton, 150,
+        scrollable: walletScroll);
+    expect(rechargeButton, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -71,10 +79,85 @@ void main() {
     ))));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '1');
-    await tester.ensureVisible(find.text('Recargar saldo'));
-    await tester.tap(find.text('Recargar saldo'));
+    final rechargeButton = find.widgetWithText(FilledButton, 'Recargar saldo');
+    final walletScroll = find
+        .descendant(
+            of: find.byType(ListView).first, matching: find.byType(Scrollable))
+        .first;
+    await tester.scrollUntilVisible(rechargeButton, 180,
+        scrollable: walletScroll);
+    tester.widget<FilledButton>(rechargeButton).onPressed!();
     await tester.pump();
     expect(find.text(r'El valor mínimo de recarga es $5.00.'), findsOneWidget);
     expect(ordersCreated, 0);
+  });
+
+  testWidgets('wallet previews three movements and opens the filtered history',
+      (tester) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: DriverWalletSheet(
+      load: () async => {
+        'wallet': {
+          'total': '8.70',
+          'reserved': '0.00',
+          'available': '8.70',
+          'enabled': true
+        },
+        'configuration': {
+          'minimumTopUp': '3.00',
+          'maximumTopUp': '100.00',
+          'lowBalanceThreshold': '1.00'
+        },
+        'movements': [
+          {
+            'kind': 'TRIP_COMMISSION',
+            'amount': '0.60',
+            'reason': 'Comisión al completar viaje',
+            'createdAt': now
+          },
+          {
+            'kind': 'TOPUP',
+            'amount': '5.00',
+            'reason': 'Transferencia aprobada',
+            'createdAt': now
+          },
+          {
+            'kind': 'ADMIN_ADJUSTMENT',
+            'amount': '1.00',
+            'reason': 'Corrección de saldo',
+            'createdAt': now
+          },
+          {
+            'kind': 'TRIP_COMMISSION',
+            'amount': '0.30',
+            'reason': 'Comisión al completar viaje',
+            'createdAt': now
+          }
+        ]
+      },
+      createOrder: (_, __) async => {},
+      setEnabled: (_) async {},
+    ))));
+    await tester.pumpAndSettle();
+    final walletScroll = find
+        .descendant(
+            of: find.byType(ListView).first, matching: find.byType(Scrollable))
+        .first;
+    await tester.scrollUntilVisible(find.text('Ver todos'), 200,
+        scrollable: walletScroll);
+    await tester.scrollUntilVisible(find.text('Comisión de viaje'), 100,
+        scrollable: walletScroll);
+    expect(find.text('Comisión de viaje'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Ver todos'), -100,
+        scrollable: walletScroll);
+    await tester.tap(find.text('Ver todos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Todos'), findsOneWidget);
+    expect(find.text('Comisiones'), findsOneWidget);
+    expect(find.text('Recargas'), findsOneWidget);
+    expect(find.text('Ajustes'), findsOneWidget);
+    expect(find.text('Comisión de viaje'), findsNWidgets(2));
   });
 }

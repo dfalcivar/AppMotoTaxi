@@ -15,6 +15,7 @@ import { z } from "zod";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./admin.js";
 import { registerMobileAccountAdminRoutes } from './mobile-account-admin.js';
+import { registerMobileAdminAccessRoutes } from './mobile-admin-access.js';
 import { anonymizeMobileIdentity } from './mobile-account-maintenance.js';
 import { database } from "./database.js";
 import { registerFleetRoutes } from './fleet/routes.js';
@@ -475,6 +476,7 @@ export async function buildApp() {
   await app.register(websocket);
   const realtime = registerRealtimeRoutes(app);
   await registerAdminRoutes(app, realtime);
+  await registerMobileAdminAccessRoutes(app);
   await registerSmartNotificationRoutes(app);
   await registerNotificationPreferenceRoutes(app,authenticatedUser);
   await registerMobileAccountAdminRoutes(app);
@@ -2098,12 +2100,12 @@ export async function buildApp() {
           ST_SetSRID(ST_MakePoint(${input.origin.longitude}, ${input.origin.latitude}),4326)::geography,
           ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           ${input.originReference ?? null}, ${finalDestination.reference}, ${input.notes || null}, ${zone},
-           ${fare.pricingVersion}, ${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: scheduledQuote || arrivalQuote ? 0 : fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: scheduledQuote || arrivalQuote ? fare.legs.map(leg=>({...leg,commissionCents:0})) : fare.legs, economic: scheduledQuote?.economic, economicQuote:arrivalQuote?.quote,quoteConfirmation:arrivalQuote?.confirmation??scheduledQuote?.confirmation })}::jsonb,
+           ${fare.pricingVersion}, ${tx.json({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: scheduledQuote || arrivalQuote ? 0 : fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: scheduledQuote || arrivalQuote ? fare.legs.map(leg=>({...leg,commissionCents:0})) : fare.legs, economic: scheduledQuote?.economic, economicQuote:arrivalQuote?.quote,quoteConfirmation:arrivalQuote?.confirmation??scheduledQuote?.confirmation })},
           ${total}, ${scheduledFor ?? null}, ${scheduledFor ? "SCHEDULED" : null},
           ${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           ${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
           ${operationalArea.id}::uuid, ${operationalArea.versionId}::uuid,
-          ${route ? JSON.stringify({ points: route.points, provider: route.provider }) : null}::jsonb,
+          ${route ? tx.json({ points: route.points.map(point => ({ latitude: point.latitude, longitude: point.longitude })), provider: route.provider }) : null},
           ${input.idempotencyKey ?? null},${sessionId}
         )
         on conflict (passenger_id, client_request_id) where client_request_id is not null
@@ -2403,13 +2405,13 @@ export async function buildApp() {
           destination=ST_SetSRID(ST_MakePoint(${finalDestination.location.longitude}, ${finalDestination.location.latitude}),4326)::geography,
           origin_reference=${input.originReference ?? null}, destination_reference=${finalDestination.reference},
           passenger_notes=${input.notes || null}, service_zone=${zone}, pricing_version=${fare.pricingVersion},
-          pricing_snapshot=${JSON.stringify({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: scheduledQuote ? 0 : fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: scheduledQuote ? fare.legs.map(leg=>({...leg,commissionCents:0})) : fare.legs, economic:scheduledQuote?.economic, quoteConfirmation:scheduledQuote?.confirmation })}::jsonb,
+          pricing_snapshot=${tx.json({ version: fare.pricingVersion, zone, baseCents: fare.baseCents, totalCents: total, stops: destinations.length, stopSurchargeCents: fare.stopSurchargeCents, platformCommissionCents: scheduledQuote ? 0 : fare.platformCommissionCents, suggested: fare.suggested, distancePolicy: fare.distancePolicy, legs: scheduledQuote ? fare.legs.map(leg=>({...leg,commissionCents:0})) : fare.legs, economic:scheduledQuote?.economic, quoteConfirmation:scheduledQuote?.confirmation })},
           quoted_total_cents=${total}, scheduled_for=${scheduledFor},
           estimated_distance_meters=${route?.distanceMeters == null ? null : Math.round(route.distanceMeters)},
           estimated_duration_seconds=${route?.durationSeconds == null ? null : Math.round(route.durationSeconds)},
           service_area_id=${operationalArea.id}::uuid,
           service_area_version_id=${operationalArea.versionId}::uuid,
-          route_snapshot=${route ? JSON.stringify({ points: route.points, provider: route.provider }) : null}::jsonb
+          route_snapshot=${route ? tx.json({ points: route.points.map(point => ({ latitude: point.latitude, longitude: point.longitude })), provider: route.provider }) : null}
         where id=${tripId} and passenger_id=${user.id!} and status='SEARCHING'
           and schedule_status='SCHEDULED' and driver_id is null and scheduled_for > now()
         returning id::text

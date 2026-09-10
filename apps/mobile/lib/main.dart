@@ -40,6 +40,7 @@ import 'driver_search_indicator.dart';
 import 'fiscal_profile_modal.dart';
 import 'fleet.dart';
 import 'mototaxi_icon.dart';
+import 'mobile_admin.dart';
 import 'service_areas.dart';
 import 'trip_lifecycle.dart';
 import 'notification_alerts.dart';
@@ -4364,6 +4365,17 @@ class _ProfileState extends State<Profile> {
     if (mounted) setState(() => profileError = null);
     try {
       final value = await Api().profile(widget.s.token);
+      try {
+        final access = await Api()
+            .call('GET', '/v1/mobile-admin/access', token: widget.s.token);
+        if (value is Map) {
+          value['mobileAdminAccess'] = access?['authorized'] == true;
+        }
+      } catch (_) {
+        if (value is Map) {
+          value['mobileAdminAccess'] = false;
+        }
+      }
       if (mounted) setState(() => p = value);
     } catch (error) {
       if (mounted) setState(() => profileError = error.toString());
@@ -4692,6 +4704,22 @@ class _ProfileState extends State<Profile> {
             ]),
             sectionTitle('Ajustes y seguridad'),
             groupedCard([
+              if (p['mobileAdminAccess'] == true) ...[
+                ListTile(
+                  contentPadding: rowPadding,
+                  leading: leadingIcon(Icons.admin_panel_settings_outlined),
+                  title: const Text('Administración Costa-Go'),
+                  subtitle: const Text('Configuración operativa'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                      c,
+                      MaterialPageRoute(
+                          builder: (_) => MobileAdminPanel(
+                              mobileToken: widget.s.token,
+                              request: Api().call))),
+                ),
+                const Divider(height: 1),
+              ],
               SwitchListTile(
                 contentPadding: rowPadding,
                 secondary: leadingIcon(Icons.fingerprint),
@@ -17917,9 +17945,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           ]),
                           const SizedBox(height: CostaGoSpace.sm),
                           CostaGoSurface(
-                            tone: prepaidIsCurrent
-                                ? CostaGoStatusTone.success
-                                : CostaGoStatusTone.info,
+                            tone: CostaGoStatusTone.info,
                             padding: const EdgeInsets.all(CostaGoSpace.lg),
                             child: Column(children: [
                               Row(

@@ -21,7 +21,9 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
     const [settings]=await database()`select arrival_commercial_configuration as configuration,arrival_commercial_version as version,
       membership_extra_trip_share_percent::text as "costaGoPercent",driver_search_initial_radius_meters as "initialRadiusMeters",
       driver_search_radius_increment_meters as "radiusIncrementMeters",search_radius_meters as "maximumRadiusMeters",
-      driver_search_round_wait_seconds as "roundWaitSeconds" from operational_settings where id=1`;
+      driver_search_round_wait_seconds as "roundWaitSeconds",
+      coalesce(to_jsonb(operational_settings)->>'vat_rate_percent','0') as "vatRatePercent"
+      from operational_settings where id=1`;
     const plans=await database()`select p.id,p.code,p.name,p.included_trips as quantity,p.base_amount::text as price,
       to_jsonb(r) as rule,c.id as "calculationId",c.snapshot as calculation,c.calculated_at as "calculatedAt"
       from membership_plans p left join package_commercial_rules r on r.plan_code=p.code
@@ -52,7 +54,7 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
       if(body.configuration.enabled)await commercialContext(tx);
       await tx`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason)
         values(${actor.id!},'ARRIVAL_COMMERCIAL_CONFIGURATION','SETTINGS','1',${tx.json({configuration:normalizeCommercialConfiguration(row.arrival_commercial_configuration),costaGoPercent:String(row.membership_extra_trip_share_percent)} as JSONValue)},
-          ${tx.json({configuration:body.configuration,costaGoPercent})},'Configuración explícita; no modifica viajes ni compras históricas')`;
+          ${tx.json({configuration:body.configuration,costaGoPercent,source:actor.administrativeSource??'WEB_ADMIN'})},'Configuración explícita; no modifica viajes ni compras históricas')`;
       return {version:body.version+1,configuration:body.configuration,costaGoPercent};
     });return reply.send(result);
   }));
@@ -73,7 +75,8 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
         on conflict(plan_code) do update set commercial_factor=excluded.commercial_factor,volume_discount_percent=excluded.volume_discount_percent,
           fixed_cost=excluded.fixed_cost,minimum_price=excluded.minimum_price,service_area_id=excluded.service_area_id,version=excluded.version,updated_at=now(),updated_by=excluded.updated_by`;
       await tx`insert into audit_log(actor_id,action,entity_type,entity_id,next_value,reason)
-        values(${actor.id!},'PACKAGE_COMMERCIAL_RULES','MEMBERSHIP_PLAN',${planId},${JSON.stringify(body)}::jsonb,'Reglas comerciales específicas del paquete')`;
+        values(${actor.id!},'PACKAGE_COMMERCIAL_RULES','MEMBERSHIP_PLAN',${planId},
+          ${tx.json({...body,source:actor.administrativeSource??'WEB_ADMIN'})},'Reglas comerciales específicas del paquete')`;
       return {version:body.version+1};
     });
   }));
@@ -102,7 +105,9 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
           ${p.included_trips},${p.pack_validity_days},${c.snapshot.suggestedPrice},0,true,now(),${actor.id!},${actor.id!}) returning id,version`;
       await tx`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason)
         values(${actor.id!},'PACKAGE_SUGGESTED_PRICE_APPLIED','MEMBERSHIP_PLAN',${String(next!.id)},
-          ${JSON.stringify({planId,price:p.base_amount})}::jsonb,${JSON.stringify({price:c.snapshot.suggestedPrice,calculationId:c.id})}::jsonb,'Precio publicado por confirmación administrativa')`;
+          ${JSON.stringify({planId,price:p.base_amount})}::jsonb,
+          ${tx.json({price:c.snapshot.suggestedPrice,calculationId:c.id,source:actor.administrativeSource??'WEB_ADMIN'})},
+          'Precio publicado por confirmación administrativa')`;
       return next;
     });
   }));
@@ -118,9 +123,18 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
     const actor=requirePermission(request,'memberships:manage');
     const {driverId}=z.object({driverId:z.string().uuid()}).parse(request.params);
     const body=z.object({amount:z.string().regex(/^-?\d{1,6}(\.\d{1,2})?$/),reason:z.string().trim().min(5).max(500),idempotencyKey:z.string().min(8).max(120)}).parse(request.body);
-    const [result]=await database()`select apply_driver_wallet_movement(${driverId},'ADMIN_ADJUSTMENT',${body.amount}::numeric,
-      ${`admin-wallet:${actor.id}:${body.idempotencyKey}`},null,null,${actor.id!},${body.reason}) as id`;
-    return result;
+    return database().begin(async tx=>{
+      const [result]=await tx`select apply_driver_wallet_movement(${driverId},'ADMIN_ADJUSTMENT',${body.amount}::numeric,
+        ${`admin-wallet:${actor.id}:${body.idempotencyKey}`},null,null,${actor.id!},${body.reason}) as id`;
+      const [movement]=await tx`select id::text,amount::text,total_before::text as "totalBefore",total_after::text as "totalAfter",
+        reserved_before::text as "reservedBefore",reserved_after::text as "reservedAfter",created_at as "createdAt"
+        from driver_wallet_movements where id=${result!.id}`;
+      await tx`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason)
+        values(${actor.id!},'DRIVER_WALLET_ADMIN_ADJUSTMENT','DRIVER_WALLET',${driverId},
+          ${tx.json({total:movement!.totalBefore,reserved:movement!.reservedBefore})},
+          ${tx.json({total:movement!.totalAfter,reserved:movement!.reservedAfter,amount:movement!.amount,source:actor.administrativeSource??'WEB_ADMIN'})},${body.reason})`;
+      return movement;
+    });
   }));
   app.get('/v1/admin/commercial-economics/dashboard',guarded(async request=>{
     requirePermission(request,'memberships:view');

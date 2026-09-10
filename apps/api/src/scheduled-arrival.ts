@@ -72,7 +72,7 @@ export async function registerScheduledArrivalRoutes(app: FastifyInstance) {
         where id=1 returning scheduled_arrival_version as version,scheduled_arrival_configuration as configuration`;
       await tx`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason)
         values(${actor.id!},'SCHEDULED_ARRIVAL_SETTINGS_UPDATED','SETTINGS','1',${JSON.stringify(previous)}::jsonb,
-          ${JSON.stringify(next)}::jsonb,'Tarifa programada por hora del servicio; no cambia reservas confirmadas')`;
+          ${JSON.stringify({...next,source:actor.administrativeSource??'WEB_ADMIN'})}::jsonb,'Tarifa programada por hora del servicio; no cambia reservas confirmadas')`;
       return next;
     });
     if (!result) return reply.code(409).send({error:'SETTINGS_VERSION_CONFLICT'});

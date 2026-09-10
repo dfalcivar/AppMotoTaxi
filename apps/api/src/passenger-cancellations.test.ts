@@ -13,7 +13,7 @@ let pg:PGlite;
 const policy={enabled:true,steps:[{fromCount:1,suspensionDays:0},{fromCount:3,suspensionDays:2},{fromCount:4,suspensionDays:5},{fromCount:5,suspensionDays:7},{fromCount:6,suspensionDays:null}]};
 function sqlFor(client:any):any {
   const sql=async(parts:TemplateStringsArray,...values:any[]) => (await client.query(parts.reduce((out,part,i)=>out+(i?`$${i}`:'')+part,''),values)).rows;
-  return Object.assign(sql,{begin:(fn:any)=>client.transaction((tx:any)=>fn(sqlFor(tx)))});
+  return Object.assign(sql,{begin:(fn:any)=>client.transaction((tx:any)=>fn(sqlFor(tx))),json:(value:unknown)=>JSON.stringify(value)});
 }
 beforeAll(async()=>{
   pg=new PGlite();state.sql=sqlFor(pg);

@@ -1519,89 +1519,125 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
             (item['originLongitude'] as num).toDouble()),
         destination = LatLng((item['destinationLatitude'] as num).toDouble(),
             (item['destinationLongitude'] as num).toDouble());
+    final vehicle = item['vehicleDetails'];
     return Scaffold(
         appBar: AppBar(title: const Text('Detalle del viaje')),
-        body: ListView(padding: const EdgeInsets.only(bottom: 32), children: [
-          SizedBox(
-              height: 250,
-              child: LiveMap(
-                  originLabel: cleanAddressLabel(item['originReference'],
-                      fallback: 'Origen'),
-                  destinationLabel: cleanAddressLabel(
-                      item['destinationReference'],
-                      fallback: 'Destino'),
-                  pickup: origin,
-                  dropoff: destination,
-                  routePoints: route,
-                  fillAvailable: true,
-                  borderRadius: 0,
-                  viewportPadding: const EdgeInsets.all(30))),
-          Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _participant(context, item),
-                    const SizedBox(height: 12),
-                    TripVehicleBadge(
-                        gateway: fleetFor(widget.session),
-                        vehicle: item['vehicleDetails'],
-                        historical: true),
-                    const SizedBox(height: 22),
-                    _routeInfo(context, item),
-                    const Divider(height: 36),
-                    Text('Resumen del viaje',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleLarge
-                            ?.copyWith(fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 12),
-                    _summaryRow('Estado', estadoViaje(item['status'])),
-                    if (item['economicSnapshot'] is Map)
-                      _economicSummary(
-                          Map<String, dynamic>.from(
-                              item['economicSnapshot'] as Map),
-                          item),
-                    _summaryRow(
-                        'Método de pago',
-                        item['paymentMethod'] == 'DEUNA'
-                            ? 'Transferencia!'
-                            : 'Efectivo'),
-                    _summaryRow(
-                        'Total del viaje',
-                        _money(item['finalTotalCents'] ??
-                            item['quotedTotalCents']),
-                        strong: true),
-                    if (item['distanceMeters'] != null)
-                      _summaryRow(
-                          'Distancia', _distance(item['distanceMeters'])),
-                    if (item['durationSeconds'] != null)
-                      _summaryRow(
-                          'DuraciÃ³n', _duration(item['durationSeconds'])),
-                    if (item['myRating'] != null) ...[
+        body: SafeArea(
+          top: false,
+          child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              children: [
+                ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: SizedBox(
+                        height: 210,
+                        child: LiveMap(
+                            originLabel: cleanAddressLabel(
+                                item['originReference'],
+                                fallback: 'Origen'),
+                            destinationLabel: cleanAddressLabel(
+                                item['destinationReference'],
+                                fallback: 'Destino'),
+                            pickup: origin,
+                            dropoff: destination,
+                            routePoints: route,
+                            fillAvailable: true,
+                            borderRadius: 22,
+                            viewportPadding: const EdgeInsets.all(28)))),
+                const SizedBox(height: 12),
+                CostaGoSurface(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(children: [
+                      _participant(context, item),
+                      if (vehicle is Map) ...[
+                        const SizedBox(height: 14),
+                        TripVehicleBadge(
+                            gateway: fleetFor(widget.session),
+                            vehicle: vehicle,
+                            historical: true),
+                      ],
                       const Divider(height: 30),
-                      Row(children: [
-                        const Icon(Icons.star, color: Colors.amber),
-                        const SizedBox(width: 8),
-                        Text('Tu calificación: ${item['myRating']} de 5',
-                            style: const TextStyle(fontWeight: FontWeight.w800))
-                      ])
-                    ],
-                    const Divider(height: 36),
-                    Text('Ayuda y soporte',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleLarge
-                            ?.copyWith(fontWeight: FontWeight.w900)),
-                    _support('Objeto perdido', 'LOST_ITEM', Icons.key_outlined),
-                    _support(
-                        'Problema con el viaje', 'TRIP', Icons.route_outlined),
-                    _support('Problema con el cobro', 'PAYMENT',
-                        Icons.payments_outlined),
-                    _support('Problema de seguridad', 'SAFETY',
-                        Icons.shield_outlined),
-                  ]))
-        ]));
+                      _routeInfo(context, item),
+                    ])),
+                const SizedBox(height: 14),
+                CostaGoSurface(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(children: [
+                            Expanded(
+                              child: Text('Resumen del viaje',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.w900)),
+                            ),
+                            CostaGoStatusChip(
+                                label: estadoViaje(item['status']),
+                                icon: _statusIcon(item['status']),
+                                tone: _statusTone(item['status']))
+                          ]),
+                          const SizedBox(height: 14),
+                          _tripMetrics(context, item),
+                          const SizedBox(height: 12),
+                          if (item['economicSnapshot'] is Map)
+                            _economicSummary(
+                                Map<String, dynamic>.from(
+                                    item['economicSnapshot'] as Map),
+                                item)
+                          else
+                            _compactSection(context,
+                                icon: Icons.payments_outlined,
+                                title: 'Pago',
+                                children: [
+                                  _summaryRow('Método', _paymentMethod(item)),
+                                ]),
+                          if (item['myRating'] != null) ...[
+                            const SizedBox(height: 12),
+                            CostaGoSurface(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 10),
+                                child: Row(children: [
+                                  const Icon(Icons.star_rounded,
+                                      color: Colors.amber, size: 28),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                        'Tu calificación: ${item['myRating']} de 5',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w800)),
+                                  ),
+                                  Icon(Icons.chevron_right,
+                                      color:
+                                          Theme.of(context).colorScheme.primary)
+                                ]))
+                          ]
+                        ])),
+                const SizedBox(height: 18),
+                Text('Ayuda y soporte',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 10),
+                CostaGoSurface(
+                    padding: EdgeInsets.zero,
+                    child: Column(children: [
+                      _support(
+                          'Objeto perdido', 'LOST_ITEM', Icons.key_outlined),
+                      const Divider(height: 1, indent: 54),
+                      _support('Problema con el viaje', 'TRIP',
+                          Icons.route_outlined),
+                      const Divider(height: 1, indent: 54),
+                      _support('Problema con el cobro', 'PAYMENT',
+                          Icons.payments_outlined),
+                      const Divider(height: 1, indent: 54),
+                      _support('Problema de seguridad', 'SAFETY',
+                          Icons.shield_outlined),
+                    ])),
+              ]),
+        ));
   }
 
   Widget _participant(BuildContext context, Map<String, dynamic> item) {
@@ -1630,10 +1666,6 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
           Text(_shortDate(item['startedAt'] ??
               item['scheduledFor'] ??
               item['requestedAt'])),
-          if (!driverView && item['vehicle'] != null)
-            Text(
-                '${_money(item['finalTotalCents'] ?? item['quotedTotalCents'])} · '
-                '${item['vehicle']}'),
           if (participantRating != null)
             Row(children: [
               const Icon(Icons.star_rounded, size: 18, color: Colors.amber),
@@ -1658,51 +1690,200 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
     ]);
   }
 
+  IconData _statusIcon(dynamic status) => switch (status?.toString()) {
+        'COMPLETED' => Icons.check_rounded,
+        'CANCELLED' || 'NO_DRIVER' => Icons.close_rounded,
+        'SCHEDULED' => Icons.event_outlined,
+        _ => Icons.schedule_rounded,
+      };
+
+  CostaGoStatusTone _statusTone(dynamic status) => switch (status?.toString()) {
+        'COMPLETED' => CostaGoStatusTone.success,
+        'CANCELLED' || 'NO_DRIVER' => CostaGoStatusTone.danger,
+        'SCHEDULED' => CostaGoStatusTone.info,
+        _ => CostaGoStatusTone.warning,
+      };
+
+  String _paymentMethod(Map<String, dynamic> item) =>
+      item['paymentMethod'] == 'DEUNA' ? 'Transferencia' : 'Efectivo';
+
+  Widget _tripMetrics(BuildContext context, Map<String, dynamic> item) {
+    final metrics = <({IconData icon, String label, String value})>[
+      (
+        icon: Icons.attach_money_rounded,
+        label: 'Total del viaje',
+        value: _money(item['finalTotalCents'] ?? item['quotedTotalCents'])
+      ),
+      if (item['distanceMeters'] != null)
+        (
+          icon: Icons.route_outlined,
+          label: 'Distancia',
+          value: _distance(item['distanceMeters'])
+        ),
+      if (item['durationSeconds'] != null)
+        (
+          icon: Icons.schedule_rounded,
+          label: 'Duración',
+          value: _duration(item['durationSeconds'])
+        ),
+    ];
+    return LayoutBuilder(builder: (context, constraints) {
+      final scale = MediaQuery.textScalerOf(context).scale(1);
+      final columns = constraints.maxWidth >= 560 && scale <= 1.3
+          ? metrics.length
+          : constraints.maxWidth >= 330 && scale <= 1.15
+              ? math.min(3, metrics.length)
+              : 1;
+      final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
+      return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: metrics
+              .map((metric) => SizedBox(
+                  width: width,
+                  child: CostaGoSurface(
+                      tone: CostaGoStatusTone.info,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 12),
+                      child: Column(children: [
+                        Icon(metric.icon,
+                            color: Theme.of(context).colorScheme.primary,
+                            size: 27),
+                        const SizedBox(height: 5),
+                        Text(metric.label,
+                            textAlign: TextAlign.center,
+                            maxLines: scale <= 1.15 ? 1 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall),
+                        const SizedBox(height: 2),
+                        Text(metric.value,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w900)),
+                      ]))))
+              .toList());
+    });
+  }
+
+  Widget _compactSection(BuildContext context,
+          {required IconData icon,
+          required String title,
+          required List<Widget> children,
+          CostaGoStatusTone tone = CostaGoStatusTone.neutral}) =>
+      CostaGoSurface(
+          tone: tone,
+          padding: const EdgeInsets.all(14),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              CostaGoIconBadge(icon: icon, tone: CostaGoStatusTone.info),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(title,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+              )
+            ]),
+            const SizedBox(height: 9),
+            ...children,
+          ]));
+
   Widget _economicSummary(Map<String, dynamic> e, Map<String, dynamic> item) {
     final driver = widget.session.role == 'DRIVER';
-    final mode = e['billingMode'];
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      _summaryRow('Tarifa del trayecto', '\$${e['journeyFare']}'),
+    final mode = e['billingMode']?.toString();
+    final fareChildren = <Widget>[
+      _summaryRow('Tarifa del trayecto', _economicMoney(e['journeyFare'])),
       _summaryRow('Tarifa de llegada',
-          '\$${e['arrivalFee'] ?? e['scheduledArrivalFee']}'),
-      if (driver) ...[
-        if (mode == 'PAY_PER_USE') ...[
-          _summaryRow(
-              item['status'] == 'COMPLETED'
-                  ? 'Comisión Costa-Go'
-                  : 'Comisión reservada',
-              '\$${e['appliedCommission']}'),
-          if (item['status'] == 'COMPLETED')
-            _summaryRow(
-                'Ganancia económica del viaje', '\$${e['economicProfit']}'),
-          _summaryRow('Saldo anterior', '\$${e['balanceBefore']}'),
-          if (item['walletSettlement'] is Map)
-            _summaryRow('Saldo disponible al finalizar',
-                '\$${item['walletSettlement']['availableAfter']}'),
-          const Text('Comisión calculada sobre la tarifa de llegada.'),
-        ] else if (mode == 'TRIP_PACKAGE') ...[
-          const Text('Comisión incluida en tu paquete.'),
-          _summaryRow('Viajes utilizados al aceptar',
-              '${e['usedTrips']} / ${e['includedTrips']}'),
-        ] else if (mode == 'PERIOD_PLAN_INCLUDED') ...[
-          _summaryRow(
-              'Comisión teórica Costa-Go', '\$${e['theoreticalCommission']}'),
-          _summaryRow('Cargo adicional', '\$${e['appliedCommission']}'),
-          const Text('Incluido en tu plan.'),
-        ] else if (mode == 'PERIOD_PLAN_OVERAGE' ||
-            mode == 'PERIOD_PLAN_CAP_REACHED') ...[
-          _summaryRow(
-              'Comisión Costa-Go aplicada', '\$${e['appliedCommission']}'),
-          _summaryRow('Acumulado del período',
-              '\$${e['accruedAfter']} / \$${e['periodCap']}'),
-          Text(mode == 'PERIOD_PLAN_CAP_REACHED'
-              ? 'Has alcanzado el tope de cargos adicionales de este período. Los siguientes viajes no generarán cargos adicionales.'
-              : 'Este valor se incluirá en tu próxima renovación.'),
-        ],
-      ] else
-        const Text('Valor confirmado. No cambiará durante este viaje.'),
-      const SizedBox(height: 8),
-    ]);
+          _economicMoney(e['arrivalFee'] ?? e['scheduledArrivalFee'])),
+      if (driver && mode == 'PAY_PER_USE') ...[
+        _summaryRow(
+            item['status'] == 'COMPLETED'
+                ? 'Comisión Costa-Go'
+                : 'Comisión reservada',
+            _economicMoney(e['appliedCommission']),
+            info: item['status'] == 'COMPLETED'
+                ? 'Comisión calculada sobre la tarifa de llegada.'
+                : null),
+        if (item['status'] == 'COMPLETED' && e['economicProfit'] != null)
+          _highlightRow(context, 'Tu ganancia',
+              _economicMoney(e['economicProfit']), CostaGoStatusTone.success),
+      ] else if (driver && mode == 'TRIP_PACKAGE') ...[
+        _summaryRow('Viajes utilizados al aceptar',
+            '${e['usedTrips']} / ${e['includedTrips']}'),
+        const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('Comisión incluida en tu paquete.')),
+      ] else if (driver && mode == 'PERIOD_PLAN_INCLUDED') ...[
+        _summaryRow('Comisión teórica Costa-Go',
+            _economicMoney(e['theoreticalCommission'])),
+        _summaryRow('Cargo adicional', _economicMoney(e['appliedCommission'])),
+        const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('Incluido en tu plan.')),
+      ] else if (driver &&
+          (mode == 'PERIOD_PLAN_OVERAGE' ||
+              mode == 'PERIOD_PLAN_CAP_REACHED')) ...[
+        _summaryRow('Comisión Costa-Go aplicada',
+            _economicMoney(e['appliedCommission'])),
+        _summaryRow('Acumulado del período',
+            '${_economicMoney(e['accruedAfter'])} / ${_economicMoney(e['periodCap'])}'),
+        Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(mode == 'PERIOD_PLAN_CAP_REACHED'
+                ? 'Alcanzaste el tope de cargos adicionales de este período.'
+                : 'Este valor se incluirá en tu próxima renovación.')),
+      ] else if (!driver)
+        _highlightRow(
+            context,
+            'Valor confirmado',
+            _money(item['finalTotalCents'] ?? item['quotedTotalCents']),
+            CostaGoStatusTone.info),
+    ];
+    final sections = <Widget>[
+      _compactSection(context,
+          icon: Icons.attach_money_rounded,
+          title: 'Desglose económico',
+          children: fareChildren),
+      _compactSection(context,
+          icon: driver && mode == 'PAY_PER_USE'
+              ? Icons.account_balance_wallet_outlined
+              : Icons.payments_outlined,
+          title: driver && mode == 'PAY_PER_USE' ? 'Saldo Costa-Go' : 'Pago',
+          children: driver && mode == 'PAY_PER_USE'
+              ? [
+                  _summaryRow(
+                      'Saldo anterior', _economicMoney(e['balanceBefore'])),
+                  _summaryRow('Comisión descontada',
+                      _economicMoney(e['appliedCommission'])),
+                  if (item['walletSettlement'] is Map)
+                    _highlightRow(
+                        context,
+                        'Saldo disponible',
+                        _economicMoney(
+                            item['walletSettlement']['availableAfter']),
+                        CostaGoStatusTone.info),
+                ]
+              : [_summaryRow('Método', _paymentMethod(item))]),
+    ];
+    return LayoutBuilder(builder: (context, constraints) {
+      if (constraints.maxWidth >= 620 &&
+          MediaQuery.textScalerOf(context).scale(1) <= 1.3) {
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: sections.first),
+          const SizedBox(width: 10),
+          Expanded(child: sections.last),
+        ]);
+      }
+      return Column(children: [
+        sections.first,
+        const SizedBox(height: 10),
+        sections.last,
+      ]);
+    });
   }
 
   Widget _avatar() => Container(
@@ -1736,20 +1917,63 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
           Text(_shortDate(time).split('·').last.trim(),
               style: Theme.of(context).textTheme.bodySmall)
       ]);
-  Widget _summaryRow(String label, String value, {bool strong = false}) =>
+  String _economicMoney(dynamic value) =>
+      value == null ? '—' : '\$${value.toString()}';
+
+  Widget _highlightRow(BuildContext context, String label, String value,
+      CostaGoStatusTone tone) {
+    final semantic = context.semantic;
+    final (background, foreground) = tone == CostaGoStatusTone.success
+        ? (semantic.successContainer, semantic.onSuccessContainer)
+        : (semantic.infoContainer, semantic.onInfoContainer);
+    return Container(
+        margin: const EdgeInsets.only(top: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: foreground.withValues(alpha: .18))),
+        child: Row(children: [
+          Expanded(
+              child: Text(label,
+                  style: TextStyle(
+                      color: foreground, fontWeight: FontWeight.w800))),
+          Text(value,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(color: foreground, fontWeight: FontWeight.w900))
+        ]));
+  }
+
+  Widget _summaryRow(String label, String value,
+          {bool strong = false, String? info}) =>
       Padding(
           padding: const EdgeInsets.symmetric(vertical: 7),
           child: Row(children: [
-            Expanded(child: Text(label)),
+            Expanded(
+                child: Row(children: [
+              Flexible(child: Text(label)),
+              if (info != null) ...[
+                const SizedBox(width: 5),
+                Tooltip(
+                    message: info,
+                    triggerMode: TooltipTriggerMode.tap,
+                    child: Icon(Icons.info_outline_rounded,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.primary)),
+              ]
+            ])),
             Text(value,
                 style: TextStyle(
                     fontWeight: strong ? FontWeight.w900 : FontWeight.w600))
           ]));
   Widget _support(String label, String category, IconData icon) => ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(icon),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+      leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
       title: Text(label),
-      trailing: const Icon(Icons.chevron_right),
+      trailing: Icon(Icons.chevron_right,
+          color: Theme.of(context).colorScheme.primary),
       onTap: () => Navigator.push(
           context,
           MaterialPageRoute(

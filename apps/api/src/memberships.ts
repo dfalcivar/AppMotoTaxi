@@ -25,6 +25,7 @@ const navigationProviderSchema = z.enum(["MAP_ONLY", "EXTERNAL_MAPS", "NAVIGATIO
 const navigationStartModeSchema = z.enum(["MANUAL", "AUTO"]);
 
 const platformSettingsSchema = z.object({
+  expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
   navigationPickupProvider: navigationProviderSchema,
   navigationDestinationProvider: navigationProviderSchema,
   navigationPickupStartMode: navigationStartModeSchema,
@@ -981,7 +982,8 @@ function settingsProjection(row: any) {
     membershipExtraTripSharePercent: Number(row.membership_extra_trip_share_percent),
     membershipQrDurationHours: Number(row.membership_qr_duration_hours),
     advertisingRotationSeconds: Number(row.advertising_rotation_seconds),
-    advertisingMaxActivePerZone: Number(row.advertising_max_active_per_zone)
+    advertisingMaxActivePerZone: Number(row.advertising_max_active_per_zone),
+    updatedAt: row.updated_at
   };
 }
 
@@ -995,7 +997,8 @@ function businessError(error: unknown, reply: FastifyReply) {
     "TRANSFER_PROOF_ALREADY_SUBMITTED",
     "PAYMENT_REFERENCE_ALREADY_USED", "MEMBERSHIP_PLAN_CODE_EXISTS",
     "MEMBERSHIP_PLAN_NOT_CURRENT", "INSUFFICIENT_AVAILABLE_BALANCE", "WALLET_NOT_ENABLED",
-    "COMMERCIAL_MODEL_DISABLED", "PACKAGE_COMMERCIAL_RULE_REQUIRED", "IDEMPOTENCY_CONFLICT"
+    "COMMERCIAL_MODEL_DISABLED", "PACKAGE_COMMERCIAL_RULE_REQUIRED", "IDEMPOTENCY_CONFLICT",
+    "SETTINGS_VERSION_CONFLICT"
   ];
   const notFound = ["PAYMENT_ORDER_NOT_FOUND", "MEMBERSHIP_PLAN_NOT_FOUND"];
   const badRequest = [
@@ -1232,6 +1235,11 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const actor = requirePermission(request, "settings:manage");
     const value = platformSettingsSchema.parse(request.body);
     const [previous] = await database()`select * from operational_settings where id=1`;
+    if (!previous) throw new Error("SETTINGS_NOT_FOUND");
+    if (value.expectedUpdatedAt &&
+        new Date(previous.updated_at).getTime() !== new Date(value.expectedUpdatedAt).getTime()) {
+      throw new Error("SETTINGS_VERSION_CONFLICT");
+    }
     await database()`update operational_settings set
       navigation_pickup_provider=${value.navigationPickupProvider},navigation_destination_provider=${value.navigationDestinationProvider},
       navigation_pickup_start_mode=${value.navigationPickupStartMode},navigation_destination_start_mode=${value.navigationDestinationStartMode},
@@ -1263,7 +1271,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/membership-plans", async (request, reply) => { try {
     requirePermission(request, "memberships:view");
-    return database()`select id::text,code,version,name,plan_type as "planType",period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",pack_validity_days as "packValidityDays",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil",(enabled=true and effective_from<=now() and effective_until is null) as "current" from membership_plans order by plan_type,code,version desc`;
+    return database()`select id::text,code,version,name,plan_type as "planType",period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",pack_validity_days as "packValidityDays",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil",(enabled=true and effective_from<=now() and effective_until is null) as "current",(select coalesce(to_jsonb(os)->>'vat_rate_percent','0')::float8 from operational_settings os where id=1) as "vatRatePercent" from membership_plans order by plan_type,code,version desc`;
   } catch (error) { return businessError(error, reply); } });
 
   app.post("/v1/admin/membership-plans", async (request, reply) => { try {

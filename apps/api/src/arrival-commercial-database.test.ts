@@ -17,7 +17,8 @@ beforeEach(async()=>{
     create table membership_cycle_trip_usages(id uuid primary key);
     create table membership_payment_orders(id uuid primary key,plan_id uuid not null,membership_cycle_id uuid);
     create table membership_payments(id uuid primary key);
-    create table trips(id uuid primary key,driver_id uuid,status text,started_at timestamptz,driver_search_round int default 0,pricing_snapshot jsonb default '{}');
+    create table trips(id uuid primary key,driver_id uuid,status text,started_at timestamptz,driver_search_round int default 0,
+      pricing_snapshot jsonb default '{}',route_snapshot jsonb);
     create table driver_offers(id uuid primary key default gen_random_uuid(),trip_id uuid,driver_id uuid,search_round int);
     insert into trips(id,status)values('${trip}','SEARCHING');`);
   await pg.exec(await readFile(new URL('../migrations/088_arrival_commercial_model.sql',import.meta.url),'utf8'));
@@ -63,6 +64,19 @@ describe('transactional wallet and immutable offers',()=>{
     expect(repaired).toEqual({points_type:'array',configuration_type:'object',point_count:2});
     await expect(pg.query(`insert into arrival_search_sessions(passenger_id,expires_at,route_points,configuration)
       values($1,now()+interval '1 hour','"bad"'::jsonb,'{}'::jsonb)`,[driver])).rejects.toThrow();
+  });
+  it('repairs trip snapshots so pay per use can read the economic quote',async()=>{
+    const pricing=JSON.stringify({economicQuote:{feePerRound:'0.25',costaGoPercent:'40',journeyFare:'1.00',
+      version:'v1',minimumRound:1,settings:{initialRadiusMeters:1000,radiusIncrementMeters:1000,maximumRadiusMeters:8000}}});
+    const route=JSON.stringify({points:[],provider:'TEST'});
+    await pg.query(`update trips set pricing_snapshot=to_jsonb($1::text),route_snapshot=to_jsonb($2::text) where id=$3`,
+      [pricing,route,trip]);
+    expect((await pg.query(`select trip_offer_economics($1,1) as value`,[trip])).rows[0]).toEqual({value:null});
+    await pg.exec(await readFile(new URL('../migrations/091_fix_trip_snapshot_json.sql',import.meta.url),'utf8'));
+    const repaired=(await pg.query<any>(`select jsonb_typeof(pricing_snapshot) as pricing_type,
+      jsonb_typeof(route_snapshot) as route_type,trip_offer_economics(id,1) is not null as economics_ok from trips where id=$1`,[trip])).rows[0];
+    expect(repaired).toEqual({pricing_type:'object',route_type:'object',economics_ok:true});
+    await expect(pg.query(`update trips set pricing_snapshot='"bad"'::jsonb where id=$1`,[trip])).rejects.toThrow();
   });
   it('rejects non-finite monetary inputs without changing the balance',async()=>{
     await move('TOPUP','5','payment:1');
