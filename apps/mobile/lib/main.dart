@@ -15596,6 +15596,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       wallet: wallet,
     );
     final effectiveStatus = prepaidIsCurrent ? 'ACTIVE' : status;
+    final showTripPackEmblem =
+        !prepaidIsCurrent && currentIsTripPack && effectiveStatus == 'ACTIVE';
     final color = switch (effectiveStatus) {
       'ACTIVE' => const Color(0xff24964f),
       'EXPIRING' => const Color(0xffd58a00),
@@ -15610,9 +15612,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final icon = prepaidIsCurrent
         ? Icons.workspace_premium_outlined
         : switch (effectiveStatus) {
-            'ACTIVE' => currentIsTripPack
-                ? Icons.electric_rickshaw_rounded
-                : Icons.verified_rounded,
+            'ACTIVE' => Icons.verified_rounded,
             'EXPIRING' => Icons.timer_outlined,
             'GRACE_PERIOD' => Icons.hourglass_bottom_rounded,
             'PAYMENT_DUE' => Icons.payments_outlined,
@@ -15641,7 +15641,20 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           onTap: _showMembershipDetails,
           child: SizedBox.square(
             dimension: 46,
-            child: Icon(icon, color: color, size: 27),
+            child: showTripPackEmblem
+                ? Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: ClipOval(
+                      child: Transform.scale(
+                        scale: 1.42,
+                        child: Image.asset(
+                          'assets/images/costa-go-emblem.png',
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                  )
+                : Icon(icon, color: color, size: 27),
           ),
         ),
       ),
