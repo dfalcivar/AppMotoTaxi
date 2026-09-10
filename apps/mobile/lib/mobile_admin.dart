@@ -189,15 +189,6 @@ class _AdminHomeState extends State<_AdminHome> {
               tooltip: 'Actualizar')
         ],
       ),
-      bottomNavigationBar: NavigationBar(selectedIndex: 1, destinations: const [
-        NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Inicio'),
-        NavigationDestination(
-            icon: Icon(Icons.admin_panel_settings_outlined), label: 'Admin'),
-        NavigationDestination(
-            icon: Icon(Icons.notifications_none), label: 'Alertas'),
-        NavigationDestination(
-            icon: Icon(Icons.person_outline), label: 'Perfil'),
-      ]),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -547,11 +538,13 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
             const SizedBox(height: 14),
             ...children
           ])));
-  Widget _number(String key, String label, Object? value, {String? suffix}) =>
+  Widget _number(String key, String label, Object? value,
+          {String? suffix, bool refreshOnChange = false}) =>
       Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: TextField(
               controller: field(key, value),
+              onChanged: refreshOnChange ? (_) => setState(() {}) : null,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
@@ -653,9 +646,9 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
       _section('Tarifa de llegada',
           'Un valor por ronda; las siguientes se calculan automáticamente.', [
         _number('fee', 'Valor por ronda', settings['feePerRound'],
-            suffix: 'USD'),
+            suffix: 'USD', refreshOnChange: true),
         _number('share', 'Participación Costa-Go', settings['costaGoPercent'],
-            suffix: '%'),
+            suffix: '%', refreshOnChange: true),
         ...List.generate(
             rounds,
             (index) => ListTile(
@@ -668,6 +661,8 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
           onPressed: busy || current.isEmpty
               ? null
               : () async {
+                  final updatedFee = _d('fee');
+                  final updatedShare = _d('share');
                   if (!await _confirm(
                       'Publicar una nueva versión de tarifa de llegada y actualizar el porcentaje Costa-Go.')) {
                     return;
@@ -678,7 +673,8 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
                         token: widget.token,
                         body: {
                           ...current,
-                          'platformCommissionCentsPerLeg': (fee * 100).round(),
+                          'platformCommissionCentsPerLeg':
+                              (updatedFee * 100).round(),
                           'activeFrom': DateTime.now().toUtc().toIso8601String()
                         });
                     final config =
@@ -689,7 +685,7 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
                         body: {
                           'version': settings['version'],
                           'configuration': config,
-                          'costaGoPercent': share.toStringAsFixed(2)
+                          'costaGoPercent': updatedShare.toStringAsFixed(2)
                         });
                     fields.clear();
                     await _load();
@@ -979,6 +975,7 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
         TextEditingController(text: (nightCents / 100).toStringAsFixed(2));
     final priority =
         TextEditingController(text: '${existing?['priority'] ?? 0}');
+    var bidirectional = existing?['bidirectional'] != false;
     var enabled = existing?['enabled'] != false;
     final accepted = await showDialog<bool>(
         context: context,
@@ -1066,6 +1063,14 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
                             border: OutlineInputBorder())),
                     SwitchListTile(
                         contentPadding: EdgeInsets.zero,
+                        title: const Text('Aplicar en ambos sentidos'),
+                        subtitle: const Text(
+                            'Origen y destino pueden intercambiarse.'),
+                        value: bidirectional,
+                        onChanged: (value) =>
+                            setLocal(() => bidirectional = value)),
+                    SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
                         title: const Text('Regla activa'),
                         value: enabled,
                         onChanged: (value) => setLocal(() => enabled = value))
@@ -1099,7 +1104,7 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
         'maximumPassengers': int.parse(maximum.text),
         'dayTotalCents': (double.parse(day.text) * 100).round(),
         'nightTotalCents': (double.parse(night.text) * 100).round(),
-        'bidirectional': existing?['bidirectional'] ?? true,
+        'bidirectional': bidirectional,
         'enabled': enabled,
         'priority': int.parse(priority.text)
       });
@@ -2005,17 +2010,9 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
                           'journeyFare': _d('journey').toStringAsFixed(2)
                         });
                     if (mounted) {
-                      showDialog(
-                          context: context,
-                          builder: (c) => AlertDialog(
-                                  title: const Text('Resultado estimado'),
-                                  content: _jsonSummary(
-                                      Map<String, dynamic>.from(result)),
-                                  actions: [
-                                    FilledButton(
-                                        onPressed: () => Navigator.pop(c),
-                                        child: const Text('Cerrar'))
-                                  ]));
+                      await _showSimulationResult(
+                          Map<String, dynamic>.from(result),
+                          Map<String, dynamic>.from(data));
                     }
                   } catch (v) {
                     if (mounted) setState(() => error = v.toString());
@@ -2026,6 +2023,293 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
           icon: const Icon(Icons.play_arrow),
           label: const Text('Simular'))
     ]);
+  }
+
+  Future<void> _showSimulationResult(
+      Map<String, dynamic> result, Map<String, dynamic> scenario) async {
+    final tripType = scenario['tripType']?.toString() ?? 'IMMEDIATE';
+    final billingMode = scenario['billingMode']?.toString() ?? 'PAY_PER_USE';
+    final scheduled = tripType != 'IMMEDIATE';
+    final tripLabel = switch (tripType) {
+      'SCHEDULED_DAY' => 'Programado día',
+      'SCHEDULED_NIGHT' => 'Programado noche',
+      _ => 'Viaje inmediato'
+    };
+    final billingLabel = switch (billingMode) {
+      'PERIOD_PLAN_INCLUDED' => 'Plan incluido',
+      'PERIOD_PLAN_OVERAGE' => 'Excedente de plan',
+      'PERIOD_PLAN_CAP_REACHED' => 'Tope alcanzado',
+      'TRIP_PACKAGE' => 'Paquete de viajes',
+      _ => 'Pago por uso'
+    };
+    final arrivalFee =
+        result['arrivalFee'] ?? result['scheduledArrivalFee'] ?? '0.00';
+    final coverage = result['coverageStatus']?.toString() ?? '';
+    final canOperate = coverage != 'TOPE_ALCANZADO';
+    final requirementTitle = switch (coverage) {
+      'VIAJE_INCLUIDO' => 'Viaje cubierto por el plan',
+      'EXCEDENTE_BAJO_TOPE' => 'Excedente permitido',
+      'TOPE_ALCANZADO' => 'Tope del plan alcanzado',
+      'COMISION_INCLUIDA_PREPAGADA' => 'Viaje cubierto por el paquete',
+      _ => 'Puede operar'
+    };
+    final requirementDescription = switch (coverage) {
+      'VIAJE_INCLUIDO' =>
+        'El viaje está incluido y no descuenta saldo Costa-Go.',
+      'EXCEDENTE_BAJO_TOPE' =>
+        'La comisión indicada se aplica como viaje excedente.',
+      'TOPE_ALCANZADO' =>
+        'Este escenario requiere renovar o cambiar la modalidad.',
+      'COMISION_INCLUIDA_PREPAGADA' =>
+        'El viaje se descuenta del paquete y no del saldo.',
+      _ =>
+        'El conductor necesita al menos ${_moneyAmount(result['balanceRequired'])} de saldo disponible.'
+    };
+
+    await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          final colors = Theme.of(dialogContext).colorScheme;
+          return Dialog(
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28)),
+              child: ConstrainedBox(
+                  constraints:
+                      const BoxConstraints(maxWidth: 520, maxHeight: 760),
+                  child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(22),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Expanded(
+                                      child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                        Text('Resultado del escenario',
+                                            style: TextStyle(
+                                                fontSize: 25,
+                                                fontWeight: FontWeight.w900)),
+                                        SizedBox(height: 4),
+                                        Text(
+                                            'Simulación sin generar cobros ni viajes reales.')
+                                      ])),
+                                  IconButton(
+                                      tooltip: 'Cerrar',
+                                      onPressed: () =>
+                                          Navigator.pop(dialogContext),
+                                      icon: const Icon(Icons.close, size: 30))
+                                ]),
+                            const SizedBox(height: 18),
+                            Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 14),
+                                decoration: BoxDecoration(
+                                    color: colors.primaryContainer
+                                        .withValues(alpha: .38),
+                                    borderRadius: BorderRadius.circular(18)),
+                                child: Row(children: [
+                                  Expanded(
+                                      child: _simulationFact(
+                                          scheduled
+                                              ? Icons.calendar_month_outlined
+                                              : Icons.local_taxi_outlined,
+                                          tripLabel)),
+                                  Expanded(
+                                      child: _simulationFact(
+                                          Icons.payment_outlined,
+                                          billingLabel)),
+                                  if (!scheduled)
+                                    Expanded(
+                                        child: _simulationFact(Icons.sync,
+                                            'Ronda ${result['matchedRound'] ?? scenario['round']}'))
+                                ])),
+                            const SizedBox(height: 16),
+                            _simulationCard(
+                                icon: Icons.attach_money,
+                                color: colors.primary,
+                                title: 'Resumen económico',
+                                subtitle: 'Lo que paga el pasajero',
+                                children: [
+                                  _simulationAmountRow('Tarifa del trayecto',
+                                      result['journeyFare']),
+                                  _simulationAmountRow(
+                                      'Tarifa de llegada', arrivalFee),
+                                  const Divider(height: 18),
+                                  _simulationAmountRow('Total pasajero',
+                                      result['passengerTotal'],
+                                      emphasized: true)
+                                ]),
+                            const SizedBox(height: 14),
+                            _simulationCard(
+                                icon: Icons.person_outline,
+                                color: const Color(0xff00a873),
+                                title: 'Distribución del pago',
+                                subtitle: 'Cómo se divide el ingreso',
+                                children: [
+                                  _simulationAmountRow('Comisión Costa-Go',
+                                      result['appliedCommission']),
+                                  const Divider(height: 18),
+                                  _simulationAmountRow('Ganancia conductor',
+                                      result['driverProfit'],
+                                      emphasized: true)
+                                ]),
+                            const SizedBox(height: 14),
+                            _simulationCard(
+                                icon: Icons.verified_user_outlined,
+                                color: canOperate
+                                    ? const Color(0xff6657e8)
+                                    : colors.error,
+                                title: 'Requisito operativo',
+                                subtitle: billingMode == 'PAY_PER_USE'
+                                    ? 'Saldo en la cuenta del conductor'
+                                    : 'Condición de la modalidad elegida',
+                                children: [
+                                  if (billingMode == 'PAY_PER_USE')
+                                    _simulationAmountRow('Saldo requerido',
+                                        result['balanceRequired']),
+                                  Container(
+                                      margin: const EdgeInsets.only(top: 8),
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                          color: (canOperate
+                                                  ? const Color(0xff16a765)
+                                                  : colors.error)
+                                              .withValues(alpha: .13),
+                                          borderRadius:
+                                              BorderRadius.circular(14)),
+                                      child: Row(children: [
+                                        Icon(
+                                            canOperate
+                                                ? Icons.check_circle
+                                                : Icons.error,
+                                            color: canOperate
+                                                ? const Color(0xff078647)
+                                                : colors.error),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                            child: Text(requirementTitle,
+                                                style: TextStyle(
+                                                    color: canOperate
+                                                        ? const Color(
+                                                            0xff078647)
+                                                        : colors.error,
+                                                    fontSize: 17,
+                                                    fontWeight:
+                                                        FontWeight.w900)))
+                                      ])),
+                                  Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Text(requirementDescription))
+                                ]),
+                            const SizedBox(height: 18),
+                            Row(children: [
+                              Expanded(
+                                  child: OutlinedButton(
+                                      onPressed: () =>
+                                          Navigator.pop(dialogContext),
+                                      child: const Text('Ajustar simulación'))),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                  child: FilledButton(
+                                      onPressed: () =>
+                                          Navigator.pop(dialogContext),
+                                      child: const Text('Cerrar')))
+                            ])
+                          ]))));
+        });
+  }
+
+  Widget _simulationFact(IconData icon, String label) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, color: const Color(0xff156ac7)),
+        const SizedBox(height: 6),
+        Text(label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w800))
+      ]));
+
+  Widget _simulationCard(
+          {required IconData icon,
+          required Color color,
+          required String title,
+          required String subtitle,
+          required List<Widget> children}) =>
+      Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+              border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant),
+              borderRadius: BorderRadius.circular(20)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                      color: color.withValues(alpha: .13),
+                      shape: BoxShape.circle),
+                  child: Icon(icon, color: color, size: 28)),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 19, fontWeight: FontWeight.w900)),
+                    Text(subtitle,
+                        style: TextStyle(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant))
+                  ]))
+            ]),
+            const SizedBox(height: 14),
+            ...children
+          ]));
+
+  Widget _simulationAmountRow(String label, Object? amount,
+          {bool emphasized = false}) =>
+      Container(
+          padding: EdgeInsets.symmetric(
+              horizontal: emphasized ? 12 : 0, vertical: 9),
+          decoration: emphasized
+              ? BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primaryContainer
+                      .withValues(alpha: .38),
+                  borderRadius: BorderRadius.circular(12))
+              : null,
+          child: Row(children: [
+            Expanded(
+                child: Text(label,
+                    style: TextStyle(
+                        fontSize: emphasized ? 17 : 16,
+                        fontWeight:
+                            emphasized ? FontWeight.w900 : FontWeight.w500))),
+            Text(_moneyAmount(amount),
+                style: TextStyle(
+                    fontSize: emphasized ? 23 : 18,
+                    fontWeight: FontWeight.w900,
+                    color: emphasized
+                        ? Theme.of(context).colorScheme.primary
+                        : null))
+          ]));
+
+  String _moneyAmount(Object? value) {
+    final amount = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '') ?? 0;
+    return '\$${amount.toStringAsFixed(2)}';
   }
 
   Widget _records(List<dynamic> records, IconData icon) => Column(children: [
@@ -2049,21 +2333,6 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
                       ? Text(item['createdAt'].toString().substring(0, 10))
                       : null))
       ]);
-  Widget _jsonSummary(Map<String, dynamic> value) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        for (final entry in value.entries)
-          if (entry.value is! Map && entry.value is! List)
-            Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5),
-                child: Row(children: [
-                  Expanded(child: Text(_label(entry.key))),
-                  Text('${entry.value}',
-                      style: const TextStyle(fontWeight: FontWeight.w800))
-                ]))
-      ]);
-  String _label(String key) =>
-      key.replaceAllMapped(RegExp(r'([A-Z])'), (m) => ' ${m.group(1)}').trim();
-
   String _moneyCents(Object? value) {
     final cents = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
     return '\$${(cents / 100).toStringAsFixed(2)}';

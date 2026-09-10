@@ -148,6 +148,14 @@ export async function registerMobileAdminAccessRoutes(app: FastifyInstance) {
       join fare_sectors origin on origin.code=leg.value->>'originSector' and origin.service_area_id=t.service_area_id
       join fare_sectors destination on destination.code=leg.value->>'destinationSector' and destination.service_area_id=t.service_area_id
       where t.requested_at>=now()-interval '30 days' and coalesce((leg.value->>'suggested')::boolean,false)
+      and not exists(
+        select 1 from fare_route_rules rule
+        where rule.service_area_id=t.service_area_id and rule.enabled
+          and (
+            (rule.origin_sector_id=origin.id and rule.destination_sector_id=destination.id)
+            or (rule.bidirectional and rule.origin_sector_id=destination.id and rule.destination_sector_id=origin.id)
+          )
+      )
       group by origin.id,origin.name,destination.id,destination.name,origin.service_area_id
       order by uses desc,"lastUsedAt" desc limit 50`;
   } catch(error) { throw error; } });
