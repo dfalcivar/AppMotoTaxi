@@ -120,6 +120,40 @@ void main() {
         isFalse,
       );
     });
+
+    test('advierte cuando el saldo prepago alcanza el umbral configurado', () {
+      expect(
+        prepaidBalanceNeedsAttention({
+          'wallet': {'enabled': true, 'available': '2.00'},
+          'configuration': {'lowBalanceThreshold': '3.00'},
+        }),
+        isTrue,
+      );
+      expect(
+        prepaidBalanceNeedsAttention({
+          'wallet': {'enabled': true, 'available': '3.01'},
+          'configuration': {'lowBalanceThreshold': '3.00'},
+        }),
+        isFalse,
+      );
+    });
+
+    test('no confunde saldo agotado o pago por uso apagado con saldo bajo', () {
+      expect(
+        prepaidBalanceNeedsAttention({
+          'wallet': {'enabled': true, 'available': '0.00'},
+          'configuration': {'lowBalanceThreshold': '3.00'},
+        }),
+        isFalse,
+      );
+      expect(
+        prepaidBalanceNeedsAttention({
+          'wallet': {'enabled': false, 'available': '2.00'},
+          'configuration': {'lowBalanceThreshold': '3.00'},
+        }),
+        isFalse,
+      );
+    });
   });
 
   group('layout de pasajeros y método de pago', () {

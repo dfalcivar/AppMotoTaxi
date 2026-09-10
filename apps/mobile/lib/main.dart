@@ -336,6 +336,22 @@ bool prepaidModalityIsCurrent({
   }.contains(status);
 }
 
+@visibleForTesting
+bool prepaidBalanceNeedsAttention(Map<String, dynamic> walletSummary) {
+  final wallet = Map<String, dynamic>.from(
+      walletSummary['wallet'] as Map? ?? const <String, dynamic>{});
+  final configuration = Map<String, dynamic>.from(
+      walletSummary['configuration'] as Map? ?? const <String, dynamic>{});
+  final available = double.tryParse(wallet['available']?.toString() ?? '');
+  final threshold =
+      double.tryParse(configuration['lowBalanceThreshold']?.toString() ?? '');
+  return wallet['enabled'] == true &&
+      available != null &&
+      available > 0 &&
+      threshold != null &&
+      available <= threshold;
+}
+
 /// Keeps asynchronous GPS results from replacing an origin explicitly chosen
 /// by the passenger.
 class OriginSelectionGuard {
@@ -16039,6 +16055,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   String _membershipStatusLabel(String status) => switch (status) {
         'ACTIVE' => 'Activa',
+        'LOW_BALANCE' => 'Saldo por agotarse',
         'EXPIRING' => 'Próxima a vencer',
         'GRACE_PERIOD' => 'Período de gracia',
         'PAYMENT_DUE' => 'Pago pendiente',
@@ -16065,11 +16082,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           Map<String, dynamic>.from(data['eligibility'] as Map? ?? const {}),
       wallet: wallet,
     );
-    final effectiveStatus = prepaidIsCurrent ? 'ACTIVE' : status;
+    final prepaidBalanceLow = prepaidIsCurrent &&
+        prepaidBalanceNeedsAttention(driverWalletSummary ?? const {});
+    final effectiveStatus = prepaidIsCurrent
+        ? (prepaidBalanceLow ? 'LOW_BALANCE' : 'ACTIVE')
+        : status;
     final showTripPackEmblem =
         !prepaidIsCurrent && currentIsTripPack && effectiveStatus == 'ACTIVE';
     final color = switch (effectiveStatus) {
       'ACTIVE' => const Color(0xff24964f),
+      'LOW_BALANCE' => const Color(0xffd58a00),
       'EXPIRING' => const Color(0xffd58a00),
       'GRACE_PERIOD' => const Color(0xffe17313),
       'PAYMENT_DUE' ||
@@ -16080,7 +16102,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       _ => const Color(0xff607d8b),
     };
     final icon = prepaidIsCurrent
-        ? Icons.workspace_premium_outlined
+        ? (prepaidBalanceLow
+            ? Icons.warning_amber_rounded
+            : Icons.workspace_premium_outlined)
         : switch (effectiveStatus) {
             'ACTIVE' => Icons.verified_rounded,
             'EXPIRING' => Icons.timer_outlined,
@@ -16094,7 +16118,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     return Semantics(
       button: true,
       label: prepaidIsCurrent
-          ? 'Membresía Costa-Go, pago por uso activo'
+          ? prepaidBalanceLow
+              ? 'Membresía Costa-Go, pago por uso con saldo por agotarse'
+              : 'Membresía Costa-Go, pago por uso activo'
           : currentIsTripPack
               ? 'Paquete por viajes, ${_membershipStatusLabel(effectiveStatus)}'
               : 'Membresía por período, ${_membershipStatusLabel(effectiveStatus)}',
@@ -18271,11 +18297,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     data['eligibility'] as Map? ?? const {}),
                 wallet: wallet,
               );
-              final effectiveStatus = prepaidIsCurrent ? 'ACTIVE' : status;
+              final prepaidBalanceLow = prepaidIsCurrent &&
+                  prepaidBalanceNeedsAttention(walletSummary ?? const {});
+              final effectiveStatus = prepaidIsCurrent
+                  ? (prepaidBalanceLow ? 'LOW_BALANCE' : 'ACTIVE')
+                  : status;
               final statusTone = switch (effectiveStatus) {
                 'ACTIVE' => currentIsTripPack
                     ? CostaGoStatusTone.info
                     : CostaGoStatusTone.success,
+                'LOW_BALANCE' => CostaGoStatusTone.warning,
                 'EXPIRING' ||
                 'GRACE_PERIOD' ||
                 'PAYMENT_DUE' =>
@@ -18362,11 +18393,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           Wrap(spacing: 10, runSpacing: 8, children: [
                             CostaGoStatusChip(
                               label: _membershipStatusLabel(effectiveStatus),
-                              icon: effectiveStatus == 'ACTIVE'
-                                  ? Icons.verified_rounded
-                                  : effectiveStatus == 'EXHAUSTED'
-                                      ? Icons.route_outlined
-                                      : Icons.schedule_rounded,
+                              icon: effectiveStatus == 'LOW_BALANCE'
+                                  ? Icons.warning_amber_rounded
+                                  : effectiveStatus == 'ACTIVE'
+                                      ? Icons.verified_rounded
+                                      : effectiveStatus == 'EXHAUSTED'
+                                          ? Icons.route_outlined
+                                          : Icons.schedule_rounded,
                               tone: statusTone,
                             ),
                             CostaGoStatusChip(
@@ -18381,7 +18414,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                       ? Icons.route_outlined
                                       : Icons.event_repeat_outlined,
                               tone: prepaidIsCurrent
-                                  ? CostaGoStatusTone.success
+                                  ? prepaidBalanceLow
+                                      ? CostaGoStatusTone.warning
+                                      : CostaGoStatusTone.success
                                   : CostaGoStatusTone.info,
                             ),
                           ]),
@@ -18428,13 +18463,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                     ),
                                     CostaGoIconBadge(
                                       icon: prepaidIsCurrent
-                                          ? Icons
-                                              .account_balance_wallet_outlined
+                                          ? prepaidBalanceLow
+                                              ? Icons.warning_amber_rounded
+                                              : Icons
+                                                  .account_balance_wallet_outlined
                                           : currentIsTripPack
                                               ? Icons.route_outlined
                                               : Icons.calendar_month_outlined,
                                       tone: prepaidIsCurrent
-                                          ? CostaGoStatusTone.success
+                                          ? prepaidBalanceLow
+                                              ? CostaGoStatusTone.warning
+                                              : CostaGoStatusTone.success
                                           : CostaGoStatusTone.info,
                                       size: 52,
                                     ),
@@ -18445,6 +18484,29 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   'Saldo prepago disponible',
                                   '\$${walletAvailable.toStringAsFixed(2)}',
                                 ),
+                                if (prepaidBalanceLow) ...[
+                                  const SizedBox(height: CostaGoSpace.sm),
+                                  CostaGoSurface(
+                                    tone: CostaGoStatusTone.warning,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: CostaGoSpace.md,
+                                        vertical: CostaGoSpace.sm),
+                                    child: Row(children: [
+                                      Icon(Icons.warning_amber_rounded,
+                                          color: Theme.of(sheetContext)
+                                              .colorScheme
+                                              .tertiary),
+                                      const SizedBox(width: CostaGoSpace.sm),
+                                      const Expanded(
+                                        child: Text(
+                                          'Tu saldo Costa-Go está por agotarse.',
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.w800),
+                                        ),
+                                      ),
+                                    ]),
+                                  ),
+                                ],
                               ] else if (currentIsTripPack) ...[
                                 const SizedBox(height: CostaGoSpace.md),
                                 Row(
