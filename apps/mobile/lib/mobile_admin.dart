@@ -322,7 +322,8 @@ class _AdminModuleScreen extends StatefulWidget {
   State<_AdminModuleScreen> createState() => _AdminModuleScreenState();
 }
 
-class _AdminModuleScreenState extends State<_AdminModuleScreen> {
+class _AdminModuleScreenState extends State<_AdminModuleScreen>
+    with WidgetsBindingObserver {
   dynamic data;
   dynamic secondary;
   dynamic tertiary;
@@ -333,15 +334,22 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     for (final value in fields.values) {
       value.dispose();
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !busy) unawaited(_load());
   }
 
   TextEditingController field(String key, Object? value) {
@@ -485,10 +493,17 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
         appBar: AppBar(
             title:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(widget.module.title),
-          Text(widget.module.subtitle,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))
-        ])),
+              Text(widget.module.title),
+              Text(widget.module.subtitle,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w500))
+            ]),
+            actions: [
+              IconButton(
+                  tooltip: 'Actualizar datos vigentes',
+                  onPressed: busy ? null : _load,
+                  icon: const Icon(Icons.refresh_rounded))
+            ]),
         body: busy && data == null
             ? const Center(child: CircularProgressIndicator())
             : RefreshIndicator(
@@ -687,7 +702,14 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen> {
                           'configuration': config,
                           'costaGoPercent': updatedShare.toStringAsFixed(2)
                         });
-                    fields.clear();
+                    if (!mounted) return;
+                    setState(() {
+                      fields['fee']?.text = updatedFee.toStringAsFixed(2);
+                      fields['share']?.text = updatedShare.toStringAsFixed(2);
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(
+                            'Tarifa vigente actualizada a \$${updatedFee.toStringAsFixed(2)} por ronda.')));
                     await _load();
                   } catch (value) {
                     if (mounted) setState(() => error = value.toString());

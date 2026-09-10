@@ -2236,6 +2236,9 @@ class Api {
   Future<dynamic> cancelTrip(String t, String id) =>
       call('POST', '/v1/trips/$id/cancel', token: t);
   Future<dynamic> profile(String t) => call('GET', '/v1/profile', token: t);
+  Future<Map<String, dynamic>> profileRatings(String t) async =>
+      Map<String, dynamic>.from(
+          await call('GET', '/v1/profile/ratings', token: t));
   Future<Map<String, dynamic>> updateDriverPaymentSettings(
           String t, bool deunaEnabled) async =>
       Map<String, dynamic>.from(await call('PUT', '/v1/driver/payment-settings',
@@ -4693,14 +4696,6 @@ class _ProfileState extends State<Profile> {
                   if (repeat != null && c.mounted) Navigator.pop(c, repeat);
                 },
               ),
-              const Divider(height: 1),
-              ListTile(
-                contentPadding: rowPadding,
-                leading: leadingIcon(Icons.star_rounded, color: Colors.amber),
-                title: const Text('Calificación promedio'),
-                subtitle: Text(
-                    '${(p['rating'] as num).toStringAsFixed(1)} de 5 · ${p['ratingCount']} calificaciones'),
-              ),
             ]),
             sectionTitle('Ajustes y seguridad'),
             groupedCard([
@@ -4772,7 +4767,39 @@ class _ProfileState extends State<Profile> {
                 ),
               ],
             ]),
-            sectionTitle('Comentarios recibidos'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 18, 0, 8),
+              child: Row(children: [
+                Expanded(
+                  child: Text('Mis calificaciones',
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                ),
+                TextButton.icon(
+                  onPressed: rs.isEmpty
+                      ? null
+                      : () => Navigator.push(
+                            c,
+                            MaterialPageRoute(
+                              builder: (_) => RatingsScreen(
+                                session: widget.s,
+                                initialRating: (p['rating'] as num).toDouble(),
+                                initialCount: p['ratingCount'] as int,
+                                initialReviews: rs,
+                              ),
+                            ),
+                          ),
+                  iconAlignment: IconAlignment.end,
+                  icon: const Icon(Icons.chevron_right),
+                  label: const Text('Ver todas'),
+                ),
+              ]),
+            ),
+            RatingsSummaryCard(
+              rating: (p['rating'] as num).toDouble(),
+              count: p['ratingCount'] as int,
+            ),
+            sectionTitle('Comentarios recientes'),
             if (rs.isEmpty)
               groupedCard([
                 Padding(
@@ -4789,47 +4816,350 @@ class _ProfileState extends State<Profile> {
                 ),
               ])
             else
-              groupedCard([
-                for (var index = 0; index < rs.length; index++) ...[
-                  if (index > 0) const Divider(height: 1),
-                  Builder(builder: (_) {
-                    final review = rs[index] as Map;
-                    final author = review['author']?.toString().trim();
-                    final displayAuthor = author?.isNotEmpty == true
-                        ? author!
-                        : 'Usuario Costa-Go';
-                    final comment = review['comment']?.toString().trim();
-                    final tags = review['tags'] is List
-                        ? (review['tags'] as List)
-                            .map((tag) => tag.toString())
-                            .where((tag) => tag.isNotEmpty)
-                            .join(' · ')
-                        : '';
-                    return ListTile(
-                      contentPadding: rowPadding,
-                      leading: CircleAvatar(
-                        backgroundColor: scheme.primaryContainer,
-                        foregroundColor: scheme.onPrimaryContainer,
-                        child: Text(displayAuthor.substring(0, 1).toUpperCase(),
-                            style:
-                                const TextStyle(fontWeight: FontWeight.w800)),
+              ...rs.take(3).map((review) => RatingReviewCard(
+                    review: Map<String, dynamic>.from(review as Map),
+                  )),
+            if (rs.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: FilledButton.tonalIcon(
+                  onPressed: () => Navigator.push(
+                    c,
+                    MaterialPageRoute(
+                      builder: (_) => RatingsScreen(
+                        session: widget.s,
+                        initialRating: (p['rating'] as num).toDouble(),
+                        initialCount: p['ratingCount'] as int,
+                        initialReviews: rs,
                       ),
-                      title: Text(displayAuthor),
-                      subtitle: Text(comment?.isNotEmpty == true
-                          ? comment!
-                          : (tags.isNotEmpty ? tags : 'Sin comentario')),
-                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.star_rounded,
-                            color: Colors.amber, size: 19),
-                        const SizedBox(width: 3),
-                        Text('${review['score']}'),
-                      ]),
-                    );
-                  }),
-                ],
-              ]),
+                    ),
+                  ),
+                  iconAlignment: IconAlignment.end,
+                  icon: const Icon(Icons.chevron_right),
+                  label: const Text('Ver todas las calificaciones'),
+                ),
+              ),
           ],
         ));
+  }
+}
+
+class RatingsSummaryCard extends StatelessWidget {
+  const RatingsSummaryCard({
+    super.key,
+    required this.rating,
+    required this.count,
+  });
+
+  final double rating;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+        child: Row(children: [
+          Expanded(
+            child: Column(children: [
+              Text(rating.toStringAsFixed(1),
+                  style: theme.textTheme.displaySmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 2),
+              RatingStars(score: rating.round(), size: 24),
+              const SizedBox(height: 5),
+              Text('Basado en $count calificaciones',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant)),
+            ]),
+          ),
+          Container(
+              width: 1,
+              height: 102,
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              color: scheme.outlineVariant),
+          Expanded(
+            child: Column(children: [
+              Icon(Icons.groups_2_outlined, size: 43, color: scheme.primary),
+              const SizedBox(height: 4),
+              Text('$count',
+                  style: theme.textTheme.headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900)),
+              Text('viajes con calificación',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant)),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class RatingStars extends StatelessWidget {
+  const RatingStars({super.key, required this.score, this.size = 18});
+  final int score;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(
+          5,
+          (index) => Icon(
+            index < score ? Icons.star_rounded : Icons.star_outline_rounded,
+            color: Colors.amber.shade700,
+            size: size,
+          ),
+        ),
+      );
+}
+
+String _ratingDate(dynamic value) {
+  final date = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
+  if (date == null) return '';
+  const months = [
+    'ene.',
+    'feb.',
+    'mar.',
+    'abr.',
+    'may.',
+    'jun.',
+    'jul.',
+    'ago.',
+    'sep.',
+    'oct.',
+    'nov.',
+    'dic.'
+  ];
+  return '${date.day} ${months[date.month - 1]} ${date.year}';
+}
+
+class RatingReviewCard extends StatelessWidget {
+  const RatingReviewCard({super.key, required this.review});
+  final Map<String, dynamic> review;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final rawAuthor = review['author']?.toString().trim() ?? '';
+    final author = rawAuthor.isEmpty ? 'Usuario Costa-Go' : rawAuthor;
+    final rawDestination =
+        review['destinationReference']?.toString().trim() ?? '';
+    final destination = rawDestination.isEmpty
+        ? 'Viaje realizado'
+        : 'Viaje a ${rawDestination.split(',').first.trim()}';
+    final rawComment = review['comment']?.toString().trim() ?? '';
+    final tags = review['tags'] is List
+        ? (review['tags'] as List)
+            .map((tag) => tag.toString().trim())
+            .where((tag) => tag.isNotEmpty)
+            .join(' · ')
+        : '';
+    final comment = rawComment.isNotEmpty ? rawComment : tags;
+    final score = (review['score'] as num?)?.toInt() ?? 0;
+    final date = _ratingDate(review['createdAt']);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CircleAvatar(
+              radius: 24,
+              backgroundColor: scheme.primaryContainer,
+              foregroundColor: scheme.onPrimaryContainer,
+              child: Text(author.substring(0, 1).toUpperCase(),
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(author,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                    Text(destination,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: scheme.onSurfaceVariant)),
+                  ]),
+            ),
+            const SizedBox(width: 8),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              RatingStars(score: score, size: 16),
+              if (date.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(date,
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+              ],
+            ]),
+          ]),
+          if (comment.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('“$comment”', style: theme.textTheme.bodyMedium),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+class RatingsScreen extends StatefulWidget {
+  const RatingsScreen({
+    super.key,
+    required this.session,
+    required this.initialRating,
+    required this.initialCount,
+    required this.initialReviews,
+  });
+  final Session session;
+  final double initialRating;
+  final int initialCount;
+  final List initialReviews;
+
+  @override
+  State<RatingsScreen> createState() => _RatingsScreenState();
+}
+
+class _RatingsScreenState extends State<RatingsScreen> {
+  late double rating = widget.initialRating;
+  late int count = widget.initialCount;
+  late List<Map<String, dynamic>> reviews = widget.initialReviews
+      .map((item) => Map<String, dynamic>.from(item as Map))
+      .toList();
+  int? selectedScore;
+  bool mostRecent = true;
+  bool loading = true;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    try {
+      final result = await Api().profileRatings(widget.session.token);
+      if (!mounted) return;
+      setState(() {
+        rating = (result['rating'] as num?)?.toDouble() ?? rating;
+        count = (result['ratingCount'] as num?)?.toInt() ?? count;
+        reviews = (result['reviews'] as List? ?? const [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        loading = false;
+      });
+    } catch (loadError) {
+      if (!mounted) return;
+      setState(() {
+        error = loadError.toString();
+        loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final visible = reviews
+        .where((review) =>
+            selectedScore == null || review['score'] == selectedScore)
+        .toList()
+      ..sort((a, b) {
+        if (!mostRecent) {
+          final byScore = ((b['score'] as num?)?.toInt() ?? 0)
+              .compareTo((a['score'] as num?)?.toInt() ?? 0);
+          if (byScore != 0) return byScore;
+        }
+        final aDate =
+            DateTime.tryParse(a['createdAt']?.toString() ?? '') ?? DateTime(0);
+        final bDate =
+            DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime(0);
+        return bDate.compareTo(aDate);
+      });
+    return Scaffold(
+      appBar: AppBar(title: const Text('Mis calificaciones')),
+      body: RefreshIndicator(
+        onRefresh: load,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+          children: [
+            RatingsSummaryCard(rating: rating, count: count),
+            const SizedBox(height: 18),
+            Row(children: [
+              ChoiceChip(
+                label: const Text('Todas'),
+                selected: selectedScore == null,
+                onSelected: (_) => setState(() => selectedScore = null),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('5 estrellas'),
+                selected: selectedScore == 5,
+                onSelected: (_) => setState(() => selectedScore = 5),
+              ),
+              const Spacer(),
+              PopupMenuButton<bool>(
+                initialValue: mostRecent,
+                onSelected: (value) => setState(() => mostRecent = value),
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: true, child: Text('Más recientes')),
+                  PopupMenuItem(value: false, child: Text('Mejor calificadas')),
+                ],
+                child: Chip(
+                  avatar: const Icon(Icons.sort, size: 18),
+                  label: Text(mostRecent ? 'Recientes' : 'Mejores'),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 14),
+            if (loading) const LinearProgressIndicator(),
+            if (error != null) ...[
+              Card(
+                color: scheme.errorContainer,
+                child: ListTile(
+                  leading: Icon(Icons.cloud_off_outlined,
+                      color: scheme.onErrorContainer),
+                  title: const Text('No se pudo actualizar el historial'),
+                  subtitle:
+                      const Text('Se muestran las calificaciones disponibles.'),
+                  trailing: IconButton(
+                      onPressed: load, icon: const Icon(Icons.refresh)),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (!loading && visible.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Column(children: [
+                  Icon(Icons.star_outline_rounded,
+                      size: 52, color: scheme.onSurfaceVariant),
+                  const SizedBox(height: 10),
+                  Text('No hay calificaciones en este filtro.',
+                      style: theme.textTheme.bodyLarge),
+                ]),
+              )
+            else
+              ...visible.map((review) => RatingReviewCard(review: review)),
+          ],
+        ),
+      ),
+    );
   }
 }
 

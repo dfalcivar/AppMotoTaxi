@@ -1700,11 +1700,31 @@ export async function buildApp() {
       where u.id=${user.id!}
     `;
     const reviews = await database()`
-      select r.score, r.tags, r.comment, author.full_name as author, r.created_at as "createdAt"
-      from ratings r join users author on author.id=r.author_id
+      select r.score, r.tags, r.comment, author.full_name as author, r.created_at as "createdAt",
+        t.destination_reference as "destinationReference"
+      from ratings r join users author on author.id=r.author_id join trips t on t.id=r.trip_id
       where r.recipient_id=${user.id!} order by r.created_at desc limit 10
     `;
     return { ...profile, reviews };
+  });
+
+  app.get("/v1/profile/ratings", async (request, reply) => {
+    const user = await authenticatedUser(request, reply, { allowPendingDriver: true }); if (!user) return;
+    const [summary] = await database()`
+      select coalesce(avg(score), 0)::float8 as rating, count(*)::int as "ratingCount"
+      from ratings where recipient_id=${user.id!}
+    `;
+    const reviews = await database()`
+      select r.score, r.tags, r.comment, author.full_name as author,
+        r.created_at as "createdAt", t.destination_reference as "destinationReference"
+      from ratings r
+      join users author on author.id=r.author_id
+      join trips t on t.id=r.trip_id
+      where r.recipient_id=${user.id!}
+      order by r.created_at desc
+      limit 200
+    `;
+    return { ...summary, reviews };
   });
 
   app.put("/v1/profile/photo", async (request, reply) => {
