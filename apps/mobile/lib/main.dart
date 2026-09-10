@@ -12948,7 +12948,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Timer? fleetHeartbeatTimer;
   bool fleetRecoveryOffered = false,
       fleetChanging = false,
-      fleetHeartbeatBusy = false;
+      fleetHeartbeatBusy = false,
+      availabilityChanging = false;
   Future<void> configureFleet(dynamic state) async {
     if (!mounted) return;
     setState(() => fleetSession = state['session']);
@@ -12986,9 +12987,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> chooseFleet() async {
+  Future<bool> chooseFleet({bool activateAfterSelection = false}) async {
     if (fleetChanging || active != null) return false;
-    fleetChanging = true;
+    setState(() => fleetChanging = true);
     try {
       final all = await fleetFor(widget.s).get(
           '/vehicles?status=VERIFIED&relationType=AUTHORIZED_DRIVER&authorizedOnly=true');
@@ -13031,7 +13032,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         }
         fleetRecoveryOffered = true;
         await configureFleet(await fleetFor(widget.s).get('/session'));
-        return fleetSession != null;
+        final selected = fleetSession != null;
+        if (selected && activateAfterSelection && !available) {
+          await toggle(true);
+        }
+        return selected;
       }
       final selected = await Navigator.push(
           context,
@@ -13041,12 +13046,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       if (!mounted || selected == null) return false;
       fleetRecoveryOffered = true;
       await configureFleet(await fleetFor(widget.s).get('/session'));
-      return fleetSession != null;
+      final ready = fleetSession != null;
+      if (ready && activateAfterSelection && !available) {
+        await toggle(true);
+      }
+      return ready;
     } catch (e) {
       if (mounted) setState(() => driverMessage = e.toString());
       return false;
     } finally {
-      fleetChanging = false;
+      if (mounted) setState(() => fleetChanging = false);
     }
   }
 
@@ -14184,10 +14193,25 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   Future<void> toggle(bool v) async {
+    if (availabilityChanging) return;
     if (v && !_membershipEligible) {
       setState(() => driverMessage =
           'Tu membresía no permite recibir solicitudes. Revisa su estado y las opciones de renovación.');
       return;
+    }
+    String? pauseAction;
+    if (!v) {
+      pauseAction = await fleetPauseDialog(context,
+          gateway: fleetFor(widget.s), vehicle: fleetSession);
+      if (pauseAction == null) return;
+    }
+    if (mounted) {
+      setState(() {
+        availabilityChanging = true;
+        driverMessage = v
+            ? 'Activando disponibilidad y verificando tu ubicación…'
+            : 'Pausando disponibilidad…';
+      });
     }
     try {
       if (v) {
@@ -14199,10 +14223,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         }
         await startGpsTracking(markAvailable: true);
       } else {
-        final action = await fleetPauseDialog(context,
-            gateway: fleetFor(widget.s), vehicle: fleetSession);
-        if (action == null) return;
-        if (action == 'FINISH' && fleetSession != null) {
+        if (pauseAction == 'FINISH' && fleetSession != null) {
           await fleetFor(widget.s).post(
               '/sessions/${fleetSession['id']}/release',
               {'reason': 'MANUAL_RELEASE'});
@@ -14222,6 +14243,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       await refresh();
     } catch (e) {
       if (mounted) setState(() => driverMessage = e.toString());
+    } finally {
+      if (mounted) setState(() => availabilityChanging = false);
     }
   }
 
@@ -18628,24 +18651,34 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                     SizedBox(
                       width: 40,
                       height: 30,
-                      child: FittedBox(
-                        fit: BoxFit.contain,
-                        child: Switch(
-                          value: available,
-                          onChanged: active == null &&
-                                  _membershipEligible &&
-                                  fleetSession != null
-                              ? toggle
-                              : null,
-                        ),
-                      ),
+                      child: availabilityChanging
+                          ? const Padding(
+                              padding: EdgeInsets.all(5),
+                              child: CircularProgressIndicator(strokeWidth: 3))
+                          : FittedBox(
+                              fit: BoxFit.contain,
+                              child: Switch(
+                                value: available,
+                                onChanged: active == null &&
+                                        _membershipEligible &&
+                                        fleetSession != null
+                                    ? toggle
+                                    : null,
+                              ),
+                            ),
                     ),
                   ]),
                   const SizedBox(height: 7),
                   Text(
-                    active != null
-                        ? 'Estás atendiendo un viaje.'
-                        : 'Recibirás solicitudes de pasajeros cercanos.',
+                    availabilityChanging
+                        ? available
+                            ? 'Pausando disponibilidad…'
+                            : 'Activando y verificando tu ubicación…'
+                        : active != null
+                            ? 'Estás atendiendo un viaje.'
+                            : available
+                                ? 'Recibiendo solicitudes de pasajeros cercanos.'
+                                : 'Activa tu disponibilidad para recibir solicitudes.',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -18787,7 +18820,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 ),
                 if (fleetSession != null)
                   TextButton.icon(
-                    onPressed: fleetChanging ? null : chooseFleet,
+                    onPressed: fleetChanging || availabilityChanging
+                        ? null
+                        : () => chooseFleet(activateAfterSelection: true),
                     icon: const Icon(Icons.swap_horiz_rounded, size: 19),
                     label: const Text('Cambiar'),
                     style: TextButton.styleFrom(
@@ -18823,10 +18858,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 ?.copyWith(color: colors.onSurfaceVariant))
                       ])),
                   TextButton(
-                      onPressed: fleetChanging
+                      onPressed: fleetChanging || availabilityChanging
                           ? null
                           : () async {
-                              await chooseFleet();
+                              await chooseFleet(activateAfterSelection: true);
                             },
                       child: const Text('Seleccionar'))
                 ])
