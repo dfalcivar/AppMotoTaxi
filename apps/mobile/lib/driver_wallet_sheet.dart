@@ -22,6 +22,7 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
       'wallet-${DateTime.now().microsecondsSinceEpoch}';
   Map<String, dynamic>? data;
   String? error;
+  String? amountError;
   bool busy = false;
 
   @override
@@ -49,8 +50,8 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
     if (busy) return;
     final value = amount.text.trim().replaceAll(',', '.');
     if (!RegExp(r'^\d+(\.\d{1,2})?$').hasMatch(value)) {
-      setState(
-          () => error = 'Ingresa un importe válido con hasta dos decimales.');
+      setState(() =>
+          amountError = 'Ingresa un importe válido con hasta dos decimales.');
       return;
     }
     final config =
@@ -59,18 +60,19 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
     final minimum = double.tryParse('${config['minimumTopUp']}');
     final maximum = double.tryParse('${config['maximumTopUp']}');
     if (minimum != null && numeric < minimum) {
-      setState(() => error =
+      setState(() => amountError =
           'El valor mínimo de recarga es \$${minimum.toStringAsFixed(2)}.');
       return;
     }
     if (maximum != null && numeric > maximum) {
-      setState(() => error =
+      setState(() => amountError =
           'El valor máximo de recarga es \$${maximum.toStringAsFixed(2)}.');
       return;
     }
     setState(() {
       busy = true;
       error = null;
+      amountError = null;
     });
     try {
       final order = await widget.createOrder(value, requestKey);
@@ -307,17 +309,43 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
           TextField(
               controller: amount,
               enabled: !busy,
+              onChanged: (_) {
+                if (amountError != null) setState(() => amountError = null);
+              },
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                   labelText: 'Valor de recarga', prefixText: '\$  ')),
-          const SizedBox(height: 7),
-          Text(
-              'Puedes recargar desde \$${config['minimumTopUp']} hasta \$${config['maximumTopUp']}',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: colors.onSurfaceVariant)),
+          if (amountError != null) ...[
+            const SizedBox(height: 8),
+            CostaGoSurface(
+                tone: CostaGoStatusTone.danger,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(children: [
+                  Icon(Icons.error_outline_rounded,
+                      color: colors.error, size: 21),
+                  const SizedBox(width: 9),
+                  Expanded(
+                      child: Text(amountError!,
+                          style: TextStyle(
+                              color: colors.error,
+                              fontWeight: FontWeight.w700))),
+                ])),
+          ],
+          const SizedBox(height: 8),
+          CostaGoSurface(
+              tone: CostaGoStatusTone.info,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(children: [
+                Icon(Icons.info_outline_rounded,
+                    color: colors.primary, size: 21),
+                const SizedBox(width: 9),
+                Expanded(
+                    child: Text(
+                        'Puedes recargar desde \$${config['minimumTopUp']} hasta \$${config['maximumTopUp']}.',
+                        style: const TextStyle(fontWeight: FontWeight.w700))),
+              ])),
           const Divider(height: 28),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Icon(Icons.info_outline_rounded, color: colors.primary, size: 22),
