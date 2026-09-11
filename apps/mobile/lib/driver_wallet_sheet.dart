@@ -235,19 +235,8 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
                                       onChanged:
                                           busy ? null : setWalletEnabled),
                                 ])),
-                            if (insufficient) ...[
-                              const SizedBox(height: 10),
-                              CostaGoSurface(
-                                  tone: CostaGoStatusTone.danger,
-                                  child: Row(children: [
-                                    Icon(Icons.money_off_csred_rounded,
-                                        color: colors.error),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                        child: Text(
-                                            'Saldo insuficiente para aceptar viajes. Recarga saldo Costa-Go.${minimumRequired > 0 ? ' Necesitas al menos \$${minimumRequired.toStringAsFixed(2)}.' : ''}')),
-                                  ])),
-                            ] else if (available != null &&
+                            if (!insufficient &&
+                                available != null &&
                                 threshold != null &&
                                 available <= threshold) ...[
                               const SizedBox(height: 10),

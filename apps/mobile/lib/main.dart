@@ -13590,6 +13590,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Map<String, dynamic>? membershipData;
   Map<String, dynamic>? driverWalletSummary;
   DateTime? lastMembershipRefreshAt;
+  bool _membershipSheetOpeningOrOpen = false;
   @override
   void initState() {
     super.initState();
@@ -18388,8 +18389,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   }
 
   Future<void> _showMembershipDetails() async {
+    if (_membershipSheetOpeningOrOpen) return;
     final data = membershipData;
     if (data == null || !mounted) return;
+    _membershipSheetOpeningOrOpen = true;
     Map<String, dynamic>? walletSummary;
     try {
       walletSummary = Map<String, dynamic>.from(await api
@@ -18398,7 +18401,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     } catch (_) {
       // La membresía sigue disponible aunque el resumen del saldo no cargue.
     }
-    if (!mounted) return;
+    if (!mounted) {
+      _membershipSheetOpeningOrOpen = false;
+      return;
+    }
     final membership =
         Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final plans = List<dynamic>.from(data['plans'] ?? const []);
@@ -19265,7 +19271,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           ),
                         ])),
                   ]));
-            }));
+            })).whenComplete(() => _membershipSheetOpeningOrOpen = false);
     unawaited(refreshMembership(force: true));
   }
 

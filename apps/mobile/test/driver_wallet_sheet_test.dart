@@ -117,8 +117,8 @@ void main() {
     ))));
     await tester.pumpAndSettle();
     expect(find.textContaining('Saldo insuficiente para aceptar viajes.'),
-        findsOneWidget);
-    expect(find.textContaining(r'Necesitas al menos $0.16.'), findsOneWidget);
+        findsNothing);
+    expect(find.textContaining(r'Necesitas al menos $0.16.'), findsNothing);
     expect(find.byIcon(Icons.money_off_csred_rounded), findsWidgets);
   });
 
