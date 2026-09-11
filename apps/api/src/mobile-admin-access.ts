@@ -19,6 +19,10 @@ const updateSchema = z.object({
   role: accessRole,
   reason: z.string().trim().min(5).max(500)
 });
+const accessUsersQuery = z.object({
+  scope: z.enum(["authorized", "candidates", "all"]).default("all"),
+  search: z.string().trim().max(120).default("")
+});
 
 // Mobile administration deliberately excludes credentials, database access and
 // technical infrastructure even for a mobile SUPER_ADMIN.
@@ -164,13 +168,55 @@ export async function registerMobileAdminAccessRoutes(app: FastifyInstance) {
 
   app.get("/v1/admin/mobile-access/users", async (request, reply) => { try {
     requirePermission(request, "roles:manage");
+    const query=accessUsersQuery.parse(request.query);
+    const selectAuthorized=()=>database()`select u.id::text,u.full_name as name,u.email,u.phone_e164 as phone,
+      array(select role from mobile_account_roles where user_id=u.id order by role) as "mobileRoles",
+      coalesce(a.enabled,false) enabled,coalesce(a.access_role,'MOBILE_OPERATIONS_ADMIN') role,
+      coalesce(a.version,0)::int version,a.updated_at as "updatedAt",
+      (select max(log.created_at) from audit_log log where log.actor_id=u.id
+        and log.action='MOBILE_ADMIN_SESSION_STARTED') as "lastAccessAt"
+      from users u left join mobile_admin_access a on a.user_id=u.id
+      where u.deleted_at is null and exists(select 1 from mobile_account_roles where user_id=u.id)
+        and a.enabled=true
+      order by a.enabled desc,u.full_name`;
+    if(query.scope==="authorized") return await selectAuthorized();
+    if(query.scope==="candidates") {
+      if(query.search.length<2) return [];
+      const term=`%${query.search}%`;
+      return await database()`select u.id::text,u.full_name as name,u.email,u.phone_e164 as phone,
+        array(select role from mobile_account_roles where user_id=u.id order by role) as "mobileRoles",
+        false as enabled,'MOBILE_OPERATIONS_ADMIN' as role,0::int as version,null as "updatedAt",null as "lastAccessAt"
+        from users u left join mobile_admin_access a on a.user_id=u.id
+        where u.deleted_at is null and exists(select 1 from mobile_account_roles where user_id=u.id)
+          and coalesce(a.enabled,false)=false
+          and (u.full_name ilike ${term} or u.email ilike ${term} or coalesce(u.phone_e164,'') ilike ${term})
+        order by u.full_name limit 12`;
+    }
     return await database()`select u.id::text,u.full_name as name,u.email,u.phone_e164 as phone,
       array(select role from mobile_account_roles where user_id=u.id order by role) as "mobileRoles",
       coalesce(a.enabled,false) enabled,coalesce(a.access_role,'MOBILE_OPERATIONS_ADMIN') role,
-      coalesce(a.version,0)::int version,a.updated_at as "updatedAt"
+      coalesce(a.version,0)::int version,a.updated_at as "updatedAt",
+      (select max(log.created_at) from audit_log log where log.actor_id=u.id
+        and log.action='MOBILE_ADMIN_SESSION_STARTED') as "lastAccessAt"
       from users u left join mobile_admin_access a on a.user_id=u.id
       where u.deleted_at is null and exists(select 1 from mobile_account_roles where user_id=u.id)
       order by a.enabled desc,u.full_name`;
+  } catch (error) {
+    if (error instanceof z.ZodError) return reply.code(400).send({error:"INVALID_MOBILE_ACCESS_QUERY",details:error.issues});
+    const message=error instanceof Error?error.message:"ERROR";
+    return reply.code(message==="FORBIDDEN"?403:401).send({error:message});
+  } });
+
+  app.get("/v1/admin/mobile-access/history", async (request, reply) => { try {
+    requirePermission(request, "roles:manage");
+    return await database()`select log.created_at as "createdAt",log.action,log.reason,
+      target.id::text as "userId",target.full_name as "userName",target.email as "userEmail",
+      actor.full_name as "actorName",log.next_value as "nextValue"
+      from audit_log log
+      left join users target on target.id::text=log.entity_id
+      left join users actor on actor.id=log.actor_id
+      where log.action in ('MOBILE_ADMIN_ACCESS_GRANTED','MOBILE_ADMIN_ACCESS_REVOKED')
+      order by log.created_at desc limit 200`;
   } catch (error) {
     const message=error instanceof Error?error.message:"ERROR";
     return reply.code(message==="FORBIDDEN"?403:401).send({error:message});
