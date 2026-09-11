@@ -2,9 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>FlutterDeepLinkingEnabled</key><false/>
-    <key>NSCameraUsageDescription</key><string>Costa-Go utiliza la cámara para escanear el QR de la mototaxi que vas a conducir.</string>
-    <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>costa-go</string></array></dict></array>
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Costa-Go utiliza la cámara para escanear códigos QR y adjuntar fotografías solicitadas durante el uso de la aplicación.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Costa-Go utiliza tu biblioteca de fotos para adjuntar imágenes de perfil, documentos y evidencias que selecciones.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Costa-Go utiliza Face ID para permitir un acceso seguro y rápido a tu cuenta.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.costago.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>costa-go</string>
+			</array>
+		</dict>
+	</array>
 	<key>GOOGLE_MAPS_IOS_API_KEY</key>
 	<string>$(GOOGLE_MAPS_IOS_API_KEY)</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -13,6 +29,7 @@
 	<string>Costa-Go utiliza tu ubicación para guiarte hacia el pasajero y su destino.</string>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>fetch</string>
 		<string>location</string>
 		<string>remote-notification</string>
 	</array>
@@ -29,7 +46,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>mototaxi_atacames</string>
+	<string>Costa-Go</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
