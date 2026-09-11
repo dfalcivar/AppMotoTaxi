@@ -40,7 +40,7 @@ void main() {
     await tester.scrollUntilVisible(find.byType(TextField), 150,
         scrollable: walletScroll);
     expect(find.text('Valor de recarga'), findsOneWidget);
-    expect(find.text(r'Puedes recargar desde $1.00 hasta $100.00'),
+    expect(find.text(r'Puedes recargar desde $1.00 hasta $100.00.'),
         findsOneWidget);
     expect(find.text('Recarga sin IVA'), findsNothing);
     expect(tester.takeException(), isNull);

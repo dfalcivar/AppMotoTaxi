@@ -56,7 +56,7 @@ void main() {
               body: DriverSearchIndicator(
                   progress: sample(), onDeadline: () async {}))));
       await tester.pump(const Duration(milliseconds: 30));
-      expect(find.text('Rango 2 de 4 · 00:18 restantes'), findsOneWidget);
+      expect(find.text('Ampliando búsqueda · 00:18 restantes'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsNothing);
       final circle = tester.widget<CircularProgressIndicator>(
