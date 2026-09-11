@@ -38,7 +38,10 @@ export async function apiFetch<T>(path: string, token?: string, init: RequestIni
   if (init.body) headers.set("content-type", "application/json");
   if (token) headers.set("authorization", `Bearer ${token}`);
   try {
-    const response=await fetcher(`${base}${persistentPath(path, init.method)}`, { ...init, headers });
+    const method=(init.method??"GET").toUpperCase();
+    const response=await fetcher(`${base}${persistentPath(path, init.method)}`, {
+      ...init, headers, cache:init.cache??(method==="GET"?"no-store":undefined)
+    });
     if(response.status===401&&path!=="/v1/admin/session"&&typeof window!=="undefined")window.dispatchEvent(new CustomEvent("admin-session-expired"));
     return parse<T>(response);
   } catch (error) {

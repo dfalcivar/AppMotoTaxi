@@ -1,7 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { requestQuote } from "./api.js";
+import { apiFetch, requestQuote } from "./api.js";
 
 describe("cliente de cotizaciones administrativas", () => {
+  it("no reutiliza respuestas anteriores al consultar configuración administrativa", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ version: 2, configuration: null }), {
+      status: 200, headers: { "content-type": "application/json" }
+    }));
+
+    await apiFetch("/v1/admin/scheduled-arrival-settings", "token", {}, fetcher);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/admin/scheduled-arrival-settings",
+      expect.objectContaining({ cache: "no-store" })
+    );
+  });
+
   it("envía los datos a la API y devuelve la respuesta del servidor", async () => {
     const fetcher = vi.fn(async () =>
       new Response(

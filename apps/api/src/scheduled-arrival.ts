@@ -51,14 +51,16 @@ export async function configuredScheduledQuote(fare: TerritorialFare, pickup: Da
 }
 
 export async function registerScheduledArrivalRoutes(app: FastifyInstance) {
-  app.get('/v1/admin/scheduled-arrival-settings',async request=>{
+  app.get('/v1/admin/scheduled-arrival-settings',async (request,reply)=>{
     requirePermission(request,'settings:manage');
+    reply.header('Cache-Control','private, no-store');
     const [row] = await database()`select scheduled_arrival_configuration as configuration,
       scheduled_arrival_version as version,membership_extra_trip_share_percent::text as "costaGoPercent"
       from operational_settings where id=1`;
     return row;
   });
   app.put('/v1/admin/scheduled-arrival-settings',async (request,reply)=>{
+    reply.header('Cache-Control','private, no-store');
     const actor = requirePermission(request,'settings:manage');
     const parsed = z.object({version:z.number().int().nonnegative(),configuration:scheduledArrivalSchema}).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({error:'INVALID_SCHEDULED_ARRIVAL_SETTINGS',details:parsed.error.issues});
