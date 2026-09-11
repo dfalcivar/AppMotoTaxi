@@ -102,14 +102,23 @@ void main() {
       );
     });
 
-    test('no muestra prepago activo sin saldo o sin elegibilidad', () {
+    test('mantiene pago por uso como modalidad actual aunque no tenga saldo',
+        () {
       expect(
         prepaidModalityIsCurrent(
           membership: {'status': 'PENDING'},
           eligibility: {'eligible': true},
           wallet: {'enabled': true, 'available': '0.00'},
         ),
-        isFalse,
+        isTrue,
+      );
+      expect(
+        prepaidModalityIsCurrent(
+          membership: {'status': 'PENDING'},
+          eligibility: {'eligible': false, 'reason': 'MEMBERSHIP_REQUIRED'},
+          wallet: {'enabled': true, 'available': '0.10'},
+        ),
+        isTrue,
       );
       expect(
         prepaidModalityIsCurrent(
@@ -117,6 +126,30 @@ void main() {
           eligibility: {'eligible': false},
           wallet: {'enabled': true, 'available': '10.00'},
         ),
+        isFalse,
+      );
+    });
+
+    test('detecta saldo insuficiente según la comisión mínima vigente', () {
+      expect(
+        prepaidBalanceIsInsufficient({
+          'wallet': {'enabled': true, 'available': '0.10'},
+          'configuration': {'minimumRequiredBalance': '0.16'},
+        }),
+        isTrue,
+      );
+      expect(
+        prepaidBalanceIsInsufficient({
+          'wallet': {'enabled': true, 'available': '0.16'},
+          'configuration': {'minimumRequiredBalance': '0.16'},
+        }),
+        isFalse,
+      );
+      expect(
+        prepaidBalanceIsInsufficient({
+          'wallet': {'enabled': false, 'available': '0.10'},
+          'configuration': {'minimumRequiredBalance': '0.16'},
+        }),
         isFalse,
       );
     });

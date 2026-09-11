@@ -92,6 +92,36 @@ void main() {
     expect(ordersCreated, 0);
   });
 
+  testWidgets('wallet marks a balance below the trip minimum as insufficient',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: DriverWalletSheet(
+      load: () async => {
+        'wallet': {
+          'total': '0.10',
+          'reserved': '0.00',
+          'available': '0.10',
+          'enabled': true
+        },
+        'configuration': {
+          'minimumTopUp': '3.00',
+          'maximumTopUp': '100.00',
+          'lowBalanceThreshold': '1.00',
+          'minimumRequiredBalance': '0.16'
+        },
+        'movements': []
+      },
+      createOrder: (_, __) async => {},
+      setEnabled: (_) async {},
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Saldo insuficiente para aceptar viajes.'),
+        findsOneWidget);
+    expect(find.textContaining(r'Necesitas al menos $0.16.'), findsOneWidget);
+    expect(find.byIcon(Icons.money_off_csred_rounded), findsWidgets);
+  });
+
   testWidgets('wallet previews three movements and opens the filtered history',
       (tester) async {
     final now = DateTime.now().toUtc().toIso8601String();

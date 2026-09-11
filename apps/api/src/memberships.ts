@@ -12,7 +12,7 @@ import { taxBreakdown } from './taxes.js';
 import {notificationPreferenceAllows} from './notification-preferences.js';
 import {sendMembershipActivationConfirmation} from './membership-activation.js';
 import {commercialContext} from './arrival-commercial.js';
-import {exactTaxBreakdown} from './commercial-economics.js';
+import {exactTaxBreakdown,immediateArrival} from './commercial-economics.js';
 import {calculatePackageEconomics} from './package-economics.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
@@ -1035,12 +1035,18 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
   app.get('/v1/driver/wallet',async(request,reply)=>{
     const user=await requireMobileUser(request,reply,'DRIVER');if(!user)return;
     const context=await commercialContext();
+    const minimumRequiredBalance=context?immediateArrival({
+      settings:context.settings,round:1,feePerRound:context.feePerRound,
+      journeyFare:'0.00',costaGoPercent:context.costaGoPercent
+    }).theoreticalCommission:null;
     const [wallet]=await database()`select total::text,reserved::text,(total-reserved)::text as available,enabled
       from driver_wallets where driver_id=${user.id!}`;
     const movements=await database()`select id,kind,amount::text,total_after::text as "totalAfter",reserved_after::text as "reservedAfter",
       trip_id as "tripId",reason,created_at as "createdAt" from driver_wallet_movements where driver_id=${user.id!} order by created_at desc limit 100`;
     return {wallet:wallet??{total:'0.00',reserved:'0.00',available:'0.00',enabled:false},movements,
-      configuration:context?{minimumTopUp:context.config.minimumTopUp,maximumTopUp:context.config.maximumTopUp,lowBalanceThreshold:context.config.lowBalanceThreshold}:null};
+      configuration:context?{minimumTopUp:context.config.minimumTopUp,maximumTopUp:context.config.maximumTopUp,
+        lowBalanceThreshold:context.config.lowBalanceThreshold,minimumRequiredBalance,feePerRound:context.feePerRound,
+        costaGoPercent:context.costaGoPercent}:null};
   });
   app.put('/v1/driver/wallet/preference',async(request,reply)=>{
     const user=await requireMobileUser(request,reply,'DRIVER');if(!user)return;

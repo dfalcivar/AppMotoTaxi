@@ -112,6 +112,13 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
         .toList();
     final available = double.tryParse('${wallet['available']}');
     final threshold = double.tryParse('${config['lowBalanceThreshold']}');
+    final minimumRequired =
+        double.tryParse('${config['minimumRequiredBalance']}');
+    final insufficient = wallet['enabled'] == true &&
+        available != null &&
+        minimumRequired != null &&
+        minimumRequired > 0 &&
+        available < minimumRequired;
     return SafeArea(
         child: FractionallySizedBox(
             heightFactor: .94,
@@ -147,7 +154,9 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
                                                     text:
                                                         '\$${wallet['available'] ?? '0.00'} ',
                                                     style: TextStyle(
-                                                        color: colors.primary)),
+                                                        color: insufficient
+                                                            ? colors.error
+                                                            : colors.primary)),
                                                 const TextSpan(
                                                     text: 'disponibles')
                                               ]),
@@ -169,9 +178,13 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
                                                       colors.onSurfaceVariant)),
                                     ])),
                                 const SizedBox(width: 12),
-                                const CostaGoIconBadge(
-                                    icon: Icons.account_balance_wallet_rounded,
-                                    tone: CostaGoStatusTone.info,
+                                CostaGoIconBadge(
+                                    icon: insufficient
+                                        ? Icons.money_off_csred_rounded
+                                        : Icons.account_balance_wallet_rounded,
+                                    tone: insufficient
+                                        ? CostaGoStatusTone.danger
+                                        : CostaGoStatusTone.info,
                                     size: 76),
                               ]),
                           const SizedBox(height: 18),
@@ -222,7 +235,19 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
                                       onChanged:
                                           busy ? null : setWalletEnabled),
                                 ])),
-                            if (available != null &&
+                            if (insufficient) ...[
+                              const SizedBox(height: 10),
+                              CostaGoSurface(
+                                  tone: CostaGoStatusTone.danger,
+                                  child: Row(children: [
+                                    Icon(Icons.money_off_csred_rounded,
+                                        color: colors.error),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                        child: Text(
+                                            'Saldo insuficiente para aceptar viajes. Recarga saldo Costa-Go.${minimumRequired > 0 ? ' Necesitas al menos \$${minimumRequired.toStringAsFixed(2)}.' : ''}')),
+                                  ])),
+                            ] else if (available != null &&
                                 threshold != null &&
                                 available <= threshold) ...[
                               const SizedBox(height: 10),
