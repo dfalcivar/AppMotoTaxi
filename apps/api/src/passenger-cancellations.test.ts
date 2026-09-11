@@ -4,8 +4,9 @@ import { PGlite } from '@electric-sql/pglite';
 
 const state=vi.hoisted(()=>({sql:null as any}));
 vi.mock('./database.js',()=>({database:()=>state.sql}));
-import { cancelPassengerTrip, cancellationConsequence, passengerCancellationPolicySchema, releaseExpiredPassengerSuspensions, expirePassengerCancellationCycles, passengerCancellationSummary, passengerCancellationHistory } from './passenger-cancellations.js';
+import { cancelPassengerTrip, cancellationConsequence, passengerCancellationPolicySchema, storedPassengerCancellationPolicy, releaseExpiredPassengerSuspensions, expirePassengerCancellationCycles, passengerCancellationSummary, passengerCancellationHistory } from './passenger-cancellations.js';
 import { recordAcceptedTripMembershipUsage, reversePassengerCancelledMembershipUsage, markMembershipTripCompleted, cycleAmounts } from './membership-trip-usage.js';
+import { settleDriverCancelledCommercialAssignment } from './arrival-commercial.js';
 
 const passenger='00000000-0000-4000-8000-000000000001';
 const driver='00000000-0000-4000-8000-000000000002';
@@ -210,6 +211,27 @@ describe('consumo de membresía y reversión por pasajero',()=>{
     expect((await cycle(cycleId)).completed_trips).toBe(81);
     expect((await pg.query<any>('select reversed_at from membership_cycle_trip_usages')).rows[0]!.reversed_at).toBeNull();
   });
+  it('cancelación del conductor cobra la reserva de pago por uso una sola vez',async()=>{
+    await pg.query(`select apply_driver_wallet_movement($1,'TOPUP',5,'driver-cancel-topup',null,null,$1,'Prueba')`,[driver]);
+    await pg.exec('update driver_wallets set enabled=true');
+    const tripId=await economicTrip('0.20');await consume(tripId);
+    expect((await pg.query<any>('select total::text,reserved::text from driver_wallets')).rows[0]).toEqual({total:'5.00',reserved:'0.20'});
+    await state.sql.begin((tx:any)=>settleDriverCancelledCommercialAssignment(tx,tripId,driver));
+    await pg.query("update trips set driver_id=null,assigned_at=null,status='SEARCHING' where id=$1",[tripId]);
+    await state.sql.begin((tx:any)=>settleDriverCancelledCommercialAssignment(tx,tripId,driver));
+    expect((await pg.query<any>('select total::text,reserved::text from driver_wallets')).rows[0]).toEqual({total:'4.80',reserved:'0.00'});
+    expect((await pg.query<any>("select kind,amount::text,reason from driver_wallet_movements where trip_id=$1 order by created_at",[tripId])).rows)
+      .toEqual([{kind:'RESERVE',amount:'0.20',reason:'Reserva de comisión de llegada'},
+        {kind:'TRIP_COMMISSION',amount:'0.20',reason:'Comisión aplicada por cancelación del conductor'}]);
+  });
+  it('cancelación del pasajero libera pago por uso y conserva el saldo total',async()=>{
+    await pg.query(`select apply_driver_wallet_movement($1,'TOPUP',5,'passenger-cancel-topup',null,null,$1,'Prueba')`,[driver]);
+    await pg.exec('update driver_wallets set enabled=true');
+    const tripId=await economicTrip('0.20');await consume(tripId);await cancelPassengerTrip(passenger,tripId);
+    expect((await pg.query<any>('select total::text,reserved::text from driver_wallets')).rows[0]).toEqual({total:'5.00',reserved:'0.00'});
+    expect((await pg.query<any>("select kind from driver_wallet_movements where trip_id=$1 order by created_at",[tripId])).rows)
+      .toEqual([{kind:'RESERVE'},{kind:'RELEASE'}]);
+  });
   it('reasignación A → B: cancelar pasajero revierte B, nunca A',async()=>{
     const second='00000000-0000-4000-8000-000000000003';
     await pg.query('insert into users(id) values($1)',[second]);await pg.query('insert into drivers(user_id) values($1)',[second]);
@@ -304,6 +326,25 @@ describe('consumo de membresía y reversión por pasajero',()=>{
   });
 });
 describe('política y persistencia de cancelaciones en PostgreSQL',()=>{
+  it('lee tanto JSONB nativo como el formato histórico de cadena JSON',()=>{
+    expect(storedPassengerCancellationPolicy(policy)).toMatchObject({...policy,cycleDurationDays:30});
+    expect(storedPassengerCancellationPolicy(JSON.stringify(policy))).toMatchObject({...policy,cycleDurationDays:30});
+  });
+  it('permite cancelar en camino aunque la política conserve el formato histórico',async()=>{
+    await pg.query('update operational_settings set passenger_cancellation_policy=$1::jsonb where id=1',
+      [JSON.stringify(JSON.stringify(policy))]);
+    const id=await makeTrip();
+    expect((await cancelPassengerTrip(passenger,id))?.consequence).toMatchObject({count:1,suspensionDays:0});
+    expect(await passengerCancellationSummary(passenger)).toMatchObject({cycleCount:1,configuredDurationDays:30});
+  });
+  it('la migración repara la cadena JSONB sin cambiar la política',async()=>{
+    await pg.query('update operational_settings set passenger_cancellation_policy=$1::jsonb where id=1',
+      [JSON.stringify(JSON.stringify(policy))]);
+    await pg.exec(await readFile(new URL('../migrations/094_repair_passenger_cancellation_policy_json.sql',import.meta.url),'utf8'));
+    const stored=(await pg.query<any>('select jsonb_typeof(passenger_cancellation_policy) as type,passenger_cancellation_policy as policy from operational_settings where id=1')).rows[0]!;
+    expect(stored.type).toBe('object');
+    expect(storedPassengerCancellationPolicy(stored.policy)).toMatchObject({...policy,cycleDurationDays:30});
+  });
   it('mantiene los umbrales configurados, incluida suspensión indefinida',()=>{
     expect([1,2,3,4,5,6,10].map(n=>cancellationConsequence(policy,n))).toEqual([0,0,2,5,7,null,null]);
     expect(cancellationConsequence({...policy,enabled:false},8)).toBe(0);

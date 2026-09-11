@@ -11974,17 +11974,24 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
       final assigned = hasAssignedDriver(active);
       String warning = 'Cancelar en este momento no tiene costo.';
       if (assigned) {
-        final policy = await api.call(
-            'GET', '/v1/passenger/cancellation-policy',
-            token: widget.s.token);
-        final days = policy['suspensionDays'];
-        final consequence = days == null
-            ? 'Se suspenderá tu cuenta indefinidamente; solo administración podrá reactivarla.'
-            : days == 0
-                ? 'Se registrará una advertencia.'
-                : 'Se suspenderá tu cuenta durante $days días.';
-        warning =
-            'Esta será tu cancelación n.º ${policy['nextCount']} después de una aceptación. $consequence';
+        try {
+          final policy = await api.call(
+              'GET', '/v1/passenger/cancellation-policy',
+              token: widget.s.token);
+          final days = policy['suspensionDays'];
+          final consequence = days == null
+              ? 'Se suspenderá tu cuenta indefinidamente; solo administración podrá reactivarla.'
+              : days == 0
+                  ? 'Se registrará una advertencia.'
+                  : 'Se suspenderá tu cuenta durante $days días.';
+          warning =
+              'Esta será tu cancelación n.º ${policy['nextCount']} después de una aceptación. $consequence';
+        } catch (_) {
+          // This preview is informative. The cancellation endpoint remains the
+          // authority and validates the active policy before applying changes.
+          warning =
+              'No pudimos consultar la consecuencia en este momento. Puedes continuar; el sistema validará la política antes de cancelar.';
+        }
       }
       if (!mounted || tripId != active?['tripId']) return;
       final confirmed = await showDialog<bool>(
@@ -18797,9 +18804,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 24),
                               child: Center(
-                                child: Text(selectedPlanType == 'TRIP_PACK'
-                                    ? 'Aún no hay planes por viajes disponibles.'
-                                    : 'Aún no hay planes por período disponibles.'),
+                                child: Text(
+                                  plans.isEmpty
+                                      ? 'No existen planes disponibles en este momento.'
+                                      : selectedPlanType == 'TRIP_PACK'
+                                          ? 'No existen planes por viajes disponibles.'
+                                          : 'No existen planes por período disponibles.',
+                                  textAlign: TextAlign.center,
+                                ),
                               ),
                             )
                           else

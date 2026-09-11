@@ -196,6 +196,27 @@ function MembershipManagement({token,permissions}:Props) {
     try{await apiFetch(`/v1/admin/membership-plans/${plan.id}/deactivate`,token,{method:"POST",body:JSON.stringify({reason:reason.trim()})});setSuccess(`${plan.name} fue desactivado sin afectar membresías vigentes.`);setPlanDeactivation(null);await load();}catch(cause){setError(cause instanceof Error?cause.message:"No se pudo desactivar el plan.");}finally{setBusy(false);}
   }
 
+  async function toggleMobilePlan(plan:any){
+    const next=!Boolean(plan.mobileVisible);
+    setBusy(true);setError("");
+    try{
+      await apiFetch(`/v1/admin/membership-plans/${plan.id}/mobile-visibility`,token,{method:"PATCH",body:JSON.stringify({mobileVisible:next})});
+      setSuccess(next?`${plan.name} ya está habilitado en la aplicación.`:`${plan.name} se ocultó de la aplicación sin desactivarlo.`);
+      await load();
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudo cambiar la visibilidad móvil.");}finally{setBusy(false);}
+  }
+  async function moveMobilePlan(plan:any,direction:-1|1){
+    const current=plansOfType(plan.planType??"PERIODIC",true);
+    const index=current.findIndex(item=>item.id===plan.id),target=index+direction;
+    if(index<0||target<0||target>=current.length)return;
+    const reordered=[...current];[reordered[index],reordered[target]]=[reordered[target],reordered[index]];
+    setBusy(true);setError("");
+    try{
+      await apiFetch("/v1/admin/membership-plans/mobile-order",token,{method:"PUT",body:JSON.stringify({planType:plan.planType??"PERIODIC",planIds:reordered.map(item=>item.id)})});
+      setSuccess("Orden de los planes actualizado en la aplicación.");await load();
+    }catch(reason){setError(reason instanceof Error?reason.message:"No se pudo ordenar el catálogo móvil.");await load();}finally{setBusy(false);}
+  }
+
   async function createGraceCampaign(){const values=await dialog.open({title:"Nueva campaña de gracia",description:"Se creará inicialmente como borrador y no se aplicará hasta que la actives.",confirmLabel:"Revisar alcance",fields:[{name:"name",label:"Nombre de la campaña",required:true,minLength:3},{name:"days",label:"Días de gracia",type:"number",initialValue:2,required:true,min:0,max:90,step:1},{name:"reason",label:"Motivo y alcance",type:"textarea",required:true,minLength:5}]});if(!values)return;const name=String(values.name).trim();const days=Number(values.days);const reason=String(values.reason).trim();const now=new Date();const end=new Date(now.getTime()+30*24*60*60*1000);setBusy(true);try{const payload={name,reason,scope:"ALL",cooperativeId:null,driverId:null,graceDays:days,allowsTrips:true,campaignKind:"RENEWAL",startsAt:now.toISOString(),endsAt:end.toISOString(),expiryWindowStart:null,expiryWindowEnd:null,priority:0,status:"DRAFT"};const preview=await apiFetch<any>("/v1/admin/membership-grace-policies/preview",token,{method:"POST",body:JSON.stringify(payload)});setBusy(false);const accepted=await dialog.open({eyebrow:"VISTA PREVIA",title:"Confirmar campaña",description:`La campaña alcanzará aproximadamente ${preview.affected??0} membresía(s). Permanecerá en borrador hasta su activación.`,confirmLabel:"Crear borrador"});if(!accepted)return;setBusy(true);await apiFetch("/v1/admin/membership-grace-policies",token,{method:"POST",body:JSON.stringify(payload)});setSuccess("Campaña creada en borrador; no se aplicará hasta activarla de forma controlada.");await load();}catch(reason){setError(reason instanceof Error?reason.message:"No se pudo crear la campaña.");}finally{setBusy(false);}}
 
   async function saveSettings() {
@@ -280,7 +301,25 @@ function MembershipManagement({token,permissions}:Props) {
   const statusOptions=useMemo(()=>Object.entries(membershipLabels),[]);
   const renderPlans=(planType:"PERIODIC"|"TRIP_PACK")=>{
     const currentPlans=plansOfType(planType,true),historicalPlans=plansOfType(planType,false),isTripPack=planType==="TRIP_PACK";
-    return <section className="card"><div className="membership-toolbar"><div><h2>{isTripPack?"Planes por viajes":"Planes por período"}</h2><p className="note">{isTripPack?"Paquetes de viajes acumulables. La vigencia es opcional y cada compra queda identificada en QR, transferencia y cobro.":"Cada cambio crea una nueva versión. Los ciclos activos conservan las condiciones con las que fueron adquiridos."} Los valores base no incluyen IVA.</p></div>{can("membership_plans:manage")&&<button className="primary" disabled={busy} onClick={()=>void createPlan(planType)}>+ Nuevo plan</button>}</div><div className="plan-grid">{currentPlans.map(plan=><article key={plan.id}><span>{isTripPack?"Paquete de viajes":labelFor(planLabels,plan.code)} · versión {plan.version}</span><h3>{plan.name}</h3><strong>{money(plan.baseAmount,plan.currency)} + IVA</strong><p>{isTripPack?`${plan.includedTrips} viajes`:`${plan.durationDays} días · ${plan.includedTrips} viajes incluidos`}</p><small>{isTripPack?(plan.packValidityDays?`Vigencia: ${plan.packValidityDays} días`:`Sin caducidad; vigente hasta agotar viajes`):`Tope de renovación: ${money(plan.maxRenewalAmount,plan.currency)} + IVA · participación adicional ${plan.extraTripSharePercent}%`}</small>{can("membership_plans:manage")&&<div className="row-actions plan-actions"><button className="link" disabled={busy} onClick={()=>void editPlan(plan)}>Editar y publicar versión</button><button className="link danger" disabled={busy} onClick={()=>void deactivatePlan(plan)}>Desactivar</button></div>}</article>)}</div>{!currentPlans.length&&<p className="empty">No existen {isTripPack?"planes por viajes":"planes por período"} vigentes.</p>}{historicalPlans.length>0&&<details className="plan-history"><summary>Ver historial de versiones ({historicalPlans.length})</summary><div className="table-wrap"><ManagedTable><thead><tr><th>Plan</th><th>Versión</th><th>Precio base</th><th>{isTripPack?"Viajes / vigencia":"Duración"}</th><th>Vigente desde</th><th>Finalizó</th></tr></thead><tbody>{historicalPlans.map(plan=><tr key={plan.id}><td><strong>{plan.name}</strong><small>{plan.code}</small></td><td>{plan.version}</td><td>{money(plan.baseAmount,plan.currency)} + IVA</td><td>{isTripPack?`${plan.includedTrips} viajes · ${plan.packValidityDays?`${plan.packValidityDays} días`:"sin caducidad"}`:`${plan.durationDays} días`}</td><td>{date(plan.effectiveFrom)}</td><td>{date(plan.effectiveUntil)}</td></tr>)}</tbody></ManagedTable></div></details>}</section>;
+    return <section className="card">
+      <div className="membership-toolbar"><div><h2>{isTripPack?"Planes por viajes":"Planes por período"}</h2><p className="note">{isTripPack?"Paquetes de viajes acumulables. La vigencia es opcional y cada compra queda identificada en QR, transferencia y cobro.":"Cada cambio crea una nueva versión. Los ciclos activos conservan las condiciones con las que fueron adquiridos."} Los valores base no incluyen IVA.</p></div>{can("membership_plans:manage")&&<button className="primary" disabled={busy} onClick={()=>void createPlan(planType)}>+ Nuevo plan</button>}</div>
+      <div className="plan-grid">{currentPlans.map((plan,index)=><article key={plan.id}>
+        <span>{isTripPack?"Paquete de viajes":labelFor(planLabels,plan.code)} · versión {plan.version}</span>
+        <div className="plan-mobile-state"><span className={`membership-badge ${plan.mobileVisible?"active":""}`}>{plan.mobileVisible?"Visible en móvil":"Oculto en móvil"}</span><small>Orden {index+1}</small></div>
+        <h3>{plan.name}</h3><strong>{money(plan.baseAmount,plan.currency)} + IVA</strong>
+        <p>{isTripPack?`${plan.includedTrips} viajes`:`${plan.durationDays} días · ${plan.includedTrips} viajes incluidos`}</p>
+        <small>{isTripPack?(plan.packValidityDays?`Vigencia: ${plan.packValidityDays} días`:`Sin caducidad; vigente hasta agotar viajes`):`Tope de renovación: ${money(plan.maxRenewalAmount,plan.currency)} + IVA · participación adicional ${plan.extraTripSharePercent}%`}</small>
+        {can("membership_plans:manage")&&<div className="row-actions plan-actions">
+          <button className="link" disabled={busy} onClick={()=>void toggleMobilePlan(plan)}>{plan.mobileVisible?"Ocultar del móvil":"Habilitar en móvil"}</button>
+          <button className="link" title="Subir en la aplicación" aria-label={`Subir ${plan.name}`} disabled={busy||index===0} onClick={()=>void moveMobilePlan(plan,-1)}>↑ Subir</button>
+          <button className="link" title="Bajar en la aplicación" aria-label={`Bajar ${plan.name}`} disabled={busy||index===currentPlans.length-1} onClick={()=>void moveMobilePlan(plan,1)}>↓ Bajar</button>
+          <button className="link" disabled={busy} onClick={()=>void editPlan(plan)}>Editar y publicar versión</button>
+          <button className="link danger" disabled={busy} onClick={()=>void deactivatePlan(plan)}>Desactivar</button>
+        </div>}
+      </article>)}</div>
+      {!currentPlans.length&&<p className="empty">No existen {isTripPack?"planes por viajes":"planes por período"} vigentes.</p>}
+      {historicalPlans.length>0&&<details className="plan-history"><summary>Ver historial de versiones ({historicalPlans.length})</summary><div className="table-wrap"><ManagedTable><thead><tr><th>Plan</th><th>Versión</th><th>Precio base</th><th>{isTripPack?"Viajes / vigencia":"Duración"}</th><th>Vigente desde</th><th>Finalizó</th></tr></thead><tbody>{historicalPlans.map(plan=><tr key={plan.id}><td><strong>{plan.name}</strong><small>{plan.code}</small></td><td>{plan.version}</td><td>{money(plan.baseAmount,plan.currency)} + IVA</td><td>{isTripPack?`${plan.includedTrips} viajes · ${plan.packValidityDays?`${plan.packValidityDays} días`:"sin caducidad"}`:`${plan.durationDays} días`}</td><td>{date(plan.effectiveFrom)}</td><td>{date(plan.effectiveUntil)}</td></tr>)}</tbody></ManagedTable></div></details>}
+    </section>;
   };
   return <div className="membership-admin">
     {fiscalOrder&&<FiscalProfileDialog endpoint={`/v1/admin/fiscal/context/membership/${fiscalOrder}`} token={token} editable={can('CLIENTES_FISCALES_EDITAR')} onClose={()=>setFiscalOrder(null)}/>}

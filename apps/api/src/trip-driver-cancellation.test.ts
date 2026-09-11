@@ -9,6 +9,7 @@ describe("cancelación y reasignación de una carrera aceptada", () => {
     expect(source).toContain("trip_driver_cancellations");
     expect(source).toContain("driver_search_round=0");
     expect(source).toContain("DRIVER_CANCELLED_REASSIGNING");
+    expect(source).toContain("await settleDriverCancelledCommercialAssignment(tx,tripId,user.id!)");
     expect(source).toContain("redispatchOldestTrip(tripId)");
     expect(source).toContain("await Promise.all([");
   });

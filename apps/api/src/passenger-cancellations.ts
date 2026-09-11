@@ -19,6 +19,14 @@ export const passengerCancellationPolicySchema = z.object({
 });
 export type PassengerCancellationPolicy = z.infer<typeof passengerCancellationPolicySchema>;
 
+// Some historical writes encoded the validated object before sending it to
+// postgres.js, leaving a JSON string inside the JSONB column. Keep reads
+// compatible while the repair migration normalizes existing installations.
+export function storedPassengerCancellationPolicy(value: unknown): PassengerCancellationPolicy {
+  const decoded = typeof value === 'string' ? JSON.parse(value) : value;
+  return passengerCancellationPolicySchema.parse(decoded);
+}
+
 export function cancellationConsequence(policy: Pick<PassengerCancellationPolicy,'enabled'|'steps'>, count: number): number | null {
   if (!policy.enabled) return 0;
   const step = [...policy.steps].reverse().find(step => count >= step.fromCount);
@@ -54,7 +62,7 @@ export async function passengerCancellationSummary(passengerId: string) {
     from users u left join passenger_cancellation_cycles cy on cy.id=u.passenger_cancellation_cycle_id
     join operational_settings os on os.id=1 where u.id=${passengerId} and u.deleted_at is null`;
   if (!row) return null;
-  const policy = passengerCancellationPolicySchema.parse(row.policy);
+  const policy = storedPassengerCancellationPolicy(row.policy);
   const count = Number(row.cycleCount);
   const next = policy.enabled ? policy.steps.find(s=>s.fromCount>count&&(s.suspensionDays===null||s.suspensionDays>0)) : undefined;
   const threshold = policy.enabled ? policy.steps.find(s=>s.suspensionDays===null||s.suspensionDays>0)?.fromCount ?? null : null;
@@ -102,7 +110,7 @@ export async function registerPassengerCancellationRoutes(app: FastifyInstance):
     try { requirePermission(request, 'settings:view'); }
     catch { return reply.code(403).send({ error: 'FORBIDDEN' }); }
     const [row] = await database()`select passenger_cancellation_policy as policy from operational_settings where id=1`;
-    return passengerCancellationPolicySchema.parse(row?.policy);
+    return storedPassengerCancellationPolicy(row?.policy);
   });
   app.patch('/v1/admin/settings/passenger-cancellations', async (request, reply) => {
     let actor;
@@ -113,7 +121,7 @@ export async function registerPassengerCancellationRoutes(app: FastifyInstance):
     // Older admin clients may omit duration: preserve the current configured value.
     if (!(request.body as Record<string,unknown>).cycleDurationDays) {
       const [current]=await database()`select passenger_cancellation_policy as policy from operational_settings where id=1`;
-      parsed.data.cycleDurationDays=passengerCancellationPolicySchema.parse(current?.policy).cycleDurationDays;
+      parsed.data.cycleDurationDays=storedPassengerCancellationPolicy(current?.policy).cycleDurationDays;
     }
     await database()`update operational_settings set passenger_cancellation_policy=${JSON.stringify(parsed.data)}::jsonb,
       updated_at=now(), updated_by=${actor.id!} where id=1`;
@@ -174,7 +182,7 @@ export async function cancelPassengerTrip(passengerId: string, tripId: string) {
           or exists(select 1 from scheduled_trip_responses where trip_id=${tripId} and driver_id=${existing.driverId} and accepted=true)`;
         if (proof) {
           const [settings] = await tx`select passenger_cancellation_policy as policy from operational_settings where id=1`;
-          const policy = passengerCancellationPolicySchema.parse(settings!.policy);
+          const policy = storedPassengerCancellationPolicy(settings!.policy);
           const [instant]=await tx`select clock_timestamp() as at`;
           let [cycle]=await tx`select * from passenger_cancellation_cycles where id=${passenger!.cycleId}
             and passenger_id=${passengerId} and ends_at>${instant!.at}`;

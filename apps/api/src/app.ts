@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { calculateQuote, initialPricingConfig } from "@mototaxi/domain";
 import { calculateTerritorialFare } from "./fare-engine.js";
 import { configuredScheduledQuote, legacyScheduledConfirmation, registerScheduledArrivalRoutes } from './scheduled-arrival.js';
-import { immediateQuote, ensureSearchSession } from './arrival-commercial.js';
+import { immediateQuote, ensureSearchSession, settleDriverCancelledCommercialAssignment } from './arrival-commercial.js';
 import {registerCommercialEconomicsRoutes} from './commercial-economics-admin.js';
 import {packageEconomicsTick} from './package-economics.js';
 import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
@@ -29,7 +29,7 @@ import { pushConfigurationStatus, sendPush } from "./push.js";
 import { registerRealtimeRoutes } from "./realtime.js";
 import { registerSupportRoutes } from "./support.js";
 import { registerTripSharingRoutes } from "./trip-sharing.js";
-import { registerPassengerCancellationRoutes, releaseExpiredPassengerSuspensions, cancelPassengerTrip, cancellationConsequence, passengerCancellationPolicySchema } from "./passenger-cancellations.js";
+import { registerPassengerCancellationRoutes, releaseExpiredPassengerSuspensions, cancelPassengerTrip, cancellationConsequence, storedPassengerCancellationPolicy } from "./passenger-cancellations.js";
 import { reverseLocation, searchLocations, searchLocationsInArea } from "./geocoding.js";
 import { computeRoute, type RouteResult } from "./routing.js";
 import { googleApiUsageRecorder } from "./api-usage.js";
@@ -2180,7 +2180,7 @@ export async function buildApp() {
       from users left join passenger_cancellation_cycles cy on cy.id=users.passenger_cancellation_cycle_id
       cross join operational_settings where users.id=${user.id!} and operational_settings.id=1`;
     const count=Number(row!.count);
-    return {count, nextCount:count+1, suspensionDays:cancellationConsequence(passengerCancellationPolicySchema.parse(row!.policy),count+1)};
+    return {count, nextCount:count+1, suspensionDays:cancellationConsequence(storedPassengerCancellationPolicy(row!.policy),count+1)};
   });
 
   app.post("/v1/trips/:tripId/cancel", async (request, reply) => {
@@ -2875,6 +2875,7 @@ export async function buildApp() {
       await tx`update driver_offers set responded_at=coalesce(responded_at,now()),
         accepted=coalesce(accepted,false), response_reason=coalesce(response_reason,'TRIP_NO_LONGER_AVAILABLE')
         where trip_id=${tripId} and responded_at is null`;
+      await settleDriverCancelledCommercialAssignment(tx,tripId,user.id!);
       await tx`update trips set driver_id=null, cooperative_id=null, status='SEARCHING', assigned_at=null,
         driver_search_round=0, driver_search_lower_meters=0, driver_search_upper_meters=0,
         driver_search_next_round_at=null, driver_search_finished_at=null

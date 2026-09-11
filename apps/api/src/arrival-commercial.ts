@@ -134,3 +134,26 @@ export async function persistCommercialAssignment(tx:TransactionSql,tripId:strin
   await tx`update arrival_search_sessions set matched_round=${economic.matchedRound??null},confirmed_arrival_fee=${economic.arrivalFee??economic.scheduledArrivalFee}
     where id=(select arrival_search_session_id from trips where id=${tripId})`;
 }
+
+/**
+ * A driver cancellation after acceptance consumes the selected commercial
+ * modality. For pay-per-use this turns the reservation into a real debit; for
+ * memberships the usage recorded at acceptance remains consumed. Marking the
+ * assignment as released also prevents the generic trip trigger from refunding
+ * the wallet when the trip returns to SEARCHING.
+ */
+export async function settleDriverCancelledCommercialAssignment(tx:TransactionSql,tripId:string,driverId:string) {
+  await tx`select pg_advisory_xact_lock(hashtext(${`membership-order:${driverId}`}))`;
+  const [assignment]=await tx`select * from trip_commercial_assignments
+    where trip_id=${tripId} and driver_id=${driverId} for update`;
+  if(!assignment||assignment.completed_at||assignment.released_at)return null;
+  const snapshot=assignment.snapshot as Record<string,unknown>;
+  if(snapshot.billingMode==='PAY_PER_USE'&&Number(assignment.reserved_amount)>0) {
+    await tx`select apply_driver_wallet_movement(${driverId},'TRIP_COMMISSION',${assignment.reserved_amount},
+      ${`driver-cancel-debit:${assignment.id}`},${tripId},null,${driverId},'Comisión aplicada por cancelación del conductor')`;
+  }
+  const [settled]=await tx`update trip_commercial_assignments set released_at=now(),
+    snapshot=snapshot||${tx.json({settlementReason:'DRIVER_CANCELLED_AFTER_ACCEPTANCE'})}
+    where id=${assignment.id} returning id::text,"reserved_amount"::text as "reservedAmount",snapshot`;
+  return settled??null;
+}

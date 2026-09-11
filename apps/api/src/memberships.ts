@@ -113,6 +113,12 @@ const planVersionSchema = planBaseSchema.omit({
   effectiveFrom: true
 });
 
+const mobilePlanVisibilitySchema = z.object({ mobileVisible: z.boolean() });
+const mobilePlanOrderSchema = z.object({
+  planType: membershipPlanTypeSchema,
+  planIds: z.array(z.string().uuid()).min(1).max(100)
+}).refine(value=>new Set(value.planIds).size===value.planIds.length,{message:"DUPLICATE_PLAN_ID"});
+
 const gracePolicySchema = z.object({
   name: z.string().trim().min(3).max(120),
   reason: z.string().trim().min(5).max(500),
@@ -513,7 +519,7 @@ async function activePaymentOrder(driverId: string) {
     : { ...safeOrder, token: null, qrUrl: null };
 }
 
-async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>) {
+async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean}={}) {
   const result = await database().begin(async tx => {
     await lockMembershipBilling(tx, driverId);
     await tx`update membership_payment_orders set status='EXPIRED',updated_at=now() where driver_id=${driverId} and status='PENDING' and expires_at<=now()`;
@@ -551,7 +557,9 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
         ${context.config.minimumTopUp}::numeric and ${context.config.maximumTopUp}::numeric as valid`;
       if(!limit!.valid)throw new Error('TOPUP_OUTSIDE_LIMITS');
     }
-    const [selectedPlan] = input.planId?await tx`select * from membership_plans where id=${input.planId} and enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())`:[];
+    const [selectedPlan] = input.planId?await tx`select * from membership_plans where id=${input.planId} and enabled=true
+      and (${options.mobileCatalogOnly??false}=false or mobile_visible=true)
+      and effective_from<=now() and (effective_until is null or effective_until>now())`:[];
     const plan=selectedPlan??(input.topUpAmount?{id:null,code:'WALLET_TOPUP',name:'Saldo Costa-Go',plan_type:'WALLET_TOPUP',
       base_amount:input.topUpAmount,currency:'USD',included_trips:0,max_renewal_amount:input.topUpAmount,extra_trip_share_percent:0,duration_days:0}:null);
     if (!plan) throw new Error("MEMBERSHIP_PLAN_DISABLED");
@@ -998,7 +1006,7 @@ function businessError(error: unknown, reply: FastifyReply) {
     "PAYMENT_REFERENCE_ALREADY_USED", "MEMBERSHIP_PLAN_CODE_EXISTS",
     "MEMBERSHIP_PLAN_NOT_CURRENT", "INSUFFICIENT_AVAILABLE_BALANCE", "WALLET_NOT_ENABLED",
     "COMMERCIAL_MODEL_DISABLED", "PACKAGE_COMMERCIAL_RULE_REQUIRED", "IDEMPOTENCY_CONFLICT",
-    "SETTINGS_VERSION_CONFLICT"
+    "SETTINGS_VERSION_CONFLICT", "MEMBERSHIP_PLAN_ORDER_MISMATCH"
   ];
   const notFound = ["PAYMENT_ORDER_NOT_FOUND", "MEMBERSHIP_PLAN_NOT_FOUND"];
   const badRequest = [
@@ -1088,8 +1096,9 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         case when plan_type='PERIODIC' then duration_days end as "durationDays",
         included_trips as "includedTrips",pack_validity_days as "packValidityDays",
         max_renewal_amount::float8 as "maximumAmount"
-        from membership_plans where enabled=true and effective_from<=now() and (effective_until is null or effective_until>now())
-        order by case when plan_type='PERIODIC' then 0 else 1 end,duration_days,included_trips`,
+        from membership_plans where enabled=true and mobile_visible=true
+          and effective_from<=now() and (effective_until is null or effective_until>now())
+        order by case when plan_type='PERIODIC' then 0 else 1 end,mobile_sort_order,name,id`,
       activePaymentOrder(user.id!),
       database()`select vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`
     ]);
@@ -1159,7 +1168,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const user = await requireMobileUser(request, reply, "DRIVER"); if (!user) return;
     try {
       const input = paymentOrderSchema.parse(request.body);
-      return reply.code(201).send(await createPaymentOrder(user.id!, input));
+      return reply.code(201).send(await createPaymentOrder(user.id!, input,{mobileCatalogOnly:true}));
     } catch (error) { return businessError(error, reply); }
   });
 
@@ -1271,7 +1280,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/admin/membership-plans", async (request, reply) => { try {
     requirePermission(request, "memberships:view");
-    return database()`select id::text,code,version,name,plan_type as "planType",period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",pack_validity_days as "packValidityDays",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,effective_from as "effectiveFrom",effective_until as "effectiveUntil",(enabled=true and effective_from<=now() and effective_until is null) as "current",(select coalesce(to_jsonb(os)->>'vat_rate_percent','0')::float8 from operational_settings os where id=1) as "vatRatePercent" from membership_plans order by plan_type,code,version desc`;
+    return database()`select id::text,code,version,name,plan_type as "planType",period_unit as "periodUnit",period_count as "periodCount",duration_days as "durationDays",base_amount::float8 as "baseAmount",currency,included_trips as "includedTrips",pack_validity_days as "packValidityDays",max_renewal_amount::float8 as "maxRenewalAmount",extra_trip_share_percent::float8 as "extraTripSharePercent",enabled,mobile_visible as "mobileVisible",mobile_sort_order as "mobileSortOrder",effective_from as "effectiveFrom",effective_until as "effectiveUntil",(enabled=true and effective_from<=now() and effective_until is null) as "current",(select coalesce(to_jsonb(os)->>'vat_rate_percent','0')::float8 from operational_settings os where id=1) as "vatRatePercent" from membership_plans order by plan_type,(enabled=true and effective_from<=now() and effective_until is null) desc,mobile_sort_order,code,version desc`;
   } catch (error) { return businessError(error, reply); } });
 
   app.post("/v1/admin/membership-plans", async (request, reply) => { try {
@@ -1279,7 +1288,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const body = planSchema.parse(request.body);
     const [existing] = await database()`select id from membership_plans where code=${body.code} limit 1`;
     if (existing) throw new Error("MEMBERSHIP_PLAN_CODE_EXISTS");
-    const [plan] = await database()`insert into membership_plans(code,version,name,plan_type,period_unit,period_count,duration_days,base_amount,currency,included_trips,pack_validity_days,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${body.code},1,${body.name},${body.planType},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.planType === "TRIP_PACK" ? body.packValidityDays ?? null : null},${body.planType === "TRIP_PACK" ? body.baseAmount : body.maxRenewalAmount},${body.planType === "TRIP_PACK" ? 0 : body.extraTripSharePercent},${body.enabled},${body.effectiveFrom ?? new Date()},${actor.id!},${actor.id!}) returning id::text,code,version,name,plan_type as "planType"`;
+    const [plan] = await database()`insert into membership_plans(code,version,name,plan_type,period_unit,period_count,duration_days,base_amount,currency,included_trips,pack_validity_days,max_renewal_amount,extra_trip_share_percent,enabled,mobile_visible,mobile_sort_order,effective_from,created_by,updated_by) values (${body.code},1,${body.name},${body.planType},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${body.planType === "TRIP_PACK" ? body.packValidityDays ?? null : null},${body.planType === "TRIP_PACK" ? body.baseAmount : body.maxRenewalAmount},${body.planType === "TRIP_PACK" ? 0 : body.extraTripSharePercent},${body.enabled},true,(select coalesce(max(mobile_sort_order),-1)+1 from membership_plans where plan_type=${body.planType} and enabled and effective_from<=now() and effective_until is null),${body.effectiveFrom ?? new Date()},${actor.id!},${actor.id!}) returning id::text,code,version,name,plan_type as "planType"`;
     if (!plan) throw new Error("MEMBERSHIP_PLAN_NOT_CREATED");
     await persistAudit(actor,"MEMBERSHIP_PLAN_CREATED","MEMBERSHIP_PLAN",plan.id,body.code);
     return reply.code(201).send(plan);
@@ -1297,7 +1306,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
       if (previous.plan_type === "TRIP_PACK" && body.includedTrips < 1) throw new Error("TRIP_PACK_REQUIRES_CREDITS");
       const changedAt = new Date();
       await tx`update membership_plans set enabled=false,effective_until=${changedAt},updated_by=${actor.id!},updated_at=${changedAt} where id=${planId}`;
-      const [created] = await tx`insert into membership_plans(code,version,name,plan_type,period_unit,period_count,duration_days,base_amount,currency,included_trips,pack_validity_days,max_renewal_amount,extra_trip_share_percent,enabled,effective_from,created_by,updated_by) values (${previous.code},${Number(previous.version) + 1},${body.name},${previous.plan_type},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${previous.plan_type === "TRIP_PACK" ? body.packValidityDays ?? null : null},${previous.plan_type === "TRIP_PACK" ? body.baseAmount : body.maxRenewalAmount},${previous.plan_type === "TRIP_PACK" ? 0 : body.extraTripSharePercent},true,${changedAt},${actor.id!},${actor.id!}) returning id::text,code,version,name,plan_type as "planType"`;
+      const [created] = await tx`insert into membership_plans(code,version,name,plan_type,period_unit,period_count,duration_days,base_amount,currency,included_trips,pack_validity_days,max_renewal_amount,extra_trip_share_percent,enabled,mobile_visible,mobile_sort_order,effective_from,created_by,updated_by) values (${previous.code},${Number(previous.version) + 1},${body.name},${previous.plan_type},${body.periodUnit},${body.periodCount},${body.durationDays},${body.baseAmount},${body.currency.toUpperCase()},${body.includedTrips},${previous.plan_type === "TRIP_PACK" ? body.packValidityDays ?? null : null},${previous.plan_type === "TRIP_PACK" ? body.baseAmount : body.maxRenewalAmount},${previous.plan_type === "TRIP_PACK" ? 0 : body.extraTripSharePercent},true,${previous.mobile_visible},${previous.mobile_sort_order},${changedAt},${actor.id!},${actor.id!}) returning id::text,code,version,name,plan_type as "planType"`;
       return created;
     });
     if (!next) throw new Error("MEMBERSHIP_PLAN_NOT_CREATED");
@@ -1314,6 +1323,36 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     await persistAudit(actor,"MEMBERSHIP_PLAN_DEACTIVATED","MEMBERSHIP_PLAN",plan.id,`${plan.code} v${plan.version}: ${reason}`);
     return plan;
   } catch (error) { return businessError(error, reply); } });
+
+  app.patch("/v1/admin/membership-plans/:planId/mobile-visibility", async (request, reply) => { try {
+    const actor=requirePermission(request,"membership_plans:manage");
+    const planId=z.string().uuid().parse((request.params as {planId:string}).planId);
+    const body=mobilePlanVisibilitySchema.parse(request.body);
+    const [plan]=await database()`update membership_plans set mobile_visible=${body.mobileVisible},updated_by=${actor.id!},updated_at=now()
+      where id=${planId} and enabled=true and effective_from<=now() and effective_until is null
+      returning id::text,code,version,mobile_visible as "mobileVisible",mobile_sort_order as "mobileSortOrder"`;
+    if(!plan)throw new Error("MEMBERSHIP_PLAN_NOT_CURRENT");
+    await persistAudit(actor,"MEMBERSHIP_PLAN_MOBILE_VISIBILITY_UPDATED","MEMBERSHIP_PLAN",plan.id,
+      `${plan.code} v${plan.version}: ${body.mobileVisible?'visible':'oculto'} en móvil`);
+    return plan;
+  } catch(error){return businessError(error,reply);} });
+
+  app.put("/v1/admin/membership-plans/mobile-order", async (request, reply) => { try {
+    const actor=requirePermission(request,"membership_plans:manage");
+    const body=mobilePlanOrderSchema.parse(request.body);
+    await database().begin(async tx=>{
+      const current=await tx`select id::text from membership_plans where plan_type=${body.planType}
+        and enabled=true and effective_from<=now() and effective_until is null for update`;
+      const currentIds=new Set(current.map(row=>String(row.id)));
+      if(currentIds.size!==body.planIds.length||body.planIds.some(id=>!currentIds.has(id)))
+        throw new Error("MEMBERSHIP_PLAN_ORDER_MISMATCH");
+      for(const [position,id] of body.planIds.entries())
+        await tx`update membership_plans set mobile_sort_order=${position},updated_by=${actor.id!},updated_at=now() where id=${id}`;
+    });
+    await persistAudit(actor,"MEMBERSHIP_PLAN_MOBILE_ORDER_UPDATED","MEMBERSHIP_PLAN",body.planIds[0]!,
+      `${body.planType}: ${body.planIds.join(',')}`);
+    return {planType:body.planType,planIds:body.planIds};
+  } catch(error){return businessError(error,reply);} });
 
   app.get("/v1/admin/memberships", async (request, reply) => { try {
     requirePermission(request, "memberships:view");
