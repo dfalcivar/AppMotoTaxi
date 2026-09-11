@@ -5,6 +5,8 @@ import {ManagedTable} from './console-ui';
 import './commercial-economics-panel.css';
 
 const money=(v:unknown)=>v==null?'—':new Intl.NumberFormat('es-EC',{style:'currency',currency:'USD'}).format(Number(v));
+const billingModeLabels:Record<string,string>={PAY_PER_USE:'Pago por uso',TRIP_PACKAGE:'Paquete por viajes',PERIOD_PLAN_INCLUDED:'Incluido en plan por período',PERIOD_PLAN_OVERAGE:'Viaje adicional del plan',PERIOD_PLAN_CAP_REACHED:'Tope del plan alcanzado'};
+const round=(value:unknown)=>{const number=Number(value);return Number.isFinite(number)?new Intl.NumberFormat('es-EC',{maximumFractionDigits:2}).format(number):'—';};
 type EconomicsDraft={enabled:boolean;preserveCancelledSearchRound:boolean;costaGoPercent:string;searchSessionMinutes:string;sameRouteToleranceMeters:string;
   lowBalanceThreshold:string;minimumTopUp:string;maximumTopUp:string;historicalWindowDays:string;minimumSamples:string;
   fullConfidenceSamples:string;recalculateMinutes:string};
@@ -15,7 +17,10 @@ export function CommercialEconomicsPanel({token,permissions,mode}:{token:string;
   const [from,setFrom]=useState(''),[to,setTo]=useState(''),[zone,setZone]=useState(''),[plan,setPlan]=useState(''),[modality,setModality]=useState('');
   const dialog=usePanelDialog();
   const can=(p:string)=>permissions.includes('*')||permissions.includes(p);
-  async function load(){setData(await apiFetch('/v1/admin/commercial-economics',token));}
+  async function load(){
+    const next=await apiFetch('/v1/admin/commercial-economics',token);setData(next);
+    if(mode==='dashboard')setWallets(await apiFetch('/v1/admin/commercial-economics/wallets',token));
+  }
   useEffect(()=>{void load().catch(e=>setMessage(String(e)));},[token]);
   async function action(fn:()=>Promise<void>){setBusy(true);setMessage('');try{await fn();await load();setMessage('Operación completada.');}catch(e){setMessage(String(e));}finally{setBusy(false);}}
   function configure(){
@@ -84,7 +89,7 @@ export function CommercialEconomicsPanel({token,permissions,mode}:{token:string;
   if(totalRounds>6)displayedRounds.push(totalRounds);
   const draftFee=Number(data?.settings?.feePerRound??0),draftShare=Number(configurationDraft?.costaGoPercent??0);
   const input=(key:Exclude<keyof EconomicsDraft,'enabled'|'preserveCancelledSearchRound'>,label:string,help:string,options?:{prefix?:string;min?:number;max?:number;step?:string})=><label className="economic-field"><span>{label}</span><div className="economic-input">{options?.prefix&&<b>{options.prefix}</b>}<input type="number" required min={options?.min??0} max={options?.max} step={options?.step??'1'} value={configurationDraft?.[key]??''} onChange={event=>updateDraft(key,event.target.value)}/></div><small>{help}</small></label>;
-  return <section className={`card${mode==='settings'?' economic-summary-shell':''}`}>
+  return <section className={`card${mode==='settings'?' economic-summary-shell':''}${mode==='dashboard'?' economic-dashboard-panel':''}`}>
     {mode!=='settings'&&<h2>{mode==='packages'?'Precios técnicos y sugeridos':'Resultados comerciales y saldos'}</h2>}
     {message&&<p role="status">{message}</p>}
     {mode==='settings'&&data&&<div className="economic-summary">
@@ -105,16 +110,16 @@ export function CommercialEconomicsPanel({token,permissions,mode}:{token:string;
           <button disabled={busy||!p.calculationId||!can('membership_plans:manage')} onClick={()=>void apply(p)}>Aplicar precio sugerido</button></td></tr>)}
     </tbody></ManagedTable></div>}
     {mode==='dashboard'&&<><div className="settings-grid"><label>Desde<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>Hasta (exclusivo)<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
-      <label>ID de zona<input value={zone} onChange={e=>setZone(e.target.value)}/></label><label>ID de plan<input value={plan} onChange={e=>setPlan(e.target.value)}/></label><label>Modalidad<select value={modality} onChange={e=>setModality(e.target.value)}><option value="">Todas</option>{['PAY_PER_USE','TRIP_PACKAGE','PERIOD_PLAN_INCLUDED','PERIOD_PLAN_OVERAGE','PERIOD_PLAN_CAP_REACHED'].map(v=><option key={v}>{v}</option>)}</select></label></div>
+      <label>ID de zona<input value={zone} onChange={e=>setZone(e.target.value)}/></label><label>ID de plan<input value={plan} onChange={e=>setPlan(e.target.value)}/></label><label>Modalidad<select value={modality} onChange={e=>setModality(e.target.value)}><option value="">Todas</option>{Object.entries(billingModeLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label></div>
       <button disabled={busy} onClick={()=>void reportLoad()}>Consultar</button>
       <p>Comisión aplicada no equivale siempre a ingreso cobrado: los excedentes periódicos se pagan en la renovación.</p>
-      {report&&<><div className="table-wrap"><ManagedTable><thead><tr><th>Modalidad</th><th>Viajes</th><th>Llegada</th><th>Teórica</th><th>Aplicada</th><th>Cubierta / no aplicada</th><th>Promedios</th></tr></thead><tbody>{report.modalities.map((r:any)=><tr key={r.mode}><td>{r.mode}</td><td>{r.trips}</td><td>{money(r.arrivalTotal)}</td><td>{money(r.theoretical)}</td><td>{money(r.applied)}</td><td>{money(r.covered)}</td><td>Ronda {r.averageRound??'—'}<small>Llegada {money(r.averageArrival)} · comisión {money(r.averageCommission)}</small></td></tr>)}</tbody></ManagedTable></div>
+      {report&&<><div className="table-wrap"><ManagedTable><thead><tr><th>Modalidad</th><th>Viajes</th><th>Llegada</th><th>Teórica</th><th>Aplicada</th><th>Cubierta / no aplicada</th><th>Promedios</th></tr></thead><tbody>{report.modalities.map((r:any)=><tr key={r.mode}><td>{billingModeLabels[r.mode]??r.mode}</td><td>{r.trips}</td><td>{money(r.arrivalTotal)}</td><td>{money(r.theoretical)}</td><td>{money(r.applied)}</td><td>{money(r.covered)}</td><td>Ronda {round(r.averageRound)}<small>Llegada {money(r.averageArrival)} · comisión {money(r.averageCommission)}</small></td></tr>)}</tbody></ManagedTable></div>
       <h3>Distribución de rondas</h3><p>{report.rounds.map((r:any)=>`${r.round==='PROGRAMADO'?'Programados':`R${r.round}`}: ${r.trips} viajes`).join(' · ')||'Sin viajes en el filtro.'}</p>
       <h3>Paquetes vendidos</h3><p>Compras del período seleccionado; consumo y margen acumulados de cada compra. El margen es provisional mientras queden viajes. Por zona se incluyen compras con viajes en esa zona.</p><div className="table-wrap"><ManagedTable><thead><tr><th>Paquete</th><th>Uso</th><th>Ingreso base sin IVA</th><th>Comisión teórica real</th><th>Margen esperado / acumulado</th></tr></thead><tbody>{report.packages.map((p:any)=><tr key={p.id}><td>{p.snapshot.name}</td><td>{p.used}/{p.quantity}</td><td>{money(p.snapshot.publishedPrice)}</td><td>{money(p.realTheoreticalCommission)}</td><td>{money(p.snapshot.priceEconomics?.expectedMargin)} / {money(p.realMargin)}</td></tr>)}</tbody></ManagedTable></div>
       <h3>Cobros confirmados · alcance global</h3><p>Solo aplica el filtro de fechas: una recarga o membresía no pertenece a una zona de viaje. Las recargas son saldo prepago, no comisión ganada.</p>
       <div className="table-wrap"><ManagedTable><thead><tr><th>Concepto</th><th>Pagos</th><th>Base</th><th>Excedentes / saldo anterior</th><th>Neto sin IVA</th><th>IVA</th></tr></thead><tbody>{report.receipts.map((r:any)=><tr key={r.mode}><td>{r.mode==='WALLET_TOPUP'?'Recargas':r.mode==='TRIP_PACK'?'Paquetes':'Planes por período'}</td><td>{r.payments}</td><td>{money(r.base)}</td><td>{money(r.overages)}</td><td>{money(r.net)}</td><td>{money(r.vat)}</td></tr>)}</tbody></ManagedTable></div>
       <p>Saldos globales actuales: {money(report.wallets.total)} · reservado {money(report.wallets.reserved)}.</p></>}
-      {wallets&&<><h3>Saldos de conductores</h3><div className="table-wrap"><ManagedTable><thead><tr><th>Conductor</th><th>Total</th><th>Reservado</th><th>Disponible</th><th>Acciones</th></tr></thead><tbody>{wallets.wallets.map((w:any)=><tr key={w.driverId}><td>{w.name}</td><td>{money(w.total)}</td><td>{money(w.reserved)}</td><td>{money(w.available)}</td><td><button onClick={()=>void wallet(w)}>Movimientos</button><button disabled={busy||!can('memberships:manage')} onClick={()=>void adjust(w)}>Ajustar</button></td></tr>)}</tbody></ManagedTable></div></>}
+      {wallets&&<><h3>Saldos de conductores</h3><p className="economic-dashboard-help">Se muestran todos los conductores. Usa <b>Ajustar</b> para crear su saldo de cortesía; si Pago por uso está inactivo, el conductor puede activarlo desde su saldo en la aplicación.</p><div className="table-wrap"><ManagedTable><thead><tr><th>Conductor</th><th>Pago por uso</th><th>Total</th><th>Reservado</th><th>Disponible</th><th>Acciones</th></tr></thead><tbody>{wallets.wallets.map((w:any)=><tr key={w.driverId}><td><strong>{w.name}</strong><small>{w.email}</small></td><td><span className={`badge ${w.enabled?'active':''}`}>{w.enabled?'Activo':'Inactivo'}</span></td><td>{money(w.total)}</td><td>{money(w.reserved)}</td><td>{money(w.available)}</td><td><button onClick={()=>void wallet(w)}>Movimientos</button><button disabled={busy||!can('memberships:manage')} onClick={()=>void adjust(w)}>Ajustar</button></td></tr>)}</tbody></ManagedTable></div></>}
     </>}
     {configurationDraft&&<div className="economic-modal-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget&&!busy)setConfigurationDraft(null);}}>
       <form className="economic-modal" role="dialog" aria-modal="true" aria-labelledby="economic-modal-title" onSubmit={event=>void saveConfiguration(event)}>

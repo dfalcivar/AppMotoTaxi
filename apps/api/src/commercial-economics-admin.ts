@@ -114,8 +114,11 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
   app.get('/v1/admin/commercial-economics/wallets',guarded(async request=>{
     requirePermission(request,'memberships:view');
     const {driverId}=z.object({driverId:z.string().uuid().optional()}).parse(request.query);
-    const wallets=await database()`select w.driver_id as "driverId",u.full_name as name,w.total::text,w.reserved::text,(w.total-w.reserved)::text as available,w.enabled
-      from driver_wallets w join users u on u.id=w.driver_id where (${driverId??null}::uuid is null or w.driver_id=${driverId??null}) order by u.full_name limit 200`;
+    const wallets=await database()`select d.user_id as "driverId",u.full_name as name,u.email,
+      coalesce(w.total,0)::text as total,coalesce(w.reserved,0)::text as reserved,
+      (coalesce(w.total,0)-coalesce(w.reserved,0))::text as available,coalesce(w.enabled,false) as enabled
+      from drivers d join users u on u.id=d.user_id left join driver_wallets w on w.driver_id=d.user_id
+      where (${driverId??null}::uuid is null or d.user_id=${driverId??null}) order by u.full_name limit 200`;
     const movements=driverId?await database()`select * from driver_wallet_movements where driver_id=${driverId} order by created_at desc limit 200`:[];
     return {wallets,movements};
   }));

@@ -46,6 +46,12 @@
 .economic-summary-configure b { margin-left: 4px; font-size: 1.35rem; }
 .economic-summary-configure:disabled { opacity: .55; box-shadow: none; }
 
+.control-panel .economic-dashboard-panel { overflow: visible; }
+.control-panel .economic-dashboard-panel > .cg-data-table { margin-bottom: 24px; }
+.control-panel .economic-dashboard-panel > h3 { position: relative; clear: both; margin: 26px 0 10px; padding-top: 3px; line-height: 1.4; }
+.control-panel .economic-dashboard-panel > p { margin: 10px 0 16px; line-height: 1.5; }
+.control-panel .economic-dashboard-panel > .economic-dashboard-help { margin-top: -3px; padding: 10px 12px; border-radius: 9px; color: var(--cg-muted); background: var(--cg-soft); }
+
 .economic-modal {
   width: min(1180px, 100%);
   max-height: calc(100dvh - 48px);

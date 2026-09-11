@@ -14,7 +14,7 @@ function sqlFor(client:any):any {
 }
 beforeAll(async()=>{
   pg=new PGlite();state.sql=sqlFor(pg);
-  await pg.exec(`create table users(id uuid primary key,full_name text);insert into users values('${user}','Prueba');
+  await pg.exec(`create table users(id uuid primary key,full_name text,email text);insert into users values('${user}','Prueba','prueba@costago.test');
     create table drivers(user_id uuid primary key references users(id));insert into drivers values('${user}');
     create table operational_settings(id int primary key,membership_extra_trip_share_percent numeric default 40,
       driver_search_initial_radius_meters int default 2000,driver_search_radius_increment_meters int default 2000,
@@ -41,7 +41,7 @@ beforeAll(async()=>{
   await registerCommercialEconomicsRoutes(app);await app.ready();
 },30000);
 beforeEach(async()=>{
-  await pg.exec('truncate membership_plans cascade;truncate audit_log;');
+  await pg.exec('truncate membership_plans cascade;truncate driver_wallets cascade;truncate audit_log;');
   await pg.query(`insert into membership_plans(id,code,version,name,plan_type,base_amount,included_trips,currency,enabled)
     values($1,'PACK_TEST',1,'Paquete prueba','TRIP_PACK',8,50,'USD',true)`,[plan]);
   await pg.query(`update operational_settings set arrival_commercial_version=1,arrival_commercial_configuration=$1::jsonb`,[JSON.stringify({
@@ -129,4 +129,11 @@ it('records an administrative balance adjustment as a movement and common audit 
     where entity_id=$1`,[user])).rows).toEqual([
     {action:'DRIVER_WALLET_ADMIN_ADJUSTMENT',source:'WEB_ADMIN'}
   ]);
+});
+it('lists drivers without a wallet so an administrator can grant a courtesy adjustment',async()=>{
+  const result=await app.inject({method:'GET',url:'/v1/admin/commercial-economics/wallets'});
+  expect(result.statusCode,result.body).toBe(200);
+  expect(result.json()).toEqual({wallets:[{
+    driverId:user,name:'Prueba',email:'prueba@costago.test',total:'0',reserved:'0',available:'0',enabled:false
+  }],movements:[]});
 });
