@@ -18292,6 +18292,101 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (mounted) await _showMembershipDetails();
   }
 
+  Widget _insufficientWalletOverview(
+    BuildContext context, {
+    required double available,
+    required double minimumRequired,
+    required VoidCallback onRecharge,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return CostaGoSurface(
+      borderColor: colors.primary.withValues(alpha: .26),
+      padding: const EdgeInsets.all(CostaGoSpace.lg),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Modalidad actual',
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: colors.onSurfaceVariant,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text('Pago por uso',
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineMedium
+                      ?.copyWith(fontWeight: FontWeight.w900, height: 1.05)),
+            ]),
+          ),
+          const SizedBox(width: CostaGoSpace.sm),
+          const CostaGoStatusChip(
+            label: 'Sin saldo',
+            icon: Icons.warning_amber_rounded,
+            tone: CostaGoStatusTone.danger,
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Text('Recibe viajes al contar con saldo en tu cuenta.',
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: colors.onSurfaceVariant, fontWeight: FontWeight.w500)),
+        const Divider(height: CostaGoSpace.xl),
+        Text('Saldo Costa-Go',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: colors.onSurfaceVariant, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 2),
+        Text('\$${available.toStringAsFixed(2)}',
+            style: Theme.of(context)
+                .textTheme
+                .displayMedium
+                ?.copyWith(fontWeight: FontWeight.w900, height: 1.05)),
+        const SizedBox(height: 8),
+        Text.rich(
+          TextSpan(children: [
+            const TextSpan(text: 'Saldo mínimo para recibir viajes: '),
+            TextSpan(
+                text: '\$${minimumRequired.toStringAsFixed(2)}',
+                style: TextStyle(
+                    color: colors.onSurface, fontWeight: FontWeight.w900)),
+          ]),
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: colors.onSurfaceVariant, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: CostaGoSpace.md),
+        const CostaGoInfoBanner(
+          title: 'Saldo insuficiente para aceptar viajes.',
+          message: 'Recarga saldo Costa-Go para volver a recibir solicitudes.',
+          icon: Icons.error_outline_rounded,
+          tone: CostaGoStatusTone.danger,
+        ),
+        const SizedBox(height: CostaGoSpace.md),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: onRecharge,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(58),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: CostaGoSpace.md, vertical: 14),
+            ),
+            child: const Stack(alignment: Alignment.center, children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.add_card_rounded),
+                SizedBox(width: 10),
+                Text('Recargar saldo',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
+              ]),
+              Align(
+                  alignment: Alignment.centerRight,
+                  child: Icon(Icons.chevron_right_rounded)),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+
   Future<void> _showMembershipDetails() async {
     final data = membershipData;
     if (data == null || !mounted) return;
@@ -18423,6 +18518,45 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 }
               }
 
+              Future<void> openWallet() async {
+                final order = await showModalBottomSheet<Map<String, dynamic>>(
+                    context: sheetContext,
+                    isScrollControlled: true,
+                    useSafeArea: true,
+                    showDragHandle: true,
+                    builder: (_) => DriverWalletSheet(
+                          load: () async => Map<String, dynamic>.from(
+                              await api.call('GET', '/v1/driver/wallet',
+                                  token: widget.s.token) as Map),
+                          setEnabled: (enabled) async {
+                            await api.call(
+                                'PUT', '/v1/driver/wallet/preference',
+                                token: widget.s.token,
+                                body: {'enabled': enabled});
+                          },
+                          createOrder: (amount, key) async =>
+                              Map<String, dynamic>.from(await api.call('POST',
+                                  '/v1/driver/membership/payment-orders',
+                                  token: widget.s.token,
+                                  body: {
+                                'topUpAmount': amount,
+                                'idempotencyKey': key,
+                                'intendedMethod': 'CASH'
+                              }) as Map),
+                        ));
+                if (order != null && sheetContext.mounted) {
+                  setSheetState(() => pendingOrder = order);
+                  final result =
+                      await _showMembershipPaymentOrder(sheetContext, order);
+                  await refreshMembership(force: true);
+                  if (result ==
+                          MembershipPaymentOrderResult.transferSubmitted &&
+                      sheetContext.mounted) {
+                    Navigator.pop(sheetContext);
+                  }
+                }
+              }
+
               return FractionallySizedBox(
                   heightFactor: .9,
                   child: Column(children: [
@@ -18447,267 +18581,305 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 CostaGoSpace.lg,
                                 CostaGoSpace.xxl),
                             children: [
-                          Wrap(spacing: 10, runSpacing: 8, children: [
-                            CostaGoStatusChip(
-                              label: _membershipStatusLabel(effectiveStatus),
-                              icon: effectiveStatus == 'INSUFFICIENT_BALANCE'
-                                  ? Icons.money_off_csred_rounded
-                                  : effectiveStatus == 'LOW_BALANCE'
-                                      ? Icons.warning_amber_rounded
-                                      : effectiveStatus == 'ACTIVE'
-                                          ? Icons.verified_rounded
-                                          : effectiveStatus == 'EXHAUSTED'
-                                              ? Icons.route_outlined
-                                              : Icons.schedule_rounded,
-                              tone: statusTone,
-                            ),
-                            CostaGoStatusChip(
-                              label: prepaidIsCurrent
-                                  ? 'Pago por uso'
-                                  : currentIsTripPack
-                                      ? 'Por viajes'
-                                      : 'Por período',
-                              icon: prepaidIsCurrent
-                                  ? Icons.account_balance_wallet_outlined
-                                  : currentIsTripPack
-                                      ? Icons.route_outlined
-                                      : Icons.event_repeat_outlined,
-                              tone: prepaidIsCurrent
-                                  ? prepaidBalanceInsufficient
-                                      ? CostaGoStatusTone.danger
-                                      : prepaidBalanceLow
-                                          ? CostaGoStatusTone.warning
-                                          : CostaGoStatusTone.success
-                                  : CostaGoStatusTone.info,
-                            ),
-                          ]),
+                          if (!prepaidBalanceInsufficient)
+                            Wrap(spacing: 10, runSpacing: 8, children: [
+                              CostaGoStatusChip(
+                                label: _membershipStatusLabel(effectiveStatus),
+                                icon: effectiveStatus == 'INSUFFICIENT_BALANCE'
+                                    ? Icons.money_off_csred_rounded
+                                    : effectiveStatus == 'LOW_BALANCE'
+                                        ? Icons.warning_amber_rounded
+                                        : effectiveStatus == 'ACTIVE'
+                                            ? Icons.verified_rounded
+                                            : effectiveStatus == 'EXHAUSTED'
+                                                ? Icons.route_outlined
+                                                : Icons.schedule_rounded,
+                                tone: statusTone,
+                              ),
+                              CostaGoStatusChip(
+                                label: prepaidIsCurrent
+                                    ? 'Pago por uso'
+                                    : currentIsTripPack
+                                        ? 'Por viajes'
+                                        : 'Por período',
+                                icon: prepaidIsCurrent
+                                    ? Icons.account_balance_wallet_outlined
+                                    : currentIsTripPack
+                                        ? Icons.route_outlined
+                                        : Icons.event_repeat_outlined,
+                                tone: prepaidIsCurrent
+                                    ? prepaidBalanceInsufficient
+                                        ? CostaGoStatusTone.danger
+                                        : prepaidBalanceLow
+                                            ? CostaGoStatusTone.warning
+                                            : CostaGoStatusTone.success
+                                    : CostaGoStatusTone.info,
+                              ),
+                            ]),
                           const SizedBox(height: CostaGoSpace.sm),
-                          CostaGoSurface(
-                            tone: prepaidBalanceInsufficient
-                                ? CostaGoStatusTone.danger
-                                : CostaGoStatusTone.info,
-                            padding: const EdgeInsets.all(CostaGoSpace.lg),
-                            child: Column(children: [
-                              Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Expanded(
-                                      child: Column(
+                          prepaidBalanceInsufficient
+                              ? _insufficientWalletOverview(
+                                  sheetContext,
+                                  available: walletAvailable,
+                                  minimumRequired: minimumRequiredBalance,
+                                  onRecharge: () => unawaited(openWallet()),
+                                )
+                              : CostaGoSurface(
+                                  tone: prepaidBalanceInsufficient
+                                      ? CostaGoStatusTone.danger
+                                      : CostaGoStatusTone.info,
+                                  padding:
+                                      const EdgeInsets.all(CostaGoSpace.lg),
+                                  child: Column(children: [
+                                    Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                      prepaidIsCurrent
+                                                          ? 'Modalidad actual'
+                                                          : 'Plan actual',
+                                                      style: Theme.of(
+                                                              sheetContext)
+                                                          .textTheme
+                                                          .bodyMedium
+                                                          ?.copyWith(
+                                                              color: Theme.of(
+                                                                      sheetContext)
+                                                                  .colorScheme
+                                                                  .onSurfaceVariant)),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    prepaidIsCurrent
+                                                        ? prepaidBalanceInsufficient
+                                                            ? 'Sin saldo disponible'
+                                                            : 'Pago por uso'
+                                                        : planName.isNotEmpty
+                                                            ? planName
+                                                            : 'Sin plan activo',
+                                                    style:
+                                                        Theme.of(sheetContext)
+                                                            .textTheme
+                                                            .titleLarge
+                                                            ?.copyWith(
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w900),
+                                                  ),
+                                                ]),
+                                          ),
+                                          CostaGoIconBadge(
+                                            icon: prepaidIsCurrent
+                                                ? prepaidBalanceInsufficient
+                                                    ? Icons
+                                                        .money_off_csred_rounded
+                                                    : prepaidBalanceLow
+                                                        ? Icons
+                                                            .warning_amber_rounded
+                                                        : Icons
+                                                            .account_balance_wallet_outlined
+                                                : currentIsTripPack
+                                                    ? Icons.route_outlined
+                                                    : Icons
+                                                        .calendar_month_outlined,
+                                            tone: prepaidIsCurrent
+                                                ? prepaidBalanceInsufficient
+                                                    ? CostaGoStatusTone.danger
+                                                    : prepaidBalanceLow
+                                                        ? CostaGoStatusTone
+                                                            .warning
+                                                        : CostaGoStatusTone
+                                                            .success
+                                                : CostaGoStatusTone.info,
+                                            size: 52,
+                                          ),
+                                        ]),
+                                    if (prepaidIsCurrent) ...[
+                                      const Divider(height: CostaGoSpace.lg),
+                                      _membershipDetailLine(
+                                        'Saldo prepago disponible',
+                                        '\$${walletAvailable.toStringAsFixed(2)}',
+                                      ),
+                                      if (prepaidBalanceInsufficient) ...[
+                                        if (minimumRequiredBalance > 0)
+                                          _membershipDetailLine(
+                                            'Saldo mínimo para recibir viajes',
+                                            '\$${minimumRequiredBalance.toStringAsFixed(2)}',
+                                          ),
+                                        const SizedBox(height: CostaGoSpace.sm),
+                                        CostaGoSurface(
+                                          tone: CostaGoStatusTone.danger,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: CostaGoSpace.md,
+                                              vertical: CostaGoSpace.sm),
+                                          child: Row(children: [
+                                            Icon(Icons.money_off_csred_rounded,
+                                                color: Theme.of(sheetContext)
+                                                    .colorScheme
+                                                    .error),
+                                            const SizedBox(
+                                                width: CostaGoSpace.sm),
+                                            const Expanded(
+                                              child: Text(
+                                                'Saldo insuficiente para aceptar viajes. Recarga saldo Costa-Go.',
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w800),
+                                              ),
+                                            ),
+                                          ]),
+                                        ),
+                                      ] else if (prepaidBalanceLow) ...[
+                                        const SizedBox(height: CostaGoSpace.sm),
+                                        CostaGoSurface(
+                                          tone: CostaGoStatusTone.warning,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: CostaGoSpace.md,
+                                              vertical: CostaGoSpace.sm),
+                                          child: Row(children: [
+                                            Icon(Icons.warning_amber_rounded,
+                                                color: Theme.of(sheetContext)
+                                                    .colorScheme
+                                                    .tertiary),
+                                            const SizedBox(
+                                                width: CostaGoSpace.sm),
+                                            const Expanded(
+                                              child: Text(
+                                                'Tu saldo Costa-Go está por agotarse.',
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w800),
+                                              ),
+                                            ),
+                                          ]),
+                                        ),
+                                      ],
+                                    ] else if (currentIsTripPack) ...[
+                                      const SizedBox(height: CostaGoSpace.md),
+                                      Row(
                                           crossAxisAlignment:
-                                              CrossAxisAlignment.start,
+                                              CrossAxisAlignment.end,
                                           children: [
                                             Text(
-                                                prepaidIsCurrent
-                                                    ? 'Modalidad actual'
-                                                    : 'Plan actual',
+                                                '${tripPackProgress.remaining}',
                                                 style: Theme.of(sheetContext)
                                                     .textTheme
-                                                    .bodyMedium
+                                                    .displaySmall
                                                     ?.copyWith(
                                                         color: Theme.of(
                                                                 sheetContext)
                                                             .colorScheme
-                                                            .onSurfaceVariant)),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              prepaidIsCurrent
-                                                  ? prepaidBalanceInsufficient
-                                                      ? 'Sin saldo disponible'
-                                                      : 'Pago por uso'
-                                                  : planName.isNotEmpty
-                                                      ? planName
-                                                      : 'Sin plan activo',
-                                              style: Theme.of(sheetContext)
-                                                  .textTheme
-                                                  .titleLarge
-                                                  ?.copyWith(
-                                                      fontWeight:
-                                                          FontWeight.w900),
+                                                            .primary,
+                                                        fontWeight:
+                                                            FontWeight.w900,
+                                                        height: .95)),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: Padding(
+                                                padding: const EdgeInsets.only(
+                                                    bottom: 4),
+                                                child: Text(
+                                                    'viajes disponibles',
+                                                    style: Theme.of(
+                                                            sheetContext)
+                                                        .textTheme
+                                                        .titleMedium
+                                                        ?.copyWith(
+                                                            color: Theme.of(
+                                                                    sheetContext)
+                                                                .colorScheme
+                                                                .primary,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w800)),
+                                              ),
                                             ),
                                           ]),
-                                    ),
-                                    CostaGoIconBadge(
-                                      icon: prepaidIsCurrent
-                                          ? prepaidBalanceInsufficient
-                                              ? Icons.money_off_csred_rounded
-                                              : prepaidBalanceLow
-                                                  ? Icons.warning_amber_rounded
-                                                  : Icons
-                                                      .account_balance_wallet_outlined
-                                          : currentIsTripPack
-                                              ? Icons.route_outlined
-                                              : Icons.calendar_month_outlined,
-                                      tone: prepaidIsCurrent
-                                          ? prepaidBalanceInsufficient
-                                              ? CostaGoStatusTone.danger
-                                              : prepaidBalanceLow
-                                                  ? CostaGoStatusTone.warning
-                                                  : CostaGoStatusTone.success
-                                          : CostaGoStatusTone.info,
-                                      size: 52,
-                                    ),
-                                  ]),
-                              if (prepaidIsCurrent) ...[
-                                const Divider(height: CostaGoSpace.lg),
-                                _membershipDetailLine(
-                                  'Saldo prepago disponible',
-                                  '\$${walletAvailable.toStringAsFixed(2)}',
-                                ),
-                                if (prepaidBalanceInsufficient) ...[
-                                  if (minimumRequiredBalance > 0)
-                                    _membershipDetailLine(
-                                      'Saldo mínimo para recibir viajes',
-                                      '\$${minimumRequiredBalance.toStringAsFixed(2)}',
-                                    ),
-                                  const SizedBox(height: CostaGoSpace.sm),
-                                  CostaGoSurface(
-                                    tone: CostaGoStatusTone.danger,
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: CostaGoSpace.md,
-                                        vertical: CostaGoSpace.sm),
-                                    child: Row(children: [
-                                      Icon(Icons.money_off_csred_rounded,
-                                          color: Theme.of(sheetContext)
-                                              .colorScheme
-                                              .error),
-                                      const SizedBox(width: CostaGoSpace.sm),
-                                      const Expanded(
-                                        child: Text(
-                                          'Saldo insuficiente para aceptar viajes. Recarga saldo Costa-Go.',
-                                          style: TextStyle(
-                                              fontWeight: FontWeight.w800),
-                                        ),
-                                      ),
-                                    ]),
-                                  ),
-                                ] else if (prepaidBalanceLow) ...[
-                                  const SizedBox(height: CostaGoSpace.sm),
-                                  CostaGoSurface(
-                                    tone: CostaGoStatusTone.warning,
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: CostaGoSpace.md,
-                                        vertical: CostaGoSpace.sm),
-                                    child: Row(children: [
-                                      Icon(Icons.warning_amber_rounded,
-                                          color: Theme.of(sheetContext)
-                                              .colorScheme
-                                              .tertiary),
-                                      const SizedBox(width: CostaGoSpace.sm),
-                                      const Expanded(
-                                        child: Text(
-                                          'Tu saldo Costa-Go está por agotarse.',
-                                          style: TextStyle(
-                                              fontWeight: FontWeight.w800),
-                                        ),
-                                      ),
-                                    ]),
-                                  ),
-                                ],
-                              ] else if (currentIsTripPack) ...[
-                                const SizedBox(height: CostaGoSpace.md),
-                                Row(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text('${tripPackProgress.remaining}',
-                                          style: Theme.of(sheetContext)
-                                              .textTheme
-                                              .displaySmall
-                                              ?.copyWith(
-                                                  color: Theme.of(sheetContext)
+                                      const SizedBox(height: CostaGoSpace.sm),
+                                      Row(children: [
+                                        Expanded(
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(99),
+                                            child: LinearProgressIndicator(
+                                              minHeight: 11,
+                                              value: tripPackProgress.progress,
+                                              backgroundColor:
+                                                  Theme.of(sheetContext)
                                                       .colorScheme
-                                                      .primary,
-                                                  fontWeight: FontWeight.w900,
-                                                  height: .95)),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Padding(
-                                          padding:
-                                              const EdgeInsets.only(bottom: 4),
-                                          child: Text('viajes disponibles',
-                                              style: Theme.of(sheetContext)
-                                                  .textTheme
-                                                  .titleMedium
-                                                  ?.copyWith(
-                                                      color:
-                                                          Theme.of(sheetContext)
-                                                              .colorScheme
-                                                              .primary,
-                                                      fontWeight:
-                                                          FontWeight.w800)),
+                                                      .outlineVariant
+                                                      .withValues(alpha: .65),
+                                            ),
+                                          ),
                                         ),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                            '${tripPackProgress.remaining} de ${tripPackProgress.included}',
+                                            style: Theme.of(sheetContext)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                    color:
+                                                        Theme.of(sheetContext)
+                                                            .colorScheme
+                                                            .onSurfaceVariant,
+                                                    fontWeight:
+                                                        FontWeight.w700)),
+                                      ]),
+                                      const SizedBox(height: 6),
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                            '${tripPackProgress.used} utilizados de ${tripPackProgress.included}',
+                                            style: Theme.of(sheetContext)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                    color:
+                                                        Theme.of(sheetContext)
+                                                            .colorScheme
+                                                            .onSurfaceVariant)),
                                       ),
-                                    ]),
-                                const SizedBox(height: CostaGoSpace.sm),
-                                Row(children: [
-                                  Expanded(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(99),
-                                      child: LinearProgressIndicator(
-                                        minHeight: 11,
-                                        value: tripPackProgress.progress,
-                                        backgroundColor: Theme.of(sheetContext)
-                                            .colorScheme
-                                            .outlineVariant
-                                            .withValues(alpha: .65),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                      '${tripPackProgress.remaining} de ${tripPackProgress.included}',
-                                      style: Theme.of(sheetContext)
-                                          .textTheme
-                                          .bodyMedium
-                                          ?.copyWith(
-                                              color: Theme.of(sheetContext)
-                                                  .colorScheme
-                                                  .onSurfaceVariant,
-                                              fontWeight: FontWeight.w700)),
-                                ]),
-                                const SizedBox(height: 6),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                      '${tripPackProgress.used} utilizados de ${tripPackProgress.included}',
-                                      style: Theme.of(sheetContext)
-                                          .textTheme
-                                          .bodyMedium
-                                          ?.copyWith(
-                                              color: Theme.of(sheetContext)
-                                                  .colorScheme
-                                                  .onSurfaceVariant)),
+                                    ] else ...[
+                                      const Divider(height: CostaGoSpace.lg),
+                                      _membershipDetailLine('Viajes del ciclo',
+                                          '${membership['completedTrips'] ?? 0}'),
+                                      _membershipDetailLine(
+                                          'Renovación estimada',
+                                          '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
+                                    ],
+                                    if (!prepaidIsCurrent &&
+                                        !currentIsTripPack &&
+                                        extraAmount > 0)
+                                      _membershipDetailLine(
+                                          'Excedente acumulado',
+                                          '\$${extraAmount.toStringAsFixed(2)}'),
+                                    if (!prepaidIsCurrent) ...[
+                                      const Divider(height: CostaGoSpace.lg),
+                                      if (membership['expiresAt'] != null)
+                                        _membershipDetailLine(
+                                            'Vigente hasta',
+                                            formatEcuadorCompactDate(
+                                                DateTime.parse(
+                                                    membership['expiresAt']
+                                                        .toString()))),
+                                      if (currentIsTripPack &&
+                                          membership['expiresAt'] == null)
+                                        _membershipDetailLine('Vigencia',
+                                            'Hasta agotar los viajes'),
+                                    ],
+                                  ]),
                                 ),
-                              ] else ...[
-                                const Divider(height: CostaGoSpace.lg),
-                                _membershipDetailLine('Viajes del ciclo',
-                                    '${membership['completedTrips'] ?? 0}'),
-                                _membershipDetailLine('Renovación estimada',
-                                    '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
-                              ],
-                              if (!prepaidIsCurrent &&
-                                  !currentIsTripPack &&
-                                  extraAmount > 0)
-                                _membershipDetailLine('Excedente acumulado',
-                                    '\$${extraAmount.toStringAsFixed(2)}'),
-                              if (!prepaidIsCurrent) ...[
-                                const Divider(height: CostaGoSpace.lg),
-                                if (membership['expiresAt'] != null)
-                                  _membershipDetailLine(
-                                      'Vigente hasta',
-                                      formatEcuadorCompactDate(DateTime.parse(
-                                          membership['expiresAt'].toString()))),
-                                if (currentIsTripPack &&
-                                    membership['expiresAt'] == null)
-                                  _membershipDetailLine(
-                                      'Vigencia', 'Hasta agotar los viajes'),
-                              ],
-                            ]),
-                          ),
                           const SizedBox(height: 8),
                           CostaGoSurface(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: CostaGoSpace.md,
-                                vertical: CostaGoSpace.sm),
+                                vertical: CostaGoSpace.md),
                             onTap: () async {
                               final submitted =
                                   await _showMembershipPaymentHistory(
@@ -18719,121 +18891,115 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 }
                               }
                             },
-                            child: const Row(children: [
-                              CostaGoIconBadge(
-                                  icon: Icons.receipt_long_outlined, size: 42),
-                              SizedBox(width: CostaGoSpace.sm),
+                            child: Row(children: [
+                              const CostaGoIconBadge(
+                                  icon: Icons.receipt_long_outlined, size: 48),
+                              const SizedBox(width: CostaGoSpace.md),
                               Expanded(
-                                  child: Text('Mis pagos',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w800))),
-                              Icon(Icons.chevron_right_rounded),
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Mis pagos',
+                                          style: Theme.of(sheetContext)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(
+                                                  fontWeight: FontWeight.w900)),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Ver cargos, recargas y comprobantes',
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                                color: Theme.of(sheetContext)
+                                                    .colorScheme
+                                                    .onSurfaceVariant),
+                                      ),
+                                    ]),
+                              ),
+                              const Icon(Icons.chevron_right_rounded),
                             ]),
                           ),
                           const SizedBox(height: 8),
-                          OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: prepaidBalanceInsufficient
-                                  ? Theme.of(sheetContext).colorScheme.error
-                                  : null,
-                              backgroundColor: prepaidBalanceInsufficient
-                                  ? Theme.of(sheetContext)
-                                      .colorScheme
-                                      .errorContainer
-                                      .withValues(alpha: .42)
-                                  : null,
-                              side: prepaidBalanceInsufficient
-                                  ? BorderSide(
-                                      color: Theme.of(sheetContext)
-                                          .colorScheme
-                                          .error
-                                          .withValues(alpha: .55))
-                                  : null,
+                          if (prepaidBalanceInsufficient)
+                            CostaGoSurface(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: CostaGoSpace.md,
-                                  vertical: CostaGoSpace.sm),
-                            ),
-                            onPressed: () async {
-                              final order =
-                                  await showModalBottomSheet<
-                                          Map<String, dynamic>>(
-                                      context: sheetContext,
-                                      isScrollControlled: true,
-                                      useSafeArea: true,
-                                      showDragHandle: true,
-                                      builder: (_) => DriverWalletSheet(
-                                            load: () async =>
-                                                Map<String, dynamic>.from(
-                                                    await api.call('GET',
-                                                        '/v1/driver/wallet',
-                                                        token: widget
-                                                            .s.token) as Map),
-                                            setEnabled: (enabled) async {
-                                              await api.call('PUT',
-                                                  '/v1/driver/wallet/preference',
-                                                  token: widget.s.token,
-                                                  body: {'enabled': enabled});
-                                            },
-                                            createOrder: (amount, key) async =>
-                                                Map<String, dynamic>.from(
-                                                    await api.call('POST',
-                                                        '/v1/driver/membership/payment-orders',
-                                                        token: widget.s.token,
-                                                        body: {
-                                                  'topUpAmount': amount,
-                                                  'idempotencyKey': key,
-                                                  'intendedMethod': 'CASH'
-                                                }) as Map),
-                                          ));
-                              if (order != null && sheetContext.mounted) {
-                                setSheetState(() => pendingOrder = order);
-                                final result =
-                                    await _showMembershipPaymentOrder(
-                                        sheetContext, order);
-                                await refreshMembership(force: true);
-                                if (result ==
-                                        MembershipPaymentOrderResult
-                                            .transferSubmitted &&
-                                    sheetContext.mounted) {
-                                  Navigator.pop(sheetContext);
-                                }
-                              }
-                            },
-                            child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                      prepaidBalanceInsufficient
-                                          ? Icons.money_off_csred_rounded
-                                          : Icons
-                                              .account_balance_wallet_outlined,
-                                      size: 17),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                      child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                        Text(
-                                            prepaidBalanceInsufficient
-                                                ? 'Sin saldo disponible · Recargar'
-                                                : 'Saldo Costa-Go · Pago por uso',
-                                            textAlign: TextAlign.center,
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.w800)),
-                                        if (walletSummary?['wallet'] is Map)
-                                          Text(
-                                            '\$${Map<String, dynamic>.from(walletSummary!['wallet'] as Map)['available'] ?? '0.00'} disponibles',
-                                            textAlign: TextAlign.center,
+                                  vertical: CostaGoSpace.md),
+                              onTap: () => unawaited(openWallet()),
+                              child: Row(children: [
+                                const CostaGoIconBadge(
+                                    icon: Icons.stacked_bar_chart_rounded,
+                                    size: 48),
+                                const SizedBox(width: CostaGoSpace.md),
+                                Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Ver movimientos',
                                             style: Theme.of(sheetContext)
                                                 .textTheme
-                                                .bodySmall
+                                                .titleMedium
                                                 ?.copyWith(
                                                     fontWeight:
-                                                        FontWeight.w700),
-                                          ),
-                                      ])),
-                                ]),
-                          ),
+                                                        FontWeight.w900)),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Consulta tu historial de saldo',
+                                          style: Theme.of(sheetContext)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                  color: Theme.of(sheetContext)
+                                                      .colorScheme
+                                                      .onSurfaceVariant),
+                                        ),
+                                      ]),
+                                ),
+                                const Icon(Icons.chevron_right_rounded),
+                              ]),
+                            )
+                          else
+                            OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: CostaGoSpace.md,
+                                    vertical: CostaGoSpace.sm),
+                              ),
+                              onPressed: openWallet,
+                              child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                        Icons.account_balance_wallet_outlined,
+                                        size: 17),
+                                    const SizedBox(width: 8),
+                                    Flexible(
+                                        child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                          const Text(
+                                              'Saldo Costa-Go · Pago por uso',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                  fontWeight: FontWeight.w800)),
+                                          if (walletSummary?['wallet'] is Map)
+                                            Text(
+                                              '\$${Map<String, dynamic>.from(walletSummary!['wallet'] as Map)['available'] ?? '0.00'} disponibles',
+                                              textAlign: TextAlign.center,
+                                              style: Theme.of(sheetContext)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w700),
+                                            ),
+                                        ])),
+                                  ]),
+                            ),
                           if (pendingOrder != null) ...[
                             const SizedBox(height: 10),
                             Card(
