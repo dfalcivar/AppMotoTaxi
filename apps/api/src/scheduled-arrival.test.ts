@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it, vi } from 'vitest';
-import { scheduledArrivalSchema, scheduledQuote } from './scheduled-arrival.js';
+import { scheduledArrivalSchema, scheduledQuote, storedScheduledArrivalConfiguration } from './scheduled-arrival.js';
 import type { TerritorialFare } from './fare-engine.js';
 
 const configuration={enabled:true,dayStartTime:'06:00',nightStartTime:'19:00',dayArrivalFee:'0.25',nightArrivalFee:'0.75',timezone:'America/Guayaquil'};
@@ -41,6 +41,11 @@ describe('scheduled arrival integration contract',()=>{
     expect(scheduledArrivalSchema.safeParse({...configuration,nightStartTime:'06:00'}).success).toBe(false);
     expect(scheduledArrivalSchema.safeParse({...configuration,dayArrivalFee:'-1'}).success).toBe(false);
   });
+  it('reads both native JSONB objects and legacy double-encoded values',()=>{
+    expect(storedScheduledArrivalConfiguration(configuration)).toEqual(configuration);
+    expect(storedScheduledArrivalConfiguration(JSON.stringify(configuration))).toEqual(configuration);
+    expect(storedScheduledArrivalConfiguration(null)).toBeNull();
+  });
   it('migration is repeatable and leaves current pricing and trips unchanged',async()=>{
     const pg=new PGlite();
     try{
@@ -51,6 +56,17 @@ describe('scheduled arrival integration contract',()=>{
       expect((await pg.query('select scheduled_arrival_configuration,scheduled_arrival_version from operational_settings')).rows)
         .toEqual([{scheduled_arrival_configuration:null,scheduled_arrival_version:0}]);
       expect((await pg.query('select pricing_snapshot from trips')).rows).toEqual([{pricing_snapshot:{totalCents:350}}]);
+    }finally{await pg.close();}
+  },30000);
+  it('repairs the double-encoded JSONB value already stored in production',async()=>{
+    const pg=new PGlite();
+    try{
+      await pg.exec('create table operational_settings(id integer primary key,scheduled_arrival_configuration jsonb);');
+      await pg.query('insert into operational_settings values(1,$1::jsonb)',[JSON.stringify(JSON.stringify(configuration))]);
+      const sql=await readFile(new URL('../migrations/093_repair_scheduled_arrival_json.sql',import.meta.url),'utf8');
+      await pg.exec(sql);await pg.exec(sql);
+      expect((await pg.query('select scheduled_arrival_configuration as configuration from operational_settings')).rows)
+        .toEqual([{configuration}]);
     }finally{await pg.close();}
   },30000);
 });

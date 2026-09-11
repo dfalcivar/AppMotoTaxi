@@ -21,6 +21,12 @@ export const scheduledArrivalSchema = z.object({
   })
 }).refine(value => value.dayStartTime !== value.nightStartTime, {message:'SCHEDULED_PERIODS_OVERLAP'});
 
+export function storedScheduledArrivalConfiguration(value: unknown) {
+  if (value == null) return null;
+  const decoded = typeof value === 'string' ? JSON.parse(value) : value;
+  return scheduledArrivalSchema.parse(decoded);
+}
+
 export function scheduledQuote(fare: TerritorialFare, pickup: Date, config: z.infer<typeof scheduledArrivalSchema>,
   version: number, costaGoPercent: string, requestIdentity: unknown) {
   // Replace the legacy additional-per-leg, never add a second commission.
@@ -45,8 +51,8 @@ export async function configuredScheduledQuote(fare: TerritorialFare, pickup: Da
   const [settings] = await database()`select scheduled_arrival_configuration as configuration,
     scheduled_arrival_version as version,membership_extra_trip_share_percent::text as percentage
     from operational_settings where id=1`;
-  if (!settings?.configuration?.enabled) return null;
-  const config = scheduledArrivalSchema.parse(settings.configuration);
+  const config = storedScheduledArrivalConfiguration(settings?.configuration);
+  if (!settings || !config?.enabled) return null;
   return scheduledQuote(fare,pickup,config,Number(settings.version),String(settings.percentage),requestIdentity);
 }
 
@@ -57,7 +63,7 @@ export async function registerScheduledArrivalRoutes(app: FastifyInstance) {
     const [row] = await database()`select scheduled_arrival_configuration as configuration,
       scheduled_arrival_version as version,membership_extra_trip_share_percent::text as "costaGoPercent"
       from operational_settings where id=1`;
-    return row;
+    return row ? {...row,configuration:storedScheduledArrivalConfiguration(row.configuration)} : row;
   });
   app.put('/v1/admin/scheduled-arrival-settings',async (request,reply)=>{
     reply.header('Cache-Control','private, no-store');
@@ -68,14 +74,17 @@ export async function registerScheduledArrivalRoutes(app: FastifyInstance) {
       const [previous] = await tx`select scheduled_arrival_version as version,scheduled_arrival_configuration as configuration
         from operational_settings where id=1 for update`;
       if (!previous || previous.version !== parsed.data.version) return null;
+      const previousValue = {...previous,configuration:storedScheduledArrivalConfiguration(previous.configuration)};
       const [next] = await tx`update operational_settings set
-        scheduled_arrival_configuration=${JSON.stringify(parsed.data.configuration)}::jsonb,
+        scheduled_arrival_configuration=${tx.json(parsed.data.configuration)},
         scheduled_arrival_version=scheduled_arrival_version+1,updated_at=now(),updated_by=${actor.id!}
         where id=1 returning scheduled_arrival_version as version,scheduled_arrival_configuration as configuration`;
+      if (!next) throw new Error('SCHEDULED_ARRIVAL_SETTINGS_NOT_SAVED');
+      const nextValue = {...next,configuration:storedScheduledArrivalConfiguration(next.configuration)};
       await tx`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason)
-        values(${actor.id!},'SCHEDULED_ARRIVAL_SETTINGS_UPDATED','SETTINGS','1',${JSON.stringify(previous)}::jsonb,
-          ${JSON.stringify({...next,source:actor.administrativeSource??'WEB_ADMIN'})}::jsonb,'Tarifa programada por hora del servicio; no cambia reservas confirmadas')`;
-      return next;
+        values(${actor.id!},'SCHEDULED_ARRIVAL_SETTINGS_UPDATED','SETTINGS','1',${tx.json(previousValue)},
+          ${tx.json({...nextValue,source:actor.administrativeSource??'WEB_ADMIN'})},'Tarifa programada por hora del servicio; no cambia reservas confirmadas')`;
+      return nextValue;
     });
     if (!result) return reply.code(409).send({error:'SETTINGS_VERSION_CONFLICT'});
     return result;

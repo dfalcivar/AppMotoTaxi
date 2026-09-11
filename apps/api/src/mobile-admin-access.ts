@@ -4,6 +4,7 @@ import { z } from "zod";
 import { database } from "./database.js";
 import { commercialContext } from "./arrival-commercial.js";
 import { immediateArrival, scheduledArrivalSnapshot } from "./commercial-economics.js";
+import { storedScheduledArrivalConfiguration } from "./scheduled-arrival.js";
 import {
   requirePermission,
   tokenFor,
@@ -110,11 +111,12 @@ export async function registerMobileAdminAccessRoutes(app: FastifyInstance) {
     } else {
       const [scheduled] = await database()`select scheduled_arrival_configuration as configuration,
         scheduled_arrival_version as version from operational_settings where id=1`;
-      if (!scheduled?.configuration?.enabled) return reply.code(409).send({ error: "SCHEDULED_CONFIGURATION_NOT_ACTIVE" });
+      const scheduledConfiguration = storedScheduledArrivalConfiguration(scheduled?.configuration);
+      if (!scheduled || !scheduledConfiguration?.enabled) return reply.code(409).send({ error: "SCHEDULED_CONFIGURATION_NOT_ACTIVE" });
       const pickup = body.tripType === "SCHEDULED_DAY"
-        ? `2026-01-15T${scheduled.configuration.dayStartTime}:00-05:00`
-        : `2026-01-15T${scheduled.configuration.nightStartTime}:00-05:00`;
-      calculation = scheduledArrivalSnapshot(pickup,body.journeyFare,{...scheduled.configuration,
+        ? `2026-01-15T${scheduledConfiguration.dayStartTime}:00-05:00`
+        : `2026-01-15T${scheduledConfiguration.nightStartTime}:00-05:00`;
+      calculation = scheduledArrivalSnapshot(pickup,body.journeyFare,{...scheduledConfiguration,
         version:String(scheduled.version),costaGoPercent:context.costaGoPercent});
     }
     const theoretical = String(calculation.theoreticalCommission);
