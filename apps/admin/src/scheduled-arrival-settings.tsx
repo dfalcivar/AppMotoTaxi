@@ -10,16 +10,19 @@ export function ScheduledArrivalSettings({token}:{token:string}) {
     dayStartTime:'',nightStartTime:'',timezone:''});
   const [version,setVersion]=useState<number>();
   const [percentage,setPercentage]=useState('');
+  const [loading,setLoading]=useState(true);
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
   const dialog=usePanelDialog();
   useEffect(()=>{
     let active=true;
+    setLoading(true);setMessage('');
     apiFetch<SettingsResponse>('/v1/admin/scheduled-arrival-settings',token).then(result=>{
       if(!active)return;
       setVersion(result.version);setPercentage(result.costaGoPercent??'');
       if(result.configuration)setConfiguration(result.configuration);
-    }).catch(error=>{if(active)setMessage(String(error));});
+    }).catch(error=>{if(active)setMessage(`No se pudo cargar la configuración guardada. ${String(error)}`);})
+      .finally(()=>{if(active)setLoading(false);});
     return ()=>{active=false;};
   },[token]);
   async function save(event:React.FormEvent) {
@@ -40,6 +43,10 @@ export function ScheduledArrivalSettings({token}:{token:string}) {
     <input type={type} required value={configuration[key]} disabled={busy}
       inputMode={key.endsWith('Fee')?'decimal':undefined}
       onChange={event=>setConfiguration(current=>({...current,[key]:event.target.value}))}/></label>;
+  if(loading)return <section className="card" aria-busy="true">
+    <h2>Tarifa de llegada · viajes programados</h2>
+    <p className="note">Cargando la configuración guardada…</p>
+  </section>;
   return <section className="card">
     <h2>Tarifa de llegada · viajes programados</h2>
     <p>Según la hora del servicio, no la hora de reserva. No cambia las rondas de viajes inmediatos.</p>
