@@ -1,65 +1,66 @@
 # Versión candidata a producción
 
-Actualizado el 11 de septiembre de 2026.
+Actualizado el 15 de septiembre de 2026.
 
 - Aplicación: Costa-Go
-- Versión de referencia: `0.18.4 (65)`
-- Canal: prueba abierta
-- Estado documental: políticas, ficha y declaraciones revisadas contra el código actual.
-- Imágenes: set actualizado disponible en `docs/google-play/screenshots-0.18.1`.
+- Versión: `0.18.7`
+- Código de versión: `68`
+- Canal previsto: prueba abierta / producción en Play Console
+- API: `https://mototaxi-atacames-api.onrender.com`
+- Mapas: Google
+- Proxy de laboratorio: no incluido
 
 ## Cambios de esta versión
 
-- Administración móvil integrada con los mismos parámetros y reglas del panel web.
-- Configuración y simulación del modelo económico por rondas, tarifa de llegada y participación Costa-Go.
-- Corrección de la continuidad de búsqueda y reinicio de rondas según la política de cancelación configurada.
-- Activación automática de disponibilidad al seleccionar una mototaxi.
-- Rediseño del historial y detalle de viajes para pasajero y conductor, con desglose económico más claro.
-- Nueva experiencia de saldo Costa-Go con recargas, últimos movimientos e historial filtrable.
-- Perfiles con resumen de calificaciones, tres comentarios recientes e historial completo.
-- Distintivos diferenciados para membresía por período, paquetes por viajes y Pago por uso.
-- Advertencia visible cuando el saldo prepago alcanza el umbral bajo configurado.
-- Estado rojo de saldo insuficiente cuando el disponible no cubre la comisión mínima de un viaje, con acceso directo a recarga.
-- Catálogo móvil de planes ordenable y publicable gradualmente sin desactivar los planes administrativos.
-- Estado vacío visual para modalidades que todavía no tienen planes publicados.
-- Liquidación correcta de la comisión cuando cancela el conductor y protección del saldo o paquete cuando cancela el pasajero.
-- Actualización inmediata de formularios administrativos al cambiar la tarifa de llegada.
-- Mejoras generales de contraste, jerarquía visual y compatibilidad con temas claro y oscuro.
-- Compilación y validación con Flutter `3.47.2` y Dart `3.13.2`.
+- Nueva sección **Ganancias y comisiones** para conductores.
+- Resumen por hoy, semana, mes o período personalizado.
+- Detalle de ingresos por viajes, comisión Costa-Go, ganancia neta, promedio por
+  viaje, saldo prepago y modalidad de cobro.
+- Movimientos recientes e historial paginado por viaje.
+- Textos más claros al confirmar un viaje: tarifa por búsqueda, rango estimado y
+  aviso de variación según la ronda.
+- API de ganancias protegida por la sesión y el rol del conductor.
+- Preparación documentada del procedimiento de limpieza inicial de producción;
+  el procedimiento no forma parte del arranque de la aplicación y no se ejecuta
+  durante el despliegue.
 
-## Artefactos esperados
+## Artefacto para Play Console
 
-- AAB: `Costa-Go-0.18.4-build65.aab`
-- APK universal: no generado en esta entrega.
-- Firma: clave de publicación Costa-Go existente.
-- API: `https://mototaxi-atacames-api.onrender.com`, sin proxy.
-- Mapas: proveedor Google con clave Android restringida suministrada al compilar.
-- Seguridad de los datos y permisos: sin nuevas categorías ni permisos respecto de la versión anterior.
+- Archivo: `Costa-Go-0.18.7-build68.aab`
+- Tamaño: `113332512` bytes (`108.1 MB`)
+- SHA-256: `42C8A560B2498BC6D4857582A1B1BCB9D7B567F3D4BDB640B554727AD701892E`
+- Application ID: `ec.atacames.mototaxi.mototaxi_atacames`
+- Android mínimo: API 24 (Android 7.0)
+- Android objetivo: API 36
+- Arquitecturas: `arm64-v8a`, `armeabi-v7a` y `x86_64`
+- Firebase: configuración incluida
+- Firma JAR: verificada correctamente
+- Certificado: `CN=Costa-Go Upload, OU=Mobile, O=Costa-Go, L=Atacames, ST=Esmeraldas, C=EC`
+- SHA-256 del certificado: `D0E9E2958DC8B0BE3934A12B3CF484A2E40DFD114FC834153FD534036F2D2292`
+- Certificado coincidente con el AAB `0.18.6 (67)`
 
-## Verificación final del AAB
+El certificado es autofirmado y el AAB no incluye sello de tiempo. `jarsigner`
+lo verifica correctamente y presenta las advertencias habituales para una clave
+de subida privada. Google Play realiza la firma final de distribución.
 
-- Estado: compilado y verificado localmente; pendiente de carga a Play Console.
-- Tamaño: `113235377` bytes.
-- SHA-256: `C4D6CCC4C74F73477D71BA968C41667CC639D3E2FD44263F3540751EC7EE075B`.
-- Firma JAR: verificada. El verificador muestra advertencias de certificado autofirmado y orden del manifiesto ZIP/JAR.
-- Certificado de firma: coincide con el utilizado en el build 63.
-- Version name: `0.18.4`.
-- Version code: `65`.
-- Arquitecturas incluidas: `arm64-v8a`, `armeabi-v7a` y `x86_64`.
-- API de producción: incluida.
-- Proxy de laboratorio: no incluido.
-- Clave de Google Maps: incluida y coincide con la configuración existente de Gradle.
+## Seguridad de los datos y permisos
 
-## Nombre y notas para Play Console
+Esta versión no agrega permisos Android ni nuevas categorías de datos respecto
+de `0.18.6`. La sección de ganancias consulta información de viajes y cobros que
+ya pertenece a la cuenta autenticada del conductor; no incorpora un proveedor
+externo ni un nuevo tipo de recopilación.
 
-Nombre: `Costa-Go 0.18.4 (65)`
+## Notas para Play Console
+
+Nombre sugerido: `Costa-Go 0.18.7 (68)`
 
 ```text
 <es-419>
-Mejoramos el saldo Costa-Go con avisos claros cuando no alcanza para recibir viajes.
-Ahora los planes disponibles se muestran de forma más ordenada y visual.
-También corregimos las cancelaciones para proteger correctamente saldos y paquetes.
+Ahora los conductores pueden consultar sus ganancias y comisiones por día, semana, mes o período personalizado, con el detalle de cada viaje.
+Mejoramos la información de la tarifa al solicitar un viaje para explicar claramente que puede variar según la ronda de búsqueda.
+Incluimos ajustes de estabilidad y preparación para producción.
 </es-419>
 ```
 
-Antes de cada AAB nuevo, actualizar este archivo con `versionName`, `versionCode`, notas, AAB validado, permisos y cambios que afecten Seguridad de los datos o acceso del revisor.
+Antes de cargar una versión posterior, incrementar nuevamente `versionName` y
+`versionCode`, generar un AAB sin proxy y actualizar este registro con su hash.
