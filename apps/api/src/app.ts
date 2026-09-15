@@ -45,6 +45,7 @@ import {
   registerMembershipRoutes
 } from "./memberships.js";
 import { recordAcceptedTripMembershipUsage, markMembershipTripCompleted } from './membership-trip-usage.js';
+import { registerDriverEarningsRoutes } from './driver-earnings.js';
 import {
   legacyPhoneAliases,
   normalizeEmail,
@@ -484,6 +485,7 @@ export async function buildApp() {
   await registerTripSharingRoutes(app);
   await registerPassengerCancellationRoutes(app);
   await registerMembershipRoutes(app);
+  await registerDriverEarningsRoutes(app);
   await registerScheduledArrivalRoutes(app);
   await registerCommercialEconomicsRoutes(app);
   await registerCollectionAdminRoutes(app);

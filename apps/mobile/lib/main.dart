@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'driver_wallet_sheet.dart';
+import 'driver_earnings_sheet.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -2133,6 +2134,30 @@ class Api {
   Future<Map<String, dynamic>> driverMembership(String t) async =>
       Map<String, dynamic>.from(
           await call('GET', '/v1/driver/membership', token: t));
+  Future<Map<String, dynamic>> driverEarningsSummary(
+      String t, DateTime from, DateTime to) async {
+    final query = Uri(queryParameters: {
+      'from': from.toUtc().toIso8601String(),
+      'to': to.toUtc().toIso8601String(),
+    }).query;
+    return Map<String, dynamic>.from(
+        await call('GET', '/v1/driver/earnings/summary?$query', token: t)
+            as Map);
+  }
+
+  Future<Map<String, dynamic>> driverEarningsMovements(
+      String t, DateTime from, DateTime to, int page, int pageSize) async {
+    final query = Uri(queryParameters: {
+      'from': from.toUtc().toIso8601String(),
+      'to': to.toUtc().toIso8601String(),
+      'page': '$page',
+      'pageSize': '$pageSize',
+    }).query;
+    return Map<String, dynamic>.from(
+        await call('GET', '/v1/driver/earnings/movements?$query', token: t)
+            as Map);
+  }
+
   Future<dynamic> createMembershipPaymentOrder(
           String t, String planId, String method) =>
       call('POST', '/v1/driver/membership/payment-orders', token: t, body: {
@@ -11292,7 +11317,35 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
             Padding(
                 padding: const EdgeInsets.only(top: 5),
                 child: Row(children: [
-                  const Expanded(child: Text('Tarifa de llegada')),
+                  Expanded(
+                    child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Tarifa por búsqueda',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w700)),
+                                  Text('Varía según la ronda.',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                              color: scheme.onSurfaceVariant)),
+                                ]),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1, right: 8),
+                            child: Icon(Icons.info_outline_rounded,
+                                size: 17, color: scheme.primary),
+                          ),
+                        ]),
+                  ),
                   Text(
                       '\$${((preview['arrivalMinimumCents'] as num) / 100).toStringAsFixed(2)} – \$${((preview['arrivalMaximumCents'] as num) / 100).toStringAsFixed(2)}'),
                 ])),
@@ -11514,17 +11567,35 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                       .withValues(alpha: .55),
                                 ),
                                 Expanded(
-                                  child: Text(
-                                    'El valor final se confirmará cuando un conductor acepte tu viaje.',
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(dialogContext).brightness ==
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'El valor puede variar',
+                                        style: TextStyle(
+                                          color: Theme.of(dialogContext)
+                                                      .brightness ==
                                                   Brightness.dark
                                               ? const Color(0xffffcc80)
                                               : const Color(0xff784000),
-                                      fontWeight: FontWeight.w800,
-                                      height: 1.25,
-                                    ),
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'La tarifa cambia según la ronda de búsqueda y se confirma cuando un conductor acepte.',
+                                        style: TextStyle(
+                                          color: Theme.of(dialogContext)
+                                                      .brightness ==
+                                                  Brightness.dark
+                                              ? const Color(0xffffcc80)
+                                              : const Color(0xff784000),
+                                          fontWeight: FontWeight.w500,
+                                          height: 1.25,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ]),
@@ -18408,6 +18479,10 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final membership =
         Map<String, dynamic>.from(data['membership'] as Map? ?? const {});
     final plans = List<dynamic>.from(data['plans'] ?? const []);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final earningsToday = api.driverEarningsSummary(
+        widget.s.token, today, today.add(const Duration(days: 1)));
     var pendingOrder = data['pendingOrder'] is Map
         ? Map<String, dynamic>.from(data['pendingOrder'] as Map)
         : null;
@@ -18881,6 +18956,81 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                     ],
                                   ]),
                                 ),
+                          const SizedBox(height: 8),
+                          CostaGoSurface(
+                            tone: CostaGoStatusTone.success,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: CostaGoSpace.md,
+                                vertical: CostaGoSpace.md),
+                            onTap: () => showModalBottomSheet<void>(
+                              context: sheetContext,
+                              isScrollControlled: true,
+                              useSafeArea: true,
+                              showDragHandle: false,
+                              builder: (_) => DriverEarningsSheet(
+                                loadSummary: (from, to) =>
+                                    api.driverEarningsSummary(
+                                        widget.s.token, from, to),
+                                loadPage: (from, to, page, pageSize) =>
+                                    api.driverEarningsMovements(widget.s.token,
+                                        from, to, page, pageSize),
+                              ),
+                            ),
+                            child: Row(children: [
+                              const CostaGoIconBadge(
+                                icon: Icons.account_balance_wallet_outlined,
+                                tone: CostaGoStatusTone.success,
+                                size: 48,
+                              ),
+                              const SizedBox(width: CostaGoSpace.md),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Ganancias y comisiones',
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w900)),
+                                    const SizedBox(height: 2),
+                                    Text('Ver ingresos, descuentos y detalle',
+                                        style: Theme.of(sheetContext)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                                color: Theme.of(sheetContext)
+                                                    .colorScheme
+                                                    .onSurfaceVariant)),
+                                    FutureBuilder<Map<String, dynamic>>(
+                                      future: earningsToday,
+                                      builder: (context, snapshot) {
+                                        if (!snapshot.hasData) {
+                                          return const SizedBox.shrink();
+                                        }
+                                        final amount = double.tryParse(snapshot
+                                                    .data?['netEarnings']
+                                                    ?.toString() ??
+                                                '') ??
+                                            0;
+                                        return Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 6),
+                                          child: CostaGoStatusChip(
+                                            label:
+                                                'Hoy: \$${amount.toStringAsFixed(2)}',
+                                            icon: Icons.trending_up_rounded,
+                                            tone: CostaGoStatusTone.success,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right_rounded),
+                            ]),
+                          ),
                           const SizedBox(height: 8),
                           CostaGoSurface(
                             padding: const EdgeInsets.symmetric(

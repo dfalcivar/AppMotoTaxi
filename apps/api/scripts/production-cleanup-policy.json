@@ -1,0 +1,33 @@
+{
+  "name": "ProductionDataCleanup",
+  "dryRun": true,
+  "preserveEmails": [
+    "play.driver@costa-go.com",
+    "play.passenger@costa-go.com"
+  ],
+  "preserveAllRegisteredAccounts": true,
+  "preserveDeletedAccounts": false,
+  "preserveActiveDriverDocuments": true,
+  "preserveCurrentFleetRelations": true,
+  "deleteAllCooperatives": true,
+  "pruneObsoleteConfigurationVersions": true,
+  "preserveScheduledConfigurationVersions": true,
+  "expectedRegisteredUserCount": 32,
+  "expectedRegisteredDriverCount": 8,
+  "expectedCooperativeCount": 1,
+  "protectAdministrativeRoles": true,
+  "protectMobileAdminAccess": true,
+  "requireFiscalReview": true,
+  "requireReviewDriverEligibility": true,
+  "expectedMigrationCount": 95,
+  "expectedLatestMigration": "095_membership_mobile_catalog.sql",
+  "reviewVehicleId": "a0bc42aa-987a-4ad2-add8-625359839db0",
+  "reviewVehicleIdentifier": "MT-1",
+  "reviewEntitlement": {
+    "planCode": "PLAN_PILOTO",
+    "source": "COURTESY",
+    "amount": 0,
+    "createsPayment": false,
+    "createsFiscalDocument": false
+  }
+}

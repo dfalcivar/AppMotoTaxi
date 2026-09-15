@@ -276,7 +276,7 @@ function validFileSignature(data: Buffer, mime: string): boolean {
   return false;
 }
 
-async function requireMobileUser(request: FastifyRequest, reply: FastifyReply, role?: "DRIVER" | "PASSENGER"): Promise<SessionUser | undefined> {
+export async function requireMobileUser(request: FastifyRequest, reply: FastifyReply, role?: "DRIVER" | "PASSENGER"): Promise<SessionUser | undefined> {
   const token = userFrom(request);
   if (!token?.id) {
     reply.code(401).send({ error: "UNAUTHORIZED" });
