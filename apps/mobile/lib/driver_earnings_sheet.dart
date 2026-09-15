@@ -197,42 +197,34 @@ class _DriverEarningsSheetState extends State<DriverEarningsSheet> {
                             padding: const EdgeInsets.all(CostaGoSpace.lg),
                             child: Row(children: [
                               const CostaGoIconBadge(
-                                icon: Icons.bar_chart_rounded,
-                                tone: CostaGoStatusTone.success,
-                                size: 64,
-                              ),
-                              const SizedBox(width: CostaGoSpace.md),
+                                  icon: Icons.bar_chart_rounded,
+                                  tone: CostaGoStatusTone.success,
+                                  size: 56),
+                              const SizedBox(width: CostaGoSpace.sm),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('Ganancia neta de $_periodLabel',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium
-                                            ?.copyWith(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant)),
-                                    Text(_money(data['netEarnings']),
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .displaySmall
-                                            ?.copyWith(
-                                                color: context.semantic
-                                                    .onSuccessContainer,
-                                                fontWeight: FontWeight.w900,
-                                                height: 1.05)),
-                                    Text(
-                                        '${data['completedTrips'] ?? 0} viajes completados',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodyMedium
-                                            ?.copyWith(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant)),
-                                  ],
+                                flex: 6,
+                                child: _EarningsAmount(
+                                  label: 'Ganancia neta de $_periodLabel',
+                                  value: _money(data['netEarnings']),
+                                  supporting:
+                                      '${data['completedTrips'] ?? 0} viajes completados',
+                                  prominent: true,
+                                ),
+                              ),
+                              const _EarningsDivider(),
+                              Expanded(
+                                flex: 4,
+                                child: _EarningsAmount(
+                                  label: 'Generado por viajes',
+                                  value: _money(data['generatedByTrips']),
+                                ),
+                              ),
+                              const _EarningsDivider(),
+                              Expanded(
+                                flex: 4,
+                                child: _EarningsAmount(
+                                  label: 'Generado con Costa-Go',
+                                  value: _money(data['generatedWithCostaGo']),
                                 ),
                               ),
                             ]),
@@ -248,7 +240,7 @@ class _DriverEarningsSheetState extends State<DriverEarningsSheet> {
                                 _MetricCard(
                                     width: width,
                                     icon: Icons.moped_outlined,
-                                    label: 'Ingresos por viajes',
+                                    label: 'Total cobrado al pasajero',
                                     value: _money(data['grossTripIncome'])),
                                 _MetricCard(
                                     width: width,
@@ -359,6 +351,68 @@ class _DriverEarningsSheetState extends State<DriverEarningsSheet> {
       ]),
     );
   }
+}
+
+class _EarningsAmount extends StatelessWidget {
+  const _EarningsAmount({
+    required this.label,
+    required this.value,
+    this.supporting,
+    this.prominent = false,
+  });
+
+  final String label;
+  final String value;
+  final String? supporting;
+  final bool prominent;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                  height: 1.1)),
+          const SizedBox(height: 2),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(value,
+                maxLines: 1,
+                style: (prominent
+                        ? Theme.of(context).textTheme.headlineMedium
+                        : Theme.of(context).textTheme.titleLarge)
+                    ?.copyWith(
+                        color: context.semantic.onSuccessContainer,
+                        fontWeight: FontWeight.w900,
+                        height: 1.05)),
+          ),
+          if (supporting != null)
+            Text(supporting!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    height: 1.1)),
+        ],
+      );
+}
+
+class _EarningsDivider extends StatelessWidget {
+  const _EarningsDivider();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 1,
+        height: 62,
+        margin: const EdgeInsets.symmetric(horizontal: CostaGoSpace.xs),
+        color: Theme.of(context).colorScheme.outlineVariant,
+      );
 }
 
 class _EarningsHeader extends StatelessWidget {

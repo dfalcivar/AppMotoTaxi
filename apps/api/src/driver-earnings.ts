@@ -24,13 +24,20 @@ function money(value: unknown): string {
   return (Number.isFinite(numeric) ? numeric : 0).toFixed(2);
 }
 
-export function earningsTotals(completedTrips: number, grossValue: unknown, commissionValue: unknown) {
+export function earningsTotals(completedTrips: number, grossValue: unknown, commissionValue: unknown,
+  costaGoGeneratedValue: unknown = 0) {
   const gross = Number(grossValue ?? 0);
   const commission = Number(commissionValue ?? 0);
+  const net = gross - commission;
+  const rawCostaGoGenerated = Number(costaGoGeneratedValue ?? 0);
+  const costaGoGenerated = Math.max(0, Math.min(net,
+    Number.isFinite(rawCostaGoGenerated) ? rawCostaGoGenerated : 0));
   return {
     grossTripIncome: money(gross),
     costaGoCommission: money(commission),
-    netEarnings: money(gross - commission),
+    netEarnings: money(net),
+    generatedByTrips: money(net - costaGoGenerated),
+    generatedWithCostaGo: money(costaGoGenerated),
     averagePerTrip: money(completedTrips ? gross / completedTrips : 0)
   };
 }
@@ -88,6 +95,14 @@ export async function registerDriverEarningsRoutes(app: FastifyInstance): Promis
           coalesce(sum(coalesce(t.final_total_cents,t.quoted_total_cents)::numeric/100),0)::text as gross,
           coalesce(sum(case when coalesce(a.snapshot->>'appliedCommission','') ~ '^\\d+(\\.\\d+)?$'
             then (a.snapshot->>'appliedCommission')::numeric else 0 end),0)::text as commission,
+          coalesce(sum(case
+            when coalesce(a.snapshot->>'extraDriver','') ~ '^\\d+(\\.\\d+)?$'
+              then (a.snapshot->>'extraDriver')::numeric
+            when coalesce(a.snapshot->>'arrivalFee',a.snapshot->>'scheduledArrivalFee','') ~ '^\\d+(\\.\\d+)?$'
+              and coalesce(a.snapshot->>'appliedCommission','') ~ '^\\d+(\\.\\d+)?$'
+              then greatest(coalesce(a.snapshot->>'arrivalFee',a.snapshot->>'scheduledArrivalFee')::numeric-
+                (a.snapshot->>'appliedCommission')::numeric,0)
+            else 0 end),0)::text as "costaGoGenerated",
           count(*) filter(where case when coalesce(a.snapshot->>'appliedCommission','') ~ '^\\d+(\\.\\d+)?$'
             then (a.snapshot->>'appliedCommission')::numeric else 0 end > 0)::int as "discountsApplied"
         from trips t
@@ -104,7 +119,7 @@ export async function registerDriverEarningsRoutes(app: FastifyInstance): Promis
     const completedTrips = Number(summary?.completedTrips ?? 0);
     const gross = Number(summary?.gross ?? 0);
     const commission = Number(summary?.commission ?? 0);
-    const totals = earningsTotals(completedTrips, gross, commission);
+    const totals = earningsTotals(completedTrips, gross, commission, summary?.costaGoGenerated);
     return {
       period: { from: from.toISOString(), to: to.toISOString() },
       completedTrips,

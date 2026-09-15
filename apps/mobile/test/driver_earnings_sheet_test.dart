@@ -40,6 +40,8 @@ void main() {
         'grossTripIncome': '4.75',
         'costaGoCommission': '0.25',
         'netEarnings': '4.50',
+        'generatedByTrips': '4.20',
+        'generatedWithCostaGo': '0.30',
         'averagePerTrip': '1.58',
         'prepaidBalance': '0.00',
         'billingMode': 'PAY_PER_USE',
@@ -69,6 +71,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Ganancias y comisiones'), findsOneWidget);
     expect(find.text(r'$4.50'), findsOneWidget);
+    expect(find.text('Generado por viajes'), findsOneWidget);
+    expect(find.text(r'$4.20'), findsOneWidget);
+    expect(find.text('Generado con Costa-Go'), findsOneWidget);
+    expect(find.text(r'$0.30'), findsOneWidget);
     expect(find.text('3 viajes completados'), findsOneWidget);
     expect(tester.takeException(), isNull);
 

@@ -22,14 +22,16 @@ describe('ganancias y comisiones del conductor', () => {
   it('mantiene dos decimales para cero, un viaje y varios viajes', () => {
     expect(earningsTotals(0, 0, 0)).toEqual({
       grossTripIncome: '0.00', costaGoCommission: '0.00',
-      netEarnings: '0.00', averagePerTrip: '0.00'
+      netEarnings: '0.00', generatedByTrips: '0.00',
+      generatedWithCostaGo: '0.00', averagePerTrip: '0.00'
     });
     expect(earningsTotals(1, '1.50', '0.10')).toMatchObject({
       netEarnings: '1.40', averagePerTrip: '1.50'
     });
-    expect(earningsTotals(3, '4.75', '0.25')).toEqual({
+    expect(earningsTotals(3, '4.75', '0.25', '0.30')).toEqual({
       grossTripIncome: '4.75', costaGoCommission: '0.25',
-      netEarnings: '4.50', averagePerTrip: '1.58'
+      netEarnings: '4.50', generatedByTrips: '4.20',
+      generatedWithCostaGo: '0.30', averagePerTrip: '1.58'
     });
   });
 
@@ -49,6 +51,7 @@ describe('ganancias y comisiones del conductor', () => {
     expect(source).toContain("t.driver_id=${user.id!} and t.status='COMPLETED'");
     expect(source).toContain('coalesce(t.final_total_cents,t.quoted_total_cents)');
     expect(source).toContain("snapshot->>'appliedCommission'");
+    expect(source).toContain("snapshot->>'extraDriver'");
     expect(source).not.toMatch(/request\.query.*driverId|driverId.*request\.query/);
   });
 });
