@@ -77,6 +77,8 @@ void main() {
     expect(find.text(r'$0.30'), findsOneWidget);
     expect(find.text('Promedio por viaje'), findsNothing);
     expect(find.text('3 viajes completados'), findsOneWidget);
+    expect(find.text('Tu ingreso'), findsOneWidget);
+    expect(find.text('Tu ganancia'), findsNothing);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.text('Semana'));

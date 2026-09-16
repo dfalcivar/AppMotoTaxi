@@ -576,7 +576,7 @@ class _MovementRow extends StatelessWidget {
                   value: '-${_money(item['costaGoCommission'])}')),
           Expanded(
               child: _MovementAmount(
-                  label: 'Tu ganancia',
+                  label: 'Tu ingreso',
                   value: _money(item['netEarnings']),
                   positive: true)),
         ]),
