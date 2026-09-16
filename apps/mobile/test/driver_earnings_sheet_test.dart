@@ -71,10 +71,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Ganancias y comisiones'), findsOneWidget);
     expect(find.text(r'$4.50'), findsOneWidget);
-    expect(find.text('Generado por viajes'), findsOneWidget);
+    expect(find.text('Ingresos por viajes'), findsOneWidget);
     expect(find.text(r'$4.20'), findsOneWidget);
-    expect(find.text('Generado con Costa-Go'), findsOneWidget);
+    expect(find.text('Ingresos con Costa-Go'), findsOneWidget);
     expect(find.text(r'$0.30'), findsOneWidget);
+    expect(find.text('Promedio por viaje'), findsNothing);
     expect(find.text('3 viajes completados'), findsOneWidget);
     expect(tester.takeException(), isNull);
 

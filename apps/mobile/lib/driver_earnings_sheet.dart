@@ -196,35 +196,44 @@ class _DriverEarningsSheetState extends State<DriverEarningsSheet> {
                             tone: CostaGoStatusTone.success,
                             padding: const EdgeInsets.all(CostaGoSpace.lg),
                             child: Row(children: [
-                              const CostaGoIconBadge(
-                                  icon: Icons.bar_chart_rounded,
-                                  tone: CostaGoStatusTone.success,
-                                  size: 56),
-                              const SizedBox(width: CostaGoSpace.sm),
                               Expanded(
-                                flex: 6,
-                                child: _EarningsAmount(
-                                  label: 'Ganancia neta de $_periodLabel',
-                                  value: _money(data['netEarnings']),
-                                  supporting:
-                                      '${data['completedTrips'] ?? 0} viajes completados',
-                                  prominent: true,
+                                child: Row(
+                                  children: [
+                                    const CostaGoIconBadge(
+                                        icon: Icons.bar_chart_rounded,
+                                        tone: CostaGoStatusTone.success,
+                                        size: 56),
+                                    const SizedBox(width: CostaGoSpace.sm),
+                                    Expanded(
+                                      child: _EarningsAmount(
+                                        label: 'Ganancia neta de $_periodLabel',
+                                        value: _money(data['netEarnings']),
+                                        supporting:
+                                            '${data['completedTrips'] ?? 0} viajes completados',
+                                        prominent: true,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               const _EarningsDivider(),
                               Expanded(
-                                flex: 4,
-                                child: _EarningsAmount(
-                                  label: 'Generado por viajes',
-                                  value: _money(data['generatedByTrips']),
-                                ),
-                              ),
-                              const _EarningsDivider(),
-                              Expanded(
-                                flex: 4,
-                                child: _EarningsAmount(
-                                  label: 'Generado con Costa-Go',
-                                  value: _money(data['generatedWithCostaGo']),
+                                child: Row(
+                                  children: [
+                                    const CostaGoIconBadge(
+                                        icon: Icons.account_balance_wallet,
+                                        tone: CostaGoStatusTone.success,
+                                        size: 48),
+                                    const SizedBox(width: CostaGoSpace.sm),
+                                    Expanded(
+                                      child: _EarningsAmount(
+                                        label: 'Ingresos con Costa-Go',
+                                        value: _money(
+                                            data['generatedWithCostaGo']),
+                                        prominent: true,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ]),
@@ -252,8 +261,8 @@ class _DriverEarningsSheetState extends State<DriverEarningsSheet> {
                                 _MetricCard(
                                     width: width,
                                     icon: Icons.bar_chart_rounded,
-                                    label: 'Promedio por viaje',
-                                    value: _money(data['averagePerTrip'])),
+                                    label: 'Ingresos por viajes',
+                                    value: _money(data['generatedByTrips'])),
                                 _MetricCard(
                                     width: width,
                                     icon: Icons.account_balance_wallet_outlined,
