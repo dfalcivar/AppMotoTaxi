@@ -39,3 +39,12 @@ test("publica la marca transparente en la web y reserva el icono sólido para ti
   assert.match(home, /v2-launch[^]*costa-go-app-icon-v2\.png/);
   assert.doesNotMatch(home, /costa-go-emblem\.png/);
 });
+
+test("ofrece la descarga pública de Costa-Go con enlace y QR de Google Play", () => {
+  const playUrl = "https://play.google.com/store/apps/details?id=ec.atacames.mototaxi.mototaxi_atacames";
+
+  assert.equal(home.split(playUrl).length - 1, 2);
+  assert.match(home, /DESCARGAR EN/);
+  assert.match(home, /costa-go-google-play-qr\.svg/);
+  assert.doesNotMatch(home, /PRÓXIMAMENTE EN|Muy pronto en|estará muy pronto/);
+});
