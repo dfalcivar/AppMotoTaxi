@@ -115,19 +115,22 @@ node scripts/production-cleanup.mjs
 El primer comando genera el inventario extendido; el segundo imprime el preview ejecutable y
 su `planToken`. No se deben copiar credenciales en documentación o mensajes.
 
-## Ejecución pendiente
+## Ejecución completada
 
-1. Esperar a que finalice el export lógico de Render y verificar que pueda restaurarse.
-2. Ejecutar ambos inventarios de solo lectura y confirmar que siguen existiendo exactamente
-   37 cuentas registradas, 8 perfiles de conductor y una sola cooperativa de prueba.
-3. Probar el ejecutor sobre la copia restaurada y verificar acceso, documentos y flota de los
-   usuarios conservados.
-4. Confirmar que viajes, ingresos, pagos, saldos, membresías, facturación de prueba,
-   notificaciones, publicidad, sesiones y métricas queden en cero.
-5. Confirmar que las versiones vencidas de precios y zonas, y las geometrías reemplazadas,
-   queden en cero sin alterar la configuración activa o programada.
-6. Ejecutar en una ventana sin escrituras y validar nuevamente el estado final antes de abrir
-   producción.
+La limpieza se ejecutó correctamente el 16 de septiembre de 2026 a las 15:07,
+hora de Ecuador, después de validar el respaldo restaurado y obtener un preview sin
+bloqueos. PostgreSQL confirmó y registró la transacción completa.
+
+El control posterior confirmó:
+
+- 37 usuarios y 8 perfiles de conductor conservados;
+- 7 mototaxis, 6 archivos vigentes, 10 relaciones actuales y 40 documentos activos;
+- una habilitación de cortesía para el conductor de revisión de Google Play, sin pago,
+  saldo ni documento fiscal;
+- cero cooperativas, viajes, pagos, facturas, anunciantes, campañas y notificaciones;
+- cero versiones obsoletas de precios, zonas y áreas;
+- un único registro de auditoría de la limpieza;
+- API pública saludable y proveedores de mapas y rutas disponibles.
 
 La limpieza de PostgreSQL no elimina métricas históricas del proveedor Google. Claves,
 Firebase y configuración de Google Maps se conservan.
