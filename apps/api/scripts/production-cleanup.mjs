@@ -133,8 +133,8 @@ async function snapshot(sql) {
         join users u on u.id=r.user_id where u.deleted_at is null and r.status in ('APPROVED','PENDING'))::int as vehicles,
       (select count(*) from user_vehicle_relations r join users u on u.id=r.user_id
         where u.deleted_at is null and r.status in ('APPROVED','PENDING') and exists(
-          select 1 from user_vehicle_relations current join users current_user on current_user.id=current.user_id
-          where current.vehicle_id=r.vehicle_id and current_user.deleted_at is null and current.status in ('APPROVED','PENDING')))::int as user_vehicle_relations,
+          select 1 from user_vehicle_relations current_relation join users current_account on current_account.id=current_relation.user_id
+          where current_relation.vehicle_id=r.vehicle_id and current_account.deleted_at is null and current_relation.status in ('APPROVED','PENDING')))::int as user_vehicle_relations,
       (select count(*) from vehicle_files f join vehicles v on v.id=f.vehicle_id
         where exists(select 1 from user_vehicle_relations r join users u on u.id=r.user_id
           where r.vehicle_id=v.id and u.deleted_at is null and r.status in ('APPROVED','PENDING'))

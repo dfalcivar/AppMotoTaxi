@@ -6,6 +6,10 @@ const policy = JSON.parse(
   readFileSync(new URL("production-cleanup-policy.json", scripts), "utf8"),
 ) as Record<string, unknown>;
 const cleanup = readFileSync(new URL("production-cleanup.mjs", scripts), "utf8");
+const fleetPreview = readFileSync(
+  new URL("production-cleanup-fleet-preview-readonly.mjs", scripts),
+  "utf8",
+);
 
 describe("production cleanup safety policy", () => {
   it("preserves every registered account and removes deleted identities", () => {
@@ -43,5 +47,10 @@ describe("production cleanup safety policy", () => {
     expect(cleanup).toContain('CLEANUP_EXECUTE !== "YES_DELETE_PRODUCTION_TEST_DATA"');
     expect(cleanup).toContain('CLEANUP_BACKUP_CONFIRMED !== "RESTORE_TESTED"');
     expect(cleanup).toContain("CLEANUP_PLAN_TOKEN");
+  });
+
+  it("avoids PostgreSQL reserved session identifiers as aliases", () => {
+    expect(cleanup).not.toMatch(/\bcurrent_user\b/);
+    expect(fleetPreview).not.toMatch(/\bcurrent_user\b/);
   });
 });

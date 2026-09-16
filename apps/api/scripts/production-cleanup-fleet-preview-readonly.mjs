@@ -9,8 +9,8 @@ try {
       select v.id::text,v.identifier,v.fleet_status as "fleetStatus",v.status::text,
         v.driver_id::text as "legacyDriverId",lower(owner.email) as "legacyDriverEmail",
         v.merged_into::text as "mergedInto",v.photo_id::text as "photoId",
-        exists(select 1 from user_vehicle_relations r join users current_user on current_user.id=r.user_id
-          where r.vehicle_id=v.id and current_user.deleted_at is null and r.status in ('APPROVED','PENDING')) as preserve,
+        exists(select 1 from user_vehicle_relations r join users current_account on current_account.id=r.user_id
+          where r.vehicle_id=v.id and current_account.deleted_at is null and r.status in ('APPROVED','PENDING')) as preserve,
         (select count(*)::int from vehicle_files f where f.vehicle_id=v.id) as files,
         array(select lower(u.email) from user_vehicle_relations r join users u on u.id=r.user_id
           where r.vehicle_id=v.id order by lower(u.email)) as users
@@ -20,8 +20,8 @@ try {
       select f.id::text,f.vehicle_id::text,v.identifier,f.kind,lower(u.email) as uploader,
         octet_length(f.original_bytes)::int as "originalBytes",
         coalesce(octet_length(f.display_bytes),0)::int as "displayBytes",
-        exists(select 1 from user_vehicle_relations r join users current_user on current_user.id=r.user_id
-          where r.vehicle_id=v.id and current_user.deleted_at is null and r.status in ('APPROVED','PENDING'))
+        exists(select 1 from user_vehicle_relations r join users current_account on current_account.id=r.user_id
+          where r.vehicle_id=v.id and current_account.deleted_at is null and r.status in ('APPROVED','PENDING'))
           and (f.id=v.photo_id or (f.kind<>'PHOTO' and not exists(select 1 from vehicle_files newer
             where newer.vehicle_id=f.vehicle_id and newer.kind=f.kind
               and (newer.created_at,newer.id)>(f.created_at,f.id)))) as preserve
