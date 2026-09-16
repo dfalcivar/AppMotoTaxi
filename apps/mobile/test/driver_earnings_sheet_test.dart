@@ -79,6 +79,8 @@ void main() {
     expect(find.text('3 viajes completados'), findsOneWidget);
     expect(find.text('Tu ingreso'), findsOneWidget);
     expect(find.text('Tu ganancia'), findsNothing);
+    expect(find.text('Comisión Costa-Go'), findsWidgets);
+    expect(find.text('Comisión'), findsNothing);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.text('Semana'));
