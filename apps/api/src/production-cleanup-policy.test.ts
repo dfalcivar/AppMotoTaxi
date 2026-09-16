@@ -16,7 +16,7 @@ describe("production cleanup safety policy", () => {
     expect(policy).toMatchObject({
       preserveAllRegisteredAccounts: true,
       preserveDeletedAccounts: false,
-      expectedRegisteredUserCount: 32,
+      expectedRegisteredUserCount: 37,
       expectedRegisteredDriverCount: 8,
       pruneObsoleteConfigurationVersions: true,
       preserveScheduledConfigurationVersions: true,

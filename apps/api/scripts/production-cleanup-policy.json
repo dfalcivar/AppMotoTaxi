@@ -12,7 +12,7 @@
   "deleteAllCooperatives": true,
   "pruneObsoleteConfigurationVersions": true,
   "preserveScheduledConfigurationVersions": true,
-  "expectedRegisteredUserCount": 32,
+  "expectedRegisteredUserCount": 37,
   "expectedRegisteredDriverCount": 8,
   "expectedCooperativeCount": 1,
   "protectAdministrativeRoles": true,

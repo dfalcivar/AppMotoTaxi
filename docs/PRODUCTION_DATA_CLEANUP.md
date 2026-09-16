@@ -31,12 +31,15 @@ eliminan.
 
 ## Cuentas y perfiles conservados
 
-El inventario de solo lectura encontró 36 filas en `users`:
+El inventario de solo lectura del 16 de septiembre de 2026 encontró 41 filas en `users`:
 
-- 32 cuentas registradas sin `deleted_at`, que se conservan;
+- 37 cuentas registradas sin `deleted_at`, que se conservan;
 - 4 cuentas ya anonimizadas/eliminadas, que se retiran definitivamente;
 - 8 perfiles vigentes en `drivers`, que se conservan;
 - 3 perfiles de conductor ligados a cuentas ya eliminadas, que se retiran.
+
+Desde el inventario anterior se registraron cinco pasajeros adicionales: cuatro activos y uno
+pendiente. Todos se conservan junto con las demás cuentas registradas.
 
 Las cuentas `play.driver@costa-go.com` y `play.passenger@costa-go.com` permanecen incluidas.
 El ejecutor aborta si estos conteos cambian antes de la limpieza.
@@ -45,7 +48,7 @@ El ejecutor aborta si estos conteos cambian antes de la limpieza.
 
 | Entidad | Actual | Eliminar | Conservar/crear |
 |---|---:|---:|---:|
-| Usuarios | 36 | 4 anonimizados | 32 registrados |
+| Usuarios | 41 | 4 anonimizados | 37 registrados |
 | Conductores | 11 | 3 eliminados | 8 registrados |
 | Documentos de conductor | 41 | 1 de cuenta eliminada | 40 activos |
 | Mototaxis | 12 | 5 sin relación actual | 7 actuales |
@@ -56,7 +59,7 @@ El ejecutor aborta si estos conteos cambian antes de la limpieza.
 | Órdenes de membresía | 44 | 44 | 0 |
 | Pagos de membresía | 17 | 17 | 0 |
 | Viajes | 348 | 348 | 0 |
-| Facturas fiscales de prueba | 16 | 16 | 0 |
+| Facturas fiscales de prueba | 18 | 18 | 0 |
 | Comercios/anunciantes | 7 | 7 | 0 |
 | Campañas publicitarias | 13 | 13 | 0 |
 | Eventos publicitarios | 6176 | 6176 | 0 |
@@ -71,7 +74,7 @@ si tiene una relación actual con un usuario registrado. Las relaciones `REVOKED
 cada mototaxi se mantiene la fotografía actualmente referenciada y el archivo no fotográfico
 más reciente de cada tipo.
 
-Las 16 facturas detectadas son `TEST/PENDIENTE_INTEGRACION`; no existen facturas autorizadas
+Las 18 facturas detectadas son de prueba; no existen facturas autorizadas
 ni notas de crédito. El ejecutor vuelve a comprobarlo y aborta si aparece un documento
 autorizado o ajeno al entorno de prueba.
 
@@ -116,7 +119,7 @@ su `planToken`. No se deben copiar credenciales en documentación o mensajes.
 
 1. Esperar a que finalice el export lógico de Render y verificar que pueda restaurarse.
 2. Ejecutar ambos inventarios de solo lectura y confirmar que siguen existiendo exactamente
-   32 cuentas registradas, 8 perfiles de conductor y una sola cooperativa de prueba.
+   37 cuentas registradas, 8 perfiles de conductor y una sola cooperativa de prueba.
 3. Probar el ejecutor sobre la copia restaurada y verificar acceso, documentos y flota de los
    usuarios conservados.
 4. Confirmar que viajes, ingresos, pagos, saldos, membresías, facturación de prueba,
