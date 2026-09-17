@@ -28,7 +28,7 @@ describe('confirmación de membresía activa',()=>{
 
   it('mantiene la plantilla y presenta una cortesía sin lenguaje de pago',()=>{
     const result=membershipActivationPresentation({
-      userId:'user',email:'driver@example.com',name:'Juan',plan:{name:'Plan Lanzamiento Costa-Go',purchasedTrips:80,packValidityDays:15},planType:'TRIP_PACK',
+      userId:'user',email:'driver@example.com',name:'Juan',plan:{},planName:'Plan Lanzamiento Costa-Go',includedTrips:80,packValidityDays:15,planType:'TRIP_PACK',
       startsAt:'2026-09-17T12:00:00Z',expiresAt:'2026-10-02T12:00:00Z',paymentId:'payment',membershipId:'membership',code:'CORTESIA',
       subtotal:0,vatRate:15,vat:0,total:0,currency:'USD',invoiceNumber:null,hasDocument:false,paymentMethod:'COURTESY'
     });
@@ -41,5 +41,16 @@ describe('confirmación de membresía activa',()=>{
     expect(result.emailHtml).toContain('Sin costo');
     expect(result.emailHtml).not.toContain('Confirmamos correctamente tu pago');
     expect(result.emailHtml).not.toContain('Ver comprobante');
+  });
+
+  it('normaliza una instantánea serializada como respaldo',()=>{
+    const result=membershipActivationPresentation({
+      userId:'user',email:null,name:'Juan',plan:'{"name":"Plan Lanzamiento Costa-Go","purchasedTrips":80,"packValidityDays":15}' as unknown as Record<string,unknown>,planType:'TRIP_PACK',
+      startsAt:'2026-09-17T12:00:00Z',expiresAt:'2026-10-02T12:00:00Z',paymentId:'payment',membershipId:'membership',code:'CORTESIA',
+      subtotal:0,vatRate:15,vat:0,total:0,currency:'USD',invoiceNumber:null,hasDocument:false,paymentMethod:'COURTESY'
+    });
+    expect(result.planName).toBe('Plan Lanzamiento Costa-Go');
+    expect(result.validity).toBe('15 días');
+    expect(result.emailHtml).toContain('80 viajes');
   });
 });

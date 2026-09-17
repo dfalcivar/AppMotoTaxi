@@ -4,6 +4,7 @@ import {notificationService} from './notification-service.js';
 
 type ActivationRecord={
   userId:string;email:string|null;name:string;plan:Record<string,unknown>;planType:string;
+  planName?:string|null;planCode?:string|null;durationDays?:number|null;includedTrips?:number|null;packValidityDays?:number|null;
   startsAt:string|Date;expiresAt:string|Date|null;paymentId:string;membershipId:string;
   code:string;subtotal:number;vatRate:number;vat:number;total:number;currency:string;
   invoiceNumber:string|null;hasDocument:boolean;paymentMethod:string;
@@ -15,9 +16,10 @@ function money(currency:string,value:number):string{return `${currency} ${Number
 
 export function membershipActivationPresentation(record:ActivationRecord){
   const courtesy=record.paymentMethod==='COURTESY';
-  const planName=String(record.plan.name??record.plan.code??'Costa-Go');
-  const tripCount=Number(record.plan.purchasedTrips??record.plan.includedTrips??0);
-  const days=Number(record.planType==='TRIP_PACK'?record.plan.packValidityDays??0:record.plan.durationDays??0);
+  const rawPlan=typeof record.plan==='string'?(()=>{try{return JSON.parse(record.plan) as Record<string,unknown>;}catch{return {};}})():record.plan??{};
+  const planName=String(record.planName??rawPlan.name??record.planCode??rawPlan.code??'Costa-Go');
+  const tripCount=Number(record.includedTrips??rawPlan.purchasedTrips??rawPlan.includedTrips??0);
+  const days=Number(record.planType==='TRIP_PACK'?record.packValidityDays??rawPlan.packValidityDays??0:record.durationDays??rawPlan.durationDays??0);
   const validity=days>0
     ? `${days} ${days===1?'día':'días'}`
     : `${tripCount} ${tripCount===1?'viaje':'viajes'}`;
@@ -63,6 +65,11 @@ export async function sendMembershipActivationConfirmation(paymentId:string,memb
       'purchasedTrips',case when mp.plan_type='TRIP_PACK' then mp.included_trips else null end,
       'packValidityDays',mp.pack_validity_days
     )) as plan,
+    coalesce(mp.name,dm.plan_snapshot->>'name',o.plan_snapshot->>'name',dm.plan_code,'Costa-Go') as "planName",
+    coalesce(mp.code,dm.plan_code,o.plan_snapshot->>'code') as "planCode",
+    coalesce(mp.duration_days,nullif(dm.plan_snapshot->>'durationDays','')::int,nullif(o.plan_snapshot->>'durationDays','')::int,0)::int as "durationDays",
+    coalesce(mp.included_trips,dm.included_trips_snapshot,nullif(o.plan_snapshot->>'includedTrips','')::int,0)::int as "includedTrips",
+    coalesce(mp.pack_validity_days,nullif(dm.plan_snapshot->>'packValidityDays','')::int,nullif(o.plan_snapshot->>'packValidityDays','')::int,0)::int as "packValidityDays",
     dm.plan_type_snapshot as "planType",dm.starts_at as "startsAt",dm.expires_at as "expiresAt",
     p.id::text as "paymentId",dm.id::text as "membershipId",o.short_code as code,
     o.taxable_subtotal::float8 as subtotal,o.vat_rate_percent::float8 as "vatRate",
