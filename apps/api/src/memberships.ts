@@ -523,7 +523,7 @@ export function requiresPackageCommercialRules(planType:string,commercialContext
   return commercialContextAvailable&&planType==='TRIP_PACK'&&!skipForCourtesy;
 }
 
-async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean;skipPackageCommercialRules?:boolean}={}) {
+async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean;skipPackageCommercialRules?:boolean;reuseActiveOrder?:boolean}={}) {
   const result = await database().begin(async tx => {
     await lockMembershipBilling(tx, driverId);
     await tx`update membership_payment_orders set status='EXPIRED',updated_at=now() where driver_id=${driverId} and status='PENDING' and expires_at<=now()`;
@@ -535,7 +535,7 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
         total_amount::float8 as "totalAmount",
         currency,expires_at as "expiresAt",plan_snapshot as "plan",metadata
       from membership_payment_orders
-      where driver_id=${driverId} and ((status in ('PENDING','PENDING_VERIFICATION') and expires_at>now()) or idempotency_key=${input.idempotencyKey})
+      where driver_id=${driverId} and ((status in ('PENDING','PENDING_VERIFICATION') and expires_at>now() and ${options.reuseActiveOrder??true}=true) or idempotency_key=${input.idempotencyKey})
       order by case when status='PENDING_VERIFICATION' then 0 else 1 end,created_at desc limit 1 for update
     `;
     if (existing) {
@@ -1439,8 +1439,14 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     } else {
       requirePermission(request,"payments:courtesy_grant");
       const input={planId:body.planId,intendedMethod:undefined,idempotencyKey:`courtesy-${driverId}-${Date.now()}`};
-      const order=await createPaymentOrder(driverId,input,{skipPackageCommercialRules:true});
+      const order=await createPaymentOrder(driverId,input,{skipPackageCommercialRules:true,reuseActiveOrder:false});
       result=await processMembershipPayment(String(order.id),actor,{method:"COURTESY",receiverScope:"NOT_APPLICABLE",verificationChannel:"ADMIN_COURTESY",idempotencyKey:`courtesy-payment-${order.id}`});
+      try{
+        await database()`update membership_payment_orders set status='CANCELLED',cancelled_at=now(),cancelled_by=${actor.id!},
+          cancellation_reason_code='OTHER',cancellation_observation='Reemplazada por una membresía de cortesía administrativa',
+          cancellation_channel='ADMIN',updated_at=now()
+          where driver_id=${driverId} and id<>${order.id} and status='PENDING'`;
+      }catch(error){console.error('courtesy_pending_orders_cleanup_failed',{driverId,orderId:order.id,error});}
     }
     if(!result)return reply.code(409).send({error:"MEMBERSHIP_REQUIRED"});
     await persistAudit(actor,`MEMBERSHIP_${body.action}`,"DRIVER_MEMBERSHIP",driverId,body.reason);

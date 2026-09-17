@@ -6,7 +6,7 @@ type ActivationRecord={
   userId:string;email:string|null;name:string;plan:Record<string,unknown>;planType:string;
   startsAt:string|Date;expiresAt:string|Date|null;paymentId:string;membershipId:string;
   code:string;subtotal:number;vatRate:number;vat:number;total:number;currency:string;
-  invoiceNumber:string|null;hasDocument:boolean;
+  invoiceNumber:string|null;hasDocument:boolean;paymentMethod:string;
 };
 
 const dateFormatter=new Intl.DateTimeFormat('es-EC',{dateStyle:'long',timeStyle:'short',timeZone:'America/Guayaquil'});
@@ -14,6 +14,7 @@ function dateLabel(value:string|Date|null):string{return value?dateFormatter.for
 function money(currency:string,value:number):string{return `${currency} ${Number(value).toFixed(2)}`;}
 
 export function membershipActivationPresentation(record:ActivationRecord){
+  const courtesy=record.paymentMethod==='COURTESY';
   const planName=String(record.plan.name??record.plan.code??'Costa-Go');
   const tripCount=Number(record.plan.purchasedTrips??record.plan.includedTrips??0);
   const days=Number(record.plan.durationDays??0);
@@ -22,23 +23,32 @@ export function membershipActivationPresentation(record:ActivationRecord){
     : `${days} ${days===1?'día':'días'}`;
   const expiry=dateLabel(record.expiresAt);
   const activeUntil=record.expiresAt?`hasta ${expiry}`:'hasta agotar tus viajes';
+  const rows=courtesy?[
+    {label:'Plan',value:planName,emphasis:true},{label:'Vigencia',value:validity},
+    {label:'Fecha de vencimiento',value:expiry},{label:'Modalidad',value:'Cortesía Costa-Go'},
+    {label:'Valor',value:'Sin costo',emphasis:true},{label:'Estado',value:'Activa'}
+  ]:[
+    {label:'Plan',value:planName,emphasis:true},{label:'Vigencia',value:validity},
+    {label:'Fecha de vencimiento',value:expiry},{label:'Valor',value:money(record.currency,record.subtotal)},
+    {label:`IVA (${Number(record.vatRate).toFixed(0)}%)`,value:money(record.currency,record.vat)},
+    {label:'Total',value:money(record.currency,record.total),emphasis:true},{label:'Estado',value:'Activa'}
+  ];
   return {
-    planName,validity,expiry,
-    title:'✅ Membresía activada',
-    body:`Tu plan ${planName} está activo ${activeUntil}. Ya puedes recibir viajes.`,
+    planName,validity,expiry,courtesy,
+    title:courtesy?'✅ Cortesía activada':'✅ Membresía activada',
+    body:courtesy?`Costa-Go activó tu plan de cortesía ${planName} ${activeUntil}. Ya puedes recibir viajes.`:`Tu plan ${planName} está activo ${activeUntil}. Ya puedes recibir viajes.`,
+    emailSubject:courtesy?'Tu membresía de cortesía Costa-Go está activa':'Tu membresía Costa-Go está activa',
+    emailText:courtesy
+      ?`Hola ${record.name}. Costa-Go activó tu plan de cortesía ${planName}, con vigencia de ${validity}. No necesitas realizar ningún pago. Ya puedes recibir viajes.`
+      :`Hola ${record.name}. Tu plan ${planName} está activo hasta ${expiry}. Total: ${money(record.currency,record.total)}. Ya puedes recibir viajes.`,
     emailHtml:renderCostaGoEmail({
-      title:'Tu membresía Costa-Go está activa',greeting:record.name,
-      lead:'Confirmamos correctamente tu pago. Tu membresía ya está lista para recibir viajes.',
-      badge:{label:'Activa',tone:'success'},
-      rows:[
-        {label:'Plan',value:planName,emphasis:true},{label:'Vigencia',value:validity},
-        {label:'Fecha de vencimiento',value:expiry},{label:'Valor',value:money(record.currency,record.subtotal)},
-        {label:`IVA (${Number(record.vatRate).toFixed(0)}%)`,value:money(record.currency,record.vat)},
-        {label:'Total',value:money(record.currency,record.total),emphasis:true},{label:'Estado',value:'Activa'}
-      ],
-      notice:{title:'Membresía habilitada',text:'Ya puedes conectarte y recibir solicitudes de viaje.',tone:'success'},
+      title:courtesy?'Tu membresía de cortesía Costa-Go está activa':'Tu membresía Costa-Go está activa',greeting:record.name,
+      lead:courtesy?'Costa-Go activó una membresía de cortesía en tu cuenta. No necesitas realizar ningún pago.':'Confirmamos correctamente tu pago. Tu membresía ya está lista para recibir viajes.',
+      badge:{label:courtesy?'Cortesía activa':'Activa',tone:'success'},
+      rows,
+      notice:{title:courtesy?'Cortesía habilitada':'Membresía habilitada',text:'Ya puedes conectarte y recibir solicitudes de viaje.',tone:'success'},
       primaryAction:{label:'Ver mi membresía',url:'costa-go://membership'},
-      secondaryAction:record.hasDocument?{label:record.invoiceNumber?'Ver factura':'Ver comprobante',url:'costa-go://membership'}:undefined
+      secondaryAction:!courtesy&&record.hasDocument?{label:record.invoiceNumber?'Ver factura':'Ver comprobante',url:'costa-go://membership'}:undefined
     })
   };
 }
@@ -49,7 +59,7 @@ export async function sendMembershipActivationConfirmation(paymentId:string,memb
     dm.plan_type_snapshot as "planType",dm.starts_at as "startsAt",dm.expires_at as "expiresAt",
     p.id::text as "paymentId",dm.id::text as "membershipId",o.short_code as code,
     o.taxable_subtotal::float8 as subtotal,o.vat_rate_percent::float8 as "vatRate",
-    o.vat_amount::float8 as vat,o.total_amount::float8 as total,o.currency,
+    o.vat_amount::float8 as vat,o.total_amount::float8 as total,o.currency,p.method as "paymentMethod",
     invoice.document_number as "invoiceNumber",
     (invoice.id is not null or proof.id is not null) as "hasDocument"
     from membership_payments p
@@ -69,8 +79,8 @@ export async function sendMembershipActivationConfirmation(paymentId:string,memb
     metadata:{membershipId:record.membershipId,paymentId:record.paymentId,plan:presentation.planName,expiresAt:record.expiresAt}
   })];
   if(record.email)deliveries.push(sendTransactionalEmail({
-    to:record.email,subject:'Tu membresía Costa-Go está activa',
-    text:`Hola ${record.name}. Tu plan ${presentation.planName} está activo hasta ${presentation.expiry}. Total: ${money(record.currency,record.total)}. Ya puedes recibir viajes.`,
+    to:record.email,subject:presentation.emailSubject,
+    text:presentation.emailText,
     html:presentation.emailHtml
   }));
   await Promise.allSettled(deliveries);
