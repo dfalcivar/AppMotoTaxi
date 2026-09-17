@@ -1368,6 +1368,24 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     return { items: rows, page: query.page, limit: query.limit, total: Number(rows[0]?.total ?? 0) };
   } catch (error) { return businessError(error, reply); } });
 
+  app.get("/v1/admin/membership-courtesy-candidates", async (request, reply) => { try {
+    requirePermission(request,"memberships:manage");
+    requirePermission(request,"payments:courtesy_grant");
+    return database()`select u.id::text,u.full_name as name,u.email,u.phone_e164 as phone,
+      dm.plan_name as "currentPlan",dm.plan_type_snapshot as "currentPlanType",dm.status as "membershipStatus"
+      from drivers d join users u on u.id=d.user_id
+      left join lateral (
+        select coalesce(current_plan.name,current_membership.plan_code) as plan_name,
+          current_membership.plan_type_snapshot,current_membership.status
+        from driver_memberships current_membership
+        left join membership_plans current_plan on current_plan.id=current_membership.plan_id
+        where current_membership.driver_id=d.user_id and current_membership.cycle_closed_at is null
+        order by current_membership.created_at desc limit 1
+      ) dm on true
+      where u.deleted_at is null and u.status='ACTIVE' and d.approval_status='APROBADO'
+      order by (dm.plan_name is null) desc,u.full_name,u.email`;
+  } catch(error){return businessError(error,reply);} });
+
   app.get("/v1/admin/memberships/dashboard", async (request, reply) => { try {
     requirePermission(request,"memberships:view");
     const [summary]=await database()`select count(*) filter(where status in ('ACTIVE','EXPIRING'))::int as active,count(*) filter(where expires_at between now() and now()+interval '7 days')::int as "expiring7Days",count(*) filter(where status='GRACE_PERIOD')::int as grace,count(*) filter(where status in ('PAYMENT_DUE','SUSPENDED_NON_PAYMENT'))::int as expired,count(*) filter(where status in ('SUSPENDED','SUSPENDED_NON_PAYMENT'))::int as suspended,count(*) filter(where payer_type='COOPERATIVE')::int as cooperatives,count(*) filter(where payer_type='INDIVIDUAL')::int as individual,count(*) filter(where status='PENDING')::int as pending from driver_memberships where cycle_closed_at is null and exists(select 1 from users u where u.id=driver_memberships.driver_id and u.deleted_at is null)`;

@@ -16,7 +16,7 @@
 .mobile-account-dialog .panel-dialog-heading h2 { margin: 3px 0 0; color: var(--cg-ink); font-size: 1.25rem; }
 .mobile-account-dialog .panel-dialog-heading p { margin-top: 4px; color: var(--cg-muted); font-weight: 650; }
 .mobile-account-dialog .panel-dialog-fields { gap: 12px; }
-.mobile-account-dialog-pasajero .panel-dialog-fields {
+.mobile-account-edit-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   grid-template-areas:
@@ -81,7 +81,7 @@
     padding: 19px 15px max(15px, env(safe-area-inset-bottom));
     border-radius: 22px 22px 0 0;
   }
-  .mobile-account-dialog-pasajero .panel-dialog-fields {
+  .mobile-account-edit-fields {
     grid-template-columns: 1fr !important;
     grid-template-areas: "note" "status" "name" "phone" "email" "reason";
   }
