@@ -17,18 +17,19 @@ export function membershipActivationPresentation(record:ActivationRecord){
   const courtesy=record.paymentMethod==='COURTESY';
   const planName=String(record.plan.name??record.plan.code??'Costa-Go');
   const tripCount=Number(record.plan.purchasedTrips??record.plan.includedTrips??0);
-  const days=Number(record.plan.durationDays??0);
-  const validity=record.planType==='TRIP_PACK'
-    ? `${tripCount} ${tripCount===1?'viaje':'viajes'}`
-    : `${days} ${days===1?'día':'días'}`;
+  const days=Number(record.planType==='TRIP_PACK'?record.plan.packValidityDays??0:record.plan.durationDays??0);
+  const validity=days>0
+    ? `${days} ${days===1?'día':'días'}`
+    : `${tripCount} ${tripCount===1?'viaje':'viajes'}`;
   const expiry=dateLabel(record.expiresAt);
   const activeUntil=record.expiresAt?`hasta ${expiry}`:'hasta agotar tus viajes';
+  const tripRows=record.planType==='TRIP_PACK'?[{label:'Viajes incluidos',value:`${tripCount} ${tripCount===1?'viaje':'viajes'}`}]:[];
   const rows=courtesy?[
-    {label:'Plan',value:planName,emphasis:true},{label:'Vigencia',value:validity},
+    {label:'Plan',value:planName,emphasis:true},{label:'Vigencia',value:validity},...tripRows,
     {label:'Fecha de vencimiento',value:expiry},{label:'Modalidad',value:'Cortesía Costa-Go'},
     {label:'Valor',value:'Sin costo',emphasis:true},{label:'Estado',value:'Activa'}
   ]:[
-    {label:'Plan',value:planName,emphasis:true},{label:'Vigencia',value:validity},
+    {label:'Plan',value:planName,emphasis:true},{label:'Vigencia',value:validity},...tripRows,
     {label:'Fecha de vencimiento',value:expiry},{label:'Valor',value:money(record.currency,record.subtotal)},
     {label:`IVA (${Number(record.vatRate).toFixed(0)}%)`,value:money(record.currency,record.vat)},
     {label:'Total',value:money(record.currency,record.total),emphasis:true},{label:'Estado',value:'Activa'}
@@ -39,7 +40,7 @@ export function membershipActivationPresentation(record:ActivationRecord){
     body:courtesy?`Costa-Go activó tu plan de cortesía ${planName} ${activeUntil}. Ya puedes recibir viajes.`:`Tu plan ${planName} está activo ${activeUntil}. Ya puedes recibir viajes.`,
     emailSubject:courtesy?'Tu membresía de cortesía Costa-Go está activa':'Tu membresía Costa-Go está activa',
     emailText:courtesy
-      ?`Hola ${record.name}. Costa-Go activó tu plan de cortesía ${planName}, con vigencia de ${validity}. No necesitas realizar ningún pago. Ya puedes recibir viajes.`
+      ?`Hola ${record.name}. Costa-Go activó tu plan de cortesía ${planName}, con vigencia de ${validity}${record.planType==='TRIP_PACK'?` e incluye ${tripCount} ${tripCount===1?'viaje':'viajes'}`:''}. No necesitas realizar ningún pago. Ya puedes recibir viajes.`
       :`Hola ${record.name}. Tu plan ${planName} está activo hasta ${expiry}. Total: ${money(record.currency,record.total)}. Ya puedes recibir viajes.`,
     emailHtml:renderCostaGoEmail({
       title:courtesy?'Tu membresía de cortesía Costa-Go está activa':'Tu membresía Costa-Go está activa',greeting:record.name,
@@ -55,7 +56,13 @@ export function membershipActivationPresentation(record:ActivationRecord){
 
 export async function sendMembershipActivationConfirmation(paymentId:string,membershipId:string):Promise<void>{
   const [record]=await database()`select
-    u.id::text as "userId",u.email,u.full_name as name,o.plan_snapshot as plan,
+    u.id::text as "userId",u.email,u.full_name as name,
+    coalesce(o.plan_snapshot,'{}'::jsonb)||jsonb_strip_nulls(jsonb_build_object(
+      'name',mp.name,'code',mp.code,'planType',mp.plan_type,
+      'durationDays',mp.duration_days,'includedTrips',mp.included_trips,
+      'purchasedTrips',case when mp.plan_type='TRIP_PACK' then mp.included_trips else null end,
+      'packValidityDays',mp.pack_validity_days
+    )) as plan,
     dm.plan_type_snapshot as "planType",dm.starts_at as "startsAt",dm.expires_at as "expiresAt",
     p.id::text as "paymentId",dm.id::text as "membershipId",o.short_code as code,
     o.taxable_subtotal::float8 as subtotal,o.vat_rate_percent::float8 as "vatRate",
@@ -64,6 +71,7 @@ export async function sendMembershipActivationConfirmation(paymentId:string,memb
     (invoice.id is not null or proof.id is not null) as "hasDocument"
     from membership_payments p
     join membership_payment_orders o on o.id=p.order_id
+    left join membership_plans mp on mp.id=o.plan_id
     join driver_memberships dm on dm.id=p.membership_cycle_id
     join users u on u.id=p.driver_id
     left join lateral(select id,document_number from fiscal_invoices where source='MEMBRESIA' and payment_id=p.id order by created_at desc limit 1) invoice on true

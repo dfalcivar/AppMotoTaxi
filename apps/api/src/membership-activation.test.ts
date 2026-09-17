@@ -28,14 +28,16 @@ describe('confirmación de membresía activa',()=>{
 
   it('mantiene la plantilla y presenta una cortesía sin lenguaje de pago',()=>{
     const result=membershipActivationPresentation({
-      userId:'user',email:'driver@example.com',name:'Juan',plan:{name:'Cortesía 25 viajes',purchasedTrips:25},planType:'TRIP_PACK',
-      startsAt:'2026-09-17T12:00:00Z',expiresAt:null,paymentId:'payment',membershipId:'membership',code:'CORTESIA',
+      userId:'user',email:'driver@example.com',name:'Juan',plan:{name:'Plan Lanzamiento Costa-Go',purchasedTrips:80,packValidityDays:15},planType:'TRIP_PACK',
+      startsAt:'2026-09-17T12:00:00Z',expiresAt:'2026-10-02T12:00:00Z',paymentId:'payment',membershipId:'membership',code:'CORTESIA',
       subtotal:0,vatRate:15,vat:0,total:0,currency:'USD',invoiceNumber:null,hasDocument:false,paymentMethod:'COURTESY'
     });
     expect(result.title).toBe('✅ Cortesía activada');
-    expect(result.validity).toBe('25 viajes');
+    expect(result.planName).toBe('Plan Lanzamiento Costa-Go');
+    expect(result.validity).toBe('15 días');
     expect(result.emailSubject).toContain('cortesía');
     expect(result.emailHtml).toContain('Cortesía Costa-Go');
+    expect(result.emailHtml).toContain('80 viajes');
     expect(result.emailHtml).toContain('Sin costo');
     expect(result.emailHtml).not.toContain('Confirmamos correctamente tu pago');
     expect(result.emailHtml).not.toContain('Ver comprobante');
