@@ -519,7 +519,11 @@ async function activePaymentOrder(driverId: string) {
     : { ...safeOrder, token: null, qrUrl: null };
 }
 
-async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean}={}) {
+export function requiresPackageCommercialRules(planType:string,commercialContextAvailable:boolean,skipForCourtesy=false){
+  return commercialContextAvailable&&planType==='TRIP_PACK'&&!skipForCourtesy;
+}
+
+async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean;skipPackageCommercialRules?:boolean}={}) {
   const result = await database().begin(async tx => {
     await lockMembershipBilling(tx, driverId);
     await tx`update membership_payment_orders set status='EXPIRED',updated_at=now() where driver_id=${driverId} and status='PENDING' and expires_at<=now()`;
@@ -580,8 +584,9 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
     const usageAmount = Number(due!.amount);
     const adjustmentAmount = money(Number(cycle?.adjustment_amount ?? 0));
     const planType = String(plan.plan_type ?? "PERIODIC");
-    const priceEconomics=context&&planType==='TRIP_PACK'?await calculatePackageEconomics(String(plan.id),tx):null;
-    if(context&&planType==='TRIP_PACK'&&!priceEconomics)throw new Error('RULE_OR_CONFIGURATION_REQUIRED');
+    const packageRulesRequired=requiresPackageCommercialRules(planType,Boolean(context),Boolean(options.skipPackageCommercialRules));
+    const priceEconomics=packageRulesRequired?await calculatePackageEconomics(String(plan.id),tx):null;
+    if(packageRulesRequired&&!priceEconomics)throw new Error('RULE_OR_CONFIGURATION_REQUIRED');
     const [net]=await tx`select greatest(0,${plan.base_amount}::numeric+${due!.amount}::numeric+${cycle?.adjustment_amount??0}::numeric)::text as amount`;
     const tax = context?exactTaxBreakdown(net!.amount,String(settings?.vatRatePercent??0)):
       taxBreakdown(Math.max(0, Number(plan.base_amount) + usageAmount + adjustmentAmount), settings?.vatRatePercent ?? 0);
@@ -1434,7 +1439,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     } else {
       requirePermission(request,"payments:courtesy_grant");
       const input={planId:body.planId,intendedMethod:undefined,idempotencyKey:`courtesy-${driverId}-${Date.now()}`};
-      const order=await createPaymentOrder(driverId,input);
+      const order=await createPaymentOrder(driverId,input,{skipPackageCommercialRules:true});
       result=await processMembershipPayment(String(order.id),actor,{method:"COURTESY",receiverScope:"NOT_APPLICABLE",verificationChannel:"ADMIN_COURTESY",idempotencyKey:`courtesy-payment-${order.id}`});
     }
     if(!result)return reply.code(409).send({error:"MEMBERSHIP_REQUIRED"});
