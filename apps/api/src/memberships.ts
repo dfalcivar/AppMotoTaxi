@@ -523,6 +523,19 @@ export function requiresPackageCommercialRules(planType:string,commercialContext
   return commercialContextAvailable&&planType==='TRIP_PACK'&&!skipForCourtesy;
 }
 
+export function shouldReplaceEmptyCourtesyTripPack(input:{
+  paymentMethod:string;
+  planType:string;
+  currentPlanType:string;
+  includedTrips:number;
+  completedTrips:number;
+}){
+  return input.paymentMethod==='COURTESY'
+    &&input.planType==='TRIP_PACK'
+    &&input.currentPlanType==='TRIP_PACK'
+    &&Math.max(0,input.includedTrips-input.completedTrips)===0;
+}
+
 async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean;skipPackageCommercialRules?:boolean;reuseActiveOrder?:boolean}={}) {
   const result = await database().begin(async tx => {
     await lockMembershipBilling(tx, driverId);
@@ -756,11 +769,19 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
     const [current] = await tx`select * from driver_memberships where driver_id=${order.driver_id} and cycle_closed_at is null order by created_at desc limit 1 for update`;
     const planType = String(plan.plan_type ?? "PERIODIC");
     const currentPlanType = String(current?.plan_type_snapshot ?? "PERIODIC");
+    const replaceEmptyCourtesyPack=Boolean(current)&&shouldReplaceEmptyCourtesyTripPack({
+      paymentMethod:input.method,
+      planType,
+      currentPlanType,
+      includedTrips:Number(current?.included_trips_snapshot??0),
+      completedTrips:Number(current?.completed_trips??0)
+    });
+    const mergeTripPack=Boolean(current)&&planType==='TRIP_PACK'&&currentPlanType==='TRIP_PACK'&&!replaceEmptyCourtesyPack;
     const [price] = await tx`select platform_commission_cents_per_leg from pricing_versions where active_from<=now() and (active_until is null or active_until>now()) order by active_from desc limit 1`;
     const passengerAdditional = Number(price?.platform_commission_cents_per_leg ?? 5) / 100;
     const extraFee = Number((passengerAdditional * Number(plan.extra_trip_share_percent) / 100).toFixed(4));
     let membership: any;
-    if (current && planType === "TRIP_PACK" && currentPlanType === "TRIP_PACK") {
+    if (current&&mergeTripPack) {
       const configuredExpiry = plan.pack_validity_days == null
         ? null
         : new Date(Math.max(Date.now(), current.expires_at ? new Date(String(current.expires_at)).getTime() : 0) + Number(plan.pack_validity_days) * 86_400_000);
@@ -785,7 +806,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
       const expiresAt = planType === "PERIODIC"
         ? new Date(baseDate + Number(plan.duration_days) * 86_400_000)
         : plan.pack_validity_days == null ? null : new Date(baseDate + Number(plan.pack_validity_days) * 86_400_000);
-      const closeReason = currentPlanType === planType ? "PAID_RENEWAL" : "PLAN_CHANGED";
+      const closeReason = replaceEmptyCourtesyPack ? "COURTESY_REPLACEMENT" : currentPlanType === planType ? "PAID_RENEWAL" : "PLAN_CHANGED";
       if (current) await tx`update driver_memberships set status='CLOSED',cycle_closed_at=now(),cycle_close_reason=${closeReason},final_renewal_amount=coalesce(final_renewal_amount,estimated_next_renewal_amount),renewal_order_id=${order.id},updated_at=now() where id=${current.id}`;
       [membership] = await tx`
         insert into driver_memberships (
@@ -801,7 +822,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
           ${planType},${planType === "PERIODIC" ? plan.duration_days : 0},${plan.base_amount},${plan.included_trips},${planType === "PERIODIC" ? extraFee : 0},${planType === "PERIODIC" ? plan.extra_trip_share_percent : 0},
           ${planType === "PERIODIC" ? plan.max_renewal_amount : plan.base_amount},${passengerAdditional},${planType === "PERIODIC" ? plan.base_amount : 0},'INDIVIDUAL',null,
           ${order.total_amount},${order.currency},'CONFIRMED',${input.method},${input.referenceDisplay ?? input.reference?.trim() ?? referenceMasked ?? null},
-          now(),now(),${payment.id},'NORMAL',${actor.id!},${actor.id!}
+          now(),now(),${payment.id},${input.method==='COURTESY'?'COURTESY':'NORMAL'},${actor.id!},${actor.id!}
         from operational_settings os where os.id=1 returning id::text,expires_at as "expiresAt",status,included_trips_snapshot-completed_trips as "remainingTrips"
       `;
     }
@@ -809,7 +830,7 @@ async function processMembershipPayment(orderId: string, actor: SessionUser, inp
     if(planType==='TRIP_PACK')await tx`insert into package_purchases(order_id,driver_id,membership_id,quantity,snapshot)
       values(${order.id},${order.driver_id},${membership.id},${plan.included_trips},${JSON.stringify(order.plan_snapshot)}::jsonb)
       on conflict(order_id) do nothing`;
-    if(order.metadata?.arrivalBillingEnabled&&!(current&&planType==='TRIP_PACK'&&currentPlanType==='TRIP_PACK'))
+    if(order.metadata?.arrivalBillingEnabled&&!mergeTripPack)
       await tx`update driver_memberships set arrival_billing_enabled=true where id=${membership.id}`;
     if(current&&(order.metadata?.arrivalBillingEnabled||current.arrival_billing_enabled||Number(current.prior_cycle_due??0)!==0)) {
       // Debt/credit from a prior period is independent from the next package's

@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {requiresPackageCommercialRules} from './memberships.js';
+import {requiresPackageCommercialRules,shouldReplaceEmptyCourtesyTripPack} from './memberships.js';
 import {readFile} from 'node:fs/promises';
 
 describe('membresías de cortesía',()=>{
@@ -17,5 +17,15 @@ describe('membresías de cortesía',()=>{
     expect(source).toContain('reuseActiveOrder:false');
     expect(source).toContain("cancellation_channel='ADMIN'");
     expect(source).toContain("and id<>${order.id} and status='PENDING'");
+  });
+
+  it('reemplaza una cortesía por viajes agotada en lugar de acumularla',()=>{
+    expect(shouldReplaceEmptyCourtesyTripPack({paymentMethod:'COURTESY',planType:'TRIP_PACK',currentPlanType:'TRIP_PACK',includedTrips:0,completedTrips:0})).toBe(true);
+    expect(shouldReplaceEmptyCourtesyTripPack({paymentMethod:'COURTESY',planType:'TRIP_PACK',currentPlanType:'TRIP_PACK',includedTrips:10,completedTrips:10})).toBe(true);
+  });
+
+  it('conserva la acumulación normal y las cortesías que aún tienen viajes',()=>{
+    expect(shouldReplaceEmptyCourtesyTripPack({paymentMethod:'CASH',planType:'TRIP_PACK',currentPlanType:'TRIP_PACK',includedTrips:0,completedTrips:0})).toBe(false);
+    expect(shouldReplaceEmptyCourtesyTripPack({paymentMethod:'COURTESY',planType:'TRIP_PACK',currentPlanType:'TRIP_PACK',includedTrips:10,completedTrips:2})).toBe(false);
   });
 });
