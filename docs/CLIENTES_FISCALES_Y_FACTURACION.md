@@ -135,6 +135,7 @@ FACTURACION_ENABLED=false
 FACTURACION_PROVIDER=DATIL
 FACTURACION_ENVIRONMENT=TEST
 FACTURACION_CUTOVER_AT=<fecha-y-hora-futura-coordinada-en-ISO-8601>
+FACTURACION_TEST_ORDER_CODE=<codigo-visible-de-la-orden-pendiente-de-membresia-o-recarga>
 FACTURACION_EMAIL_MODE=PROVIDER
 FACTURACION_SMTP_ENABLED=false
 FACTURACION_FROM_EMAIL=
@@ -155,6 +156,8 @@ DATIL_WEBHOOK_TOKEN=
 ```
 
 Las claves y la contraseña del certificado se cargan únicamente como secretos de Render. Activar solo `FACTURACION_ENABLED` no emite nada si falta la configuración o la fecha de corte. La fecha debe fijarse antes del primer pago que se quiera emitir; todo registro anterior conserva `emission_eligible=false`. No almacenar credenciales reales en Git.
+
+En `TEST`, la emisión exige además `FACTURACION_TEST_ORDER_CODE`. Solo la orden de membresía o recarga con ese código visible puede enviarse a Dátil; los demás pagos nuevos quedan como `PENDIENTE_INTEGRACION`. Crear primero la orden desde la app del conductor, copiar el código, configurar el corte antes de confirmar su pago y comprobar en el panel que la emisión está habilitada. Una cortesía no genera factura. El correo fiscal del cliente se incluye en el comprador y Dátil gestiona el envío tras la autorización. Al terminar la prueba, desactivar `FACTURACION_ENABLED` y retirar el código de prueba.
 
 ### Habilitación de Dátil
 

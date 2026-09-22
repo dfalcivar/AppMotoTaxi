@@ -153,9 +153,12 @@ export class AzurProvider extends UnconfiguredProvider {constructor(){super('AZU
 export class SriProvider extends UnconfiguredProvider {constructor(){super('SRI');}}
 
 export function billingConfiguration(){const cutoverRaw=process.env.FACTURACION_CUTOVER_AT?.trim()??'',cutoverDate=cutoverRaw?new Date(cutoverRaw):null;
+  const testOrderRaw=process.env.FACTURACION_TEST_ORDER_CODE?.trim().toUpperCase()??'';
   return {enabled:process.env.FACTURACION_ENABLED==='true',provider:process.env.FACTURACION_PROVIDER??'DATIL',environment:process.env.FACTURACION_ENVIRONMENT??'TEST',
     emailMode:process.env.FACTURACION_EMAIL_MODE??'PROVIDER',smtpEnabled:process.env.FACTURACION_SMTP_ENABLED==='true',fromEmail:process.env.FACTURACION_FROM_EMAIL??'',
-    cutoverAt:cutoverDate&&!Number.isNaN(cutoverDate.getTime())?cutoverDate:null,webhookReady:Boolean((process.env.DATIL_WEBHOOK_TOKEN??'').trim().length>=32)};
+    cutoverAt:cutoverDate&&!Number.isNaN(cutoverDate.getTime())?cutoverDate:null,
+    testOrderCode:/^[A-Z0-9-]{3,32}$/.test(testOrderRaw)?testOrderRaw:null,
+    webhookReady:Boolean((process.env.DATIL_WEBHOOK_TOKEN??'').trim().length>=32)};
 }
 export function billingProvider():ProveedorFacturacion {switch(billingConfiguration().provider){case 'AZUR':return new AzurProvider();case 'SRI':return new SriProvider();default:return new DatilProvider();}}
 export function datilSequenceConfiguration(){return {establishment:envString(process.env,'DATIL_ESTABLISHMENT_CODE'),emissionPoint:envString(process.env,'DATIL_EMISSION_POINT'),

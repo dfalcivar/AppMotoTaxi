@@ -41,7 +41,7 @@ beforeAll(async()=>{
   await pg.exec('alter table membership_payment_orders alter column taxable_subtotal set default 12; alter table advertising_orders alter column subtotal_amount set default 25;');
 },30000);
 beforeEach(async()=>{
-  vi.unstubAllEnvs();vi.stubEnv('FACTURACION_ENABLED','false');vi.stubEnv('NODE_ENV','test');
+  vi.unstubAllEnvs();vi.stubEnv('FACTURACION_ENABLED','false');vi.stubEnv('FACTURACION_TEST_ORDER_CODE','MEM-TEST');vi.stubEnv('NODE_ENV','test');
   await pg.exec('truncate fiscal_provider_events,fiscal_sequences,fiscal_credit_notes,fiscal_invoices,fiscal_billing_outbox,fiscal_profiles,fiscal_client_links,fiscal_audit,fiscal_clients,users,advertisers,membership_payment_orders,advertising_orders,membership_payments,advertising_payments,advertising_payment_upload_tokens cascade');
   await pg.query('insert into users(id,full_name,email,active_session_id) values($1,$2,$3,$4),($5,$6,$7,null)',[driverId,'Conductor','driver@example.test',sessionId,actorId,'Administrador','admin@example.test']);
   await pg.query('insert into advertisers(id,business_name,email) values($1,$2,$3)',[advertiserId,'Hotel de prueba','contact@example.test']);
@@ -93,6 +93,32 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     const svc=new FacturaService();await svc.collectCommittedPayments();await svc.collectCommittedPayments();await svc.processPending();
     const rows=(await pg.query<any>('select * from fiscal_invoices')).rows;expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({status:'PENDIENTE_INTEGRACION',authorization_number:null,access_key:null,xml_location:null,subtotal:'12.00',tax_amount:'0.00',emission_eligible:false});
+  });
+  it('only emits the selected paid order in the shared TEST environment',async()=>{
+    const otherOrder='00000000-0000-4000-8000-000000000008';
+    await service.save(owner,input,{});
+    await pg.query('insert into membership_payment_orders(id,driver_id,short_code) values($1,$2,$3)',[otherOrder,driverId,'MEM-OTHER']);
+    await pay();await pg.query('insert into membership_payments(driver_id,order_id,amount) values($1,$2,12)',[driverId,otherOrder]);
+    vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2020-01-01T00:00:00Z');
+    vi.stubEnv('DATIL_ESTABLISHMENT_CODE','001');vi.stubEnv('DATIL_EMISSION_POINT','002');
+    const emit=vi.fn(async()=>({status:'RECIBIDA' as const,remoteId:'selected-order-only',providerStatus:'RECIBIDO'}));
+    const svc=new FacturaService({name:'DATIL',configured:true,emitirFactura:emit} as any);
+    await svc.collectCommittedPayments();await svc.processPending();
+    expect(emit).toHaveBeenCalledTimes(1);
+    const invoices=(await pg.query<any>('select payment_id,emission_eligible,status from fiscal_invoices')).rows;
+    expect(invoices).toHaveLength(2);
+    expect(invoices.map(row=>row.emission_eligible).sort()).toEqual([false,true]);
+    expect(invoices.find(row=>row.emission_eligible)?.status).toBe('RECIBIDA');
+    expect(invoices.find(row=>!row.emission_eligible)?.status).toBe('PENDIENTE_INTEGRACION');
+  });
+  it('does not prepare test invoices until an exact order is selected',async()=>{
+    await service.save(owner,input,{});await pay();
+    vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2020-01-01T00:00:00Z');
+    vi.stubEnv('FACTURACION_TEST_ORDER_CODE','');
+    const emit=vi.fn();const svc=new FacturaService({name:'DATIL',configured:true,emitirFactura:emit} as any);
+    await svc.collectCommittedPayments();await svc.processPending();
+    expect(emit).not.toHaveBeenCalled();
+    expect((await pg.query<any>('select status,emission_eligible from fiscal_invoices')).rows[0]).toMatchObject({status:'PENDIENTE_INTEGRACION',emission_eligible:false});
   });
   it('snapshots remain unchanged when current profile changes',async()=>{
     await service.save(owner,input,{});await pay();await service.save(owner,{...input,expectedRevision:1,billingEmail:'new@example.test'},{});

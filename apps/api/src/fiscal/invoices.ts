@@ -13,7 +13,7 @@ const delaySeconds=(attempt:number)=>Math.min(3600,30*Math.pow(2,Math.max(0,atte
 
 export class FacturaService {
   constructor(private provider:ProveedorFacturacion=billingProvider()){}
-  private ensureProviderEnabled(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured)throw new Error('FISCAL_PROVIDER_DISABLED');return config;}
+  private ensureProviderEnabled(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode))throw new Error('FISCAL_PROVIDER_DISABLED');return config;}
 
   async collectCommittedPayments() {
     const config=billingConfiguration();
@@ -21,7 +21,10 @@ export class FacturaService {
       const jobs=await tx`select * from fiscal_billing_outbox where processed_at is null and not payment_reversed order by created_at limit 100 for update skip locked`;
       for(const job of jobs){
         const reference=`costago:${job.source}:${job.payment_id}:${job.document_type}`;
-        const eligible=Boolean(config.cutoverAt&&new Date(job.paid_at)>=config.cutoverAt&&job.fiscal_snapshot);
+        const [testOrder]=config.environment==='TEST'&&config.testOrderCode&&job.source==='MEMBRESIA'
+          ?await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${job.payment_id} and upper(o.short_code)=${config.testOrderCode}`:[];
+        const eligible=Boolean(config.cutoverAt&&new Date(job.paid_at)>=config.cutoverAt&&job.fiscal_snapshot&&
+          (config.environment!=='TEST'||testOrder));
         const [invoice]=await tx`insert into fiscal_invoices(external_reference,source,service_type,zone_id,payment_id,document_type,
           client_id,fiscal_snapshot,concept,subtotal,tax_amount,total,currency,provider,environment,email_to,paid_at,status,
           payment_method,vat_rate_percent,emission_eligible,next_attempt_at)
@@ -79,11 +82,12 @@ export class FacturaService {
   }
 
   async processPending() {
-    const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured)return;
+    const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode))return;
     const rows=await database()`update fiscal_invoices set status='ENVIANDO',attempt_count=attempt_count+1,updated_at=now()
       where id in (select id from fiscal_invoices where emission_eligible and fiscal_snapshot is not null
         and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
         and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
+        and (${config.environment}<>'TEST' or (source='MEMBRESIA' and exists(select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=fiscal_invoices.payment_id and upper(o.short_code)=${config.testOrderCode})))
         and not exists(select 1 from fiscal_billing_outbox o where o.source=fiscal_invoices.source and o.payment_id=fiscal_invoices.payment_id and o.payment_reversed)
         order by created_at limit 10 for update skip locked) returning *`;
     for(let invoice of rows){
@@ -123,6 +127,10 @@ export class FacturaService {
     return database().begin(async tx=>{
       const [invoice]=await tx`select * from fiscal_invoices where id=${invoiceId} and status='AUTORIZADA' for update`;if(!invoice)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       if(!invoice.emission_eligible||invoice.provider!==config.provider||invoice.environment!==config.environment)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+      if(config.environment==='TEST'){
+        const [selected]=await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${invoice.payment_id} and upper(o.short_code)=${config.testOrderCode}`;
+        if(invoice.source!=='MEMBRESIA'||!selected)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+      }
       const total=cents(invoice.total),amount=cents(input.amount);if(amount<1||amount>total)throw new Error('INVALID_CREDIT_NOTE_AMOUNT');
       const [existing]=await tx`select id::text,status from fiscal_credit_notes where idempotency_key=${input.idempotencyKey}::uuid`;if(existing)return existing;
       const [reserved]=await tx`select coalesce(sum(amount),0) as amount from fiscal_credit_notes
@@ -138,10 +146,12 @@ export class FacturaService {
     });
   }
 
-  private async processPendingCreditNotes(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured)return;const seq=datilSequenceConfiguration();
+  private async processPendingCreditNotes(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode))return;const seq=datilSequenceConfiguration();
     const notes=await database()`update fiscal_credit_notes set status='ENVIANDO',attempt_count=attempt_count+1,updated_at=now() where id in
       (select id from fiscal_credit_notes where emission_eligible and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
-       and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment} order by created_at limit 5 for update skip locked) returning *`;
+       and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
+       and (${config.environment}<>'TEST' or exists(select 1 from fiscal_invoices i join membership_payments p on p.id=i.payment_id join membership_payment_orders o on o.id=p.order_id where i.id=fiscal_credit_notes.invoice_id and i.source='MEMBRESIA' and upper(o.short_code)=${config.testOrderCode}))
+       order by created_at limit 5 for update skip locked) returning *`;
     for(let note of notes){try{
       if(!note.sequential){const [allocated]=await database()`select allocate_fiscal_sequence('NOTA_CREDITO',${config.environment},${seq.establishment},${seq.emissionPoint},${seq.creditNoteInitial}) as value`;
         if(!allocated)throw new Error('FISCAL_SEQUENCE_ALLOCATION_FAILED');
