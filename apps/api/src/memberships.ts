@@ -536,7 +536,7 @@ export function shouldReplaceEmptyCourtesyTripPack(input:{
     &&Math.max(0,input.includedTrips-input.completedTrips)===0;
 }
 
-async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean;skipPackageCommercialRules?:boolean;reuseActiveOrder?:boolean}={}) {
+async function createPaymentOrder(driverId: string, input: z.infer<typeof paymentOrderSchema>, options:{mobileCatalogOnly?:boolean;skipPackageCommercialRules?:boolean;reuseActiveOrder?:boolean;createdBy?:string}={}) {
   const result = await database().begin(async tx => {
     await lockMembershipBilling(tx, driverId);
     await tx`update membership_payment_orders set status='EXPIRED',updated_at=now() where driver_id=${driverId} and status='PENDING' and expires_at<=now()`;
@@ -645,7 +645,7 @@ async function createPaymentOrder(driverId: string, input: z.infer<typeof paymen
         ${plan.base_amount},${usageAmount},${adjustmentAmount},${tax.subtotal},${tax.vatRatePercent},${tax.vatAmount},${tax.total},${plan.currency},${input.intendedMethod ?? null},
         ${input.intendedMethod === "BANK_TRANSFER" ? "COSTA_GO_CENTRAL" : "NOT_APPLICABLE"},
         ${input.intendedMethod === "BANK_TRANSFER" ? "REMOTE_PROOF" : null},'PENDING',
-        now()+(${Number(settings?.hours ?? 24)}*interval '1 hour'),${driverId},${input.idempotencyKey},
+        now()+(${Number(settings?.hours ?? 24)}*interval '1 hour'),${options.createdBy??driverId},${input.idempotencyKey},
         ${JSON.stringify({ tokenVersion: 1, economicBreakdown,arrivalBillingEnabled:Boolean(context) })}::jsonb,${input.topUpAmount?'WALLET_TOPUP':'MEMBERSHIP'})
       returning id::text,status,short_code as "shortCode",base_amount::float8 as "baseAmount",
         prior_usage_amount::float8 as "priorUsageAmount",adjustment_amount::float8 as "adjustmentAmount",
@@ -1031,7 +1031,7 @@ function businessError(error: unknown, reply: FastifyReply) {
     "TRANSFER_PROOF_ALREADY_SUBMITTED",
     "PAYMENT_REFERENCE_ALREADY_USED", "MEMBERSHIP_PLAN_CODE_EXISTS",
     "MEMBERSHIP_PLAN_NOT_CURRENT", "INSUFFICIENT_AVAILABLE_BALANCE", "WALLET_NOT_ENABLED",
-    "COMMERCIAL_MODEL_DISABLED", "PACKAGE_COMMERCIAL_RULE_REQUIRED", "IDEMPOTENCY_CONFLICT",
+    "COMMERCIAL_MODEL_DISABLED", "PACKAGE_COMMERCIAL_RULE_REQUIRED", "IDEMPOTENCY_CONFLICT", "PENDING_ORDER_ALREADY_EXISTS",
     "SETTINGS_VERSION_CONFLICT", "MEMBERSHIP_PLAN_ORDER_MISMATCH"
   ];
   const notFound = ["PAYMENT_ORDER_NOT_FOUND", "MEMBERSHIP_PLAN_NOT_FOUND"];
@@ -1411,6 +1411,24 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
       where u.deleted_at is null and u.status='ACTIVE' and d.approval_status='APROBADO'
       order by (dm.plan_name is null) desc,u.full_name,u.email`;
   } catch(error){return businessError(error,reply);} });
+
+  app.get("/v1/admin/membership-topup-order/config",async(request,reply)=>{try{
+    requirePermission(request,"memberships:manage");
+    const context=await commercialContext();if(!context)throw new Error("WALLET_NOT_ENABLED");
+    return {minimumTopUp:context.config.minimumTopUp,maximumTopUp:context.config.maximumTopUp};
+  }catch(error){return businessError(error,reply);} });
+
+  app.post("/v1/admin/membership-topup-order",async(request,reply)=>{try{
+    const actor=requirePermission(request,"memberships:manage");
+    const body=z.object({driverId:z.string().uuid(),topUpAmount:z.string().regex(/^\d{1,6}(\.\d{1,2})?$/),idempotencyKey:z.string().uuid()}).parse(request.body);
+    const [driver]=await database()`select u.id::text,u.full_name as name,u.email from drivers d join users u on u.id=d.user_id
+      where u.id=${body.driverId} and u.deleted_at is null and u.status='ACTIVE' and d.approval_status='APROBADO'`;
+    if(!driver)return reply.code(404).send({error:"DRIVER_NOT_FOUND"});
+    const order=await createPaymentOrder(body.driverId,{topUpAmount:body.topUpAmount,idempotencyKey:body.idempotencyKey},{createdBy:actor.id!,reuseActiveOrder:true});
+    if(order.plan?.code!=='WALLET_TOPUP'||Math.round(Number(order.baseAmount)*100)!==Math.round(Number(body.topUpAmount)*100))throw new Error('PENDING_ORDER_ALREADY_EXISTS');
+    if(!order.reused)await persistAudit(actor,'MEMBERSHIP_TOPUP_ORDER_CREATED','MEMBERSHIP_PAYMENT_ORDER',order.id,`Recarga pendiente para ${driver.email}; total ${order.totalAmount} ${order.currency}`);
+    return reply.code(order.reused?200:201).send({...order,driver:{id:driver.id,name:driver.name,email:driver.email}});
+  }catch(error){return businessError(error,reply);} });
 
   app.get("/v1/admin/memberships/dashboard", async (request, reply) => { try {
     requirePermission(request,"memberships:view");
