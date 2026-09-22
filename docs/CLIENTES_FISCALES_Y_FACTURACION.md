@@ -1,6 +1,6 @@
 # Clientes fiscales y preparación de facturación — Costa-Go
 
-Estado funcional revisado al 29 de agosto de 2026. La arquitectura está implementada y versionada; la emisión fiscal productiva continúa deshabilitada hasta configurar y autorizar expresamente el proveedor correspondiente.
+Estado funcional revisado al 22 de septiembre de 2026. El adaptador de Dátil está implementado; la emisión continúa deshabilitada hasta cargar credenciales, definir una fecha de corte, probar en ambiente TEST y activar expresamente el proveedor.
 
 ## Qué funciona ahora
 
@@ -10,9 +10,11 @@ Estado funcional revisado al 29 de agosto de 2026. La arquitectura está impleme
 - Panel **Finanzas / Facturación**: Dashboard, Facturas, Clientes fiscales, Pagos y Configuración.
 - Auditoría, trazabilidad del pago y copia histórica de datos fiscales independiente del perfil actual.
 - Eliminación del perfil reutilizable al eliminar una cuenta; conservación del histórico financiero.
-- Cola durable local y adaptadores desactivados para Dátil, Azur y SRI.
+- Cola durable local, adaptador HTTP de Dátil, consulta asíncrona de estados, XML/RIDE, reenvío y notas de crédito.
+- Secuenciales fiscales atómicos e idempotencia remota con UUID de 36 caracteres.
+- Corte de activación que deja todo comprobante histórico fuera de emisión.
 
-No funciona todavía la emisión electrónica real, autorización SRI, descarga de XML/RIDE reales, webhooks ni envío fiscal por correo. Sus acciones están deshabilitadas, no simuladas.
+El proveedor sigue apagado en la configuración desplegable. Azur y SRI continúan como adaptadores no configurados. No existe autorización real hasta que Dátil/SRI devuelva y Costa-Go verifique el estado `AUTORIZADO`.
 
 ## Arquitectura y archivos
 
@@ -34,12 +36,13 @@ FacturaService (trabajo independiente, durable)
 fiscal_invoices (snapshot, referencia única)
         ▼
 ProveedorFacturacion → DatilProvider / AzurProvider / SriProvider
-                       actualmente sin llamadas externas
+                       HTTP real solo para Dátil configurado
 ```
 
 | Componente | Implementación |
 |---|---|
 | Esquema y captura transaccional | `apps/api/migrations/072_fiscal_clients_and_invoicing.sql` |
+| Integración Dátil, secuenciales y corte | `apps/api/migrations/096_datil_billing_integration.sql` |
 | Identidades, validación y revisiones | `apps/api/src/fiscal/clients.ts` |
 | API, permisos y métricas | `apps/api/src/fiscal/routes.ts` |
 | Trabajo posterior al pago | `apps/api/src/fiscal/invoices.ts` |
@@ -86,15 +89,18 @@ No cambian la revisión de contenido ni los requisitos actuales para publicar ca
 - Membresía: captura pagos `CONFIRMED`, excluyendo cortesías. Publicidad: captura únicamente `APPROVED` y `RECONCILED`.
 - El trigger guarda solo la intención local dentro de la misma transacción. Si falla la activación del negocio, tampoco queda intención fiscal huérfana.
 - El worker recoge intenciones confirmadas cada 30 segundos. Usa bloqueos `SKIP LOCKED` y restricciones únicas por origen/pago/tipo de documento.
-- `external_reference = costago:ORIGEN:PAGO:TIPO` permanece estable en reintentos.
+- `external_reference = costago:ORIGEN:PAGO:TIPO` conserva trazabilidad local. Dátil recibe como clave idempotente un UUID persistido de 36 caracteres.
 - Sin proveedor, el documento queda `PENDIENTE_INTEGRACION`; no es error ni factura autorizada.
 - El snapshot se fija al aprobar el pago y se copia al documento preparado. Cambiar o eliminar el perfil después no altera esa evidencia financiera.
-- Una factura autorizada no permite editar ni borrar sus datos fiscales/importes; solo admite actualizar el seguimiento del envío de correo. Las notas autorizadas también son inmutables.
-- Los importes actuales no se alteran: subtotal/IVA quedan pendientes de configuración fiscal, no se inventa una tasa ni se descuenta IVA de los cobros.
+- Una factura autorizada no permite editar ni borrar identidad, importes o autorización; solo admite actualizar enlaces XML/RIDE y seguimiento de correo. Las notas autorizadas también son inmutables.
+- El documento conserva subtotal, porcentaje de IVA e impuesto de la orden. Para IVA 15%, Dátil recibe impuesto `2` y porcentaje `4`; cédula usa `05` y RUC `04`.
+- Las recargas se emiten con el concepto **Recarga de saldo Costa-Go** y servicio `RECARGA`, aunque compartan la tabla de pagos de membresías.
 - Un pago revertido deja de sumar en Total cobrado. No se borra ni se modifica automáticamente una factura autorizada; una futura nota de crédito tratará su corrección fiscal.
-- Un proveedor caído deja `PENDIENTE_REINTENTO`, sin cambiar pago ni membresía/campaña. Un envío que quedó en curso puede recuperarse tras 10 minutos usando la misma referencia.
+- Un proveedor caído o un timeout deja `PENDIENTE_REINTENTO`, con espera exponencial, sin cambiar pago ni membresía/campaña. Un envío en curso se recupera usando la misma idempotencia.
+- Los estados `RECIBIDO`/`ENVIADO` se consultan de forma asíncrona. La autorización suele tardar entre 3 y 5 segundos y el worker vuelve a consultar sin reenviar el documento.
+- El webhook se deduplica y solo adelanta la próxima consulta. Su cuerpo no puede autorizar documentos: Costa-Go confirma nuevamente el ID remoto con Dátil.
 
-Antes de integrar un proveedor real deben completarse su idempotencia externa, timeouts, política de reintentos, consulta de estados y webhooks. La protección local por sí sola no sustituye la idempotencia del proveedor remoto.
+Antes de habilitar producción deben completarse las pruebas del emisor y certificado en TEST, validar secuenciales iniciales con contabilidad y probar factura, correo, XML/RIDE y nota de crédito.
 
 ## Administración y métricas
 
@@ -128,18 +134,31 @@ La política corporativa de conservación del histórico y su plazo debe mantene
 FACTURACION_ENABLED=false
 FACTURACION_PROVIDER=DATIL
 FACTURACION_ENVIRONMENT=TEST
+FACTURACION_CUTOVER_AT=<fecha-y-hora-futura-coordinada-en-ISO-8601>
 FACTURACION_EMAIL_MODE=PROVIDER
 FACTURACION_SMTP_ENABLED=false
 FACTURACION_FROM_EMAIL=
+DATIL_BASE_URL=https://link.datil.co
+DATIL_API_KEY=
+DATIL_CERTIFICATE_PASSWORD=
+DATIL_ISSUER_RUC=
+DATIL_ISSUER_LEGAL_NAME=
+DATIL_ISSUER_TRADE_NAME=
+DATIL_ISSUER_ADDRESS=
+DATIL_ESTABLISHMENT_ADDRESS=
+DATIL_ESTABLISHMENT_CODE=001
+DATIL_EMISSION_POINT=001
+DATIL_INVOICE_INITIAL_SEQUENCE=1
+DATIL_CREDIT_NOTE_INITIAL_SEQUENCE=1
+DATIL_REQUEST_TIMEOUT_MS=12000
+DATIL_WEBHOOK_TOKEN=
 ```
 
-Los adaptadores tienen `configured=false`: cambiar solamente la variable a `true` no producirá llamadas ni autorizaciones. SMTP no está implementado ni es un requisito actual. No almacenar credenciales reales en Git.
+Las claves y la contraseña del certificado se cargan únicamente como secretos de Render. Activar solo `FACTURACION_ENABLED` no emite nada si falta la configuración o la fecha de corte. La fecha debe fijarse antes del primer pago que se quiera emitir; todo registro anterior conserva `emission_eligible=false`. No almacenar credenciales reales en Git.
 
-### Futuro proveedor
+### Habilitación de Dátil
 
-Completar el adaptador y contrato de emisión/consulta/XML/RIDE/reenvío/nota de crédito, registrar credenciales en entorno, configurar emisor e impuestos, mapear respuestas, validar webhooks autenticados y repetidos, aplicar idempotencia remota y probar con el proveedor. El envío al correo fiscal corresponderá por defecto al proveedor; el esquema ya contempla destinatario, enviado, fecha y estado.
-
-No habilitar automáticamente documentos históricos antiguos sin snapshot fiscal ni enviarlos retrospectivamente al contratar un proveedor. Requieren decisión y revisión contable separadas.
+Configurar primero Dátil en TEST y mantener `FACTURACION_ENABLED=false`. Registrar el URL del webhook como `/v1/fiscal/datil/webhook/<DATIL_WEBHOOK_TOKEN>/<evento>`. Después de validar el emisor, certificado y secuenciales, fijar `FACTURACION_CUTOVER_AT` a una hora futura coordinada y habilitar. Para producción, cambiar el ambiente a `PRODUCTION` únicamente después de las pruebas y de confirmar los secuenciales iniciales. Los históricos no se vuelven elegibles por cambios posteriores de variables.
 
 ## Publicación coordinada — importante
 
@@ -160,9 +179,9 @@ La migración crea registros pendientes para cobros históricos confirmados sin 
 
 La suite fiscal usa PostgreSQL embebido PGlite y aplica el SQL real de la migración sobre tablas base mínimas. No usa ni modifica producción.
 
-- Fiscal: 28 pruebas de identidad, renovación, revisión concurrente, idempotencia, snapshot, pagos, reversión, borrado, permisos, sesiones, token, métricas e inmutabilidad.
-- API completa: 223 pruebas aprobadas, con regresiones de autenticación, búsquedas, tarifas, membresías, cancelaciones y publicidad, además del módulo fiscal; una prueba manual de vista local se omite por defecto.
-- Panel: typecheck, build y 14 pruebas existentes.
+- Fiscal y Dátil: 33 pruebas aprobadas de identidad, concurrencia de secuenciales, mapeo tributario, idempotencia, snapshot, corte histórico, webhook, pagos, reversión, borrado, permisos, métricas e inmutabilidad; una prueba manual de vista local se omite por defecto.
+- API: la regresión completa cubre autenticación, búsquedas, tarifas, membresías, cancelaciones, publicidad y facturación. Las pruebas afectadas también se ejecutan de forma aislada para descartar timeouts por carga paralela.
+- Panel: typecheck, build y pruebas de interfaz existentes.
 - Dominio: 12 pruebas.
 - Móvil: análisis sin incidencias y 78 pruebas, incluidas 6 del modal fiscal con ambos temas, pantalla pequeña, teclado, errores y doble envío.
 - Navegador local: Dashboard/listados/detalles, creación mediante enlace comercial, confirmación para continuar al comprobante y disposición del panel en 390 × 844.

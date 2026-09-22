@@ -1,5 +1,5 @@
 import type { FastifyInstance,FastifyRequest,FastifyReply } from 'fastify';
-import { createHash } from 'node:crypto';
+import { createHash,timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { database } from '../database.js';
 import { persistAudit,requirePermission,userFrom,type SessionUser } from '../admin.js';
@@ -10,6 +10,7 @@ import { FacturaService } from './invoices.js';
 const profileService=new PerfilFiscalService();
 const uuid=z.string().uuid();
 const vatRateSchema=z.object({vatRatePercent:z.coerce.number().min(0).max(100)});
+const creditNoteSchema=z.object({amount:z.coerce.number().positive(),reason:z.string().trim().min(3).max(300),idempotencyKey:z.string().uuid()});
 export const fiscalFilterSchema=z.object({
   search:z.string().trim().max(120).default(''),limit:z.coerce.number().int().min(1).max(100).default(25),
   offset:z.coerce.number().int().min(0).default(0),start:z.string().date().optional(),end:z.string().date().optional(),
@@ -22,12 +23,17 @@ const messages:Record<string,string>={
   FISCAL_OWNER_NOT_FOUND:'No se encontró un cliente vigente para esta operación.',
   FISCAL_CONTEXT_UNAVAILABLE:'La orden ya no está disponible o no tienes acceso a ella.',
   FISCAL_PROVIDER_DISABLED:'La emisión electrónica aún no está habilitada. El pago y el servicio no se modifican.',
+  FISCAL_INVOICE_NOT_FOUND:'No se encontró el documento fiscal.',
+  FISCAL_DOCUMENT_NOT_EMITTED:'El documento todavía no ha sido enviado al proveedor.',
+  FISCAL_DOCUMENT_NOT_AUTHORIZED:'La operación requiere un documento autorizado por el SRI.',
+  FISCAL_DOCUMENT_NOT_RETRYABLE:'El estado actual no admite un reintento manual.',
+  INVALID_CREDIT_NOTE_AMOUNT:'El valor de la nota de crédito debe ser mayor que cero y no superar el total de la factura.',
   FORBIDDEN:'No tienes permiso para consultar o modificar estos datos.',UNAUTHORIZED:'Inicia sesión nuevamente.'
 };
 export function fiscalError(error:unknown,reply:FastifyReply){
   if(error instanceof z.ZodError)return reply.code(400).send({error:'INVALID_FISCAL_DATA',message:'Revisa la identificación, nombre, dirección y correo de facturación.',fields:error.issues.map(v=>({field:v.path[0],message:v.message}))});
   const code=error instanceof Error?error.message:'';
-  return reply.code(code==='UNAUTHORIZED'?401:code==='FORBIDDEN'?403:code==='FISCAL_PROFILE_CHANGED'?409:messages[code]?400:500)
+  return reply.code(code==='UNAUTHORIZED'?401:code==='FORBIDDEN'?403:code==='FISCAL_INVOICE_NOT_FOUND'?404:code==='FISCAL_PROFILE_CHANGED'?409:messages[code]?400:500)
     .send({error:messages[code]?code:'FISCAL_OPERATION_FAILED',message:messages[code]??'No fue posible guardar o consultar los datos. Intenta nuevamente.'});
 }
 async function driver(request:FastifyRequest):Promise<SessionUser>{
@@ -106,8 +112,29 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     return {profile};
   }catch(e){return fiscalError(e,reply);}});
 
-  app.get('/v1/admin/fiscal/config',async(req,reply)=>{try{requirePermission(req,'FACTURACION_VER');const [settings]=await database()`select vat_rate_percent::float8 as "vatRatePercent",updated_at as "vatUpdatedAt" from operational_settings where id=1`;return {...billingConfiguration(),providerReady:billingProvider().configured,
-    profilesEnabled:true,emissionAvailable:billingConfiguration().enabled&&billingProvider().configured,...settings};}catch(e){return fiscalError(e,reply);}});
+  // Dátil's webhook is only a wake-up signal. Its payload never authorizes a
+  // local document; the worker must confirm the state through Dátil's API.
+  app.post('/v1/fiscal/datil/webhook/:token/:event',async(req,reply)=>{try{
+    const expected=process.env.DATIL_WEBHOOK_TOKEN?.trim()??'',params=req.params as {token:string;event:string};
+    if(expected.length<32||params.token.length!==expected.length||!timingSafeEqual(Buffer.from(params.token),Buffer.from(expected)))return reply.code(404).send({accepted:false});
+    const event=z.enum(['receipt-issued','issue-error']).parse(params.event),body=z.record(z.string(),z.unknown()).parse(req.body??{});
+    const remoteId=String(body.id??(body.data as any)?.id??body.receipt_id??body.document_id??'').trim();
+    if(!remoteId)return reply.code(202).send({accepted:true,matched:false});
+    const payloadHash=createHash('sha256').update(JSON.stringify(body)).digest('hex'),eventKey=createHash('sha256').update(`${event}:${remoteId}:${payloadHash}`).digest('hex');
+    const matched=await database().begin(async tx=>{
+      const [invoice]=await tx`select id::text from fiscal_invoices where provider='DATIL' and remote_id=${remoteId}`;
+      const [note]=invoice?[]:await tx`select id::text from fiscal_credit_notes where provider='DATIL' and remote_id=${remoteId}`;
+      const inserted=await tx`insert into fiscal_provider_events(provider,event_name,remote_id,event_key,payload_hash,matched_invoice_id,matched_credit_note_id)
+        values('DATIL',${event},${remoteId},${eventKey},${payloadHash},${invoice?.id??null}::uuid,${note?.id??null}::uuid) on conflict(event_key) do nothing returning id`;
+      if(inserted.length&&invoice)await tx`update fiscal_invoices set next_attempt_at=now(),updated_at=now() where id=${invoice.id} and status in ('RECIBIDA','ENVIANDO','PENDIENTE_REINTENTO')`;
+      if(inserted.length&&note)await tx`update fiscal_credit_notes set next_attempt_at=now(),updated_at=now() where id=${note.id} and status in ('RECIBIDA','ENVIANDO','PENDIENTE_REINTENTO')`;
+      return Boolean(invoice||note);
+    });
+    return reply.code(202).send({accepted:true,matched});
+  }catch{return reply.code(202).send({accepted:true,matched:false});}});
+
+  app.get('/v1/admin/fiscal/config',async(req,reply)=>{try{requirePermission(req,'FACTURACION_VER');const [settings]=await database()`select vat_rate_percent::float8 as "vatRatePercent",updated_at as "vatUpdatedAt" from operational_settings where id=1`,config=billingConfiguration(),providerReady=billingProvider().configured;return {...config,providerReady,
+    profilesEnabled:true,emissionAvailable:config.enabled&&providerReady&&Boolean(config.cutoverAt),...settings};}catch(e){return fiscalError(e,reply);}});
   app.patch('/v1/admin/fiscal/config/vat',async(req,reply)=>{try{
     const actor=requirePermission(req,'FACTURACION_ADMINISTRAR'),input=vatRateSchema.parse(req.body);
     const [previous]=await database()`select vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`;
@@ -164,12 +191,22 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     const [invoice]=await database()`select * from fiscal_invoices where id=${id}`;
     if(!invoice)return reply.code(404).send({message:'No se encontró el documento.'});
     const history=await database()`select event_type as event,result,created_at as date from fiscal_audit where entity_type='FACTURA' and entity_id=${id} order by created_at desc`;
-    return {invoice,history,actionsEnabled:false};
+    const config=billingConfiguration(),providerReady=billingProvider().configured,ready=config.enabled&&providerReady&&Boolean(config.cutoverAt);
+    return {invoice,history,actionsEnabled:{
+      status:ready&&Boolean(invoice.remote_id)&&!['AUTORIZADA','ANULADA'].includes(invoice.status),
+      retry:ready&&Boolean(invoice.emission_eligible)&&['ERROR','RECHAZADA','PENDIENTE_REINTENTO','RECIBIDA'].includes(invoice.status),
+      xml:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),ride:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),
+      email:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),creditNote:ready&&invoice.status==='AUTORIZADA'
+    }};
   }catch(e){return fiscalError(e,reply);}});
   app.post('/v1/admin/fiscal/invoices/:id/:action',async(req,reply)=>{try{
-    requirePermission(req,'FACTURACION_ADMINISTRAR');uuid.parse((req.params as any).id);
-    // Explicitly unavailable; never manufacture XML, RIDE, authorization or credit notes.
-    throw new Error('FISCAL_PROVIDER_DISABLED');
+    requirePermission(req,'FACTURACION_ADMINISTRAR');const params=req.params as {id:string;action:string},id=uuid.parse(params.id),svc=new FacturaService();
+    if(params.action==='status')return await svc.reconcileInvoice(id);
+    if(params.action==='retry')return await svc.retryInvoice(id);
+    if(params.action==='xml'||params.action==='ride')return await svc.artifact(id,params.action);
+    if(params.action==='email')return await svc.resendEmail(id);
+    if(params.action==='credit-note')return await svc.createCreditNote(id,creditNoteSchema.parse(req.body));
+    throw new Error('FISCAL_CONTEXT_UNAVAILABLE');
   }catch(e){return fiscalError(e,reply);}});
   app.get('/v1/admin/fiscal/payments',async(req,reply)=>{try{
     requirePermission(req,'FACTURACION_VER');const q=fiscalFilterSchema.parse(req.query);

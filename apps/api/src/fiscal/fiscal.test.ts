@@ -25,8 +25,8 @@ beforeAll(async()=>{
     create table service_areas(id uuid primary key,name text);
     create table operational_settings(id int primary key,vat_rate_percent numeric(6,3) not null default 15,updated_at timestamptz default now(),updated_by uuid);
     insert into operational_settings(id) values(1);
-    create table membership_payment_orders(id uuid primary key,driver_id uuid,short_code text default 'MEM-TEST',plan_snapshot jsonb default '{"name":"Plan mensual"}',status text default 'PENDING',expires_at timestamptz default now()+interval '1 day');
-    create table advertising_orders(id uuid primary key,advertiser_id uuid,code text default 'PUB-TEST',plan_snapshot jsonb default '{"name":"Plan publicitario"}',status text default 'PENDING_PAYMENT',assigned_commercial_id uuid);
+    create table membership_payment_orders(id uuid primary key,driver_id uuid,short_code text default 'MEM-TEST',plan_snapshot jsonb default '{"name":"Plan mensual"}',status text default 'PENDING',expires_at timestamptz default now()+interval '1 day',total_amount numeric(12,2) not null default 12,purpose text not null default 'MEMBERSHIP');
+    create table advertising_orders(id uuid primary key,advertiser_id uuid,code text default 'PUB-TEST',plan_snapshot jsonb default '{"name":"Plan publicitario"}',status text default 'PENDING_PAYMENT',assigned_commercial_id uuid,amount numeric(12,2) not null default 25);
     create table affiliate_banners(id uuid primary key,order_id uuid,service_area_id uuid);
     create table membership_payments(id uuid primary key default gen_random_uuid(),driver_id uuid,order_id uuid,collection_point_id uuid,status text default 'CONFIRMED',method text default 'CASH',amount numeric,currency text default 'USD',confirmed_at timestamptz default now());
     create table advertising_payments(id uuid primary key default gen_random_uuid(),advertiser_id uuid,order_id uuid,status text default 'PENDING',settlement_status text default 'NOT_RECEIVED',payment_method_id uuid,amount numeric,currency text default 'USD',reviewed_at timestamptz,created_at timestamptz default now());
@@ -36,10 +36,13 @@ beforeAll(async()=>{
     create table collection_points(id uuid primary key,status text,service_area_id uuid);
   `);
   await pg.exec(await readFile(new URL('../../migrations/072_fiscal_clients_and_invoicing.sql',import.meta.url).pathname.replace(/^\/(\w:)/,'$1'),'utf8').catch(()=>readFile('migrations/072_fiscal_clients_and_invoicing.sql','utf8')));
+  await pg.exec(await readFile(new URL('../../migrations/077_configurable_vat_billing.sql',import.meta.url).pathname.replace(/^\/(\w:)/,'$1'),'utf8').catch(()=>readFile('migrations/077_configurable_vat_billing.sql','utf8')));
+  await pg.exec(await readFile(new URL('../../migrations/096_datil_billing_integration.sql',import.meta.url).pathname.replace(/^\/(\w:)/,'$1'),'utf8').catch(()=>readFile('migrations/096_datil_billing_integration.sql','utf8')));
+  await pg.exec('alter table membership_payment_orders alter column taxable_subtotal set default 12; alter table advertising_orders alter column subtotal_amount set default 25;');
 },30000);
 beforeEach(async()=>{
-  vi.stubEnv('FACTURACION_ENABLED','false');vi.stubEnv('NODE_ENV','test');
-  await pg.exec('truncate fiscal_credit_notes,fiscal_invoices,fiscal_billing_outbox,fiscal_profiles,fiscal_client_links,fiscal_audit,fiscal_clients,users,advertisers,membership_payment_orders,advertising_orders,membership_payments,advertising_payments,advertising_payment_upload_tokens cascade');
+  vi.unstubAllEnvs();vi.stubEnv('FACTURACION_ENABLED','false');vi.stubEnv('NODE_ENV','test');
+  await pg.exec('truncate fiscal_provider_events,fiscal_sequences,fiscal_credit_notes,fiscal_invoices,fiscal_billing_outbox,fiscal_profiles,fiscal_client_links,fiscal_audit,fiscal_clients,users,advertisers,membership_payment_orders,advertising_orders,membership_payments,advertising_payments,advertising_payment_upload_tokens cascade');
   await pg.query('insert into users(id,full_name,email,active_session_id) values($1,$2,$3,$4),($5,$6,$7,null)',[driverId,'Conductor','driver@example.test',sessionId,actorId,'Administrador','admin@example.test']);
   await pg.query('insert into advertisers(id,business_name,email) values($1,$2,$3)',[advertiserId,'Hotel de prueba','contact@example.test']);
   await pg.query('insert into membership_payment_orders(id,driver_id) values($1,$2)',[orderId,driverId]);
@@ -89,7 +92,7 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     await service.save(owner,input,{});const id=await pay();await pg.query("update membership_payments set status='CONFIRMED' where id=$1",[id]);
     const svc=new FacturaService();await svc.collectCommittedPayments();await svc.collectCommittedPayments();await svc.processPending();
     const rows=(await pg.query<any>('select * from fiscal_invoices')).rows;expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({status:'PENDIENTE_INTEGRACION',authorization_number:null,access_key:null,xml_location:null,subtotal:null,tax_amount:null});
+    expect(rows[0]).toMatchObject({status:'PENDIENTE_INTEGRACION',authorization_number:null,access_key:null,xml_location:null,subtotal:'12.00',tax_amount:'0.00',emission_eligible:false});
   });
   it('snapshots remain unchanged when current profile changes',async()=>{
     await service.save(owner,input,{});await pay();await service.save(owner,{...input,expectedRevision:1,billingEmail:'new@example.test'},{});
@@ -172,19 +175,33 @@ describe('fiscal integration, durable local payments and deletion',()=>{
   it('disabled providers cannot call external services even with an accidental true flag',async()=>{
     vi.stubEnv('FACTURACION_ENABLED','true');for(const provider of [new DatilProvider(),new AzurProvider(),new SriProvider()]){
       expect(provider.configured).toBe(false);expect((await provider.emitirFactura({})).status).toBe('PENDIENTE_INTEGRACION');
-      expect((await provider.obtenerXml('test')).status).toBe('PENDIENTE_INTEGRACION');
+      const xml=await provider.obtenerXml('test');expect('status' in xml&&xml.status).toBe('PENDIENTE_INTEGRACION');
     }
   });
   it('a provider failure never changes an approved payment and retries with the same reference',async()=>{
     await service.save(owner,input,{});await pay();
     const emit=vi.fn(async(_invoice:any)=>{throw new Error('Test provider unavailable');});
     const provider={...new DatilProvider(),name:'DATIL',configured:true,emitirFactura:emit} as any;
-    vi.stubEnv('FACTURACION_ENABLED','true');const svc=new FacturaService(provider);
-    await svc.collectCommittedPayments();await svc.processPending();await svc.processPending();
+    vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2020-01-01T00:00:00Z');vi.stubEnv('DATIL_ESTABLISHMENT_CODE','001');vi.stubEnv('DATIL_EMISSION_POINT','001');const svc=new FacturaService(provider);
+    await svc.collectCommittedPayments();await svc.processPending();await pg.exec('update fiscal_invoices set next_attempt_at=now()');await svc.processPending();
     expect(emit).toHaveBeenCalledTimes(2);
     expect(emit.mock.calls[0]?.[0].external_reference).toEqual(emit.mock.calls[1]?.[0].external_reference);
     expect((await pg.query<any>('select status from membership_payments')).rows[0].status).toBe('CONFIRMED');
     expect((await pg.query<any>('select status from fiscal_invoices')).rows[0].status).toBe('PENDIENTE_REINTENTO');
+  });
+  it('allocates unique fiscal sequences under concurrent requests',async()=>{
+    const values=await Promise.all(Array.from({length:20},()=>pg.query<any>("select allocate_fiscal_sequence('FACTURA','TEST','001','001',1) as value")));
+    expect(values.map(v=>Number(v.rows[0].value)).sort((a,b)=>a-b)).toEqual(Array.from({length:20},(_,i)=>i+1));
+  });
+  it('treats Dátil webhooks only as deduplicated wake-up signals',async()=>{
+    await service.save(owner,input,{});await pay();await new FacturaService().collectCommittedPayments();
+    await pg.exec("update fiscal_invoices set remote_id='remote-test',status='RECIBIDA',emission_eligible=true,next_attempt_at=now()+interval '1 day'");
+    vi.stubEnv('DATIL_WEBHOOK_TOKEN','w'.repeat(32));const app=Fastify();await registerFiscalRoutes(app);
+    const url=`/v1/fiscal/datil/webhook/${'w'.repeat(32)}/receipt-issued`,payload={id:'remote-test',estado:'AUTORIZADO',autorizacion:{numero:'untrusted'}};
+    expect((await app.inject({method:'POST',url,payload})).statusCode).toBe(202);expect((await app.inject({method:'POST',url,payload})).statusCode).toBe(202);
+    const [invoice]=(await pg.query<any>('select status,next_attempt_at<=now() as due from fiscal_invoices')).rows;
+    expect(invoice).toMatchObject({status:'RECIBIDA',due:true});expect((await pg.query('select * from fiscal_provider_events')).rows).toHaveLength(1);
+    expect((await app.inject({method:'POST',url:'/v1/fiscal/datil/webhook/bad/receipt-issued',payload})).statusCode).toBe(404);await app.close();
   });
   it('rolls back the local outbox when the business transaction rolls back',async()=>{
     await expect(pg.transaction(async tx=>{await tx.query('insert into membership_payments(driver_id,order_id,amount) values($1,$2,12)',[driverId,orderId]);throw new Error('activation failed');})).rejects.toThrow('activation failed');

@@ -13,7 +13,8 @@ services:
         value: 0.0.0.0
       - key: NODE_ENV
         value: production
-      # Fiscal profiles stay active; provider emission is deliberately disabled.
+      # Fiscal profiles stay active. Emission remains locked until credentials,
+      # cutover time and the explicit enable flag are all configured.
       - key: FACTURACION_ENABLED
         value: "false"
       - key: FACTURACION_PROVIDER
@@ -22,8 +23,42 @@ services:
         value: TEST
       - key: FACTURACION_EMAIL_MODE
         value: PROVIDER
+      - key: FACTURACION_CUTOVER_AT
+        sync: false
       - key: FACTURACION_SMTP_ENABLED
         value: "false"
+      - key: DATIL_BASE_URL
+        value: https://link.datil.co
+      - key: DATIL_API_KEY
+        sync: false
+      - key: DATIL_CERTIFICATE_PASSWORD
+        sync: false
+      - key: DATIL_ISSUER_RUC
+        sync: false
+      - key: DATIL_ISSUER_LEGAL_NAME
+        sync: false
+      - key: DATIL_ISSUER_TRADE_NAME
+        sync: false
+      - key: DATIL_ISSUER_ADDRESS
+        sync: false
+      - key: DATIL_ESTABLISHMENT_ADDRESS
+        sync: false
+      - key: DATIL_ESTABLISHMENT_CODE
+        sync: false
+      - key: DATIL_EMISSION_POINT
+        sync: false
+      - key: DATIL_ACCOUNTING_REQUIRED
+        value: "false"
+      - key: DATIL_SPECIAL_TAXPAYER
+        sync: false
+      - key: DATIL_INVOICE_INITIAL_SEQUENCE
+        value: "1"
+      - key: DATIL_CREDIT_NOTE_INITIAL_SEQUENCE
+        value: "1"
+      - key: DATIL_REQUEST_TIMEOUT_MS
+        value: "12000"
+      - key: DATIL_WEBHOOK_TOKEN
+        generateValue: true
       - key: DATABASE_URL
         fromDatabase:
           name: mototaxi-atacames-db
