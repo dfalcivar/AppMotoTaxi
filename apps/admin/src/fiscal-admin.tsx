@@ -34,7 +34,7 @@ export function FiscalAdmin({token,permissions}:{token:string;permissions:string
   async function invoiceAction(action:'status'|'retry'|'xml'|'ride'|'email'|'credit-note'){
     if(!detail?.id)return;let payload:Record<string,unknown>|undefined;
     if(action==='credit-note'){
-      const amount=window.prompt('Valor de la nota de crédito (USD)',String(detail.invoice.total??''));if(amount===null)return;
+      const amount=window.prompt('Valor de la nota de crédito (USD)',String(detail.remainingCreditAmount??detail.invoice.total??''));if(amount===null)return;
       const reason=window.prompt('Motivo de la nota de crédito','Anulación solicitada por el cliente');if(reason===null)return;
       payload={amount:Number(amount),reason,idempotencyKey:crypto.randomUUID()};
     }

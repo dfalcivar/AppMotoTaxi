@@ -134,6 +134,21 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     await expect(pg.exec('update fiscal_credit_notes set amount=2')).rejects.toThrow('AUTHORIZED_FISCAL_DOCUMENT_IMMUTABLE');
     await expect(pg.exec('delete from fiscal_credit_notes')).rejects.toThrow('AUTHORIZED_FISCAL_DOCUMENT_IMMUTABLE');
   });
+  it('reserves prior credit notes and keeps test invoices out of production credit notes',async()=>{
+    await service.save(owner,input,{});await pay();await new FacturaService().collectCommittedPayments();
+    const [invoice]=(await pg.query<any>('select id from fiscal_invoices')).rows;
+    await pg.exec("update fiscal_invoices set status='AUTORIZADA',emission_eligible=true,document_number='001-002-000000001',access_key='TEST-ONLY',authorization_number='TEST-ONLY',authorized_at=now()");
+    vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2026-09-22T00:00:00Z');
+    const svc=new FacturaService({name:'DATIL',configured:true} as any);
+    const first={amount:4,reason:'Devolución parcial',idempotencyKey:'00000000-0000-4000-8000-000000000031'};
+    const note=await svc.createCreditNote(invoice.id,first);
+    expect(await svc.createCreditNote(invoice.id,first)).toEqual(note);
+    await svc.createCreditNote(invoice.id,{amount:8,reason:'Devolución restante',idempotencyKey:'00000000-0000-4000-8000-000000000032'});
+    await expect(svc.createCreditNote(invoice.id,{amount:0.01,reason:'Exceso',idempotencyKey:'00000000-0000-4000-8000-000000000033'})).rejects.toThrow('INVALID_CREDIT_NOTE_AMOUNT');
+    expect((await pg.query<any>('select sum(amount)::numeric(14,2) as total,count(*)::int as count from fiscal_credit_notes')).rows[0]).toMatchObject({total:'12.00',count:2});
+    vi.stubEnv('FACTURACION_ENVIRONMENT','PRODUCTION');
+    await expect(svc.createCreditNote(invoice.id,{amount:0.01,reason:'Otro ambiente',idempotencyKey:'00000000-0000-4000-8000-000000000034'})).rejects.toThrow('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+  });
   it('deletion retains paid and authorized historical metrics',async()=>{
     await service.save(owner,input,{});await pay();await new FacturaService().collectCommittedPayments();
     await pg.exec("update fiscal_invoices set status='AUTORIZADA',subtotal=12,tax_amount=0,document_number='TEST-ONLY',access_key='TEST-ONLY',authorization_number='TEST-ONLY',authorized_at=now()");

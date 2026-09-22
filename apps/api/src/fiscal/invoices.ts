@@ -122,9 +122,13 @@ export class FacturaService {
   async createCreditNote(invoiceId:string,input:CreditNoteInput){const config=this.ensureProviderEnabled();
     return database().begin(async tx=>{
       const [invoice]=await tx`select * from fiscal_invoices where id=${invoiceId} and status='AUTORIZADA' for update`;if(!invoice)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+      if(!invoice.emission_eligible||invoice.provider!==config.provider||invoice.environment!==config.environment)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       const total=cents(invoice.total),amount=cents(input.amount);if(amount<1||amount>total)throw new Error('INVALID_CREDIT_NOTE_AMOUNT');
-      const subtotal=Math.round(cents(invoice.subtotal)*amount/total)/100,tax=amount/100-subtotal;
       const [existing]=await tx`select id::text,status from fiscal_credit_notes where idempotency_key=${input.idempotencyKey}::uuid`;if(existing)return existing;
+      const [reserved]=await tx`select coalesce(sum(amount),0) as amount from fiscal_credit_notes
+        where invoice_id=${invoiceId} and status not in ('ERROR','RECHAZADA','ANULADA')`;
+      if(amount>total-cents(reserved?.amount??0))throw new Error('INVALID_CREDIT_NOTE_AMOUNT');
+      const subtotal=Math.round(cents(invoice.subtotal)*amount/total)/100,tax=amount/100-subtotal;
       const [note]=await tx`insert into fiscal_credit_notes(invoice_id,external_reference,fiscal_snapshot,amount,status,idempotency_key,provider,environment,
         reason,subtotal,tax_amount,vat_rate_percent,issued_at,emission_eligible,next_attempt_at)
         values(${invoiceId},${`costago:credit:${input.idempotencyKey}`},${invoice.fiscal_snapshot},${amount/100},'PENDIENTE',${input.idempotencyKey}::uuid,

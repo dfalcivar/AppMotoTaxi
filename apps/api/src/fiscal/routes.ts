@@ -27,7 +27,7 @@ const messages:Record<string,string>={
   FISCAL_DOCUMENT_NOT_EMITTED:'El documento todavía no ha sido enviado al proveedor.',
   FISCAL_DOCUMENT_NOT_AUTHORIZED:'La operación requiere un documento autorizado por el SRI.',
   FISCAL_DOCUMENT_NOT_RETRYABLE:'El estado actual no admite un reintento manual.',
-  INVALID_CREDIT_NOTE_AMOUNT:'El valor de la nota de crédito debe ser mayor que cero y no superar el total de la factura.',
+  INVALID_CREDIT_NOTE_AMOUNT:'El valor de la nota de crédito debe ser mayor que cero y no superar el saldo de la factura pendiente de acreditar.',
   FORBIDDEN:'No tienes permiso para consultar o modificar estos datos.',UNAUTHORIZED:'Inicia sesión nuevamente.'
 };
 export function fiscalError(error:unknown,reply:FastifyReply){
@@ -191,12 +191,14 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     const [invoice]=await database()`select * from fiscal_invoices where id=${id}`;
     if(!invoice)return reply.code(404).send({message:'No se encontró el documento.'});
     const history=await database()`select event_type as event,result,created_at as date from fiscal_audit where entity_type='FACTURA' and entity_id=${id} order by created_at desc`;
+    const [credits]=await database()`select coalesce(sum(amount),0)::float8 as reserved from fiscal_credit_notes where invoice_id=${id} and status not in ('ERROR','RECHAZADA','ANULADA')`;
+    const remainingCreditAmount=Math.max(0,Math.round((Number(invoice.total)-Number(credits?.reserved??0))*100)/100);
     const config=billingConfiguration(),providerReady=billingProvider().configured,ready=config.enabled&&providerReady&&Boolean(config.cutoverAt);
-    return {invoice,history,actionsEnabled:{
+    return {invoice,history,remainingCreditAmount,actionsEnabled:{
       status:ready&&Boolean(invoice.remote_id)&&!['AUTORIZADA','ANULADA'].includes(invoice.status),
       retry:ready&&Boolean(invoice.emission_eligible)&&['ERROR','RECHAZADA','PENDIENTE_REINTENTO','RECIBIDA'].includes(invoice.status),
       xml:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),ride:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),
-      email:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),creditNote:ready&&invoice.status==='AUTORIZADA'
+      email:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),creditNote:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.emission_eligible)&&invoice.provider===config.provider&&invoice.environment===config.environment&&remainingCreditAmount>0
     }};
   }catch(e){return fiscalError(e,reply);}});
   app.post('/v1/admin/fiscal/invoices/:id/:action',async(req,reply)=>{try{
