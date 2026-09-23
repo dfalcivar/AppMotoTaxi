@@ -14,6 +14,7 @@ import {sendMembershipActivationConfirmation} from './membership-activation.js';
 import {commercialContext} from './arrival-commercial.js';
 import {exactTaxBreakdown,immediateArrival} from './commercial-economics.js';
 import {calculatePackageEconomics} from './package-economics.js';
+import {commissionForClosure} from './collection-commissions.js';
 
 const ACTIVE_TRIP_STATES = ["ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "IN_PROGRESS"] as const;
 const membershipStatusSchema = z.enum([
@@ -1666,7 +1667,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/v1/collector/me",async(request,reply)=>{try{const actor=requirePermission(request,"payments:view_own_point");const points=await database()`select cp.id::text,cp.code,cp.name,cp.address,cp.status,cp.cash_enabled as "cashEnabled",cp.deuna_enabled as "deunaEnabled",cp.bank_transfer_enabled as "bankTransferEnabled" from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now()) order by cp.name`;return {user:{id:actor.id,name:actor.name},points};}catch(error){return businessError(error,reply);} });
 
-  app.get("/v1/collector/closures",async(request,reply)=>{try{const actor=requirePermission(request,"settlements:view_own_point");return database()`select c.id::text,c.period_start as "periodStart",c.period_end as "periodEnd",c.status,c.cash_total::float8 as "cashTotal",c.deuna_total::float8 as "deunaTotal",c.transfer_total::float8 as "transferTotal",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id where c.collector_id=${actor.id!} and c.gross_amount>0 order by c.created_at desc limit 100`; }catch(error){return businessError(error,reply);} });
+  app.get("/v1/collector/closures",async(request,reply)=>{try{const actor=requirePermission(request,"settlements:view_own_point");return database()`select c.id::text,c.period_start as "periodStart",c.period_end as "periodEnd",c.status,c.cash_total::float8 as "cashTotal",c.deuna_total::float8 as "deunaTotal",c.transfer_total::float8 as "transferTotal",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.commission_payment_count as "commissionPaymentCount",c.commission_price_basis_snapshot as "commissionPriceBasis",c.net_amount::float8 as "netAmount",cp.name as point from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id where c.collector_id=${actor.id!} and c.gross_amount>0 order by c.created_at desc limit 100`; }catch(error){return businessError(error,reply);} });
 
   app.post("/v1/collector/closures", async (request, reply) => {
     try {
@@ -1677,7 +1678,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         notes: z.string().trim().max(500).optional()
       }).parse(request.body);
       const result = await database().begin(async (tx) => {
-        const [assignment] = await tx`select cp.id from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and cp.id=${body.collectionPointId} and cp.status='ACTIVE' and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now())`;
+        const [assignment] = await tx`select cp.id,cp.commission_enabled as "commissionEnabled",cp.commission_per_payment::float8 as "commissionPerPayment",cp.commission_price_basis as "commissionPriceBasis" from collector_assignments ca join collection_points cp on cp.id=ca.collection_point_id where ca.collector_id=${actor.id!} and cp.id=${body.collectionPointId} and cp.status='ACTIVE' and ca.starts_at<=now() and (ca.ends_at is null or ca.ends_at>now()) for update of cp`;
         if (!assignment) throw new Error("FORBIDDEN");
         const [settings] = await tx`select coalesce(membership_timezone,'America/Guayaquil') as timezone from operational_settings limit 1`;
         const timezone = String(settings?.timezone ?? "America/Guayaquil");
@@ -1694,8 +1695,11 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
         const deuna = total("DEUNA");
         const transfer = total("BANK_TRANSFER");
         const gross = money(cash + deuna + transfer);
+        const commissionEnabled = Boolean(assignment.commissionEnabled);
+        const commission = commissionEnabled ? commissionForClosure(payments.length, Number(assignment.commissionPerPayment)) : 0;
+        const commissionBasis = String(assignment.commissionPriceBasis);
         const periodEnd = body.businessDate === String(period.today) ? new Date() : period.end;
-        const [closure] = await tx`insert into collection_point_closures(collection_point_id,collector_id,period_start,period_end,status,cash_total,deuna_total,transfer_total,gross_amount,net_amount,closed_at,notes) values(${body.collectionPointId},${actor.id!},${period.start},${periodEnd},'PENDING_SETTLEMENT',${cash},${deuna},${transfer},${gross},${gross},now(),${body.notes ?? null}) returning id::text,status,gross_amount::float8 as "grossAmount",net_amount::float8 as "netAmount"`;
+        const [closure] = await tx`insert into collection_point_closures(collection_point_id,collector_id,period_start,period_end,status,cash_total,deuna_total,transfer_total,gross_amount,commission_enabled_snapshot,commission_type_snapshot,commission_value_snapshot,commission_amount,commission_payment_count,commission_price_basis_snapshot,net_amount,closed_at,notes) values(${body.collectionPointId},${actor.id!},${period.start},${periodEnd},'PENDING_SETTLEMENT',${cash},${deuna},${transfer},${gross},${commissionEnabled},${commissionEnabled?'FIXED_PER_PAYMENT':'NONE'},${commissionEnabled?Number(assignment.commissionPerPayment):0},${commission},${commissionEnabled?payments.length:0},${commissionBasis},${gross},now(),${body.notes ?? null}) returning id::text,status,gross_amount::float8 as "grossAmount",net_amount::float8 as "netAmount"`;
         if (!closure) throw new Error("CLOSURE_NOT_CREATED");
         for (const payment of payments) await tx`insert into collection_point_closure_payments(closure_id,payment_id) values(${closure.id},${payment.id})`;
         return { id: String(closure.id), status: String(closure.status), businessDate: body.businessDate, grossAmount: Number(closure.grossAmount), netAmount: Number(closure.netAmount), payments: payments.length };
@@ -1707,7 +1711,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     }
   });
 
-  app.get("/v1/admin/collection-closures",async(request,reply)=>{try{requirePermission(request,"cash_closures:review");return database()`select c.id::text,c.status,c.period_start as "periodStart",c.period_end as "periodEnd",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.net_amount::float8 as "netAmount",cp.name as point,u.full_name as collector,c.created_at as "createdAt" from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join users u on u.id=c.collector_id where c.gross_amount>0 order by c.created_at desc limit 200`; }catch(error){return businessError(error,reply);} });
+  app.get("/v1/admin/collection-closures",async(request,reply)=>{try{requirePermission(request,"cash_closures:review");return database()`select c.id::text,c.status,c.period_start as "periodStart",c.period_end as "periodEnd",c.gross_amount::float8 as "grossAmount",c.commission_amount::float8 as "commissionAmount",c.commission_payment_count as "commissionPaymentCount",c.commission_price_basis_snapshot as "commissionPriceBasis",c.net_amount::float8 as "netAmount",cp.name as point,u.full_name as collector,c.created_at as "createdAt",i.id::text as "commissionInvoiceId",i.status as "commissionInvoiceStatus",i.total::float8 as "commissionInvoiceTotal" from collection_point_closures c join collection_points cp on cp.id=c.collection_point_id join users u on u.id=c.collector_id left join collection_point_commission_invoices i on i.closure_id=c.id where c.gross_amount>0 order by c.created_at desc limit 200`; }catch(error){return businessError(error,reply);} });
 
   app.get("/v1/admin/membership-payments/pending",async(request,reply)=>{try{requirePermission(request,"payments:transfer_review");return database()`select proof.id::text,proof.order_id::text as "orderId",u.full_name as driver,o.plan_snapshot as plan,o.total_amount::float8 as "expectedAmount",proof.declared_amount::float8 as "declaredAmount",o.currency,proof.bank_name as bank,coalesce(proof.reference_display,proof.reference_masked) as reference,proof.transfer_date as "transferDate",proof.status,proof.created_at as "createdAt" from membership_transfer_proofs proof join membership_payment_orders o on o.id=proof.order_id join users u on u.id=o.driver_id where proof.status='PENDING' order by proof.created_at`; }catch(error){return businessError(error,reply);} });
 

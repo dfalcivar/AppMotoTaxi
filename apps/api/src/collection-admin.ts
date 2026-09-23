@@ -3,11 +3,12 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { persistAudit, requirePermission } from "./admin.js";
 import { database } from "./database.js";
+import { validateCommissionInvoice, type CommissionBasis } from "./collection-commissions.js";
 
 function failure(error: unknown, reply: FastifyReply) {
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_COLLECTION_DATA", details: error.flatten() });
   const code = error instanceof Error ? error.message : "COLLECTION_OPERATION_FAILED";
-  const status = code === "FORBIDDEN" ? 403 : code.endsWith("_NOT_FOUND") ? 404 : code.includes("NOT_SETTLEABLE") ? 409 : 400;
+  const status = code === "FORBIDDEN" ? 403 : code.endsWith("_NOT_FOUND") ? 404 : code.includes("NOT_SETTLEABLE") || code.includes("NOT_PAYABLE") || code.includes("NOT_REVIEWABLE") || code.includes("ALREADY_REGISTERED") ? 409 : 400;
   return reply.code(status).send({ error: code });
 }
 
@@ -65,7 +66,7 @@ export async function registerCollectionAdminRoutes(app: FastifyInstance): Promi
   app.get("/v1/admin/collection-points", async (request, reply) => {
     try {
       requirePermission(request, "collection_points:manage");
-      const points = await database()`select cp.id::text,cp.code,cp.name,cp.address,cp.reference,cp.phone,cp.whatsapp,cp.email,cp.latitude::float8,cp.longitude::float8,cp.display_order as "displayOrder",cp.timezone,cp.service_area_id::text as "serviceAreaId",sa.name as "serviceArea",cp.status,cp.cash_enabled as "cashEnabled",cp.deuna_enabled as "deunaEnabled",cp.bank_transfer_enabled as "bankTransferEnabled",cp.settlement_deadline_hours as "settlementDeadlineHours",cp.pending_limit::float8 as "pendingLimit",cp.created_at as "createdAt",cp.updated_at as "updatedAt",coalesce((select jsonb_agg(jsonb_build_object('dayOfWeek',s.day_of_week,'opensAt',to_char(s.opens_at,'HH24:MI'),'closesAt',to_char(s.closes_at,'HH24:MI'),'closed',s.closed) order by s.day_of_week) from collection_point_schedules s where s.collection_point_id=cp.id),'[]'::jsonb) as schedules,coalesce(jsonb_agg(jsonb_build_object('id',u.id::text,'name',u.full_name,'email',u.email)) filter(where u.id is not null and ca.ends_at is null),'[]'::jsonb) as collectors from collection_points cp left join service_areas sa on sa.id=cp.service_area_id left join collector_assignments ca on ca.collection_point_id=cp.id left join users u on u.id=ca.collector_id group by cp.id,sa.name order by cp.display_order,cp.name`;
+      const points = await database()`select cp.id::text,cp.code,cp.name,cp.address,cp.reference,cp.phone,cp.whatsapp,cp.email,cp.latitude::float8,cp.longitude::float8,cp.display_order as "displayOrder",cp.timezone,cp.service_area_id::text as "serviceAreaId",sa.name as "serviceArea",cp.status,cp.cash_enabled as "cashEnabled",cp.deuna_enabled as "deunaEnabled",cp.bank_transfer_enabled as "bankTransferEnabled",cp.settlement_deadline_hours as "settlementDeadlineHours",cp.pending_limit::float8 as "pendingLimit",cp.commission_enabled as "commissionEnabled",cp.commission_per_payment::float8 as "commissionPerPayment",cp.commission_price_basis as "commissionPriceBasis",cp.created_at as "createdAt",cp.updated_at as "updatedAt",coalesce((select jsonb_agg(jsonb_build_object('dayOfWeek',s.day_of_week,'opensAt',to_char(s.opens_at,'HH24:MI'),'closesAt',to_char(s.closes_at,'HH24:MI'),'closed',s.closed) order by s.day_of_week) from collection_point_schedules s where s.collection_point_id=cp.id),'[]'::jsonb) as schedules,coalesce(jsonb_agg(jsonb_build_object('id',u.id::text,'name',u.full_name,'email',u.email)) filter(where u.id is not null and ca.ends_at is null),'[]'::jsonb) as collectors from collection_points cp left join service_areas sa on sa.id=cp.service_area_id left join collector_assignments ca on ca.collection_point_id=cp.id left join users u on u.id=ca.collector_id group by cp.id,sa.name order by cp.display_order,cp.name`;
       const collectors = await database()`select id::text,full_name as name,email,status from users where role='COLLECTOR' and deleted_at is null order by full_name`;
       return { points, collectors };
     } catch (error) { return failure(error, reply); }
@@ -90,6 +91,22 @@ export async function registerCollectionAdminRoutes(app: FastifyInstance): Promi
       const point = await database().begin(async tx=>{const [updated]=await tx`update collection_points set name=${body.name},address=${body.address??null},reference=${body.reference??null},phone=${body.phone??null},whatsapp=${body.whatsapp??null},email=${body.email??null},latitude=${body.latitude??null},longitude=${body.longitude??null},display_order=${body.displayOrder},timezone=${body.timezone},service_area_id=${body.serviceAreaId??null},status=${body.status},cash_enabled=${body.cashEnabled},deuna_enabled=${body.deunaEnabled},bank_transfer_enabled=${body.bankTransferEnabled},settlement_deadline_hours=${body.settlementDeadlineHours},pending_limit=${body.pendingLimit??null},updated_by=${actor.id!},updated_at=now() where id=${pointId} returning id::text,code,name,status`;if(!updated)return undefined;await tx`delete from collection_point_schedules where collection_point_id=${pointId}`;for(const schedule of body.schedules)await tx`insert into collection_point_schedules(collection_point_id,day_of_week,opens_at,closes_at,closed) values(${pointId},${schedule.dayOfWeek},${schedule.opensAt??null},${schedule.closesAt??null},${schedule.closed})`;return updated;});
       if (!point) throw new Error("COLLECTION_POINT_NOT_FOUND");
       await persistAudit(actor, "COLLECTION_POINT_UPDATED", "COLLECTION_POINT", pointId, `${body.name}: ${body.status}`);
+      return point;
+    } catch (error) { return failure(error, reply); }
+  });
+
+  app.patch("/v1/admin/collection-points/:pointId/commission", async (request, reply) => {
+    try {
+      const actor = requirePermission(request, "collection_points:manage");
+      const { pointId } = z.object({ pointId: z.string().uuid() }).parse(request.params);
+      const body = z.object({
+        enabled: z.boolean(),
+        perPayment: z.number().min(0).max(1000).refine(value => Math.abs(value * 100 - Math.round(value * 100)) < 0.000001, "INVALID_COMMISSION_AMOUNT"),
+        priceBasis: z.enum(["BASE_PLUS_TAX", "TOTAL_INCLUDING_TAX"])
+      }).refine(value => !value.enabled || value.perPayment > 0, "COMMISSION_RATE_REQUIRED").parse(request.body);
+      const [point] = await database()`update collection_points set commission_enabled=${body.enabled},commission_per_payment=${body.perPayment},commission_price_basis=${body.priceBasis},updated_by=${actor.id!},updated_at=now() where id=${pointId} returning id::text,commission_enabled as "enabled",commission_per_payment::float8 as "perPayment",commission_price_basis as "priceBasis"`;
+      if (!point) throw new Error("COLLECTION_POINT_NOT_FOUND");
+      await persistAudit(actor, "COLLECTION_POINT_COMMISSION_UPDATED", "COLLECTION_POINT", pointId, `${body.enabled ? "ACTIVE" : "INACTIVE"}: ${body.perPayment.toFixed(2)} ${body.priceBasis}`);
       return point;
     } catch (error) { return failure(error, reply); }
   });
@@ -121,6 +138,82 @@ export async function registerCollectionAdminRoutes(app: FastifyInstance): Promi
     } catch (error) { return failure(error, reply); }
   });
 
+  app.get("/v1/admin/collection-closures/:closureId/commission-invoice", async (request, reply) => {
+    try {
+      requirePermission(request, "settlements:review");
+      const { closureId } = z.object({ closureId: z.string().uuid() }).parse(request.params);
+      const [invoice] = await database()`select id::text,supplier_ruc as "supplierRuc",invoice_number as "invoiceNumber",access_key as "accessKey",subtotal::float8,vat_amount::float8 as "vatAmount",total::float8,status,review_note as "reviewNote",payment_reference_masked as "paymentReference",created_at as "createdAt",reviewed_at as "reviewedAt",paid_at as "paidAt" from collection_point_commission_invoices where closure_id=${closureId}`;
+      return { invoice: invoice ?? null };
+    } catch (error) { return failure(error, reply); }
+  });
+
+  app.get("/v1/admin/collection-closures/:closureId/commission-invoice/pdf", async (request, reply) => {
+    try {
+      requirePermission(request, "settlements:review");
+      const { closureId } = z.object({ closureId: z.string().uuid() }).parse(request.params);
+      const [invoice] = await database()`select pdf_data as data from collection_point_commission_invoices where closure_id=${closureId}`;
+      if (!invoice) throw new Error("COMMISSION_INVOICE_NOT_FOUND");
+      return reply.header("Content-Type", "application/pdf").header("Content-Disposition", `inline; filename=commission-${closureId}.pdf`).header("Cache-Control", "private, no-store").send(invoice.data);
+    } catch (error) { return failure(error, reply); }
+  });
+
+  app.post("/v1/admin/collection-closures/:closureId/commission-invoice", { bodyLimit: 5 * 1024 * 1024 }, async (request, reply) => {
+    try {
+      const actor = requirePermission(request, "settlements:review");
+      const { closureId } = z.object({ closureId: z.string().uuid() }).parse(request.params);
+      const body = z.object({
+        supplierRuc: z.string().regex(/^\d{13}$/),
+        invoiceNumber: z.string().regex(/^\d{3}-\d{3}-\d{9}$/),
+        accessKey: z.string().regex(/^\d{49}$/),
+        subtotal: z.number().min(0), vatAmount: z.number().min(0), total: z.number().positive(),
+        pdfBase64: z.string().min(10).max(4 * 1024 * 1024)
+      }).parse(request.body);
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body.pdfBase64)) throw new Error("INVALID_COMMISSION_INVOICE_PDF");
+      const pdf = Buffer.from(body.pdfBase64, "base64");
+      if (pdf.length < 5 || pdf.length > 3 * 1024 * 1024 || pdf.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("INVALID_COMMISSION_INVOICE_PDF");
+      const invoice = await database().begin(async tx => {
+        const [closure] = await tx`select id,collection_point_id,commission_amount::float8 as "commissionAmount",commission_price_basis_snapshot as "priceBasis" from collection_point_closures where id=${closureId} for update`;
+        if (!closure) throw new Error("CLOSURE_NOT_FOUND");
+        if (Number(closure.commissionAmount) <= 0) throw new Error("CLOSURE_HAS_NO_COMMISSION");
+        validateCommissionInvoice(String(closure.priceBasis) as CommissionBasis, Number(closure.commissionAmount), body.subtotal, body.vatAmount, body.total);
+        const [existing] = await tx`select id::text,status from collection_point_commission_invoices where closure_id=${closureId} for update`;
+        if (existing && existing.status !== "REJECTED") throw new Error("COMMISSION_INVOICE_ALREADY_REGISTERED");
+        const [saved] = existing
+          ? await tx`update collection_point_commission_invoices set supplier_ruc=${body.supplierRuc},invoice_number=${body.invoiceNumber},access_key=${body.accessKey},subtotal=${body.subtotal},vat_amount=${body.vatAmount},total=${body.total},pdf_data=${pdf},status='PENDING_REVIEW',review_note=null,registered_by=${actor.id!},reviewed_by=null,reviewed_at=null,updated_at=now() where id=${existing.id} returning id::text,status`
+          : await tx`insert into collection_point_commission_invoices(closure_id,collection_point_id,supplier_ruc,invoice_number,access_key,subtotal,vat_amount,total,pdf_data,registered_by) values(${closureId},${closure.collection_point_id},${body.supplierRuc},${body.invoiceNumber},${body.accessKey},${body.subtotal},${body.vatAmount},${body.total},${pdf},${actor.id!}) returning id::text,status`;
+        return saved;
+      });
+      await persistAudit(actor, "COLLECTION_COMMISSION_INVOICE_REGISTERED", "COLLECTION_POINT_CLOSURE", closureId, body.invoiceNumber);
+      return reply.code(201).send(invoice);
+    } catch (error) { return failure(error, reply); }
+  });
+
+  app.post("/v1/admin/collection-closures/:closureId/commission-invoice/review", async (request, reply) => {
+    try {
+      const actor = requirePermission(request, "settlements:review");
+      const { closureId } = z.object({ closureId: z.string().uuid() }).parse(request.params);
+      const body = z.object({ approved: z.boolean(), note: z.string().trim().min(8).max(500) }).parse(request.body);
+      const [invoice] = await database()`update collection_point_commission_invoices set status=${body.approved ? "APPROVED" : "REJECTED"},review_note=${body.note},reviewed_by=${actor.id!},reviewed_at=now(),updated_at=now() where closure_id=${closureId} and status='PENDING_REVIEW' returning id::text,status`;
+      if (!invoice) throw new Error("COMMISSION_INVOICE_NOT_REVIEWABLE");
+      await persistAudit(actor, body.approved ? "COLLECTION_COMMISSION_INVOICE_APPROVED" : "COLLECTION_COMMISSION_INVOICE_REJECTED", "COLLECTION_POINT_CLOSURE", closureId, body.note);
+      return invoice;
+    } catch (error) { return failure(error, reply); }
+  });
+
+  app.post("/v1/admin/collection-closures/:closureId/commission-invoice/pay", async (request, reply) => {
+    try {
+      const actor = requirePermission(request, "settlements:review");
+      const { closureId } = z.object({ closureId: z.string().uuid() }).parse(request.params);
+      const body = z.object({ reference: z.string().trim().min(3).max(120) }).parse(request.body);
+      const referenceHash = createHash("sha256").update(body.reference.toUpperCase()).digest("hex");
+      const referenceMasked = `****${body.reference.slice(-4)}`;
+      const [invoice] = await database()`update collection_point_commission_invoices i set status='PAID',payment_reference_hash=${referenceHash},payment_reference_masked=${referenceMasked},paid_by=${actor.id!},paid_at=now(),updated_at=now() from collection_point_closures c where i.closure_id=c.id and i.closure_id=${closureId} and i.status='APPROVED' and c.status='SETTLED' returning i.id::text,i.status,i.total::float8`;
+      if (!invoice) throw new Error("COMMISSION_INVOICE_NOT_PAYABLE");
+      await persistAudit(actor, "COLLECTION_COMMISSION_INVOICE_PAID", "COLLECTION_POINT_CLOSURE", closureId, referenceMasked);
+      return invoice;
+    } catch (error) { return failure(error, reply); }
+  });
+
   app.post("/v1/admin/collection-closures/:closureId/settle", async (request, reply) => {
     try {
       const actor = requirePermission(request, "settlements:review");
@@ -131,7 +224,7 @@ export async function registerCollectionAdminRoutes(app: FastifyInstance): Promi
       const settlement = await database().begin(async (tx) => {
         const [closure] = await tx`select * from collection_point_closures where id=${closureId} and status='PENDING_SETTLEMENT' for update`;
         if (!closure) throw new Error("CLOSURE_NOT_SETTLEABLE");
-        const [item] = await tx`insert into collection_point_settlements(closure_id,collection_point_id,gross_amount,commission_amount,net_amount,method,reference_normalized_hash,reference_masked,status,submitted_at,verified_at,verified_by,notes,idempotency_key) values(${closureId},${closure.collection_point_id},${closure.gross_amount},${closure.commission_amount},${closure.net_amount},${body.method},${referenceHash},${referenceMasked},'VERIFIED',now(),now(),${actor.id!},${body.notes??null},${body.idempotencyKey}) returning id::text,status,net_amount::float8 as "netAmount"`;
+        const [item] = await tx`insert into collection_point_settlements(closure_id,collection_point_id,gross_amount,commission_amount,net_amount,method,reference_normalized_hash,reference_masked,status,submitted_at,verified_at,verified_by,notes,idempotency_key) values(${closureId},${closure.collection_point_id},${closure.gross_amount},${0},${closure.gross_amount},${body.method},${referenceHash},${referenceMasked},'VERIFIED',now(),now(),${actor.id!},${body.notes??null},${body.idempotencyKey}) returning id::text,status,net_amount::float8 as "netAmount"`;
         await tx`update collection_point_closures set status='SETTLED',settled_at=now(),verified_by=${actor.id!} where id=${closureId}`;
         await tx`update membership_payments p set settlement_status='SETTLED' from collection_point_closure_payments link where link.closure_id=${closureId} and link.payment_id=p.id`;
         return item;
