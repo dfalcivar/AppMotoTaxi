@@ -191,10 +191,11 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     const [invoice]=await database()`select * from fiscal_invoices where id=${id}`;
     if(!invoice)return reply.code(404).send({message:'No se encontró el documento.'});
     const history=await database()`select event_type as event,result,created_at as date from fiscal_audit where entity_type='FACTURA' and entity_id=${id} order by created_at desc`;
+    const creditNotes=await database()`select id::text,document_number as "documentNumber",amount::float8,status,reason,issued_at as "issuedAt",authorized_at as "authorizedAt",provider_error_code as "errorCode" from fiscal_credit_notes where invoice_id=${id} order by created_at desc`;
     const [credits]=await database()`select coalesce(sum(amount),0)::float8 as reserved from fiscal_credit_notes where invoice_id=${id} and status not in ('ERROR','RECHAZADA','ANULADA')`;
     const remainingCreditAmount=Math.max(0,Math.round((Number(invoice.total)-Number(credits?.reserved??0))*100)/100);
     const config=billingConfiguration(),providerReady=billingProvider().configured,ready=config.enabled&&providerReady&&Boolean(config.cutoverAt)&&(config.environment!=='TEST'||Boolean(config.testOrderCode||config.testDriverId));
-    return {invoice,history,remainingCreditAmount,actionsEnabled:{
+    return {invoice,history,creditNotes,remainingCreditAmount,actionsEnabled:{
       status:ready&&Boolean(invoice.remote_id)&&!['AUTORIZADA','ANULADA'].includes(invoice.status),
       retry:ready&&Boolean(invoice.emission_eligible)&&['ERROR','RECHAZADA','PENDIENTE_REINTENTO','RECIBIDA'].includes(invoice.status),
       xml:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),ride:ready&&invoice.status==='AUTORIZADA'&&Boolean(invoice.remote_id),

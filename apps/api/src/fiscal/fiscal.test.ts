@@ -201,6 +201,12 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     await svc.createCreditNote(invoice.id,{amount:8,reason:'Devolución restante',idempotencyKey:'00000000-0000-4000-8000-000000000032'});
     await expect(svc.createCreditNote(invoice.id,{amount:0.01,reason:'Exceso',idempotencyKey:'00000000-0000-4000-8000-000000000033'})).rejects.toThrow('INVALID_CREDIT_NOTE_AMOUNT');
     expect((await pg.query<any>('select sum(amount)::numeric(14,2) as total,count(*)::int as count from fiscal_credit_notes')).rows[0]).toMatchObject({total:'12.00',count:2});
+    const app=Fastify();await registerFiscalRoutes(app);
+    const response=await app.inject({url:`/v1/admin/fiscal/invoices/${invoice.id}`,headers:{authorization:`Bearer ${tokenFor({id:actorId,name:'Admin',email:'admin@example.test',role:'ADMIN'})}`}});
+    expect(response.statusCode).toBe(200);
+    expect(response.json().creditNotes).toMatchObject([{amount:8,status:'PENDIENTE',reason:'Devolución restante'},{amount:4,status:'PENDIENTE',reason:'Devolución parcial'}]);
+    expect(response.json().remainingCreditAmount).toBe(0);
+    await app.close();
     vi.stubEnv('FACTURACION_ENVIRONMENT','PRODUCTION');
     await expect(svc.createCreditNote(invoice.id,{amount:0.01,reason:'Otro ambiente',idempotencyKey:'00000000-0000-4000-8000-000000000034'})).rejects.toThrow('FISCAL_DOCUMENT_NOT_AUTHORIZED');
   });
