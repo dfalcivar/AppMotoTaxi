@@ -13,7 +13,7 @@ const delaySeconds=(attempt:number)=>Math.min(3600,30*Math.pow(2,Math.max(0,atte
 
 export class FacturaService {
   constructor(private provider:ProveedorFacturacion=billingProvider()){}
-  private ensureProviderEnabled(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode))throw new Error('FISCAL_PROVIDER_DISABLED');return config;}
+  private ensureProviderEnabled(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId))throw new Error('FISCAL_PROVIDER_DISABLED');return config;}
 
   async collectCommittedPayments() {
     const config=billingConfiguration();
@@ -21,8 +21,9 @@ export class FacturaService {
       const jobs=await tx`select * from fiscal_billing_outbox where processed_at is null and not payment_reversed order by created_at limit 100 for update skip locked`;
       for(const job of jobs){
         const reference=`costago:${job.source}:${job.payment_id}:${job.document_type}`;
-        const [testOrder]=config.environment==='TEST'&&config.testOrderCode&&job.source==='MEMBRESIA'
-          ?await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${job.payment_id} and upper(o.short_code)=${config.testOrderCode}`:[];
+        const [testOrder]=config.environment==='TEST'&&job.source==='MEMBRESIA'
+          ?await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${job.payment_id}
+            and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP'))`:[];
         const eligible=Boolean(config.cutoverAt&&new Date(job.paid_at)>=config.cutoverAt&&job.fiscal_snapshot&&
           (config.environment!=='TEST'||testOrder));
         const [invoice]=await tx`insert into fiscal_invoices(external_reference,source,service_type,zone_id,payment_id,document_type,
@@ -82,12 +83,13 @@ export class FacturaService {
   }
 
   async processPending() {
-    const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode))return;
+    const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId))return;
     const rows=await database()`update fiscal_invoices set status='ENVIANDO',attempt_count=attempt_count+1,updated_at=now()
       where id in (select id from fiscal_invoices where emission_eligible and fiscal_snapshot is not null
         and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
         and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
-        and (${config.environment}<>'TEST' or (source='MEMBRESIA' and exists(select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=fiscal_invoices.payment_id and upper(o.short_code)=${config.testOrderCode})))
+        and (${config.environment}<>'TEST' or (source='MEMBRESIA' and exists(select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=fiscal_invoices.payment_id
+          and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP')))))
         and not exists(select 1 from fiscal_billing_outbox o where o.source=fiscal_invoices.source and o.payment_id=fiscal_invoices.payment_id and o.payment_reversed)
         order by created_at limit 10 for update skip locked) returning *`;
     for(let invoice of rows){
@@ -128,7 +130,8 @@ export class FacturaService {
       const [invoice]=await tx`select * from fiscal_invoices where id=${invoiceId} and status='AUTORIZADA' for update`;if(!invoice)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       if(!invoice.emission_eligible||invoice.provider!==config.provider||invoice.environment!==config.environment)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       if(config.environment==='TEST'){
-        const [selected]=await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${invoice.payment_id} and upper(o.short_code)=${config.testOrderCode}`;
+        const [selected]=await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${invoice.payment_id}
+          and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP'))`;
         if(invoice.source!=='MEMBRESIA'||!selected)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       }
       const total=cents(invoice.total),amount=cents(input.amount);if(amount<1||amount>total)throw new Error('INVALID_CREDIT_NOTE_AMOUNT');
@@ -146,11 +149,12 @@ export class FacturaService {
     });
   }
 
-  private async processPendingCreditNotes(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode))return;const seq=datilSequenceConfiguration();
+  private async processPendingCreditNotes(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId))return;const seq=datilSequenceConfiguration();
     const notes=await database()`update fiscal_credit_notes set status='ENVIANDO',attempt_count=attempt_count+1,updated_at=now() where id in
       (select id from fiscal_credit_notes where emission_eligible and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
        and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
-       and (${config.environment}<>'TEST' or exists(select 1 from fiscal_invoices i join membership_payments p on p.id=i.payment_id join membership_payment_orders o on o.id=p.order_id where i.id=fiscal_credit_notes.invoice_id and i.source='MEMBRESIA' and upper(o.short_code)=${config.testOrderCode}))
+       and (${config.environment}<>'TEST' or exists(select 1 from fiscal_invoices i join membership_payments p on p.id=i.payment_id join membership_payment_orders o on o.id=p.order_id where i.id=fiscal_credit_notes.invoice_id and i.source='MEMBRESIA'
+         and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP'))))
        order by created_at limit 5 for update skip locked) returning *`;
     for(let note of notes){try{
       if(!note.sequential){const [allocated]=await database()`select allocate_fiscal_sequence('NOTA_CREDITO',${config.environment},${seq.establishment},${seq.emissionPoint},${seq.creditNoteInitial}) as value`;

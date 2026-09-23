@@ -27,6 +27,8 @@ services:
         sync: false
       - key: FACTURACION_TEST_ORDER_CODE
         sync: false
+      - key: FACTURACION_TEST_DRIVER_ID
+        sync: false
       - key: FACTURACION_SMTP_ENABLED
         value: "false"
       - key: DATIL_BASE_URL
