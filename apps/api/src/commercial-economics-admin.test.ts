@@ -59,6 +59,13 @@ it('calculates a suggestion without publishing and publishes only a confirmed ne
   await rules();
   const calc=await app.inject({method:'POST',url:`${route}/recalculate`});expect(calc.statusCode).toBe(200);
   expect(calc.json()).toMatchObject({technicalCost:'10.00',suggestedPrice:'9.00',scope:'REFERENCE',publishedPrice:'8.00'});
+  const catalogue=await app.inject({method:'GET',url:'/v1/admin/commercial-economics'});
+  expect(catalogue.statusCode).toBe(200);
+  expect(catalogue.json().plans[0].calculation).toMatchObject({technicalCost:'10.00',suggestedPrice:'9.00',meanRound:'2.000000'});
+  expect((await pg.query<any>('select jsonb_typeof(snapshot) as type from package_price_calculations')).rows[0].type).toBe('object');
+  await pg.exec('update package_price_calculations set snapshot=to_jsonb(snapshot::text)');
+  const legacyCatalogue=await app.inject({method:'GET',url:'/v1/admin/commercial-economics'});
+  expect(legacyCatalogue.json().plans[0].calculation).toMatchObject({technicalCost:'10.00',suggestedPrice:'9.00',meanRound:'2.000000'});
   await pg.query(`insert into membership_payment_orders(id,plan_id,base_amount,plan_snapshot)
     values('00000000-0000-4000-8000-000000000003',$1,8,'{"publishedPrice":"8.00"}')`,[plan]);
   expect((await pg.query<any>('select base_amount::text as price from membership_plans where id=$1',[plan])).rows[0].price).toBe('8.00');

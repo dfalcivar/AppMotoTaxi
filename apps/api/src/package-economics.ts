@@ -33,7 +33,7 @@ export async function calculatePackageEconomics(planId:string,tx:any=database())
     configuredServiceAreaId:rule.service_area_id,fixedCost:String(rule.fixed_cost),minimumPrice:String(rule.minimum_price),
     historicalRoundsCappedAt:context.totalRounds,calculatedAt:new Date().toISOString()};
   const [saved]=await tx`insert into package_price_calculations(plan_id,rule_version,configuration_version,snapshot)
-    values(${planId},${rule.version},${context.version},${JSON.stringify(snapshot)}::jsonb) returning id`;
+    values(${planId},${rule.version},${context.version},${tx.json(snapshot)}) returning id`;
   return {...snapshot,calculationId:String(saved.id)};
 }
 export async function packageEconomicsTick() {

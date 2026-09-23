@@ -25,7 +25,9 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
       coalesce(to_jsonb(operational_settings)->>'vat_rate_percent','0') as "vatRatePercent"
       from operational_settings where id=1`;
     const plans=await database()`select p.id,p.code,p.name,p.included_trips as quantity,p.base_amount::text as price,
-      to_jsonb(r) as rule,c.id as "calculationId",c.snapshot as calculation,c.calculated_at as "calculatedAt"
+      to_jsonb(r) as rule,c.id as "calculationId",
+      case when jsonb_typeof(c.snapshot)='string' then (c.snapshot#>>'{}')::jsonb else c.snapshot end as calculation,
+      c.calculated_at as "calculatedAt"
       from membership_plans p left join package_commercial_rules r on r.plan_code=p.code
       left join lateral(select * from package_price_calculations where plan_id=p.id order by calculated_at desc limit 1)c on true
       where p.plan_type='TRIP_PACK' and p.enabled and p.effective_until is null order by p.included_trips`;
@@ -92,10 +94,13 @@ export async function registerCommercialEconomicsRoutes(app:FastifyInstance) {
     return database().begin(async tx=>{
       const [p]=await tx`select * from membership_plans where id=${planId} and plan_type='TRIP_PACK' and enabled and effective_until is null for update`;
       if(!p)throw new Error('PLAN_NOT_CURRENT');
-      const [c]=await tx`select * from package_price_calculations where id=${body.calculationId} and plan_id=${planId}`;
+      const [c]=await tx`select id,rule_version,configuration_version,
+        case when jsonb_typeof(snapshot)='string' then (snapshot#>>'{}')::jsonb else snapshot end as snapshot
+        from package_price_calculations where id=${body.calculationId} and plan_id=${planId}`;
       const [r]=await tx`select * from package_commercial_rules where plan_code=${p.code} for update`;
       const context=await commercialContext(tx);
-      if(!c||!r||!context||c.rule_version!==r.version||c.configuration_version!==context.version)throw new Error('CALCULATION_STALE');
+      if(!c||!r||!context||c.rule_version!==r.version||c.configuration_version!==context.version||
+        !Number.isFinite(Number(c.snapshot?.suggestedPrice)))throw new Error('CALCULATION_STALE');
       const [latest]=await tx`select id from package_price_calculations where plan_id=${planId} order by calculated_at desc limit 1`;
       if(latest?.id!==c.id)throw new Error('CALCULATION_STALE');
       await tx`update membership_plans set enabled=false,effective_until=now(),updated_at=now(),updated_by=${actor.id!} where id=${planId}`;
