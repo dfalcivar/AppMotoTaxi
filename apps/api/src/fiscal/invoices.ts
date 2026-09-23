@@ -23,7 +23,7 @@ export class FacturaService {
         const reference=`costago:${job.source}:${job.payment_id}:${job.document_type}`;
         const [testOrder]=config.environment==='TEST'&&job.source==='MEMBRESIA'
           ?await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${job.payment_id}
-            and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP'))`:[];
+            and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP')))`:[];
         const eligible=Boolean(config.cutoverAt&&new Date(job.paid_at)>=config.cutoverAt&&job.fiscal_snapshot&&
           (config.environment!=='TEST'||testOrder));
         const [invoice]=await tx`insert into fiscal_invoices(external_reference,source,service_type,zone_id,payment_id,document_type,
@@ -89,7 +89,7 @@ export class FacturaService {
         and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
         and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
         and (${config.environment}<>'TEST' or (source='MEMBRESIA' and exists(select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=fiscal_invoices.payment_id
-          and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP')))))
+          and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP'))))))
         and not exists(select 1 from fiscal_billing_outbox o where o.source=fiscal_invoices.source and o.payment_id=fiscal_invoices.payment_id and o.payment_reversed)
         order by created_at limit 10 for update skip locked) returning *`;
     for(let invoice of rows){
@@ -131,7 +131,7 @@ export class FacturaService {
       if(!invoice.emission_eligible||invoice.provider!==config.provider||invoice.environment!==config.environment)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       if(config.environment==='TEST'){
         const [selected]=await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${invoice.payment_id}
-          and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP'))`;
+          and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP')))`;
         if(invoice.source!=='MEMBRESIA'||!selected)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       }
       const total=cents(invoice.total),amount=cents(input.amount);if(amount<1||amount>total)throw new Error('INVALID_CREDIT_NOTE_AMOUNT');
@@ -154,7 +154,7 @@ export class FacturaService {
       (select id from fiscal_credit_notes where emission_eligible and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
        and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
        and (${config.environment}<>'TEST' or exists(select 1 from fiscal_invoices i join membership_payments p on p.id=i.payment_id join membership_payment_orders o on o.id=p.order_id where i.id=fiscal_credit_notes.invoice_id and i.source='MEMBRESIA'
-         and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose='WALLET_TOPUP'))))
+         and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP')))))
        order by created_at limit 5 for update skip locked) returning *`;
     for(let note of notes){try{
       if(!note.sequential){const [allocated]=await database()`select allocate_fiscal_sequence('NOTA_CREDITO',${config.environment},${seq.establishment},${seq.emissionPoint},${seq.creditNoteInitial}) as value`;

@@ -111,17 +111,20 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     expect(invoices.find(row=>row.emission_eligible)?.status).toBe('RECIBIDA');
     expect(invoices.find(row=>!row.emission_eligible)?.status).toBe('PENDIENTE_INTEGRACION');
   });
-  it('automatically emits only future top-ups for the selected TEST driver',async()=>{
+  it('automatically emits top-ups and both membership plan types only for the selected TEST driver',async()=>{
     const anotherDriver='00000000-0000-4000-8000-000000000009';
     const topUpOne='00000000-0000-4000-8000-000000000010',topUpTwo='00000000-0000-4000-8000-000000000011';
-    const otherTopUp='00000000-0000-4000-8000-000000000012';
+    const otherTopUp='00000000-0000-4000-8000-000000000012',periodPlan='00000000-0000-4000-8000-000000000013';
+    const tripPlan='00000000-0000-4000-8000-000000000014',otherPlan='00000000-0000-4000-8000-000000000015';
     await service.save(owner,input,{});
     await pg.query('insert into users(id,full_name,email) values($1,$2,$3)',[anotherDriver,'Otro conductor','other@example.test']);
     await service.save({type:'CONDUCTOR',id:anotherDriver},{...input,identification:'0912345679',billingEmail:'other@example.test'},{});
     await pg.query("insert into membership_payment_orders(id,driver_id,short_code,purpose) values($1,$2,'TOPUP-ONE','WALLET_TOPUP'),($3,$2,'TOPUP-TWO','WALLET_TOPUP'),($4,$5,'TOPUP-OTHER','WALLET_TOPUP')",
       [topUpOne,driverId,topUpTwo,otherTopUp,anotherDriver]);
+    await pg.query("insert into membership_payment_orders(id,driver_id,short_code,purpose,plan_snapshot) values($1,$2,'PLAN-PERIOD','MEMBERSHIP',$3),($4,$2,'PLAN-TRIPS','MEMBERSHIP',$5),($6,$7,'PLAN-OTHER','MEMBERSHIP',$3)",
+      [periodPlan,driverId,JSON.stringify({name:'Plan mensual',planType:'PERIODIC'}),tripPlan,JSON.stringify({name:'Plan de viajes',planType:'TRIP_PACK'}),otherPlan,anotherDriver]);
     await pay();
-    for(const [order,driver] of [[topUpOne,driverId],[topUpTwo,driverId],[otherTopUp,anotherDriver]])
+    for(const [order,driver] of [[topUpOne,driverId],[topUpTwo,driverId],[periodPlan,driverId],[tripPlan,driverId],[otherTopUp,anotherDriver],[otherPlan,anotherDriver]])
       await pg.query('insert into membership_payments(driver_id,order_id,amount) values($1,$2,12)',[driver,order]);
     vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2020-01-01T00:00:00Z');
     vi.stubEnv('FACTURACION_TEST_ORDER_CODE','');vi.stubEnv('FACTURACION_TEST_DRIVER_ID',driverId);
@@ -130,14 +133,14 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     const emit=vi.fn(async()=>({status:'RECIBIDA' as const,remoteId:`selected-topup-${++issued}`,providerStatus:'RECIBIDO'}));
     const svc=new FacturaService({name:'DATIL',configured:true,emitirFactura:emit} as any);
     await svc.collectCommittedPayments();await svc.processPending();
-    expect(emit).toHaveBeenCalledTimes(2);
+    expect(emit).toHaveBeenCalledTimes(5);
     const rows=(await pg.query<any>(`select o.short_code,i.emission_eligible,i.status from fiscal_invoices i
       join membership_payments p on p.id=i.payment_id join membership_payment_orders o on o.id=p.order_id`)).rows;
-    expect(rows).toHaveLength(4);
-    expect(rows.filter(row=>row.emission_eligible).map(row=>row.short_code).sort()).toEqual(['TOPUP-ONE','TOPUP-TWO']);
-    expect(rows.filter(row=>!row.emission_eligible).map(row=>row.short_code).sort()).toEqual(['MEM-TEST','TOPUP-OTHER']);
+    expect(rows).toHaveLength(7);
+    expect(rows.filter(row=>row.emission_eligible).map(row=>row.short_code).sort()).toEqual(['MEM-TEST','PLAN-PERIOD','PLAN-TRIPS','TOPUP-ONE','TOPUP-TWO']);
+    expect(rows.filter(row=>!row.emission_eligible).map(row=>row.short_code).sort()).toEqual(['PLAN-OTHER','TOPUP-OTHER']);
   });
-  it('does not prepare test invoices until an exact order is selected',async()=>{
+  it('does not prepare test invoices until an exact order or driver is selected',async()=>{
     await service.save(owner,input,{});await pay();
     vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2020-01-01T00:00:00Z');
     vi.stubEnv('FACTURACION_TEST_ORDER_CODE','');
