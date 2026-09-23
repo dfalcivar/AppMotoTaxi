@@ -13,14 +13,14 @@ services:
         value: 0.0.0.0
       - key: NODE_ENV
         value: production
-      # Fiscal profiles stay active. Emission remains locked until credentials,
-      # cutover time and the explicit enable flag are all configured.
+      # Fiscal emission and environment are controlled in Render. Blueprint
+      # sync must not overwrite a tested activation or a later PROD cutover.
       - key: FACTURACION_ENABLED
-        value: "false"
+        sync: false
       - key: FACTURACION_PROVIDER
         value: DATIL
       - key: FACTURACION_ENVIRONMENT
-        value: TEST
+        sync: false
       - key: FACTURACION_EMAIL_MODE
         value: PROVIDER
       - key: FACTURACION_CUTOVER_AT
