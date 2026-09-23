@@ -68,6 +68,9 @@ function datilConfig(env:NodeJS.ProcessEnv):DatilConfig|null {
 
 function field<T=unknown>(row:Record<string,unknown>,camel:string,snake:string):T|undefined{return (row[camel]??row[snake]) as T|undefined;}
 function money(value:unknown){const n=Number(value);if(!Number.isFinite(n))throw new FiscalProviderError('INVALID_FISCAL_AMOUNT','Importe fiscal inválido.',false);return Number(n.toFixed(2));}
+function fiscalDateTime(value:unknown){const date=value instanceof Date?value:new Date(String(value));
+  if(Number.isNaN(date.getTime()))throw new FiscalProviderError('INVALID_FISCAL_DATE','Fecha fiscal inválida.',false);
+  return date.toISOString();}
 function taxCode(rate:number){const code=new Map([[0,'0'],[5,'5'],[12,'2'],[13,'10'],[14,'3'],[15,'4']]).get(Number(rate.toFixed(3)));if(!code)throw new FiscalProviderError('UNSUPPORTED_VAT_RATE',`Dátil no admite la tarifa de IVA ${rate}%.`,false);return code;}
 export function datilIdentificationCode(type:unknown){if(type==='CEDULA')return '05';if(type==='RUC')return '04';throw new FiscalProviderError('UNSUPPORTED_IDENTIFICATION_TYPE','Tipo de identificación fiscal no admitido.',false);}
 export function datilPaymentMethod(method:unknown){switch(String(method??'').toUpperCase()){
@@ -89,7 +92,7 @@ function taxParts(document:Record<string,unknown>){const subtotal=money(field(do
   return {subtotal,tax,total,rate,impuesto,itemImpuesto:{...impuesto,tarifa:rate}};
 }
 function commonPayload(document:Record<string,unknown>,config:DatilConfig){const parts=taxParts(document),concept=String(field(document,'concept','concept')??'Servicio Costa-Go'),
-  sequential=Number(field(document,'sequential','sequential')),issuedAt=String(field(document,'issuedAt','issued_at')??new Date().toISOString()),
+  sequential=Number(field(document,'sequential','sequential')),issuedAt=fiscalDateTime(field(document,'issuedAt','issued_at')??new Date()),
   reference=String(field(document,'externalReference','external_reference')??'');
   if(!Number.isInteger(sequential)||sequential<1)throw new FiscalProviderError('FISCAL_SEQUENCE_REQUIRED','El comprobante no tiene secuencial fiscal.',false);
   return {ambiente:config.environment,tipo_emision:1,secuencial:sequential,fecha_emision:issuedAt,emisor:issuer(config),moneda:String(field(document,'currency','currency')??'USD'),
@@ -103,7 +106,7 @@ function commonPayload(document:Record<string,unknown>,config:DatilConfig){const
 export function buildDatilInvoicePayload(document:Record<string,unknown>,configOverride?:DatilConfig){const config=configOverride??datilConfig(process.env);if(!config)throw new FiscalProviderError('DATIL_NOT_CONFIGURED','Dátil no está configurado.',false);const {_parts,...payload}=commonPayload(document,config);return payload;}
 export function buildDatilCreditNotePayload(document:Record<string,unknown>,configOverride?:DatilConfig){const config=configOverride??datilConfig(process.env);if(!config)throw new FiscalProviderError('DATIL_NOT_CONFIGURED','Dátil no está configurado.',false);
   const {_parts,...base}=commonPayload(document,config);const {pagos:_payments,...withoutPayments}=base;return {...withoutPayments,
-    fecha_emision_documento_modificado:String(field(document,'invoiceIssuedAt','invoice_issued_at')),
+    fecha_emision_documento_modificado:fiscalDateTime(field(document,'invoiceIssuedAt','invoice_issued_at')),
     numero_documento_modificado:String(field(document,'invoiceNumber','invoice_number')),tipo_documento_modificado:'01',
     motivo:String(field(document,'reason','reason')??'Anulación o devolución')};}
 
@@ -132,7 +135,8 @@ export class DatilProvider implements ProveedorFacturacion {
     const headers=new Headers(init.headers);headers.set('Accept','application/json');headers.set('X-Key',config.apiKey);if(certificate)headers.set('X-Password',config.certificatePassword);if(init.body)headers.set('Content-Type','application/json');
     let response:Response;try{response=await this.fetcher(`${config.baseUrl}${path}`,{...init,headers,signal:AbortSignal.timeout(config.timeoutMs)});}catch(error){throw new FiscalProviderError('DATIL_NETWORK_ERROR',error instanceof Error?error.message:'No fue posible conectar con Dátil.',true);}
     const text=await response.text();let body:JsonObject={};try{body=text?JSON.parse(text):{};}catch{body={message:text.slice(0,500)};}
-    if(!response.ok){const code=String(body.code??`DATIL_HTTP_${response.status}`),message=String(body.details??body.message??`Dátil respondió HTTP ${response.status}`);
+    if(!response.ok){const code=String(body.code??`DATIL_HTTP_${response.status}`),detail=body.details??body.message??body.error??body.errores??body.errors;
+      const message=detail==null?`Dátil respondió HTTP ${response.status}`:typeof detail==='string'?detail:JSON.stringify(detail);
       throw new FiscalProviderError(code,message,response.status===408||response.status===429||response.status>=500,response.status);}
     return body;
   }

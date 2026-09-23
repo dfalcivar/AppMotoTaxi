@@ -24,6 +24,16 @@ describe('Dátil provider',()=>{
     expect(note).toMatchObject({tipo_documento_modificado:'01',numero_documento_modificado:'001-002-000000001',motivo:'Anulación'});expect(note).not.toHaveProperty('pagos');
   });
 
+  it('serializes PostgreSQL timestamps as ISO 8601 for invoices and credit notes',()=>{
+    const issuedAt=new Date('2026-09-23T02:15:00.000Z');
+    const invoice=buildDatilInvoicePayload({...document,issued_at:issuedAt},config) as any;
+    expect(invoice.fecha_emision).toBe('2026-09-23T02:15:00.000Z');
+    const note=buildDatilCreditNotePayload({...document,issued_at:issuedAt,invoice_issued_at:issuedAt,
+      invoice_number:'001-002-000000002',reason:'Prueba'},config) as any;
+    expect(note.fecha_emision).toBe('2026-09-23T02:15:00.000Z');
+    expect(note.fecha_emision_documento_modificado).toBe('2026-09-23T02:15:00.000Z');
+  });
+
   it('sends a 36-character idempotency key and persists the remote state data',async()=>{
     const fetcher=vi.fn(async(_url:URL|string|Request,_init?:RequestInit)=>new Response(JSON.stringify({id:'remote-1',estado:'RECIBIDO'}),{status:200,headers:{'content-type':'application/json'}}));
     const provider=new DatilProvider(fetcher as typeof fetch,env),result=await provider.emitirFactura(document);
@@ -40,5 +50,10 @@ describe('Dátil provider',()=>{
     await expect(provider.emitirFactura({...document,idempotency_key:'costago:MEMBRESIA:too-long-for-datil-idempotency'})).rejects.toMatchObject({code:'INVALID_IDEMPOTENCY_KEY',retryable:false});
     const failing=new DatilProvider(vi.fn(async()=>new Response(JSON.stringify({message:'maintenance'}),{status:503})) as unknown as typeof fetch,env);
     await expect(failing.emitirFactura(document)).rejects.toMatchObject({code:'DATIL_HTTP_503',retryable:true});
+  });
+
+  it('preserves Dátil validation details for rejected requests',async()=>{
+    const failing=new DatilProvider(vi.fn(async()=>new Response(JSON.stringify({errors:[{field:'fecha_emision',message:'Invalid datetime'}]}),{status:400})) as unknown as typeof fetch,env);
+    await expect(failing.emitirFactura(document)).rejects.toMatchObject({code:'DATIL_HTTP_400',message:'[{"field":"fecha_emision","message":"Invalid datetime"}]',retryable:false});
   });
 });
