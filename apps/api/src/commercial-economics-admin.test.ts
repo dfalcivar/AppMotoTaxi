@@ -44,9 +44,10 @@ beforeEach(async()=>{
   await pg.exec('truncate membership_plans cascade;truncate driver_wallets cascade;truncate audit_log;');
   await pg.query(`insert into membership_plans(id,code,version,name,plan_type,base_amount,included_trips,currency,enabled)
     values($1,'PACK_TEST',1,'Paquete prueba','TRIP_PACK',8,50,'USD',true)`,[plan]);
-  await pg.query(`update operational_settings set arrival_commercial_version=1,arrival_commercial_configuration=$1::jsonb`,[JSON.stringify({
+  await pg.query(`update operational_settings set membership_extra_trip_share_percent=40,arrival_commercial_version=1,arrival_commercial_configuration=$1::jsonb`,[JSON.stringify({
     enabled:true,searchSessionMinutes:30,sameRouteToleranceMeters:100,preserveCancelledSearchRound:true,lowBalanceThreshold:'1',minimumTopUp:'1',maximumTopUp:'100',
-    historicalWindowDays:30,minimumSamples:10,fullConfidenceSamples:100,recalculateMinutes:60,referenceDistribution:[{round:1,count:1},{round:3,count:1}]})]);
+    historicalWindowDays:30,minimumSamples:10,fullConfidenceSamples:100,recalculateMinutes:60,
+    referenceDistribution:[{round:1,count:1},{round:3,count:1}]})]);
   await pg.exec('delete from package_commercial_rules');
 });
 afterAll(async()=>{await app.close();await pg.close();});
@@ -104,6 +105,16 @@ it('uses the mandatory tariff commission as the single value per round',async()=
   const response=await app.inject({method:'GET',url:'/v1/admin/commercial-economics'});
   expect(response.statusCode).toBe(200);
   expect(response.json().settings).toMatchObject({feePerRound:'0.25',minimumArrival:'0.25',maximumArrival:'1.00',rounds:4,costaGoPercent:'35'});
+});
+it('applies the configured commission cap to package estimates',async()=>{
+  const configuration=(await pg.query<any>('select arrival_commercial_configuration as c from operational_settings')).rows[0].c;
+  const saved=await app.inject({method:'PUT',url:'/v1/admin/commercial-economics/configuration',payload:{
+    version:1,configuration:{...configuration,maxCommissionPerTrip:'0.25'}
+  }});
+  expect(saved.statusCode).toBe(200);
+  await rules();
+  const calc=await app.inject({method:'POST',url:`${route}/recalculate`});
+  expect(calc.json()).toMatchObject({expectedCommissionPerTrip:'0.175000',technicalCost:'8.75'});
 });
 it('persists the independent cancellation continuity switch',async()=>{
   const configuration=(await pg.query<any>('select arrival_commercial_configuration as c from operational_settings')).rows[0].c;

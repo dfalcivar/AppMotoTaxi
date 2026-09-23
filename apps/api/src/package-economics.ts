@@ -19,6 +19,7 @@ export async function calculatePackageEconomics(planId:string,tx:any=database())
   };
   const global=await history(null),zone=rule.service_area_id?await history(String(rule.service_area_id)):undefined;
   const calculation=packageEconomics({quantity:Number(plan.included_trips),feePerRound:context.feePerRound,costaGoPercent:context.costaGoPercent,
+    maxCommissionPerTrip:context.maxCommissionPerTrip,
     reference:context.config.referenceDistribution,global,zone,minimumSamples:context.config.minimumSamples,fullConfidenceSamples:context.config.fullConfidenceSamples,
     totalRounds:context.totalRounds,commercialFactor:String(rule.commercial_factor),volumeDiscountPercent:String(rule.volume_discount_percent),
     fixedCost:String(rule.fixed_cost),minimumPrice:String(rule.minimum_price)});
@@ -28,7 +29,8 @@ export async function calculatePackageEconomics(planId:string,tx:any=database())
     round(${plan.base_amount}::numeric/${plan.included_trips}::numeric,6)::text as unit`;
   const snapshot={...calculation,packageId:planId,quantity:Number(plan.included_trips),publishedPrice:String(plan.base_amount),
     percentageDifference:comparison.difference,expectedMargin:comparison.margin,unitPublishedPrice:comparison.unit,costaGoPercent:context.costaGoPercent,
-    feePerRound:context.feePerRound,settings:context.settings,configurationVersion:context.version,ruleVersion:Number(rule.version),
+    feePerRound:context.feePerRound,maxCommissionPerTrip:context.maxCommissionPerTrip,settings:context.settings,
+    configurationVersion:context.version,ruleVersion:Number(rule.version),
     historicalWindowDays:context.config.historicalWindowDays,serviceAreaId:calculation.scope==='ZONE'?String(rule.service_area_id):null,
     configuredServiceAreaId:rule.service_area_id,fixedCost:String(rule.fixed_cost),minimumPrice:String(rule.minimum_price),
     historicalRoundsCappedAt:context.totalRounds,calculatedAt:new Date().toISOString()};

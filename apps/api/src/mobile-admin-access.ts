@@ -111,7 +111,8 @@ export async function registerMobileAdminAccessRoutes(app: FastifyInstance) {
     let calculation: Record<string, unknown>;
     if (body.tripType === "IMMEDIATE") {
       calculation = immediateArrival({settings:context.settings,round:body.round,feePerRound:context.feePerRound,
-        journeyFare:body.journeyFare,costaGoPercent:context.costaGoPercent});
+        journeyFare:body.journeyFare,costaGoPercent:context.costaGoPercent,
+        maxCommissionPerTrip:context.maxCommissionPerTrip});
     } else {
       const [scheduled] = await database()`select scheduled_arrival_configuration as configuration,
         scheduled_arrival_version as version from operational_settings where id=1`;

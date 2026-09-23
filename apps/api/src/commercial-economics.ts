@@ -15,6 +15,7 @@ function divide(a: Decimal, b: Decimal): Decimal {
   return { n: a.n*b.d, d: a.d*b.n };
 }
 function compare(a: Decimal, b: Decimal) { return a.n*b.d-b.n*a.d; }
+function minDecimal(a: Decimal, b: Decimal) { return compare(a,b)>0n?b:a; }
 function fixed(a: Decimal, places = 2): string {
   const scale = 10n ** BigInt(places);
   const rounded = (a.n*scale*2n+a.d)/(a.d*2n);
@@ -48,19 +49,22 @@ export function arrivalSearchBounds(settings: DriverSearchSettings) {
 
 export function immediateArrival(input: {
   settings: DriverSearchSettings; round: number; feePerRound: string;
-  journeyFare: string; costaGoPercent: string;
+  journeyFare: string; costaGoPercent: string; maxCommissionPerTrip?: string;
 }) {
   const bounds = arrivalSearchBounds(input.settings);
   const matched = bounds[integer(input.round, 1)-1];
   if (!matched) throw new Error('INVALID_MATCHED_ROUND');
   const fee = decimal(monetaryAmount(input.feePerRound));
   const arrivalFee = fixed(multiply(fee, decimal(String(input.round))));
-  const theoreticalCommission = fixed(multiply(decimal(arrivalFee), percentage(input.costaGoPercent)));
+  const rawCommission=multiply(decimal(arrivalFee),percentage(input.costaGoPercent));
+  const theoreticalCommission=fixed(input.maxCommissionPerTrip===undefined?rawCommission:
+    minDecimal(rawCommission,decimal(monetaryAmount(input.maxCommissionPerTrip))));
   const arrivalFeeMaximum = fixed(multiply(fee, decimal(String(bounds.length))));
   return {
     matchedRound: input.round, radiusMeters: matched.upperMeters, totalRounds: bounds.length,
     arrivalFee, arrivalFeeMinimum: fixed(fee), arrivalFeeMaximum,
     journeyFare: monetaryAmount(input.journeyFare), costaGoPercent: input.costaGoPercent,
+    maxCommissionPerTrip:input.maxCommissionPerTrip,
     theoreticalCommission,
     passengerTotal: fixed(add(decimal(monetaryAmount(input.journeyFare)), decimal(arrivalFee))),
     passengerMinimum: fixed(add(decimal(monetaryAmount(input.journeyFare)), fee)),
@@ -146,7 +150,7 @@ export function commercialCharge(theoreticalCommission: string, policy: Commerci
 
 export interface RoundSample { round: number; count: number }
 export function packageEconomics(input: {
-  quantity: number; feePerRound: string; costaGoPercent: string;
+  quantity: number; feePerRound: string; costaGoPercent: string; maxCommissionPerTrip?: string;
   reference: RoundSample[]; global: RoundSample[]; zone?: RoundSample[];
   minimumSamples: number; fullConfidenceSamples: number; totalRounds: number;
   commercialFactor: string; volumeDiscountPercent: string; fixedCost: string; minimumPrice: string;
@@ -173,7 +177,19 @@ export function packageEconomics(input: {
   const denominator = BigInt(input.fullConfidenceSamples);
   const mean = add(multiply(selected.value,{n:confidence,d:denominator}),
     multiply(reference.value,{n:denominator-confidence,d:denominator}));
-  const commission = multiply(multiply(mean,decimal(monetaryAmount(input.feePerRound))), percentage(input.costaGoPercent));
+  const perRoundCommission=(round:number)=>{
+    const raw=multiply(multiply(decimal(String(round)),decimal(monetaryAmount(input.feePerRound))),percentage(input.costaGoPercent));
+    return decimal(fixed(input.maxCommissionPerTrip===undefined?raw:
+      minDecimal(raw,decimal(monetaryAmount(input.maxCommissionPerTrip)))));
+  };
+  const weightedCommission=(samples:RoundSample[])=>{
+    const count=samples.reduce((total,sample)=>total+sample.count,0);
+    if(!count)return decimal('0');
+    return divide(samples.reduce((sum,sample)=>add(sum,multiply(perRoundCommission(sample.round),decimal(String(sample.count)))),decimal('0')),
+      decimal(String(count)));
+  };
+  const commission=add(multiply(weightedCommission(scope==='ZONE'?input.zone!:scope==='GLOBAL'?input.global:input.reference),
+    {n:confidence,d:denominator}),multiply(weightedCommission(input.reference),{n:denominator-confidence,d:denominator}));
   const technical = multiply(commission,decimal(String(input.quantity)));
   const discount = percentage(input.volumeDiscountPercent);
   const commercial = multiply(multiply(add(technical,decimal(input.fixedCost)),decimal(input.commercialFactor)),

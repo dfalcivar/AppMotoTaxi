@@ -601,6 +601,10 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
         : <String, dynamic>{};
     final fee = double.tryParse('${economics['feePerRound']}') ?? 0;
     final share = double.tryParse('${economics['costaGoPercent']}') ?? 0;
+    final commercialConfiguration = economics['configuration'] is Map
+        ? Map<String, dynamic>.from(economics['configuration'])
+        : <String, dynamic>{};
+    final commissionCap = double.tryParse('${commercialConfiguration['maxCommissionPerTrip']}') ?? double.infinity;
     return Column(children: [
       _section('Parámetros de búsqueda',
           'La vista previa usa la misma progresión oficial.', [
@@ -620,7 +624,7 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
         ]),
         const Divider(),
         Text(
-            'Impacto: $oldRounds → ${rounds.length} rondas · tarifa máxima \$${(fee * oldRounds).toStringAsFixed(2)} → \$${(fee * rounds.length).toStringAsFixed(2)} · comisión máxima \$${(fee * oldRounds * share / 100).toStringAsFixed(2)} → \$${(fee * rounds.length * share / 100).toStringAsFixed(2)}')
+            'Impacto: $oldRounds → ${rounds.length} rondas · tarifa máxima \$${(fee * oldRounds).toStringAsFixed(2)} → \$${(fee * rounds.length).toStringAsFixed(2)} · comisión máxima \$${(fee * oldRounds * share / 100).clamp(0, commissionCap).toStringAsFixed(2)} → \$${(fee * rounds.length * share / 100).clamp(0, commissionCap).toStringAsFixed(2)}')
       ]),
       FilledButton.icon(
           onPressed: busy
@@ -635,7 +639,7 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
                     'searchRadiusMeters': _i('maximum'),
                     'driverSearchRoundWaitSeconds': _i('wait')
                   },
-                  'Cambiar radios y tiempos de despacho.\n\nRondas: $oldRounds → ${rounds.length}\nTarifa máxima: \$${(fee * oldRounds).toStringAsFixed(2)} → \$${(fee * rounds.length).toStringAsFixed(2)}\nComisión máxima: \$${(fee * oldRounds * share / 100).toStringAsFixed(2)} → \$${(fee * rounds.length * share / 100).toStringAsFixed(2)}',
+                  'Cambiar radios y tiempos de despacho.\n\nRondas: $oldRounds → ${rounds.length}\nTarifa máxima: \$${(fee * oldRounds).toStringAsFixed(2)} → \$${(fee * rounds.length).toStringAsFixed(2)}\nComisión máxima: \$${(fee * oldRounds * share / 100).clamp(0, commissionCap).toStringAsFixed(2)} → \$${(fee * rounds.length * share / 100).clamp(0, commissionCap).toStringAsFixed(2)}',
                   method: 'PATCH'),
           icon: const Icon(Icons.save_outlined),
           label: const Text('Guardar cambios'))
@@ -652,11 +656,15 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
     final rounds = (settings['rounds'] as num?)?.toInt() ??
         int.tryParse('${settings['rounds']}') ??
         1;
+    final commercialConfiguration = settings['configuration'] is Map
+        ? Map<String, dynamic>.from(settings['configuration'])
+        : <String, dynamic>{};
     final fee =
             double.tryParse(field('fee', settings['feePerRound']).text) ?? 0,
         share =
             double.tryParse(field('share', settings['costaGoPercent']).text) ??
-                0;
+                0,
+        cap = double.tryParse(field('cap', commercialConfiguration['maxCommissionPerTrip'] ?? '0.25').text) ?? 0;
     return Column(children: [
       _section('Tarifa de llegada',
           'Un valor por ronda; las siguientes se calculan automáticamente.', [
@@ -664,13 +672,15 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
             suffix: 'USD', refreshOnChange: true),
         _number('share', 'Participación Costa-Go', settings['costaGoPercent'],
             suffix: '%', refreshOnChange: true),
+        _number('cap', 'Techo por viaje inmediato', commercialConfiguration['maxCommissionPerTrip'] ?? '0.25',
+            suffix: 'USD', refreshOnChange: true),
         ...List.generate(
             rounds,
             (index) => ListTile(
                 dense: true,
                 title: Text('Ronda ${index + 1}'),
                 trailing: Text(
-                    '\$${(fee * (index + 1)).toStringAsFixed(2)} · Costa-Go \$${(fee * (index + 1) * share / 100).toStringAsFixed(2)}')))
+                    '\$${(fee * (index + 1)).toStringAsFixed(2)} · Costa-Go \$${(fee * (index + 1) * share / 100).clamp(0, cap).toStringAsFixed(2)}')))
       ]),
       FilledButton.icon(
           onPressed: busy || current.isEmpty
@@ -678,8 +688,9 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
               : () async {
                   final updatedFee = _d('fee');
                   final updatedShare = _d('share');
+                  final updatedCap = _d('cap');
                   if (!await _confirm(
-                      'Publicar una nueva versión de tarifa de llegada y actualizar el porcentaje Costa-Go.')) {
+                      'Publicar una nueva versión de tarifa de llegada y actualizar el porcentaje y techo Costa-Go para viajes inmediatos.')) {
                     return;
                   }
                   setState(() => busy = true);
@@ -694,6 +705,7 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
                         });
                     final config =
                         Map<String, dynamic>.from(settings['configuration']);
+                    config['maxCommissionPerTrip'] = updatedCap.toStringAsFixed(2);
                     await widget.request(
                         'PUT', '/v1/admin/commercial-economics/configuration',
                         token: widget.token,
@@ -706,6 +718,7 @@ class _AdminModuleScreenState extends State<_AdminModuleScreen>
                     setState(() {
                       fields['fee']?.text = updatedFee.toStringAsFixed(2);
                       fields['share']?.text = updatedShare.toStringAsFixed(2);
+                      fields['cap']?.text = updatedCap.toStringAsFixed(2);
                     });
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                         content: Text(

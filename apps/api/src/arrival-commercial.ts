@@ -7,6 +7,7 @@ import { arrivalSearchBounds, immediateArrival } from './commercial-economics.js
 
 export const commercialConfigurationSchema=z.object({
   enabled:z.boolean(),searchSessionMinutes:z.number().int().min(1).max(1440),
+  maxCommissionPerTrip:z.string().regex(/^\d{1,6}\.\d{2}$/).optional(),
   sameRouteToleranceMeters:z.number().int().min(1).max(1000),
   preserveCancelledSearchRound:z.boolean().default(true),
   lowBalanceThreshold:z.string().regex(/^\d{1,6}(\.\d{1,2})?$/),
@@ -44,7 +45,8 @@ export async function commercialContext(tx:any=database()) {
   const settings={initialRadiusMeters:Number(row.initial),radiusIncrementMeters:Number(row.increment),maximumRadiusMeters:Number(row.maximum),roundWaitSeconds:Number(row.wait)};
   const bounds=arrivalSearchBounds(settings);
   if(config.referenceDistribution.some(r=>r.round>bounds.length))throw new Error('REFERENCE_EXCEEDS_DISPATCH_ROUNDS');
-  const result={config,settings,feePerRound:centsToAmount(Number(price.fee)),costaGoPercent:String(row.percentage),totalRounds:bounds.length};
+  const result={config,settings,feePerRound:centsToAmount(Number(price.fee)),costaGoPercent:String(row.percentage),
+    maxCommissionPerTrip:config.maxCommissionPerTrip,totalRounds:bounds.length};
   return {...result,version:createHash('sha256').update(JSON.stringify({row,price})).digest('hex')};
 }
 type Point={latitude:number;longitude:number};
@@ -72,7 +74,8 @@ export async function immediateQuote(fare:TerritorialFare,passengerId:string,poi
   const minimumRound=Math.min(source.totalRounds,Math.max(1,Number(session?.max_round_reached??1)));
   const journeyFare=centsToAmount(fare.baseCents+fare.stopSurchargeCents);
   const quote={...source,journeyFare,minimumRound};
-  const minimum=immediateArrival({settings:source.settings,round:minimumRound,feePerRound:source.feePerRound,journeyFare,costaGoPercent:source.costaGoPercent});
+  const minimum=immediateArrival({settings:source.settings,round:minimumRound,feePerRound:source.feePerRound,journeyFare,
+    costaGoPercent:source.costaGoPercent,maxCommissionPerTrip:source.maxCommissionPerTrip});
   const confirmation=createHash('sha256').update(JSON.stringify({quote,requestIdentity})).digest('hex');
   return {quote,confirmation,sessionId:session?.id as string|undefined,
     minimumTotalCents:amountToCents(minimum.passengerTotal),maximumTotalCents:amountToCents(minimum.passengerMaximum),

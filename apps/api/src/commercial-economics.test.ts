@@ -16,6 +16,11 @@ describe('economic calculations (illustrative test fixtures, not defaults)',()=>
     expect(immediateArrival({settings:search,round:4,feePerRound:'0.25',journeyFare:'3.00',costaGoPercent:'40'}))
       .toMatchObject({arrivalFee:'1.00',theoreticalCommission:'0.40',passengerTotal:'4.00',passengerMinimum:'3.25',passengerMaximum:'4.00'});
     expect(()=>immediateArrival({settings:search,round:5,feePerRound:'0.25',journeyFare:'3.00',costaGoPercent:'40'})).toThrow();
+    const capped=immediateArrival({settings:search,round:4,feePerRound:'0.25',journeyFare:'3.00',
+      costaGoPercent:'40',maxCommissionPerTrip:'0.25'});
+    expect(capped).toMatchObject({arrivalFee:'1.00',passengerTotal:'4.00',theoreticalCommission:'0.25'});
+    expect(immediateArrival({settings:search,round:1,feePerRound:'0.25',journeyFare:'3.00',
+      costaGoPercent:'40',maxCommissionPerTrip:'0.25'}).theoreticalCommission).toBe('0.10');
   });
   it('rounds exact decimals half-up, including tax without crediting VAT to principal',()=>{
     expect(monetaryAmount('1.005')).toBe('1.01');
@@ -79,5 +84,9 @@ describe('economic calculations (illustrative test fixtures, not defaults)',()=>
   it('supports distinct commercial factors, discount, fixed cost and price floor',()=>{
     expect(packageEconomics({...pack,commercialFactor:'0.8',volumeDiscountPercent:'10',fixedCost:'2'}).suggestedPrice).toBe('8.64');
     expect(packageEconomics({...pack,minimumPrice:'15'}).suggestedPrice).toBe('15.00');
+  });
+  it('estimates capped commission from each round, not from the average round',()=>{
+    const result=packageEconomics({...pack,maxCommissionPerTrip:'0.25',reference:[{round:1,count:1},{round:4,count:1}]});
+    expect(result).toMatchObject({meanRound:'2.500000',expectedCommissionPerTrip:'0.175000',technicalCost:'8.75'});
   });
 });

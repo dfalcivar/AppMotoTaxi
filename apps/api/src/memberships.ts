@@ -330,9 +330,10 @@ export async function driverMembershipEligibility(driverId: string, tripId?:stri
     from driver_memberships where driver_id=${driverId} and cycle_closed_at is null
     order by created_at desc limit 1
   `;
-  const [wallet]=await database()`select w.enabled and w.total-w.reserved>=round(
+  const [wallet]=await database()`select w.enabled and w.total-w.reserved>=least(round(
     coalesce((select platform_commission_cents_per_leg::numeric/100 from pricing_versions where active_from<=now()
-      and (active_until is null or active_until>now()) order by active_from desc limit 1),0)*os.membership_extra_trip_share_percent/100,2) as eligible
+      and (active_until is null or active_until>now()) order by active_from desc limit 1),0)*os.membership_extra_trip_share_percent/100,2),
+      coalesce((os.arrival_commercial_configuration->>'maxCommissionPerTrip')::numeric,999999)) as eligible
     from driver_wallets w cross join operational_settings os where w.driver_id=${driverId} and os.id=1
       and os.arrival_commercial_configuration->>'enabled'='true'`;
   let walletEligible=Boolean(wallet?.eligible);
@@ -1063,7 +1064,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const context=await commercialContext();
     const minimumRequiredBalance=context?immediateArrival({
       settings:context.settings,round:1,feePerRound:context.feePerRound,
-      journeyFare:'0.00',costaGoPercent:context.costaGoPercent
+      journeyFare:'0.00',costaGoPercent:context.costaGoPercent,maxCommissionPerTrip:context.maxCommissionPerTrip
     }).theoreticalCommission:null;
     const [wallet]=await database()`select total::text,reserved::text,(total-reserved)::text as available,enabled
       from driver_wallets where driver_id=${user.id!}`;

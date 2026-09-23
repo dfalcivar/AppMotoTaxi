@@ -162,7 +162,8 @@ async function nearbyDrivers(
       and ((select not membership_enforcement_enabled from operational_settings where id=1)
         or exists(select 1 from driver_wallets w cross join operational_settings os
           where os.id=1 and os.arrival_commercial_configuration->>'enabled'='true' and w.driver_id=d.user_id and w.enabled
-            and w.total-w.reserved>=coalesce((select round(platform_commission_cents_per_leg::numeric/100*os.membership_extra_trip_share_percent/100,2)
+            and w.total-w.reserved>=coalesce((select least(round(platform_commission_cents_per_leg::numeric/100*os.membership_extra_trip_share_percent/100,2),
+              coalesce((os.arrival_commercial_configuration->>'maxCommissionPerTrip')::numeric,999999))
               from pricing_versions where active_from<=now() and (active_until is null or active_until>now()) order by active_from desc limit 1),0)
             and not exists(select 1 from driver_memberships blocked where blocked.driver_id=d.user_id and blocked.cycle_closed_at is null
               and blocked.status in ('SUSPENDED','SUSPENDED_NON_PAYMENT','SUSPENSION_PENDING_ACTIVE_TRIP')))

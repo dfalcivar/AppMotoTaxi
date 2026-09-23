@@ -37,6 +37,25 @@ describe('transactional wallet and immutable offers',()=>{
     expect(canReuseArrivalSearchSession({cancel_count:1},false)).toBe(false);
     expect(canReuseArrivalSearchSession({cancel_count:0},false)).toBe(true);
   });
+  it('caps new round commissions while preserving old quotes and passenger totals',async()=>{
+    const legacy={feePerRound:'0.25',costaGoPercent:'40',journeyFare:'3.00',version:'old',minimumRound:1,
+      settings:{initialRadiusMeters:1000,radiusIncrementMeters:1000,maximumRadiusMeters:6000}};
+    await pg.exec(`update operational_settings set arrival_commercial_version=1,
+      arrival_commercial_configuration='{"enabled":true}'::jsonb where id=1`);
+    await pg.query('update trips set pricing_snapshot=$1::jsonb where id=$2',[JSON.stringify({economicQuote:legacy}),trip]);
+    await pg.exec(await readFile(new URL('../migrations/097_arrival_commission_cap.sql',import.meta.url),'utf8'));
+    expect((await pg.query(`select arrival_commercial_configuration->>'maxCommissionPerTrip' as cap,
+      arrival_commercial_version as version from operational_settings where id=1`)).rows[0])
+      .toEqual({cap:'0.25',version:2});
+    expect((await pg.query<any>('select trip_offer_economics($1,4) as e',[trip])).rows[0].e)
+      .toMatchObject({arrivalFee:'1.00',passengerTotal:'4.00',theoreticalCommission:'0.40'});
+    await pg.query('update trips set pricing_snapshot=$1::jsonb where id=$2',
+      [JSON.stringify({economicQuote:{...legacy,maxCommissionPerTrip:'0.25',version:'capped'}}),trip]);
+    expect((await pg.query<any>('select trip_offer_economics($1,4) as e',[trip])).rows[0].e)
+      .toMatchObject({arrivalFee:'1.00',passengerTotal:'4.00',theoreticalCommission:'0.25'});
+    await move('TOPUP','0.25','cap-test');await pg.exec('update driver_wallets set enabled=true');
+    expect((await pg.query('select commercial_driver_can_accept($1,$2,4) as ok',[driver,trip])).rows[0]).toEqual({ok:true});
+  });
   it('starts a new economic search after NO_DRIVER but preserves cancellation continuity',async()=>{
     await pg.exec(await readFile(new URL('../migrations/090_expire_exhausted_arrival_search.sql',import.meta.url),'utf8'));
     const exhausted=await pg.query<any>(`insert into arrival_search_sessions(passenger_id,expires_at,route_points,configuration,max_round_reached)
