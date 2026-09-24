@@ -10,6 +10,12 @@ const types:Record<string,string>={COURTESY_DAYS:'Días de cortesía',PROMOTIONA
 const states:Record<string,string>={DRAFT:'Borrador',ACTIVE:'Activo',PAUSED:'Pausado',ARCHIVED:'Archivado',PENDING:'Programado',EXPIRED:'Vencido',USED:'Usado',CANCELLED:'Cancelado',FAILED:'Fallido'};
 const local=(v:string)=>v?new Date(Date.parse(v)-5*3600000).toISOString().slice(0,16):'';
 const iso=(v:string)=>v?new Date(v+'-05:00').toISOString():'';
+// Read responses also contain server-owned display fields and counters.
+// Only editable fields belong in create/update requests.
+export function benefitSaveBody(form:Benefit){
+ const {code,name,description,benefitType,value,expirationDays,audience,oneTime,requiresActivation,startsAt,endsAt,maxGlobal,maxPerUser,status,zoneIds}=form;
+ return {code,name,description,benefitType,value,expirationDays,audience,oneTime,requiresActivation,startsAt,endsAt,maxGlobal,maxPerUser,status,zoneIds,...(form.id?{version:form.version}:{})};
+}
 export function CostaGoBenefits({token,permissions}:{token:string;permissions:string[]}){
  const [rows,setRows]=useState<Benefit[]>([]),[zones,setZones]=useState<{id:string;name:string;enabled:boolean}[]>([]),[form,setForm]=useState<Benefit|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[revision,setRevision]=useState(0);
  const [claims,setClaims]=useState<any[]>([]),[total,setTotal]=useState(0),[page,setPage]=useState(0),[filters,setFilters]=useState({code:'',status:'',audience:'',zone:'',from:'',until:''});
@@ -18,7 +24,7 @@ export function CostaGoBenefits({token,permissions}:{token:string;permissions:st
  useEffect(()=>{const controller=new AbortController();setError('');const query=new URLSearchParams({offset:String(page*50)});Object.entries(filters).forEach(([k,v])=>{if(v)query.set(k,['from','until'].includes(k)?iso(v):v);});
  Promise.all([apiFetch<{items:Benefit[];zones:typeof zones}>(root,token,{signal:controller.signal}),apiFetch<{items:any[];total:number}>(root+'/redemptions?'+query,token,{signal:controller.signal})]).then(([b,r])=>{setRows(b.items);setZones(b.zones);setClaims(r.items);setTotal(r.total);}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});return()=>controller.abort();},[token,revision,filters,page]);
  const set=(k:keyof Benefit,v:unknown)=>setForm(f=>f?{...f,[k]:v}:f);
- async function save(e:FormEvent){e.preventDefault();if(!form||busy)return;setBusy(true);setError('');try{const {id,redemptions,totalGranted,version,...body}=form;await apiFetch(id?`${root}/${id}`:root,token,{method:id?'PUT':'POST',body:JSON.stringify({...body,...(id?{version}:{})})});setForm(null);setRevision(x=>x+1);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ async function save(e:FormEvent){e.preventDefault();if(!form||busy)return;setBusy(true);setError('');try{const {id}=form;await apiFetch(id?`${root}/${id}`:root,token,{method:id?'PUT':'POST',body:JSON.stringify(benefitSaveBody(form))});setForm(null);setRevision(x=>x+1);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
  const filter=(key:string,value:string)=>{setFilters(f=>({...f,[key]:value}));setPage(0);};
  return <section className="costa-campaigns"><div className="campaign-intro"><div><small>BENEFICIOS Y RECOMPENSAS</small><h2>Beneficios Costa-Go</h2><p>La campaña comunica; el beneficio valida y entrega la cobertura. No modifica compras, facturas ni dinero recargado.</p></div>{can&&<button onClick={()=>setForm(initial())}>Crear beneficio</button>}</div>
  {error&&<p className="error" role="alert">{error}</p>}<div className="campaign-notice"><div><strong>Cortesía por días disponible</strong><p>Solo conductores aprobados, activos y sin suspensión. Si tienen membresía vigente, la cortesía comienza después de su vencimiento. La vigencia de la campaña limita cuándo activar; los días otorgados conservan su propia fecha de fin.</p><p>Las cortesías y el saldo promocional pueden entregarse automáticamente por referidos. El saldo promocional se acumula separado del saldo real; aún no se puede gastar en viajes. Descuentos y otros tipos siguen en preparación.</p></div></div>
