@@ -14,10 +14,12 @@ class CostaGoBenefitPanel extends StatefulWidget {
       {super.key,
       required this.service,
       required this.code,
-      required this.campaignId});
+      required this.campaignId,
+      this.actionLabel = 'Activar cortesía'});
   final CostaGoBenefitsService service;
   final String code;
   final String campaignId;
+  final String actionLabel;
   @override
   State<CostaGoBenefitPanel> createState() => _CostaGoBenefitPanelState();
 }
@@ -126,12 +128,12 @@ class _CostaGoBenefitPanelState extends State<CostaGoBenefitPanel> {
                 Text(
                     'Desde: ${date(grant['effectiveFrom'])}\nHasta: ${date(grant['effectiveUntil'])} (hora local)'),
               ],
-              if (state == 'AVAILABLE')
+              if (state == 'AVAILABLE' && widget.actionLabel.isNotEmpty)
                 Padding(
                     padding: const EdgeInsets.only(top: 12),
                     child: FilledButton(
                         onPressed: busy ? null : claimBenefit,
-                        child: const Text('Activar cortesía')))
+                        child: Text(widget.actionLabel)))
               else if (grant == null && data != null)
                 Text(data?['message']?.toString() ??
                     'Este beneficio no está disponible.'),

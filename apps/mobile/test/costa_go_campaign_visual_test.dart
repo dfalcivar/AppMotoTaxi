@@ -32,6 +32,103 @@ CostaGoCampaignStore storeFor(Future<CampaignData> Function() load) =>
         ttl: const Duration(seconds: 10));
 
 void main() {
+  test('surface/theme matrix and explicit fallbacks', () {
+    for (final surface in ['THUMBNAIL', 'MAIN', 'HEADER', 'DECORATION']) {
+      final dark = surface == 'MAIN' ? 'DARK' : '${surface}_DARK';
+      final light = '${surface}_LIGHT';
+      expect(
+          campaignResourceKind(
+              [surface, light, dark], surface, Brightness.light),
+          light);
+      expect(
+          campaignResourceKind(
+              [surface, light, dark], surface, Brightness.dark),
+          dark);
+      expect(campaignResourceKind([surface, light], surface, Brightness.dark),
+          surface);
+      expect(campaignResourceKind([light], surface, Brightness.dark), isNull);
+      expect(
+          campaignResourceKind([light], surface, Brightness.dark,
+              allowLightInDark: true),
+          light);
+    }
+    expect(
+        campaignImageKind(['MAIN'], Brightness.light,
+            thumbnail: true, allowMainInHome: false),
+        isNull);
+    expect(
+        campaignImageKind(['MAIN'], Brightness.light,
+            thumbnail: true, allowMainInHome: true),
+        'MAIN');
+    final item = {
+      ...data(variant: 'DEFAULT', assets: ['HEADER', 'DECORATION']),
+      'headerDecorationMode': 'EDGES'
+    };
+    expect(campaignHeaderKind(item, Brightness.light), 'HEADER');
+    expect(
+        campaignHeaderKind(
+            {...item, 'decorateHeader': false}, Brightness.light),
+        isNull);
+    expect(
+        campaignHeaderKind(
+            {...item, 'headerDecorationMode': 'NONE'}, Brightness.light),
+        isNull);
+    expect(
+        campaignHeaderKind({
+          ...item,
+          'assets': ['DECORATION']
+        }, Brightness.light),
+        isNull);
+    expect(
+        campaignHeaderKind({
+          ...item,
+          'assets': ['DECORATION'],
+          'useDecorativeAssetForHeader': true
+        }, Brightness.light),
+        'DECORATION');
+  });
+  for (final mode in ['NONE', 'EDGES', 'FULL_OVERLAY', 'AVATAR_ACCENT']) {
+    for (final role in ['PASSENGER', 'DRIVER']) {
+      testWidgets(
+          'island $mode $role remains functional at 320px and large text',
+          (tester) async {
+        final item = {
+          ...data(variant: 'CUSTOM', assets: ['HEADER']),
+          'headerDecorationMode': mode
+        };
+        final store = storeFor(() async => {
+              'items': [item]
+            });
+        var taps = 0;
+        await tester.pumpWidget(MaterialApp(
+            home: Scaffold(
+                body: MediaQuery(
+                    data:
+                        const MediaQueryData(textScaler: TextScaler.linear(2)),
+                    child: SizedBox(
+                        width: 320,
+                        child: CostaGoCampaignHeaderDecoration(
+                            store: store,
+                            child: Row(children: [
+                              const CircleAvatar(),
+                              Expanded(
+                                  child: Text(role == 'DRIVER'
+                                      ? 'Tu jornada, más cerca'
+                                      : '¿A dónde vamos hoy?')),
+                              IconButton(
+                                  onPressed: () => taps++,
+                                  icon: const Icon(Icons.notifications))
+                            ])))))));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(IconButton));
+        expect(taps, 1);
+        expect(tester.takeException(), isNull);
+        if (mode == 'NONE') expect(find.byType(Image), findsNothing);
+        await tester.pumpWidget(const SizedBox());
+        store.dispose();
+      });
+    }
+  }
   test(
       'image selection keeps compact resources first and single images in both themes',
       () {
@@ -41,7 +138,8 @@ void main() {
               thumbnail: true),
           'THUMBNAIL');
       expect(campaignImageKind(['MAIN'], brightness), 'MAIN');
-      expect(campaignImageKind(['DARK'], brightness), 'DARK');
+      expect(campaignImageKind(['DARK'], brightness),
+          brightness == Brightness.dark ? 'DARK' : isNull);
       expect(campaignImageKind(['DECORATION'], brightness), isNull);
     }
     expect(campaignImageKind(['MAIN', 'DARK'], Brightness.dark), 'DARK');
@@ -127,7 +225,7 @@ void main() {
     store.dispose();
   });
   testWidgets(
-      'remote DECORATION has priority and broken asset falls back; CUSTOM stays normal',
+      'remote DECORATION has priority and broken asset leaves the island normal',
       (tester) async {
     var item = data(assets: ['MAIN', 'DECORATION']);
     final store = storeFor(() async => {
@@ -141,7 +239,7 @@ void main() {
     expect(find.byKey(const ValueKey('campaign-decoration-remote-configured')),
         findsOneWidget);
     expect(find.byKey(const ValueKey('campaign-decoration-christmas_hat')),
-        findsOneWidget);
+        findsNothing);
     item = data(variant: 'CUSTOM', assets: ['DECORATION']);
     await store.refresh(force: true);
     await tester.pumpAndSettle();
@@ -155,7 +253,8 @@ void main() {
     item = data(variant: 'DEFAULT', assets: ['DECORATION']);
     await store.refresh(force: true);
     await tester.pumpAndSettle();
-    expect(find.byType(Image), findsNothing);
+    expect(find.byKey(const ValueKey('campaign-decoration-remote-configured')),
+        findsOneWidget);
     item = data(decorate: false);
     await store.refresh(force: true);
     await tester.pumpAndSettle();

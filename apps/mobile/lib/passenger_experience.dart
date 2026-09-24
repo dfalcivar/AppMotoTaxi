@@ -424,13 +424,13 @@ class RoleAwareHeaderIsland extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                   onTap: onAccount,
-                  child: Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
-                      child: Row(children: [
-                        CostaGoCampaignHeaderDecoration(
-                            store: campaignsFor(session),
-                            enabled: !operational,
-                            child: ClipOval(
+                  child: CostaGoCampaignHeaderDecoration(
+                      store: campaignsFor(session),
+                      enabled: !operational,
+                      child: Padding(
+                          padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
+                          child: Row(children: [
+                            ClipOval(
                                 child: Image.network(
                                     '$base/v1/users/${session.id}/profile-photo',
                                     headers: {
@@ -443,26 +443,28 @@ class RoleAwareHeaderIsland extends StatelessWidget {
                                         radius: 23,
                                         backgroundColor: c.primaryContainer,
                                         child: Icon(Icons.person_outline,
-                                            color: c.primary))))),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                              Text('¡Hola, $firstName!',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 16)),
-                              const SizedBox(height: 2),
-                              Text(
-                                  session.role == 'DRIVER'
-                                      ? 'Tu jornada, más cerca'
-                                      : '¿A dónde vamos hoy?',
-                                  style: TextStyle(
-                                      color: c.onSurfaceVariant, fontSize: 12)),
-                            ])),
-                      ]))))),
+                                            color: c.primary)))),
+                            const SizedBox(width: 10),
+                            Expanded(
+                                child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                  Text('¡Hola, $firstName!',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 16)),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                      session.role == 'DRIVER'
+                                          ? 'Tu jornada, más cerca'
+                                          : '¿A dónde vamos hoy?',
+                                      style: TextStyle(
+                                          color: c.onSurfaceVariant,
+                                          fontSize: 12)),
+                                ])),
+                          ])))))),
       const SizedBox(width: 12),
       Material(
           color: c.surface.withValues(alpha: .96),

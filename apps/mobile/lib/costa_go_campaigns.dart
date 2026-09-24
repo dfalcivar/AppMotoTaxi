@@ -6,13 +6,46 @@ import 'package:url_launcher/url_launcher.dart';
 
 typedef CampaignData = Map<String, dynamic>;
 
+/// Only resolve the requested surface; header artwork never becomes a card.
+String? campaignResourceKind(List assets, String surface, Brightness brightness,
+    {bool allowLightInDark = false}) {
+  final dark = surface == 'MAIN' ? 'DARK' : '${surface}_DARK';
+  final light = '${surface}_LIGHT';
+  final candidates = brightness == Brightness.dark
+      ? [dark, surface, if (allowLightInDark) light]
+      : [light, surface];
+  return candidates.where(assets.contains).firstOrNull;
+}
+
 String? campaignImageKind(List assets, Brightness brightness,
-    {bool thumbnail = false}) {
-  if (thumbnail && assets.contains('THUMBNAIL')) return 'THUMBNAIL';
-  if (brightness == Brightness.dark && assets.contains('DARK')) return 'DARK';
-  if (assets.contains('MAIN')) return 'MAIN';
-  if (assets.contains('DARK')) return 'DARK';
-  return null;
+    {bool thumbnail = false,
+    bool allowLightInDark = false,
+    bool allowMainInHome = true}) {
+  if (thumbnail) {
+    final thumb = campaignResourceKind(assets, 'THUMBNAIL', brightness,
+        allowLightInDark: allowLightInDark);
+    if (thumb != null || !allowMainInHome) return thumb;
+  }
+  return campaignResourceKind(assets, 'MAIN', brightness,
+      allowLightInDark: allowLightInDark);
+}
+
+String campaignHeaderMode(CampaignData item) =>
+    item['headerDecorationMode']?.toString() ?? 'AVATAR_ACCENT';
+
+String? campaignHeaderKind(CampaignData item, Brightness brightness) {
+  if (item['decorateHeader'] != true || campaignHeaderMode(item) == 'NONE') {
+    return null;
+  }
+  final assets = item['assets'] as List? ?? [];
+  final light = item['allowLightAssetsInDark'] == true;
+  return campaignResourceKind(assets, 'HEADER', brightness,
+          allowLightInDark: light) ??
+      ((item['useDecorativeAssetForHeader'] == true ||
+              !item.containsKey('headerDecorationMode'))
+          ? campaignResourceKind(assets, 'DECORATION', brightness,
+              allowLightInDark: light)
+          : null);
 }
 
 /// HOME exists only when the authenticated backend supplies an eligible item.
@@ -146,7 +179,9 @@ class CostaGoCampaignCard extends StatelessWidget {
     final c = Theme.of(context).colorScheme;
     final assets = campaign['assets'] as List? ?? [];
     final kind = campaignImageKind(assets, Theme.of(context).brightness,
-        thumbnail: true);
+        thumbnail: true,
+        allowLightInDark: campaign['allowLightAssetsInDark'] == true,
+        allowMainInHome: campaign['allowMainImageInHome'] != false);
     final variant = campaign['variant'];
     final accent = switch (variant) {
       'CHRISTMAS' => c.tertiary,
@@ -209,7 +244,7 @@ class CostaGoCampaignCard extends StatelessWidget {
   }
 }
 
-/// Small avatar overlay; eligibility and ordering come from the existing store.
+/// Shared island overlay; eligibility and ordering come from the existing store.
 class CostaGoCampaignHeaderDecoration extends StatefulWidget {
   const CostaGoCampaignHeaderDecoration(
       {super.key,
@@ -251,20 +286,42 @@ class _CampaignHeaderState extends State<CostaGoCampaignHeaderDecoration> {
       listenable: widget.store,
       builder: (context, _) {
         final campaign = widget.enabled ? widget.store.headerCampaign : null;
+        if (campaign == null) return widget.child;
+        final mode = campaignHeaderMode(campaign);
+        final accent = mode == 'AVATAR_ACCENT';
+        final decoration = IgnorePointer(
+            child: ExcludeSemantics(
+                child: _CampaignDecorationAsset(
+                    campaign: campaign, store: widget.store)));
         return Stack(clipBehavior: Clip.none, children: [
+          if (!accent)
+            Positioned.fill(
+                child: ClipRRect(
+                    borderRadius: BorderRadius.circular(40),
+                    child: mode == 'EDGES'
+                        ? ClipPath(
+                            clipper: const _IslandEdgesClipper(),
+                            child: decoration)
+                        : decoration)),
           widget.child,
-          if (campaign != null)
+          if (accent)
             Positioned(
-                top: -5,
-                left: -2,
-                width: 25,
-                height: 19,
-                child: IgnorePointer(
-                    child: ExcludeSemantics(
-                        child: _CampaignDecorationAsset(
-                            campaign: campaign, store: widget.store)))),
+                top: 0, left: 4, width: 25, height: 19, child: decoration),
         ]);
       });
+}
+
+class _IslandEdgesClipper extends CustomClipper<Path> {
+  const _IslandEdgesClipper();
+  @override
+  Path getClip(Size size) => Path()
+    ..fillType = PathFillType.evenOdd
+    ..addRect(Offset.zero & size)
+    ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTRB(12, 12, size.width - 12, size.height - 8),
+        const Radius.circular(24)));
+  @override
+  bool shouldReclip(_IslandEdgesClipper oldClipper) => false;
 }
 
 class _CampaignDecorationAsset extends StatelessWidget {
@@ -273,6 +330,7 @@ class _CampaignDecorationAsset extends StatelessWidget {
   final CostaGoCampaignStore store;
   @override
   Widget build(BuildContext context) {
+    final accent = campaignHeaderMode(campaign) == 'AVATAR_ACCENT';
     final local = switch (campaign['variant']) {
       'CHRISTMAS' => 'christmas_hat',
       'CARNIVAL' => 'carnival_mask',
@@ -281,21 +339,24 @@ class _CampaignDecorationAsset extends StatelessWidget {
     };
     Widget fallback() => local == null
         ? const SizedBox.shrink()
-        : Image.asset('assets/campaigns/header/$local.png',
-            key: ValueKey('campaign-decoration-$local'),
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const SizedBox.shrink());
-    final assets = campaign['assets'] as List? ?? [];
-    // DECORATION is a separate authenticated resource, never MAIN or THUMBNAIL.
-    if (!assets.contains('DECORATION')) return fallback();
-    return Image.network(store.imageUrl(campaign, 'DECORATION'),
+        : Align(
+            alignment: Alignment.topRight,
+            child: Image.asset('assets/campaigns/header/$local.png',
+                width: 25,
+                height: 19,
+                key: ValueKey('campaign-decoration-$local'),
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink()));
+    final kind = campaignHeaderKind(campaign, Theme.of(context).brightness);
+    if (kind == null) return fallback();
+    return Image.network(store.imageUrl(campaign, kind),
         headers: store.headers,
         key: ValueKey('campaign-decoration-remote-${campaign['id']}'),
-        fit: BoxFit.contain,
-        cacheWidth: 100,
+        fit: accent ? BoxFit.contain : BoxFit.fill,
+        cacheWidth: accent ? 100 : 900,
         frameBuilder: (_, child, frame, synchronous) =>
-            frame == null && !synchronous ? fallback() : child,
-        errorBuilder: (_, __, ___) => fallback());
+            frame == null && !synchronous ? const SizedBox.shrink() : child,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink());
   }
 }
 
@@ -347,14 +408,12 @@ class CostaGoCampaignStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   CampaignData? get headerCampaign {
-    final first = _items
-        .where((item) => current(item) && item['decorateHeader'] == true)
+    return _items
+        .where((item) =>
+            current(item) &&
+            item['decorateHeader'] == true &&
+            campaignHeaderMode(item) != 'NONE')
         .firstOrNull;
-    return first != null &&
-            ['CHRISTMAS', 'CARNIVAL', 'SUMMER', 'CUSTOM']
-                .contains(first['variant'])
-        ? first
-        : null;
   }
 
   DateTime? _loadedAt;
@@ -619,18 +678,26 @@ class CampaignImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final assets = campaign['assets'] as List? ?? [];
     final kind = campaignImageKind(assets, Theme.of(context).brightness,
-        thumbnail: thumbnail);
+        thumbnail: thumbnail,
+        allowLightInDark: campaign['allowLightAssetsInDark'] == true,
+        allowMainInHome: campaign['allowMainImageInHome'] != false);
     if (kind == null) return const SizedBox.shrink();
-    return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.network(store.imageUrl(campaign, kind),
-                headers: store.headers,
-                width: double.infinity,
-                height: thumbnail ? 160 : 220,
-                fit: BoxFit.contain,
-                errorBuilder: (_, error, stack) => const SizedBox.shrink())));
+    return Image.network(store.imageUrl(campaign, kind),
+        headers: store.headers,
+        fit: BoxFit.contain,
+        cacheWidth: thumbnail ? 640 : 1280,
+        frameBuilder: (_, child, frame, synchronous) =>
+            frame == null && !synchronous
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: SizedBox(
+                            width: double.infinity,
+                            height: thumbnail ? 160 : 220,
+                            child: child))),
+        errorBuilder: (_, __, ___) => const SizedBox.shrink());
   }
 }
 
@@ -755,13 +822,15 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
           }
         }
       } else if (mounted) {
-        final route = type == 'MEMBERSHIP'
-            ? 'membership'
-            : type == 'SUPPORT'
-                ? 'support'
-                : type == 'INTERNAL_ROUTE'
-                    ? destination
-                    : '';
+        final route = type == 'REFERRAL'
+            ? 'referrals'
+            : type == 'MEMBERSHIP'
+                ? 'membership'
+                : type == 'SUPPORT'
+                    ? 'support'
+                    : type == 'INTERNAL_ROUTE'
+                        ? destination
+                        : '';
         if (route.isNotEmpty) await widget.onAction(context, route);
       }
     } catch (_) {
@@ -772,9 +841,10 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
     }
   }
 
-  String date(dynamic value) {
+  String date(BuildContext context, dynamic value) {
     final d = DateTime.parse(value.toString()).toLocal();
-    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final localization = MaterialLocalizations.of(context);
+    return '${localization.formatFullDate(d)} · ${localization.formatTimeOfDay(TimeOfDay.fromDateTime(d), alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context))}';
   }
 
   @override
@@ -799,16 +869,18 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Text(c['subtitle'].toString(),
                       style: Theme.of(context).textTheme.titleMedium)),
-            Text('${date(c['startsAt'])} – ${date(c['endsAt'])} (hora local)',
+            Text('Válida hasta ${date(context, c['endsAt'])}',
                 style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 20),
             Text(c['description']?.toString() ?? ''),
             if (c['benefitCode'] != null && widget.store.benefits != null)
               CostaGoBenefitPanel(
-                  key: ValueKey('${c['id']}:${c['benefitCode']}'),
+                  key: ValueKey(
+                      '${c['id']}:${c['version']}:${c['benefitCode']}'),
                   service: widget.store.benefits!,
                   code: c['benefitCode'].toString(),
-                  campaignId: widget.id),
+                  campaignId: widget.id,
+                  actionLabel: c['ctaText']?.toString() ?? ''),
             if ((c['terms'] ?? '').toString().isNotEmpty) ...[
               const SizedBox(height: 24),
               Text('Términos y condiciones',
@@ -817,11 +889,12 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
               Text(c['terms'].toString())
             ],
             if (!['NONE', 'CAMPAIGN_DETAIL'].contains(c['ctaType']) &&
+                (c['ctaText']?.toString() ?? '').isNotEmpty &&
                 widget.store.current(c)) ...[
               const SizedBox(height: 24),
               FilledButton(
                   onPressed: busy ? null : act,
-                  child: Text(c['ctaText']?.toString() ?? 'Ver más'))
+                  child: Text(c['ctaText'].toString()))
             ],
           ],
         ]));

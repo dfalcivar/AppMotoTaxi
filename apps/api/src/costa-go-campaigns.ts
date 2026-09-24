@@ -1,6 +1,7 @@
 import type {FastifyInstance, FastifyRequest, FastifyReply} from 'fastify';
 import {z} from 'zod';
 import sharp from 'sharp';
+import {storeCampaignAsset,readCampaignAsset,campaignStorageConfigured} from './campaign-asset-storage.js';
 import {database} from './database.js';
 import {requirePermission, type SessionUser} from './admin.js';
 import type {Permission} from './permissions.js';
@@ -8,7 +9,7 @@ import {resolveServiceArea} from './service-areas.js';
 
 export const campaignPermissions = ['costa_campaigns:view','costa_campaigns:create','costa_campaigns:edit','costa_campaigns:approve','costa_campaigns:reject','costa_campaigns:activate','costa_campaigns:deactivate'] as const;
 export const campaignStates = ['DRAFT','PENDING_APPROVAL','APPROVED','REJECTED','ACTIVE','PAUSED','FINISHED'] as const;
-const assetKinds = ['MAIN','DARK','THUMBNAIL','DECORATION'] as const;
+export const assetKinds = ['MAIN','MAIN_LIGHT','DARK','THUMBNAIL','THUMBNAIL_LIGHT','THUMBNAIL_DARK','HEADER','HEADER_LIGHT','HEADER_DARK','DECORATION','DECORATION_LIGHT','DECORATION_DARK'] as const;
 export function safeCampaignUrl(value:string) {
   try { const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&(!u.port||u.port==='443')&&
     /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(u.hostname)&&!/(^|\.)(localhost|local|internal)$/i.test(u.hostname); } catch { return false; }
@@ -19,6 +20,11 @@ export const campaignSchema=z.object({
   audience:z.enum(['PASSENGER','DRIVER','BOTH']),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),
   priority:z.number().int().min(0).max(1000).default(0),allZones:z.boolean(),zoneIds:z.array(z.string().uuid()).max(100).default([]),
   decorateHeader:z.boolean().default(false),
+  headerDecorationMode:z.enum(['NONE','EDGES','FULL_OVERLAY','AVATAR_ACCENT']).default('EDGES'),
+  useDecorativeAssetForHeader:z.boolean().default(false),
+  allowLightAssetsInDark:z.boolean().default(false),
+  allowMainImageInHome:z.boolean().default(false),
+  headerAnimationAsset:z.null().optional(),
   variant:z.enum(['DEFAULT','CHRISTMAS','CARNIVAL','SUMMER','CUSTOM']).default('DEFAULT'),
   placements:z.array(z.enum(['HOME','CAMPAIGNS','NOTIFICATION'])).min(1).max(3).default(['CAMPAIGNS']),
   ctaType:z.enum(['NONE','CAMPAIGN_DETAIL','MEMBERSHIP','REFERRAL','SUPPORT','INTERNAL_ROUTE','EXTERNAL_URL']).default('NONE'),
@@ -57,6 +63,9 @@ const campaignErrors:Record<string,string>={
   CAMPAIGN_REASON_REQUIRED:'Escribe el motivo del rechazo.',
   CAMPAIGN_EXPIRED:'La vigencia ya terminó. Ajusta las fechas del borrador antes de continuar.',
   CAMPAIGN_INVALID_ZONE:'Una zona seleccionada ya no está habilitada. Revisa las zonas de la campaña.',
+  CAMPAIGN_STORAGE_NOT_CONFIGURED:'Configura el almacenamiento S3 de campañas antes de cargar recursos.',
+  CAMPAIGN_STORAGE_UNAVAILABLE:'No se pudo acceder al almacenamiento. El recurso anterior se conserva; intenta nuevamente.',
+  CAMPAIGN_HEADER_ALPHA_REQUIRED:'La decoración de isla requiere PNG o WebP con transparencia real. Deja el centro despejado.',
   CAMPAIGN_IMAGE_TOO_LARGE:'La imagen debe pesar como máximo 2 MB.',
   CAMPAIGN_INVALID_IMAGE:'Usa una imagen JPG, PNG o WebP válida, sin animación y de hasta 4096 px.',
 };
@@ -110,7 +119,7 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
   const root='/v1/admin/costa-go-campaigns';
   app.get(root+'/options',guarded(async request=>{
     requirePermission(request,'costa_campaigns:view');
-    return {zones:await database()`select id::text,name,code,enabled from service_areas order by name`,states:campaignStates,
+    return {assetStorageConfigured:campaignStorageConfigured(),zones:await database()`select id::text,name,code,enabled from service_areas order by name`,states:campaignStates,
       internalRoutes:['support','membership','profile','activity','campaigns'],referralAvailable:true};
   }));
   app.get(root,guarded(async request=>{
@@ -147,6 +156,10 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
     return database().begin(async tx=>{
       const old=await lock(tx,id,version);if(old.status==='FINISHED')throw new Error('CAMPAIGN_FINISHED');
       const previous=present(await record(tx,id));
+      if(b.useDecorativeAssetForHeader&&(!old.content.useDecorativeAssetForHeader||b.headerDecorationMode!==old.content.headerDecorationMode)){
+        const incompatible=await tx`select kind from costa_go_campaign_assets where campaign_id=${id} and kind like 'DECORATION%' and coalesce((metadata->>'transparent')::boolean,false)=false`;
+        if(incompatible.length)throw new Error('CAMPAIGN_HEADER_ALPHA_REQUIRED');
+      }
       await tx`update costa_go_campaigns set internal_name=${internalName},title=${title},audience=${audience},starts_at=${startsAt},ends_at=${endsAt},priority=${priority},all_zones=${allZones},content=${tx.json(content)},
         status='DRAFT',enabled=false,reviewed_by=null,reviewed_at=null,review_reason=null,updated_by=${actor.id??null},updated_at=now(),version=version+1 where id=${id}`;
       await validateBenefit(tx,b);await writeAreas(tx,id,zoneIds);const result=present(await record(tx,id));await audit(tx,actor,id,'EDITED',previous,result);return result;
@@ -179,21 +192,35 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
       const [copy]=await tx`insert into costa_go_campaigns(internal_name,title,audience,starts_at,ends_at,priority,all_zones,content,created_by,updated_by)
         select left(internal_name,110)||' (copia)',title,audience,starts_at,ends_at,priority,all_zones,content,${actor.id??null},${actor.id??null} from costa_go_campaigns where id=${id} returning id`;
       await tx`insert into costa_go_campaign_areas select ${copy!.id},service_area_id from costa_go_campaign_areas where campaign_id=${id}`;
-      await tx`insert into costa_go_campaign_assets select ${copy!.id},kind,mime,data,now() from costa_go_campaign_assets where campaign_id=${id}`;
+      await tx`insert into costa_go_campaign_assets(campaign_id,kind,mime,data,updated_at,storage_key,metadata) select ${copy!.id},kind,mime,data,now(),storage_key,metadata from costa_go_campaign_assets where campaign_id=${id}`;
       const result=present(await record(tx,copy!.id));await audit(tx,actor,copy!.id,'DUPLICATED',{sourceId:old.id},result);return result;
     });return reply.code(201).send(result);
   }));
   app.put(root+'/:id/assets/:kind',guarded(async request=>{
     const actor=requirePermission(request,'costa_campaigns:edit'),{id,kind}=idSchema.extend({kind:z.enum(assetKinds)}).parse(request.params);
-    const b=z.object({version:z.number().int().positive(),mime:z.enum(['image/jpeg','image/png','image/webp']),base64:z.string().min(4).max(2_800_000)}).parse(request.body);
+    const b=z.object({version:z.number().int().positive(),filename:z.string().max(180),mime:z.enum(['image/jpeg','image/png','image/webp']),base64:z.string().min(4).max(2_800_000)}).parse(request.body);
     const data=Buffer.from(b.base64,'base64');if(data.length>2_097_152)throw new Error('CAMPAIGN_IMAGE_TOO_LARGE');
-    let meta;try{meta=await sharp(data,{limitInputPixels:16_000_000}).metadata();}catch{throw new Error('CAMPAIGN_INVALID_IMAGE');}
-    if(!meta.width||!meta.height||meta.width>4096||meta.height>4096||meta.pages&&meta.pages>1||'image/'+meta.format!==b.mime)throw new Error('CAMPAIGN_INVALID_IMAGE');
+    const extensions:Record<string,RegExp>={'image/jpeg':/\.jpe?g$/i,'image/png':/\.png$/i,'image/webp':/\.webp$/i};
+    if(!extensions[b.mime]!.test(b.filename)||!/^[A-Za-z0-9+/]+={0,2}$/.test(b.base64))throw new Error('CAMPAIGN_INVALID_IMAGE');
+    let meta,encoded:Buffer,transparent=false;
+    try {
+      meta=await sharp(data,{limitInputPixels:16_000_000}).metadata();
+      if(!meta.width||!meta.height||meta.width>4096||meta.height>4096||(meta.pages??1)>1||'image/'+meta.format!==b.mime)throw new Error();
+      if(meta.hasAlpha){const stats=await sharp(data).stats();transparent=(stats.channels[stats.channels.length-1]?.min??255)<255;}
+      // Decode fully and remove metadata; do not store untrusted original bytes.
+      encoded=await sharp(data).rotate().toBuffer();
+    }catch{throw new Error('CAMPAIGN_INVALID_IMAGE');}
+    if(kind.startsWith('HEADER')&&(b.mime==='image/jpeg'||!transparent))throw new Error('CAMPAIGN_HEADER_ALPHA_REQUIRED');
+    if(encoded.length>2_097_152)throw new Error('CAMPAIGN_IMAGE_TOO_LARGE');
     return database().begin(async tx=>{
       const old=await lock(tx,id,b.version);if(old.status==='FINISHED')throw new Error('CAMPAIGN_FINISHED');
-      await tx`insert into costa_go_campaign_assets(campaign_id,kind,mime,data) values(${id},${kind},${b.mime},${data}) on conflict(campaign_id,kind) do update set mime=excluded.mime,data=excluded.data,updated_at=now()`;
+      if(old.content.useDecorativeAssetForHeader&&kind.startsWith('DECORATION')&&!transparent)throw new Error('CAMPAIGN_HEADER_ALPHA_REQUIRED');
+      const [previousAsset]=await tx`select storage_key,metadata from costa_go_campaign_assets where campaign_id=${id} and kind=${kind}`;
+      const storageKey=await storeCampaignAsset(encoded,b.mime);
+      const metadata={width:meta.width,height:meta.height,bytes:encoded.length,transparent};
+      await tx`insert into costa_go_campaign_assets(campaign_id,kind,mime,data,storage_key,metadata) values(${id},${kind},${b.mime},null,${storageKey},${tx.json(metadata)}) on conflict(campaign_id,kind) do update set mime=excluded.mime,data=null,storage_key=excluded.storage_key,metadata=excluded.metadata,updated_at=now()`;
       await tx`update costa_go_campaigns set status='DRAFT',enabled=false,reviewed_by=null,reviewed_at=null,review_reason=null,version=version+1,updated_by=${actor.id??null},updated_at=now() where id=${id}`;
-      const result=present(await record(tx,id));await audit(tx,actor,id,'ASSET_UPDATED',{status:old.status},{kind,bytes:data.length,version:result.version});return result;
+      const result=present(await record(tx,id));await audit(tx,actor,id,'ASSET_UPDATED',{status:old.status,version:old.version,asset:previousAsset??null},{kind,storageKey,...metadata,version:result.version});return result;
     });
   }));
   app.delete(root+'/:id/assets/:kind',guarded(async request=>{
@@ -201,9 +228,10 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
     const {version}=z.object({version:z.coerce.number().int().positive()}).parse(request.query);
     return database().begin(async tx=>{
       const old=await lock(tx,id,version);if(old.status==='FINISHED')throw new Error('CAMPAIGN_FINISHED');
+      const [previousAsset]=await tx`select storage_key,metadata from costa_go_campaign_assets where campaign_id=${id} and kind=${kind}`;
       await tx`delete from costa_go_campaign_assets where campaign_id=${id} and kind=${kind}`;
       await tx`update costa_go_campaigns set status='DRAFT',enabled=false,reviewed_by=null,reviewed_at=null,review_reason=null,version=version+1,updated_by=${actor.id??null},updated_at=now() where id=${id}`;
-      const result=present(await record(tx,id));await audit(tx,actor,id,'ASSET_REMOVED',null,{kind,version:result.version});return result;
+      const result=present(await record(tx,id));await audit(tx,actor,id,'ASSET_REMOVED',previousAsset??null,{kind,version:result.version});return result;
     });
   }));
   async function mobileRows(request:FastifyRequest,reply:FastifyReply,id?:string) {
@@ -220,7 +248,7 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
   }
   app.get('/v1/costa-go-campaigns',guarded(async(request,reply)=>{
     const rows=await mobileRows(request,reply);if(!rows)return;
-    reply.header('Cache-Control','private, no-store');return {items:rows.map(r=>present(r,true)),serverNow:new Date().toISOString(),refreshAfterSeconds:300};
+    reply.header('Cache-Control','private, no-store');return {items:rows.map(r=>{const {description,terms,...summary}=present(r,true);return summary;}),serverNow:new Date().toISOString(),refreshAfterSeconds:300};
   }));
   app.get('/v1/costa-go-campaigns/:id',guarded(async(request,reply)=>{
     const {id}=idSchema.parse(request.params),rows=await mobileRows(request,reply,id);if(!rows)return;if(!rows.length)throw new Error('CAMPAIGN_NOT_FOUND');
@@ -229,7 +257,7 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
   for(const admin of [true,false])app.get((admin?root:'/v1/costa-go-campaigns')+'/:id/assets/:kind',guarded(async(request,reply)=>{
     const {id,kind}=idSchema.extend({kind:z.enum(assetKinds)}).parse(request.params);
     if(admin)requirePermission(request,'costa_campaigns:view');else {const rows=await mobileRows(request,reply,id);if(!rows)return;if(!rows.length)throw new Error('CAMPAIGN_NOT_FOUND');}
-    const [asset]=await database()`select mime,data from costa_go_campaign_assets where campaign_id=${id} and kind=${kind}`;
-    if(!asset)throw new Error('CAMPAIGN_NOT_FOUND');return reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff').type(asset.mime).send(Buffer.from(asset.data));
+    const [asset]=await database()`select mime,data,storage_key from costa_go_campaign_assets where campaign_id=${id} and kind=${kind}`;
+    if(!asset)throw new Error('CAMPAIGN_NOT_FOUND');return reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff').type(asset.mime).send(asset.storage_key?await readCampaignAsset(asset.storage_key):Buffer.from(asset.data));
   }));
 }

@@ -3,7 +3,8 @@ import {PGlite} from '@electric-sql/pglite';
 import {readFile} from 'node:fs/promises';
 import {beforeAll,beforeEach,afterAll,it,expect,vi} from 'vitest';
 import sharp from 'sharp';
-const state=vi.hoisted(()=>({sql:null as any}));
+const state=vi.hoisted(()=>({sql:null as any,objects:new Map<string,Buffer>(),failStorage:false}));
+vi.mock('./campaign-asset-storage.js',()=>({campaignStorageConfigured:()=>true,storeCampaignAsset:async(data:Buffer)=>{if(state.failStorage)throw new Error('CAMPAIGN_STORAGE_UNAVAILABLE');const key='campaigns/'+(await import('node:crypto')).createHash('sha256').update(data).digest('hex');state.objects.set(key,data);return key;},readCampaignAsset:async(key:string)=>state.objects.get(key)}));
 vi.mock('./database.js',()=>({database:()=>state.sql}));
 vi.mock('./admin.js',async()=>{
   const {hasPermission}=await import('./permissions.js');
@@ -31,12 +32,13 @@ beforeAll(async()=>{
     create table notification_campaigns(id uuid primary key);
     create table affiliate_banners(id int,title text);insert into affiliate_banners values(1,'Publicidad existente');`);
   await pg.exec(await readFile(new URL('../migrations/100_costa_go_campaigns.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/104_campaign_visual_resources.sql',import.meta.url),'utf8'));
   await registerCostaGoCampaignRoutes(app,async(request,reply)=>{
     if(!request.headers['x-role']){reply.code(401).send({error:'UNAUTHORIZED'});return;}
     return {id:'00000000-0000-4000-8000-000000000001',email:'user@example.test',name:'User',role:request.headers['x-role'] as any};
   });
 },30000);
-beforeEach(async()=>{await pg.exec('truncate costa_go_campaigns cascade;truncate audit_log;');});
+beforeEach(async()=>{state.failStorage=false;await pg.exec('truncate costa_go_campaigns cascade;truncate audit_log;');});
 afterAll(async()=>{await app.close();await pg.close();});
 const root='/v1/admin/costa-go-campaigns';
 function input(overrides:Record<string,unknown>={}){return {internalName:'Lanzamiento interno',title:'Costa-Go novedades',audience:'BOTH',startsAt:new Date(Date.now()-60000).toISOString(),endsAt:new Date(Date.now()+86400000).toISOString(),allZones:true,zoneIds:[],priority:1,placements:['CAMPAIGNS','HOME'],...overrides};}
@@ -116,9 +118,46 @@ it('validates CTA destinations and limits membership actions to drivers',()=>{
 });
 it('stores validated images, resets approval, protects assets, and audits changes',async()=>{
   let c=await activate();const data=await sharp({create:{width:2,height:2,channels:3,background:'#123456'}}).png().toBuffer();
-  const upload=await app.inject({method:'PUT',url:`${root}/${c.id}/assets/MAIN`,headers:admin,payload:{version:c.version,mime:'image/png',base64:data.toString('base64')}});
+  const upload=await app.inject({method:'PUT',url:`${root}/${c.id}/assets/MAIN`,headers:admin,payload:{version:c.version,filename:'image.png',mime:'image/png',base64:data.toString('base64')}});
   expect(upload.statusCode,upload.body).toBe(200);c=upload.json();expect(c.status).toBe('DRAFT');expect(c.assets).toEqual(['MAIN']);
   expect((await app.inject({url:`/v1/costa-go-campaigns/${c.id}/assets/MAIN`,headers:{'x-role':'PASSENGER'}})).statusCode).toBe(404);
   expect((await app.inject({url:`${root}/${c.id}/assets/MAIN`,headers:admin})).headers['content-type']).toContain('image/png');
-  expect((await app.inject({method:'PUT',url:`${root}/${c.id}/assets/MAIN`,headers:admin,payload:{version:c.version,mime:'image/png',base64:'not an image'}})).statusCode).toBe(409);
+  expect((await app.inject({method:'PUT',url:`${root}/${c.id}/assets/MAIN`,headers:admin,payload:{version:c.version,filename:'image.png',mime:'image/png',base64:'not an image'}})).statusCode).toBe(409);
+});
+
+it('stores all visual surfaces as object keys, preserves them on failure, copies and deletes references',async()=>{
+  let c=await create({decorateHeader:true,variant:'CUSTOM'});
+  const bytes=await sharp({create:{width:80,height:20,channels:4,background:'#12345655'}}).png().toBuffer();
+  async function upload(kind:string,overrides:Record<string,unknown>={}) {
+    return app.inject({method:'PUT',url:`${root}/${c.id}/assets/${kind}`,headers:admin,payload:{version:c.version,filename:'overlay.png',mime:'image/png',base64:bytes.toString('base64'),...overrides}});
+  }
+  for(const kind of ['MAIN','MAIN_LIGHT','DARK','THUMBNAIL','THUMBNAIL_LIGHT','THUMBNAIL_DARK','HEADER','HEADER_LIGHT','HEADER_DARK','DECORATION','DECORATION_LIGHT','DECORATION_DARK']){
+    const r=await upload(kind);expect(r.statusCode,r.body).toBe(200);c=r.json();
+  }
+  const stored=(await pg.query<any>('select * from costa_go_campaign_assets where campaign_id=$1',[c.id])).rows;
+  expect(stored).toHaveLength(12);expect(stored.every(x=>x.data===null&&x.storage_key&&x.metadata.transparent)).toBe(true);
+  const version=c.version;
+  state.failStorage=true;expect((await upload('HEADER')).statusCode).toBe(409);state.failStorage=false;
+  expect((await app.inject({url:`${root}/${c.id}`,headers:admin})).json().version).toBe(version);
+  expect((await app.inject({url:`${root}/${c.id}/assets/HEADER`,headers:admin})).statusCode).toBe(200);
+  expect((await upload('HEADER',{filename:'malicious.svg'})).statusCode).toBe(409);
+  expect((await upload('HEADER',{mime:'image/webp',filename:'image.webp'})).statusCode).toBe(409);
+  const opaque=await sharp({create:{width:20,height:20,channels:4,background:'#123456ff'}}).png().toBuffer();
+  expect((await upload('HEADER',{base64:opaque.toString('base64')})).json().error).toBe('CAMPAIGN_HEADER_ALPHA_REQUIRED');
+  const enormous=await sharp({create:{width:4097,height:2,channels:3,background:'#123456'}}).png().toBuffer();
+  expect((await upload('MAIN',{base64:enormous.toString('base64')})).statusCode).toBe(409);
+  const copy=(await app.inject({method:'POST',url:`${root}/${c.id}/duplicate`,headers:admin,payload:{}})).json();
+  expect(copy.assets).toEqual(c.assets);
+  expect((await app.inject({method:'DELETE',url:`${root}/${c.id}/assets/HEADER?version=${c.version}`,headers:admin})).json().assets).not.toContain('HEADER');
+  expect((await app.inject({url:`${root}/${copy.id}/assets/HEADER`,headers:admin})).statusCode).toBe(200);
+});
+
+it('returns shared visual contract without list prose, keeps image-free campaigns and modes valid',async()=>{
+  const c=await activate({description:'Long detail',terms:'Terms',headerDecorationMode:'EDGES',decorateHeader:true});
+  const summary=(await mobile()).json().items[0];expect(summary.headerDecorationMode).toBe('EDGES');
+  expect(summary.assets).toEqual([]);expect(summary.description).toBeUndefined();
+  expect((await app.inject({url:`/v1/costa-go-campaigns/${c.id}`,headers:{'x-role':'DRIVER'}})).json().description).toBe('Long detail');
+  for(const mode of ['NONE','EDGES','FULL_OVERLAY','AVATAR_ACCENT'])expect(campaignSchema.safeParse(input({headerDecorationMode:mode})).success).toBe(true);
+  expect(campaignSchema.safeParse(input({headerDecorationMode:'UNKNOWN'})).success).toBe(false);
+  expect(campaignSchema.safeParse(input({headerAnimationAsset:'https://example.com/test.gif'})).success).toBe(false);
 });
