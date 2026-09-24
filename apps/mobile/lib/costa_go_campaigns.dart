@@ -731,6 +731,7 @@ class CostaGoCampaignDetail extends StatefulWidget {
 class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
     with WidgetsBindingObserver {
   CampaignData? campaign;
+  int detailRevision = 0;
   bool busy = false;
   String? error;
   Timer? timer;
@@ -775,7 +776,10 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
     try {
       final item = await widget.store.freshDetail(widget.id);
       if (mounted) {
-        setState(() => campaign = item);
+        setState(() {
+          campaign = item;
+          detailRevision++;
+        });
         expiry?.cancel();
         expiry = Timer(
             DateTime.parse(item['endsAt'].toString())
@@ -855,62 +859,154 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
     }
   }
 
-  String date(BuildContext context, dynamic value) {
-    final d = DateTime.parse(value.toString()).toLocal();
-    final localization = MaterialLocalizations.of(context);
-    return '${localization.formatFullDate(d)} · ${localization.formatTimeOfDay(TimeOfDay.fromDateTime(d), alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context))}';
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final background = dark ? const Color(0xff0d1d30) : const Color(0xfff2faff);
+    return CostaGoScaffold(
+        backgroundColor: background,
+        decoration: CostaGoDecorationIntensity.none,
+        appBar: AppBar(
+            backgroundColor: background,
+            scrolledUnderElevation: 0,
+            title: const Text('Campaña Costa-Go'),
+            actions: [
+              IconButton(
+                  onPressed: busy ? null : reload,
+                  tooltip: 'Actualizar',
+                  icon: const Icon(Icons.refresh))
+            ]),
+        body: SafeArea(
+            top: false,
+            child: CostaGoCampaignDetailContent(
+                campaign: campaign,
+                busy: busy,
+                error: error,
+                image: campaign == null
+                    ? null
+                    : CampaignImage(store: widget.store, campaign: campaign!),
+                benefit: campaign?['benefitCode'] == null ||
+                        widget.store.benefits == null
+                    ? null
+                    : CostaGoBenefitPanel(
+                        key: ValueKey(
+                            '${campaign!['id']}:${campaign!['version']}:${campaign!['benefitCode']}:$detailRevision'),
+                        service: widget.store.benefits!,
+                        code: campaign!['benefitCode'].toString(),
+                        campaignId: widget.id,
+                        actionLabel: campaign!['ctaText']?.toString() ?? ''),
+                onAction:
+                    busy || campaign == null || !widget.store.current(campaign!)
+                        ? null
+                        : act)));
   }
+}
 
+/// Shared composition. Optional sections occupy no space when absent.
+class CostaGoCampaignDetailContent extends StatelessWidget {
+  const CostaGoCampaignDetailContent(
+      {super.key,
+      required this.campaign,
+      this.busy = false,
+      this.error,
+      this.image,
+      this.benefit,
+      this.onAction});
+  final CampaignData? campaign;
+  final bool busy;
+  final String? error;
+  final Widget? image, benefit;
+  final VoidCallback? onAction;
   @override
   Widget build(BuildContext context) {
     final c = campaign;
-    return CostaGoScaffold(
-        appBar: AppBar(title: const Text('Campaña Costa-Go'), actions: [
-          IconButton(
-              onPressed: busy ? null : reload,
-              tooltip: 'Actualizar',
-              icon: const Icon(Icons.refresh))
-        ]),
-        body: ListView(padding: const EdgeInsets.all(20), children: [
+    final colors = Theme.of(context).colorScheme;
+    final muted = colors.onSurfaceVariant;
+    final hasBenefit = c?['benefitCode'] != null;
+    final ends = benefitDate(context, c?['endsAt']);
+    return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 28, 16, 28),
+        children: [
           if (busy) const LinearProgressIndicator(),
-          if (error != null) Text(error!),
+          if (error != null)
+            Text(error!, style: TextStyle(color: colors.error)),
           if (c != null) ...[
-            CampaignImage(store: widget.store, campaign: c),
-            Text(c['title'].toString(),
-                style: Theme.of(context).textTheme.headlineSmall),
+            Text(c['title']?.toString() ?? '',
+                style: TextStyle(
+                    fontSize: 28,
+                    height: 1.18,
+                    fontWeight: FontWeight.w800,
+                    color: colors.onSurface)),
             if ((c['subtitle'] ?? '').toString().isNotEmpty)
               Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.only(top: 18),
                   child: Text(c['subtitle'].toString(),
-                      style: Theme.of(context).textTheme.titleMedium)),
-            Text('Válida hasta ${date(context, c['endsAt'])}',
-                style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 20),
-            Text(c['description']?.toString() ?? ''),
-            if (c['benefitCode'] != null && widget.store.benefits != null)
-              CostaGoBenefitPanel(
-                  key: ValueKey(
-                      '${c['id']}:${c['version']}:${c['benefitCode']}'),
-                  service: widget.store.benefits!,
-                  code: c['benefitCode'].toString(),
-                  campaignId: widget.id,
-                  actionLabel: c['ctaText']?.toString() ?? ''),
+                      style: TextStyle(
+                          fontSize: 18,
+                          height: 1.4,
+                          fontWeight: FontWeight.w600,
+                          color: muted))),
+            if ((c['description'] ?? '').toString().isNotEmpty)
+              Padding(
+                  padding: const EdgeInsets.only(top: 16, bottom: 22),
+                  child: Text(c['description'].toString(),
+                      style:
+                          TextStyle(fontSize: 17, height: 1.45, color: muted))),
+            if (image != null) image!,
+            if (hasBenefit && benefit != null) benefit!,
+            if (!hasBenefit &&
+                !['NONE', 'CAMPAIGN_DETAIL'].contains(c['ctaType']) &&
+                (c['ctaText'] ?? '').toString().isNotEmpty)
+              Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: FilledButton(
+                      onPressed: onAction,
+                      style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(54),
+                          padding: const EdgeInsets.all(16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18))),
+                      child: Text(c['ctaText'].toString(),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 19, fontWeight: FontWeight.w700)))),
+            if (ends.isNotEmpty)
+              Padding(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 24, horizontal: 4),
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.calendar_month_outlined,
+                            color: muted, size: 26),
+                        const SizedBox(width: 14),
+                        Expanded(
+                            child: Text('Válida hasta $ends',
+                                style: TextStyle(
+                                    fontSize: 15, height: 1.5, color: muted))),
+                      ])),
             if ((c['terms'] ?? '').toString().isNotEmpty) ...[
-              const SizedBox(height: 24),
-              Text('Términos y condiciones',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Text(c['terms'].toString())
-            ],
-            if (!['NONE', 'CAMPAIGN_DETAIL'].contains(c['ctaType']) &&
-                (c['ctaText']?.toString() ?? '').isNotEmpty &&
-                widget.store.current(c)) ...[
-              const SizedBox(height: 24),
-              FilledButton(
-                  onPressed: busy ? null : act,
-                  child: Text(c['ctaText'].toString()))
+              Divider(color: colors.primary.withValues(alpha: .12)),
+              Theme(
+                  data: Theme.of(context)
+                      .copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                      tilePadding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 12),
+                      childrenPadding: const EdgeInsets.fromLTRB(4, 0, 4, 16),
+                      leading: Icon(Icons.description_outlined, color: muted),
+                      title: const Text('Términos y condiciones',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w700)),
+                      children: [
+                        Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(c['terms'].toString(),
+                                style: TextStyle(
+                                    fontSize: 15, height: 1.5, color: muted)))
+                      ])),
             ],
           ],
-        ]));
+        ]);
   }
 }

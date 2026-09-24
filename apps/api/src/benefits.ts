@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {database} from './database.js';
 import {requirePermission,type SessionUser} from './admin.js';
 import {resolveServiceArea} from './service-areas.js';
+import {benefitPresentation} from './benefit-presentation.js';
 
 export const benefitTypes=['COURTESY_DAYS','PROMOTIONAL_BALANCE','TRIP_DISCOUNT','FIXED_DISCOUNT','PERCENTAGE_DISCOUNT','FREE_TRIPS','MEMBERSHIP','REFERRAL_REWARD','CUSTOM'] as const;
 export const benefitSchema=z.object({
@@ -34,7 +35,7 @@ const guard=(fn:(r:FastifyRequest,s:FastifyReply)=>Promise<unknown>)=>async(r:Fa
  }
  throw e;
 }};
-function definition(r:any){return {id:r.id,code:r.code,name:r.name,description:r.description,benefitType:r.benefit_type,value:Number(r.value),expirationDays:r.expiration_days??null,audience:r.audience,oneTime:r.one_time,requiresActivation:r.requires_activation,startsAt:r.starts_at,endsAt:r.ends_at,maxGlobal:r.max_global,maxPerUser:r.max_per_user,status:r.status,zoneIds:r.zone_ids??[],version:r.version,redemptions:Number(r.redemptions??0),totalGranted:Number(r.total_granted??0)};}
+function definition(r:any){return {id:r.id,code:r.code,name:r.name,description:r.description,benefitType:r.benefit_type,...benefitPresentation(r.benefit_type,Number(r.value)),value:Number(r.value),expirationDays:r.expiration_days??null,audience:r.audience,oneTime:r.one_time,requiresActivation:r.requires_activation,startsAt:r.starts_at,endsAt:r.ends_at,maxGlobal:r.max_global,maxPerUser:r.max_per_user,status:r.status,zoneIds:r.zone_ids??[],version:r.version,redemptions:Number(r.redemptions??0),totalGranted:Number(r.total_granted??0)};}
 export function redemption(r:any){const now=Date.now();return {id:r.id,benefitCode:r.benefit_code,campaignId:r.campaign_id,benefitType:r.benefit_type,value:Number(r.benefit_value),source:r.source,status:['ACTIVE','PENDING'].includes(r.status)?new Date(r.effective_until).getTime()<=now?'EXPIRED':new Date(r.effective_from).getTime()>now?'PENDING':'ACTIVE':r.status,effectiveFrom:r.effective_from,effectiveUntil:r.effective_until,redeemedAt:r.redeemed_at};}
 async function audit(tx:any,actor:string|null,action:string,id:string,previous:any,next:any,reason=''){
  await tx`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason) values(${actor},${action},'BENEFIT',${id},${tx.json(previous)},${tx.json(next)},${reason})`;

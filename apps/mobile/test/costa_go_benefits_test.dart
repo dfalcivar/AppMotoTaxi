@@ -9,7 +9,9 @@ void main() {
     'description': 'Cortesía Costa-Go',
     'benefitType': 'COURTESY_DAYS',
     'value': 15,
-    'oneTime': true
+    'oneTime': true,
+    'valueLabel': '15 días gratis',
+    'typeLabel': 'de membresía'
   };
   final grant = {
     'status': 'PENDING',
@@ -31,6 +33,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
             body: CostaGoBenefitPanel(
+                actionLabel: 'Activar cortesía',
                 service: service,
                 code: 'DRIVER_FOUNDER_COURTESY',
                 campaignId: 'campaign'))));
@@ -42,8 +45,8 @@ void main() {
     expect(calls, 1);
     result.complete({'success': true, 'benefit': benefit, 'redemption': grant});
     await tester.pumpAndSettle();
-    expect(find.text('Cortesía programada'), findsOneWidget);
-    expect(find.textContaining('16/10/2026'), findsOneWidget);
+    expect(find.text('Beneficio activado · inicio programado'), findsOneWidget);
+    expect(find.textContaining('Válido hasta'), findsOneWidget);
     expect(find.text('Activar cortesía'), findsNothing);
   });
   testWidgets(
@@ -59,11 +62,12 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
             body: CostaGoBenefitPanel(
+                actionLabel: 'Activar cortesía',
                 service: service,
                 code: 'DRIVER_FOUNDER_COURTESY',
                 campaignId: 'duplicated-campaign'))));
     await tester.pumpAndSettle();
-    expect(find.text('Cortesía programada'), findsOneWidget);
+    expect(find.text('Beneficio activado · inicio programado'), findsOneWidget);
     expect(find.text('Activar cortesía'), findsNothing);
   });
   testWidgets('shows functional ineligibility with no activation',
@@ -78,7 +82,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
             body: CostaGoBenefitPanel(
-                service: service, code: 'CODE', campaignId: 'campaign'))));
+                actionLabel: 'Activar cortesía',
+                service: service,
+                code: 'CODE',
+                campaignId: 'campaign'))));
     await tester.pumpAndSettle();
     expect(find.text('Tu cuenta no cumple las condiciones.'), findsOneWidget);
     expect(find.text('Activar cortesía'), findsNothing);
