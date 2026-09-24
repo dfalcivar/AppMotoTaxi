@@ -2705,6 +2705,85 @@ class CostaGoBrand extends StatelessWidget {
 
 class Welcome extends StatelessWidget {
   const Welcome({super.key});
+
+  static const _white = Colors.white;
+
+  Widget _mainAction({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    bool primary = false,
+  }) =>
+      Material(
+        color: Colors.transparent,
+        child: Ink(
+          height: 48,
+          decoration: BoxDecoration(
+            gradient: primary
+                ? const LinearGradient(colors: [
+                    Color(0xff29aaff),
+                    Color(0xff0787df),
+                  ])
+                : const LinearGradient(colors: [
+                    Color(0x2E0A355F),
+                    Color(0x36093655),
+                  ]),
+            borderRadius: BorderRadius.circular(CostaGoRadius.pill),
+            border: Border.all(
+              color:
+                  primary ? const Color(0x553FC5FF) : const Color(0x99D7EEFF),
+            ),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(CostaGoRadius.pill),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: Row(children: [
+                Icon(icon, color: _white, size: 23),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(label,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: _white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700)),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: _white),
+              ]),
+            ),
+          ),
+        ),
+      );
+
+  Widget _minorAction({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) =>
+      Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(CostaGoRadius.medium),
+          child: SizedBox(
+            height: 45,
+            child: Row(children: [
+              const SizedBox(width: 17),
+              Icon(icon, color: _white, size: 22),
+              const SizedBox(width: 22),
+              Expanded(
+                  child: Text(label,
+                      style: const TextStyle(color: _white, fontSize: 13))),
+              const Icon(Icons.chevron_right_rounded,
+                  color: Color(0xffcceaff), size: 20),
+              const SizedBox(width: 12),
+            ]),
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext c) {
     final dimPhoto = Theme.of(c).brightness == Brightness.dark;
@@ -2724,100 +2803,139 @@ class Welcome extends StatelessWidget {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: dimPhoto
-                        ? const [Color(0xC0081B2C), Color(0xF0081B2C)]
-                        : const [Color(0x70032B49), Color(0xD8032B49)]))),
-        SafeArea(
-            child: Stack(children: [
-          const Positioned(
-              top: 4, right: 8, child: ThemeSelector(onPhoto: true)),
-          Center(
-              child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 72),
-                  child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 340),
-                      child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: CostaGoSpace.md,
-                              vertical: CostaGoSpace.xl),
-                          decoration: BoxDecoration(
-                            color: const Color(0xB0082032),
-                            borderRadius:
-                                BorderRadius.circular(CostaGoRadius.sheet),
-                            border: Border.all(color: const Color(0x33FFFFFF)),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x44030E19),
-                                blurRadius: 24,
-                                offset: Offset(0, 12),
-                              )
-                            ],
+                        ? const [
+                            Color(0x85011D42),
+                            Color(0x5C053B6A),
+                            Color(0x87021530),
+                          ]
+                        : const [
+                            Color(0x84011D42),
+                            Color(0x50053B6A),
+                            Color(0x80021530),
+                          ]))),
+        SafeArea(child: LayoutBuilder(builder: (context, viewport) {
+          final height = viewport.maxHeight < 570 ? 570.0 : viewport.maxHeight;
+          return SingleChildScrollView(
+            child: SizedBox(
+              height: height,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 22, 0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const ThemeSelector(onPhoto: true),
+                        Text('Tu ruta,\nmás cerca',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                                color: const Color(0xffa8d8ff),
+                                fontFamily: 'cursive',
+                                fontStyle: FontStyle.italic,
+                                fontSize: height < 650 ? 21 : 25,
+                                height: 1.0)),
+                      ],
+                    ),
+                  ),
+                  Transform.translate(
+                      offset: Offset(0, height < 650 ? -26 : -30),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        CostaGoBrand(
+                            emblemSize: height < 650 ? 106 : 122,
+                            wordmarkSize: height < 650 ? 37 : 43,
+                            gap: 0,
+                            accentColor: const Color(0xff2abaff)),
+                        const SizedBox(height: 4),
+                        const Text('T E   M U E V E   M Á S   L E J O S',
+                            style: TextStyle(
+                                color: Color(0xffc7e5fa),
+                                fontSize: 8,
+                                letterSpacing: 1.1,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 21),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 350),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 18),
+                            padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [Color(0xA0215D91), Color(0xAA143956)],
+                              ),
+                              borderRadius:
+                                  BorderRadius.circular(CostaGoRadius.sheet),
+                              border:
+                                  Border.all(color: const Color(0x77D9F1FF)),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x3600183C),
+                                  blurRadius: 24,
+                                  offset: Offset(0, 12),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _mainAction(
+                                      label: 'Ingresar como pasajero',
+                                      icon: Icons.person_outline_rounded,
+                                      primary: true,
+                                      onTap: () => open(c, 'PASSENGER')),
+                                  const SizedBox(height: 10),
+                                  _mainAction(
+                                      label: 'Ingresar como conductor',
+                                      icon: Icons.sports_motorsports_outlined,
+                                      onTap: () => open(c, 'DRIVER')),
+                                  const SizedBox(height: 16),
+                                  const Divider(
+                                      height: 1, color: Color(0x66D9F1FF)),
+                                  _minorAction(
+                                      label: 'Crear una cuenta',
+                                      icon: Icons.person_add_alt_1_outlined,
+                                      onTap: () => Navigator.push(
+                                          c,
+                                          MaterialPageRoute(
+                                              builder: (_) =>
+                                                  const Register()))),
+                                  const Divider(
+                                      height: 1, color: Color(0x55D9F1FF)),
+                                  _minorAction(
+                                      label: 'Recuperar contraseña',
+                                      icon: Icons.key_outlined,
+                                      onTap: () => Navigator.push(
+                                          c,
+                                          MaterialPageRoute(
+                                              builder: (_) =>
+                                                  const Recovery()))),
+                                ]),
                           ),
-                          child:
-                              Column(mainAxisSize: MainAxisSize.min, children: [
-                            const CostaGoBrand(),
-                            const SizedBox(height: 28),
-                            SizedBox(
-                                width: 286,
-                                child: FilledButton.icon(
-                                    onPressed: () => open(c, 'PASSENGER'),
-                                    icon: const Icon(Icons.person_outline),
-                                    label:
-                                        const Text('Ingresar como pasajero'))),
-                            const SizedBox(height: 10),
-                            SizedBox(
-                                width: 286,
-                                child: OutlinedButton.icon(
-                                    onPressed: () => open(c, 'DRIVER'),
-                                    style: OutlinedButton.styleFrom(
-                                        foregroundColor: Colors.white,
-                                        minimumSize: const Size.fromHeight(54),
-                                        side: const BorderSide(
-                                            color: Colors.white70),
-                                        shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(18))),
-                                    icon: const Icon(
-                                        Icons.sports_motorsports_outlined),
-                                    label:
-                                        const Text('Ingresar como conductor'))),
-                            const SizedBox(height: 8),
-                            TextButton.icon(
-                                onPressed: () => Navigator.push(
-                                    c,
-                                    MaterialPageRoute(
-                                        builder: (_) => const Register())),
-                                icon: const Icon(
-                                    Icons.person_add_alt_1_outlined,
-                                    color: Colors.white),
-                                label: const Text('Crear una cuenta',
-                                    style: TextStyle(color: Colors.white))),
-                            TextButton.icon(
-                                onPressed: () => Navigator.push(
-                                    c,
-                                    MaterialPageRoute(
-                                        builder: (_) => const Recovery())),
-                                icon: const Icon(Icons.key_outlined,
-                                    color: Colors.white),
-                                label: const Text('Recuperar contraseña',
-                                    style: TextStyle(color: Colors.white))),
-                          ]))))),
-          const Positioned(
-            left: 0,
-            right: 0,
-            bottom: 7,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('Powered by',
-                  style: TextStyle(color: Colors.white70, fontSize: 9)),
-              SizedBox(height: 1),
-              Text('DFAR SYSTEM',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.5)),
-            ]),
-          ),
-        ]))
+                        ),
+                      ])),
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text('Powered by',
+                          style:
+                              TextStyle(color: Colors.white70, fontSize: 10)),
+                      SizedBox(height: 2),
+                      Text('DFAR SYSTEM',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 2)),
+                    ]),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }))
       ])),
     );
   }
