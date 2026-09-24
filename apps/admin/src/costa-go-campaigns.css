@@ -30,20 +30,19 @@
 .campaign-resource-preview img {max-width:100%;height:100px;object-fit:contain}
 .campaign-resource-variants input {width:100%;min-width:0}
 .campaign-island-controls{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:14px}
-.campaign-island-stage{max-width:420px;padding:16px 12px 28px;border-radius:16px;background:#bddfe5;color:#152b4a;box-sizing:border-box}
-.campaign-island-stage.is-dark{background:#203846;color:#f4f7ff}
-.campaign-island-row{display:flex;align-items:flex-start;gap:12px}
+.campaign-island-stage{width:328px;max-width:100%;color:#152b4a}
+.campaign-island-stage.is-dark{color:#f4f7ff}
+
 .campaign-island-preview{position:relative;flex:1;min-width:0;background:rgba(247,251,255,.95);border-radius:40px;overflow:hidden;box-shadow:0 3px 9px #086bdc1f}
-.campaign-island-stage.is-dark .campaign-island-preview,.campaign-island-stage.is-dark .campaign-island-bell{background:#18283bf5}
+.campaign-island-stage.is-dark .campaign-island-preview{background:#18283bf5}
 .campaign-island-content{position:relative;z-index:1;display:flex;align-items:center;gap:10px;padding:6px 14px 6px 6px}
 .campaign-island-avatar{display:grid;place-items:center;width:46px;height:46px;flex:0 0 46px;border-radius:50%;background:#e0f2ff;color:#168bef;overflow:hidden}
-.campaign-island-avatar svg,.campaign-island-bell svg{width:24px;height:24px}
+.campaign-island-avatar svg{width:24px;height:24px}
 .campaign-island-greeting{min-width:0}
 .campaign-island-greeting strong{display:block;font-size:16px;font-weight:800;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .campaign-island-greeting small{display:block;margin-top:2px;font-size:12px;line-height:16px;color:#647b91;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.campaign-island-bell{display:grid;place-items:center;flex:0 0 56px;width:56px;height:56px;border-radius:50%;background:rgba(247,251,255,.96);color:#647b91;box-shadow:0 3px 9px #086bdc1f}
 .campaign-island-stage.is-dark .campaign-island-avatar{background:#123b57;color:#76caff}
-.campaign-island-stage.is-dark .campaign-island-greeting small,.campaign-island-stage.is-dark .campaign-island-bell{color:#b6c8da}
+.campaign-island-stage.is-dark .campaign-island-greeting small{color:#b6c8da}
 .campaign-island-art {position:absolute;inset:0;pointer-events:none}
 .campaign-island-art img {width:100%;height:100%;object-fit:fill}
 .campaign-island-art.mode-EDGES {mask-image:radial-gradient(ellipse closest-side at center,rgba(0,0,0,.12) 0%,rgba(0,0,0,.12) 45%,rgba(0,0,0,.65) 75%,#000 100%);-webkit-mask-image:radial-gradient(ellipse closest-side at center,rgba(0,0,0,.12) 0%,rgba(0,0,0,.12) 45%,rgba(0,0,0,.65) 75%,#000 100%)}

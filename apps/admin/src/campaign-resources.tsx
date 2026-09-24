@@ -46,11 +46,11 @@ export function CampaignResources({campaign,token,disabled,onUpload,onRemove,fil
  <h4>Vista previa de la isla en la app</h4>
  <div className="campaign-island-controls"><label>Vista de usuario<select value={previewRole} onChange={e=>setPreviewRole(e.target.value)}><option value="DRIVER">Conductor</option><option value="PASSENGER">Pasajero</option></select></label><label className="check"><input type="checkbox" checked={dark} onChange={e=>setDark(e.target.checked)}/>Previsualizar tema oscuro</label></div>
  <div className={`campaign-island-stage ${dark?'is-dark':''}`}>
- <div className="campaign-island-row">
+
  <div className="campaign-island-preview">
  {campaign.decorateHeader&&campaign.headerDecorationMode!=='NONE'&&header&&<div className={`campaign-island-art mode-${campaign.headerDecorationMode??'AVATAR_ACCENT'}`}><Preview campaign={campaign} token={token} kind={header} file={files[header]}/></div>}
  <div className="campaign-island-content"><span className="campaign-island-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="8" r="3"/><path d="M5 20v-2a7 5 0 0 1 14 0v2Z"/></svg></span><div className="campaign-island-greeting"><strong>¡Hola, {previewRole==='DRIVER'?'Conductor':'Pasajero'}!</strong><small>{previewRole==='DRIVER'?'Tu jornada, más cerca':'¿A dónde vamos hoy?'}</small></div></div>
- </div><span className="campaign-island-bell" role="img" aria-label="Notificaciones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4M12 2V1"/></svg></span>
- </div></div><p><small>Avatar circular y proporciones del encabezado móvil. La campana queda fuera de la isla. El saludo es de ejemplo; en la app se muestra el nombre real. Bordes desvanece la decoración hacia el centro. La anchura final depende de la pantalla del dispositivo; esta vista no incluye los recursos locales de respaldo.</small></p>
+ </div>
+ </div><p><small>Solo la isla, con avatar circular y proporciones del encabezado móvil. El saludo es de ejemplo; en la app se muestra el nombre real. Bordes desvanece la decoración hacia el centro. La anchura final depende de la pantalla del dispositivo; esta vista no incluye los recursos locales de respaldo.</small></p>
  </section>;
 }
