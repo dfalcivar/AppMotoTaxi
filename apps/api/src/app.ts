@@ -7,6 +7,7 @@ import { calculateTerritorialFare } from "./fare-engine.js";
 import { configuredScheduledQuote, legacyScheduledConfirmation, registerScheduledArrivalRoutes } from './scheduled-arrival.js';
 import { immediateQuote, ensureSearchSession, settleDriverCancelledCommercialAssignment } from './arrival-commercial.js';
 import {registerCommercialEconomicsRoutes} from './commercial-economics-admin.js';
+import {registerCostaGoCampaignRoutes} from './costa-go-campaigns.js';
 import {packageEconomicsTick} from './package-economics.js';
 import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
 import { cancellationSuspensionResponse } from './suspension-presentation.js';
@@ -488,6 +489,7 @@ export async function buildApp() {
   await registerDriverEarningsRoutes(app);
   await registerScheduledArrivalRoutes(app);
   await registerCommercialEconomicsRoutes(app);
+  await registerCostaGoCampaignRoutes(app,authenticatedUser);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
   await registerCooperativeDemoRoutes(app);

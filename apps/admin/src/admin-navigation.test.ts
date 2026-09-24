@@ -3,6 +3,11 @@ import {modulePermissions,resolvedAdminModule,visibleAdminModules} from './admin
 import {visibleNotificationTabs} from './notifications-admin.js';
 
 describe('navegación administrativa RBAC',()=>{
+  it('separa campañas Costa-Go de publicidad pagada y notificaciones',()=>{
+    const modules=Object.keys(modulePermissions);
+    expect(visibleAdminModules(modules,p=>['commercial:campaigns:view','notification_campaigns:view'].includes(p))).not.toContain('costaCampaigns');
+    expect(visibleAdminModules(modules,p=>p==='costa_campaigns:view')).toEqual(['costaCampaigns','home']);
+  });
   const modules=Object.keys(modulePermissions);
   it('oculta módulos sin permiso y rechaza URL directa',()=>{
     const permissions=new Set(['drivers:view','memberships:view','FACTURACION_VER','incidents:view',

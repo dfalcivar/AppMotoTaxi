@@ -29,6 +29,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'affiliate_banners.dart';
+import 'costa_go_campaigns.dart';
 import 'chat_sheet.dart';
 import 'driver_navigation.dart';
 import 'in_app_notification_banner.dart';
@@ -878,6 +879,9 @@ Future<void> refreshBiometricSessionIfEnabled(Session session) async {
 }
 
 Future<void> clearLocalSession({bool preserveBiometric = false}) async {
+  _costaCampaignStore?.dispose();
+  _costaCampaignStore = null;
+  _costaCampaignSession = null;
   activeFcmAuthToken = null;
   try {
     await AppSessionStore.clear();
@@ -1508,6 +1512,80 @@ class Session {
   final bool mustChangePassword;
   final String? approvalStatus;
   final List<String> availableRoles;
+}
+
+CostaGoCampaignStore? _costaCampaignStore;
+String? _costaCampaignSession;
+final _campaignNavigationObserver = _CampaignNavigationObserver();
+
+class _CampaignNavigationObserver extends NavigatorObserver {
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    scheduleMicrotask(() {
+      unawaited(_costaCampaignStore?.refresh());
+    });
+  }
+}
+
+CostaGoCampaignStore campaignsFor(Session session) {
+  final key = '${session.token}:${session.role}';
+  if (_costaCampaignSession == key && _costaCampaignStore != null) {
+    return _costaCampaignStore!;
+  }
+  _costaCampaignStore?.dispose();
+  _costaCampaignSession = key;
+  var query = '';
+  Future<void> locate() async {
+    query = '';
+    try {
+      final point = await Geolocator.getLastKnownPosition();
+      if (point != null &&
+          DateTime.now().difference(point.timestamp) <
+              const Duration(minutes: 15)) {
+        query = '?latitude=${point.latitude}&longitude=${point.longitude}';
+      }
+    } catch (_) {
+      /* Without an available position only global campaigns are eligible. */
+    }
+  }
+
+  return _costaCampaignStore = CostaGoCampaignStore(
+    load: () async {
+      await locate();
+      return Map<String, dynamic>.from(await Api()
+              .call('GET', '/v1/costa-go-campaigns$query', token: session.token)
+          as Map);
+    },
+    detail: (id) async {
+      await locate();
+      return Map<String, dynamic>.from(await Api().call(
+              'GET', '/v1/costa-go-campaigns/$id$query', token: session.token)
+          as Map);
+    },
+    imageUrl: (campaign, kind) =>
+        '$base/v1/costa-go-campaigns/${campaign['id']}/assets/$kind$query${query.isEmpty ? '?' : '&'}v=${campaign['version']}',
+    headers: {'authorization': 'Bearer ${session.token}'},
+  );
+}
+
+Future<void> openCampaignAction(
+    BuildContext context, Session session, String route) async {
+  if (route == 'membership' && session.role == 'DRIVER') {
+    FleetLinks.membershipPending.value = true;
+    return;
+  }
+  final Widget? screen = switch (route) {
+    'support' => SupportCenter(session),
+    'profile' => Profile(session),
+    'activity' => ActivityPanel(session),
+    'campaigns' => CostaGoCampaignScreen(
+        store: campaignsFor(session),
+        onAction: (c, r) => openCampaignAction(c, session, r)),
+    _ => null,
+  };
+  if (screen != null) {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+  }
 }
 
 class ApiException implements Exception {
@@ -2470,8 +2548,10 @@ class MototaxiApp extends StatelessWidget {
           themeMode: mode,
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),
-          navigatorObservers:
-              sentryDsn.isEmpty ? const [] : [SentryNavigatorObserver()],
+          navigatorObservers: [
+            _campaignNavigationObserver,
+            if (sentryDsn.isNotEmpty) SentryNavigatorObserver(),
+          ],
           builder: (context, child) {
             final theme = Theme.of(context);
             final dark = theme.brightness == Brightness.dark;
@@ -6384,6 +6464,18 @@ class _AccountHubState extends State<AccountHub> {
             ),
           ),
           actionCard(
+            icon: Icons.campaign_outlined,
+            title: 'Campañas Costa-Go',
+            subtitle: 'Novedades, beneficios y campañas disponibles',
+            onTap: () => Navigator.push(
+                c,
+                MaterialPageRoute(
+                    builder: (_) => CostaGoCampaignScreen(
+                        store: campaignsFor(widget.s),
+                        onAction: (context, route) =>
+                            openCampaignAction(context, widget.s, route)))),
+          ),
+          actionCard(
             icon: Icons.notifications_none_rounded,
             title: 'Notificaciones',
             subtitle: 'Preferencias y configuración',
@@ -8758,9 +8850,13 @@ class _CostaGoPrimaryButton extends StatelessWidget {
   }
 }
 
-Future<TripRepeatDraft?> profile(BuildContext c, Session s) =>
-    Navigator.push<TripRepeatDraft>(
-        c, MaterialPageRoute(builder: (_) => AccountHub(s)));
+Future<TripRepeatDraft?> profile(BuildContext c, Session s) async {
+  final result = await Navigator.push<TripRepeatDraft>(
+      c, MaterialPageRoute(builder: (_) => AccountHub(s)));
+  unawaited(campaignsFor(s).refresh());
+  return result;
+}
+
 Future<void> rating(
     BuildContext c, Session s, String tripId, VoidCallback done) async {
   int score = 0;
@@ -9050,6 +9146,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
+    unawaited(campaignsFor(widget.s).refresh());
     nativeOpenSubscription = listenToNativeNotificationOpens((data) {
       if (mounted) handleOpenedPush(RemoteMessage(data: data));
     });
@@ -9505,6 +9602,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       realtime.connect();
+      unawaited(campaignsFor(widget.s).refresh());
       unawaited(api.registerFcm(widget.s.token));
       unawaited(load());
       unawaited(checkPendingPassengerRating());
@@ -13919,6 +14017,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     realtime = RealtimeService(baseUrl: base, token: widget.s.token);
     realtimeSubscription = realtime.events.listen(handleRealtime);
     realtime.connect();
+    unawaited(campaignsFor(widget.s).refresh());
     nativeOpenSubscription = listenToNativeNotificationOpens((data) {
       if (mounted) handleOpenedPush(RemoteMessage(data: data));
     });
@@ -14193,6 +14292,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       realtime.connect();
+      unawaited(campaignsFor(widget.s).refresh());
       unawaited(api.registerFcm(widget.s.token));
       unawaited(showNotificationFallback());
       unawaited(refreshMembership(force: true));

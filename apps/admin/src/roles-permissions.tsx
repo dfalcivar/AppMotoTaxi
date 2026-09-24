@@ -13,10 +13,10 @@ const moduleNames:Record<string,string>={
   notifications:'Notificaciones',notification:'Campañas de notificaciones',faq:'Preguntas frecuentes',
   memberships:'Membresías',membership:'Planes y cortesías',payment:'Órdenes de pago',
   payments:'Pagos',collection:'Puntos de cobro',cash:'Cierres de caja',settlements:'Conciliaciones',
-  financial:'Cuentas financieras',api:'Uso de API'
+  financial:'Cuentas financieras',api:'Uso de API',costa:'Campañas Costa-Go'
 };
 const actionNames:Record<string,string>={view:'Ver',manage:'Gestionar',approve:'Aprobar',
-  create:'Crear',edit:'Editar',activate:'Activar',archive:'Archivar',export:'Exportar',
+  create:'Crear',edit:'Editar',activate:'Activar',deactivate:'Pausar y finalizar',reject:'Rechazar',archive:'Archivar',export:'Exportar',
   review:'Revisar',collect:'Cobrar',reverse:'Revertir',test:'Probar',delete_incomplete:'Eliminar incompletos',
   transfer_review:'Revisar transferencias',courtesy_grant:'Otorgar cortesía'};
 const protectedPermissions=new Set(['roles:manage','users:manage']);

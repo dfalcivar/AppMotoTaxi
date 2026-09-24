@@ -13,6 +13,13 @@ export const adminRoles = [
 export type AdminRole = typeof adminRoles[number];
 
 export const allPermissions = [
+  "costa_campaigns:view",
+  "costa_campaigns:create",
+  "costa_campaigns:edit",
+  "costa_campaigns:approve",
+  "costa_campaigns:reject",
+  "costa_campaigns:activate",
+  "costa_campaigns:deactivate",
   "fleet:view",
   "fleet:manage",
   "FACTURACION_VER",

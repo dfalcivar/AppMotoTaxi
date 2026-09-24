@@ -6,11 +6,12 @@ export const consoleGroups = [
   { label: 'Membresías y cobranzas', modules: ['memberships'] },
   { label: 'Finanzas y facturación', modules: ['fiscal'] },
   { label: 'Comercial y crecimiento', modules: ['commercial', 'advertising'] },
-  { label: 'Comunicación', modules: ['notifications'] },
+  { label: 'Comunicación', modules: ['costaCampaigns','notifications'] },
   { label: 'Cobertura y tarifas', modules: ['pricing', 'zones'] },
   { label: 'Gestión y soporte', modules: ['settings', 'incidents', 'access', 'audit', 'database'] },
 ];
 export const consoleDescriptions: Record<string,string> = {
+  costaCampaigns:'Administra campañas propias, audiencias, zonas, recursos y vigencia.',
   home:'Tu operación, prioridades y accesos en un solo lugar.', dashboard:'Analiza tendencias y consulta los registros detrás de cada indicador.',
   operations:'Sigue solicitudes, disponibilidad y viajes en tiempo real.', alerts:'Detecta novedades y revisa las entregas de notificaciones.',
   trips:'Consulta viajes inmediatos, programados y su cálculo tarifario.',drivers:'Gestiona aprobación, documentación y estado de los conductores.',
