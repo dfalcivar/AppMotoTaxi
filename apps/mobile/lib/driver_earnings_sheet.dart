@@ -634,7 +634,16 @@ class _EarningsLoading extends StatelessWidget {
           CostaGoSurface(
               child: SizedBox(
                   height: 115,
-                  child: Center(child: CircularProgressIndicator()))),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CostaGoSkeleton(height: 16, width: 140),
+                      SizedBox(height: CostaGoSpace.md),
+                      CostaGoSkeleton(height: 36, width: 190),
+                      SizedBox(height: CostaGoSpace.xs),
+                      CostaGoSkeleton(height: 14, width: 120),
+                    ],
+                  ))),
           SizedBox(height: CostaGoSpace.sm),
           CostaGoSurface(child: SizedBox(height: 210)),
           SizedBox(height: CostaGoSpace.sm),

@@ -37,6 +37,7 @@ import 'realtime_service.dart';
 import 'reject_offer_dialog.dart';
 import 'cancellation_feedback_dialog.dart';
 import 'costa_go_design.dart';
+import 'app_theme_controller.dart';
 import 'driver_search_indicator.dart';
 import 'fiscal_profile_modal.dart';
 import 'fleet.dart';
@@ -1370,26 +1371,6 @@ Future<void> main() async {
 
 final appTheme = AppThemeController();
 
-class AppThemeController extends ValueNotifier<ThemeMode> {
-  AppThemeController() : super(ThemeMode.system);
-
-  Future<void> load() async {
-    final saved =
-        (await SharedPreferences.getInstance()).getString('themeMode');
-    value = switch (saved) {
-      'light' => ThemeMode.light,
-      'dark' => ThemeMode.dark,
-      _ => ThemeMode.system,
-    };
-  }
-
-  Future<void> change(ThemeMode mode) async {
-    value = mode;
-    await (await SharedPreferences.getInstance())
-        .setString('themeMode', mode.name);
-  }
-}
-
 String estadoViaje(dynamic estado) =>
     const {
       'SEARCHING': 'Buscando conductor',
@@ -2491,7 +2472,22 @@ class MototaxiApp extends StatelessWidget {
           darkTheme: _theme(Brightness.dark),
           navigatorObservers:
               sentryDsn.isEmpty ? const [] : [SentryNavigatorObserver()],
-          builder: (context, child) => NetworkStatus(child: child!),
+          builder: (context, child) {
+            final theme = Theme.of(context);
+            final dark = theme.brightness == Brightness.dark;
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness:
+                    dark ? Brightness.light : Brightness.dark,
+                systemNavigationBarColor: theme.scaffoldBackgroundColor,
+                systemNavigationBarIconBrightness:
+                    dark ? Brightness.light : Brightness.dark,
+                systemNavigationBarDividerColor: Colors.transparent,
+              ),
+              child: NetworkStatus(child: child!),
+            );
+          },
           home: const SessionBootstrap()));
 
   ThemeData _theme(Brightness brightness) => CostaGoTheme.build(brightness);
@@ -2567,35 +2563,98 @@ class ThemeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
       valueListenable: appTheme,
-      builder: (context, mode, child) => PopupMenuButton<ThemeMode>(
-          tooltip: 'Cambiar apariencia',
-          initialValue: mode,
-          onSelected: appTheme.change,
+      builder: (context, mode, child) => IconButton(
+          tooltip: 'Apariencia',
+          onPressed: () => showCostaGoAppearanceSheet(context),
           icon: Icon(
-              mode == ThemeMode.dark
-                  ? Icons.dark_mode_outlined
-                  : mode == ThemeMode.light
-                      ? Icons.light_mode_outlined
-                      : Icons.brightness_auto_outlined,
-              color: onPhoto ? Colors.white : null),
-          itemBuilder: (_) => const [
-                PopupMenuItem(
-                    value: ThemeMode.system,
-                    child: ListTile(
-                        leading: Icon(Icons.brightness_auto_outlined),
-                        title: Text('Usar tema del teléfono'))),
-                PopupMenuItem(
-                    value: ThemeMode.light,
-                    child: ListTile(
-                        leading: Icon(Icons.light_mode_outlined),
-                        title: Text('Tema claro'))),
-                PopupMenuItem(
-                    value: ThemeMode.dark,
-                    child: ListTile(
-                        leading: Icon(Icons.dark_mode_outlined),
-                        title: Text('Tema oscuro'))),
-              ]));
+            mode == ThemeMode.dark
+                ? Icons.dark_mode_outlined
+                : mode == ThemeMode.light
+                    ? Icons.light_mode_outlined
+                    : Icons.brightness_auto_outlined,
+            color: onPhoto ? Colors.white : null,
+          )));
 }
+
+Future<void> showCostaGoAppearanceSheet(BuildContext context) =>
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => ValueListenableBuilder<ThemeMode>(
+        valueListenable: appTheme,
+        builder: (context, selected, _) => Padding(
+          padding: const EdgeInsets.fromLTRB(
+              CostaGoSpace.lg, 0, CostaGoSpace.lg, CostaGoSpace.xl),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            CostaGoSheetHeader(
+              icon: Icons.palette_outlined,
+              title: 'Apariencia',
+              subtitle: 'Elige cómo quieres ver Costa-Go.',
+              onClose: () => Navigator.pop(sheetContext),
+            ),
+            const SizedBox(height: CostaGoSpace.md),
+            for (final option in const [
+              (
+                ThemeMode.system,
+                Icons.brightness_auto_outlined,
+                'Automático',
+                'Sigue la configuración de tu teléfono'
+              ),
+              (
+                ThemeMode.light,
+                Icons.light_mode_outlined,
+                'Claro',
+                'Mantiene Costa-Go en modo claro'
+              ),
+              (
+                ThemeMode.dark,
+                Icons.dark_mode_outlined,
+                'Oscuro',
+                'Ideal para ambientes con poca luz'
+              ),
+            ]) ...[
+              CostaGoSurface(
+                borderColor: selected == option.$1
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+                onTap: () async {
+                  await appTheme.change(option.$1);
+                  if (sheetContext.mounted) Navigator.pop(sheetContext);
+                },
+                child: Row(children: [
+                  CostaGoIconBadge(icon: option.$2, size: 46),
+                  const SizedBox(width: CostaGoSpace.sm),
+                  Expanded(
+                      child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(option.$3,
+                          style: Theme.of(context).textTheme.titleMedium),
+                      Text(option.$4,
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  )),
+                    ],
+                  )),
+                  Icon(
+                      selected == option.$1
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      color: selected == option.$1
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.onSurfaceVariant),
+                ]),
+              ),
+              const SizedBox(height: CostaGoSpace.xs),
+            ],
+          ]),
+        ),
+      ),
+    );
 
 class CostaGoBrand extends StatelessWidget {
   const CostaGoBrand({
@@ -2647,15 +2706,26 @@ class CostaGoBrand extends StatelessWidget {
 class Welcome extends StatelessWidget {
   const Welcome({super.key});
   @override
-  Widget build(BuildContext c) => Scaffold(
+  Widget build(BuildContext c) {
+    final dimPhoto = Theme.of(c).brightness == Brightness.dark;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: Color(0xff081b2c),
+        systemNavigationBarIconBrightness: Brightness.light,
+      ),
+      child: Scaffold(
           body: Stack(fit: StackFit.expand, children: [
         Image.asset('assets/images/atacames-login-hero.png', fit: BoxFit.cover),
         Container(
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
                 gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Color(0x66032B49), Color(0xDD032B49)]))),
+                    colors: dimPhoto
+                        ? const [Color(0xC0081B2C), Color(0xF0081B2C)]
+                        : const [Color(0x70032B49), Color(0xD8032B49)]))),
         SafeArea(
             child: Stack(children: [
           const Positioned(
@@ -2665,51 +2735,72 @@ class Welcome extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(24, 16, 24, 72),
                   child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 340),
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        const CostaGoBrand(),
-                        const SizedBox(height: 28),
-                        SizedBox(
-                            width: 286,
-                            child: FilledButton.icon(
-                                onPressed: () => open(c, 'PASSENGER'),
-                                icon: const Icon(Icons.person_outline),
-                                label: const Text('Ingresar como pasajero'))),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                            width: 286,
-                            child: OutlinedButton.icon(
-                                onPressed: () => open(c, 'DRIVER'),
-                                style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                    minimumSize: const Size.fromHeight(54),
-                                    side:
-                                        const BorderSide(color: Colors.white70),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(18))),
+                      child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: CostaGoSpace.md,
+                              vertical: CostaGoSpace.xl),
+                          decoration: BoxDecoration(
+                            color: const Color(0xB0082032),
+                            borderRadius:
+                                BorderRadius.circular(CostaGoRadius.sheet),
+                            border: Border.all(color: const Color(0x33FFFFFF)),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x44030E19),
+                                blurRadius: 24,
+                                offset: Offset(0, 12),
+                              )
+                            ],
+                          ),
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                            const CostaGoBrand(),
+                            const SizedBox(height: 28),
+                            SizedBox(
+                                width: 286,
+                                child: FilledButton.icon(
+                                    onPressed: () => open(c, 'PASSENGER'),
+                                    icon: const Icon(Icons.person_outline),
+                                    label:
+                                        const Text('Ingresar como pasajero'))),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                                width: 286,
+                                child: OutlinedButton.icon(
+                                    onPressed: () => open(c, 'DRIVER'),
+                                    style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        minimumSize: const Size.fromHeight(54),
+                                        side: const BorderSide(
+                                            color: Colors.white70),
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(18))),
+                                    icon: const Icon(
+                                        Icons.sports_motorsports_outlined),
+                                    label:
+                                        const Text('Ingresar como conductor'))),
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                                onPressed: () => Navigator.push(
+                                    c,
+                                    MaterialPageRoute(
+                                        builder: (_) => const Register())),
                                 icon: const Icon(
-                                    Icons.sports_motorsports_outlined),
-                                label: const Text('Ingresar como conductor'))),
-                        const SizedBox(height: 8),
-                        TextButton.icon(
-                            onPressed: () => Navigator.push(
-                                c,
-                                MaterialPageRoute(
-                                    builder: (_) => const Register())),
-                            icon: const Icon(Icons.person_add_alt_1_outlined,
-                                color: Colors.white),
-                            label: const Text('Crear una cuenta',
-                                style: TextStyle(color: Colors.white))),
-                        TextButton.icon(
-                            onPressed: () => Navigator.push(
-                                c,
-                                MaterialPageRoute(
-                                    builder: (_) => const Recovery())),
-                            icon: const Icon(Icons.key_outlined,
-                                color: Colors.white),
-                            label: const Text('Recuperar contraseña',
-                                style: TextStyle(color: Colors.white))),
-                      ])))),
+                                    Icons.person_add_alt_1_outlined,
+                                    color: Colors.white),
+                                label: const Text('Crear una cuenta',
+                                    style: TextStyle(color: Colors.white))),
+                            TextButton.icon(
+                                onPressed: () => Navigator.push(
+                                    c,
+                                    MaterialPageRoute(
+                                        builder: (_) => const Recovery())),
+                                icon: const Icon(Icons.key_outlined,
+                                    color: Colors.white),
+                                label: const Text('Recuperar contraseña',
+                                    style: TextStyle(color: Colors.white))),
+                          ]))))),
           const Positioned(
             left: 0,
             right: 0,
@@ -2727,7 +2818,10 @@ class Welcome extends StatelessWidget {
             ]),
           ),
         ]))
-      ]));
+      ])),
+    );
+  }
+
   void open(BuildContext c, String r) =>
       Navigator.push(c, MaterialPageRoute(builder: (_) => Login(r)));
 }
@@ -4568,24 +4662,39 @@ class _ProfileState extends State<Profile> {
     if (p == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Mi perfil')),
-        body: Center(
-          child: profileError == null
-              ? const CircularProgressIndicator()
-              : Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.cloud_off_outlined, size: 52),
-                    const SizedBox(height: 12),
-                    Text(profileError!, textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: loadProfile,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Reintentar'),
-                    ),
-                  ]),
-                ),
-        ),
+        body: profileError == null
+            ? ListView(
+                padding: const EdgeInsets.all(CostaGoSpace.lg),
+                children: const [
+                  Center(child: CostaGoSkeleton(height: 112, width: 112)),
+                  SizedBox(height: CostaGoSpace.md),
+                  Center(child: CostaGoSkeleton(height: 24, width: 190)),
+                  SizedBox(height: CostaGoSpace.xl),
+                  CostaGoSurface(
+                      child: Column(children: [
+                    CostaGoSkeleton(height: 18, width: 150),
+                    SizedBox(height: CostaGoSpace.md),
+                    CostaGoSkeleton(height: 18),
+                    SizedBox(height: CostaGoSpace.md),
+                    CostaGoSkeleton(height: 18),
+                  ])),
+                ],
+              )
+            : Center(
+                child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.cloud_off_outlined, size: 52),
+                  const SizedBox(height: 12),
+                  Text(profileError!, textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: loadProfile,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Reintentar'),
+                  ),
+                ]),
+              )),
       );
     }
     final rs = p['reviews'] as List;
@@ -4761,6 +4870,22 @@ class _ProfileState extends State<Profile> {
             ]),
             sectionTitle('Ajustes y seguridad'),
             groupedCard([
+              ValueListenableBuilder<ThemeMode>(
+                valueListenable: appTheme,
+                builder: (context, mode, _) => ListTile(
+                  contentPadding: rowPadding,
+                  leading: leadingIcon(Icons.palette_outlined),
+                  title: const Text('Apariencia'),
+                  subtitle: Text(switch (mode) {
+                    ThemeMode.light => 'Claro',
+                    ThemeMode.dark => 'Oscuro',
+                    ThemeMode.system => 'Automático · según tu teléfono',
+                  }),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => showCostaGoAppearanceSheet(context),
+                ),
+              ),
+              const Divider(height: 1),
               if (p['mobileAdminAccess'] == true) ...[
                 ListTile(
                   contentPadding: rowPadding,
@@ -8152,8 +8277,15 @@ class _PassengerSurface extends StatelessWidget {
       padding: padding ?? const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: color ?? scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(CostaGoRadius.large),
         border: Border.all(color: scheme.outlineVariant.withValues(alpha: .75)),
+        boxShadow: [
+          BoxShadow(
+            color: CostaGoElevation.shadow(scheme),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
+          )
+        ],
       ),
       child: child,
     );
@@ -19276,113 +19408,40 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               ]),
                             )
                           else
-                            LayoutBuilder(builder: (context, constraints) {
-                              final twoColumns = constraints.maxWidth >= 330;
-                              final cardWidth = twoColumns
-                                  ? (constraints.maxWidth - 10) / 2
-                                  : constraints.maxWidth;
-                              return Wrap(
-                                spacing: 10,
-                                runSpacing: 10,
-                                children: visiblePlans.map((plan) {
-                                  final current =
-                                      membership['planCode']?.toString() ==
-                                          plan['code']?.toString();
-                                  final isTripPack =
-                                      plan['planType'] == 'TRIP_PACK';
-                                  return SizedBox(
-                                    width: cardWidth,
-                                    height: 184,
-                                    child: CostaGoSurface(
-                                      borderColor: current
-                                          ? Theme.of(sheetContext)
-                                              .colorScheme
-                                              .primary
-                                          : null,
-                                      padding: const EdgeInsets.all(12),
-                                      onTap: pendingOrder == null &&
-                                              !orderGenerationInProgress
-                                          ? () => selectPlan(plan)
-                                          : null,
-                                      child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(children: [
-                                              CostaGoIconBadge(
-                                                icon: isTripPack
-                                                    ? Icons.route_outlined
-                                                    : current
-                                                        ? Icons
-                                                            .event_available_outlined
-                                                        : Icons
-                                                            .calendar_month_outlined,
-                                                size: 40,
-                                              ),
-                                              if (current) ...[
-                                                const Spacer(),
-                                                const Icon(Icons.check_circle,
-                                                    size: 20),
-                                              ],
-                                            ]),
-                                            const SizedBox(height: 8),
-                                            Text(
-                                                plan['name']?.toString() ??
-                                                    'Plan',
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                    fontWeight:
-                                                        FontWeight.w900)),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              isTripPack
-                                                  ? '${plan['includedTrips']} viajes · ${plan['packValidityDays'] == null ? 'sin caducidad' : '${plan['packValidityDays']} días'}'
-                                                  : '${plan['durationDays']} días · ${plan['includedTrips']} viajes',
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: Theme.of(sheetContext)
-                                                  .textTheme
-                                                  .bodySmall
-                                                  ?.copyWith(
-                                                      color: Theme.of(
-                                                              sheetContext)
-                                                          .colorScheme
-                                                          .onSurfaceVariant),
-                                            ),
-                                            const Spacer(),
-                                            Text.rich(
-                                              TextSpan(children: [
-                                                TextSpan(
-                                                    text:
-                                                        '\$${(plan['amount'] as num).toStringAsFixed(2)}',
-                                                    style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.w900)),
-                                                TextSpan(
-                                                    text: ' + IVA',
-                                                    style: TextStyle(
-                                                        fontSize: 11,
-                                                        color: Theme.of(
-                                                                sheetContext)
-                                                            .colorScheme
-                                                            .onSurfaceVariant)),
-                                              ]),
-                                              style: Theme.of(sheetContext)
-                                                  .textTheme
-                                                  .titleMedium,
-                                            ),
-                                            if (pendingOrder == null)
-                                              Text('Toca para elegir',
-                                                  style: Theme.of(sheetContext)
-                                                      .textTheme
-                                                      .labelSmall),
-                                          ]),
-                                    ),
-                                  );
-                                }).toList(),
-                              );
-                            }),
+                            Column(
+                              children: visiblePlans.map((plan) {
+                                final current =
+                                    membership['planCode']?.toString() ==
+                                        plan['code']?.toString();
+                                final isTripPack =
+                                    plan['planType'] == 'TRIP_PACK';
+                                final days = isTripPack
+                                    ? plan['packValidityDays']
+                                    : plan['durationDays'];
+                                return Padding(
+                                  padding: const EdgeInsets.only(
+                                      bottom: CostaGoSpace.sm),
+                                  child: CostaGoPlanCard(
+                                    name: plan['name']?.toString() ?? 'Plan',
+                                    price:
+                                        '\$${(plan['amount'] as num).toStringAsFixed(2)}',
+                                    details: isTripPack
+                                        ? 'Paquete por viajes'
+                                        : 'Plan por período',
+                                    quantityLabel:
+                                        '${plan['includedTrips']} viajes',
+                                    validityLabel: days == null
+                                        ? 'Sin caducidad'
+                                        : '$days días',
+                                    current: current,
+                                    onSelect: pendingOrder == null &&
+                                            !orderGenerationInProgress
+                                        ? () => selectPlan(plan)
+                                        : null,
+                                  ),
+                                );
+                              }).toList(),
+                            ),
                           const SizedBox(height: 14),
                           const CostaGoSurface(
                             padding: EdgeInsets.symmetric(

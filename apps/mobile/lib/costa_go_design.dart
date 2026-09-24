@@ -18,6 +18,13 @@ abstract final class CostaGoRadius {
   static const double pill = 999;
 }
 
+abstract final class CostaGoElevation {
+  static double card(Brightness brightness) =>
+      brightness == Brightness.dark ? 1 : 2;
+  static Color shadow(ColorScheme scheme) => scheme.shadow
+      .withValues(alpha: scheme.brightness == Brightness.dark ? .18 : .10);
+}
+
 enum CostaGoStatusTone { info, success, warning, danger, neutral }
 
 abstract final class CostaGoPalette {
@@ -752,6 +759,8 @@ class CostaGoSurface extends StatelessWidget {
     final content = Padding(padding: padding, child: child);
     return Material(
       color: background,
+      elevation: CostaGoElevation.card(Theme.of(context).brightness),
+      shadowColor: CostaGoElevation.shadow(scheme),
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(CostaGoRadius.large),
@@ -764,6 +773,95 @@ class CostaGoSurface extends StatelessWidget {
               borderRadius: BorderRadius.circular(CostaGoRadius.large),
               child: content,
             ),
+    );
+  }
+}
+
+/// A compact, readable plan card shared by period and trip-pack offers.
+class CostaGoPlanCard extends StatelessWidget {
+  const CostaGoPlanCard({
+    super.key,
+    required this.name,
+    required this.price,
+    required this.details,
+    required this.quantityLabel,
+    required this.validityLabel,
+    required this.onSelect,
+    this.current = false,
+  });
+
+  final String name;
+  final String price;
+  final String details;
+  final String quantityLabel;
+  final String validityLabel;
+  final VoidCallback? onSelect;
+  final bool current;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return CostaGoSurface(
+      borderColor: current ? scheme.primary : null,
+      padding: const EdgeInsets.all(CostaGoSpace.md),
+      onTap: onSelect,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          CostaGoIconBadge(
+            icon: quantityLabel.contains('viajes')
+                ? Icons.route_outlined
+                : Icons.calendar_month_outlined,
+            size: 44,
+          ),
+          const SizedBox(width: CostaGoSpace.sm),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, style: theme.textTheme.titleMedium),
+              const SizedBox(height: CostaGoSpace.xxs),
+              Text(details,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  )),
+            ]),
+          ),
+          const SizedBox(width: CostaGoSpace.xs),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text(price,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  color: scheme.primary,
+                )),
+            Text('+ IVA',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                )),
+          ]),
+        ]),
+        const SizedBox(height: CostaGoSpace.md),
+        Wrap(spacing: CostaGoSpace.xs, runSpacing: CostaGoSpace.xs, children: [
+          CostaGoStatusChip(label: quantityLabel, icon: Icons.route_outlined),
+          CostaGoStatusChip(
+              label: validityLabel, icon: Icons.schedule_outlined),
+          if (current)
+            const CostaGoStatusChip(
+              label: 'Plan actual',
+              icon: Icons.check_circle_outline,
+              tone: CostaGoStatusTone.success,
+            ),
+        ]),
+        if (onSelect != null) ...[
+          const SizedBox(height: CostaGoSpace.md),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            Text('Seleccionar plan',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.primary,
+                )),
+            const SizedBox(width: CostaGoSpace.xxs),
+            Icon(Icons.arrow_forward_rounded, size: 18, color: scheme.primary),
+          ]),
+        ],
+      ]),
     );
   }
 }
@@ -1048,6 +1146,26 @@ class CostaGoEmptyState extends StatelessWidget {
           action!,
         ],
       ]),
+    );
+  }
+}
+
+class CostaGoSkeleton extends StatelessWidget {
+  const CostaGoSkeleton({super.key, required this.height, this.width});
+
+  final double height;
+  final double? width;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .85),
+        borderRadius: BorderRadius.circular(CostaGoRadius.small),
+      ),
     );
   }
 }

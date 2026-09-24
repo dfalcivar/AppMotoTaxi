@@ -165,4 +165,30 @@ void main() {
       );
     }
   }
+
+  testWidgets('tarjeta de plan conserva precio y acción en ancho pequeño',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+      theme: CostaGoTheme.build(Brightness.light),
+      home: Scaffold(
+          body: ListView(children: [
+        CostaGoPlanCard(
+          name: 'Go 100',
+          price: r'$9.00',
+          details: 'Paquete por viajes',
+          quantityLabel: '100 viajes',
+          validityLabel: '30 días',
+          onSelect: () {},
+        ),
+      ])),
+    ));
+    expect(find.text('Go 100'), findsOneWidget);
+    expect(find.text(r'$9.00'), findsOneWidget);
+    expect(find.text('Seleccionar plan'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
