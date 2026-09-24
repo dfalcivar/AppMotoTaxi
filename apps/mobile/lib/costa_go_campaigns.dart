@@ -1,8 +1,245 @@
+import 'costa_go_coastal.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 typedef CampaignData = Map<String, dynamic>;
+
+/// HOME exists only when the authenticated backend supplies an eligible item.
+class CostaGoHomeCampaigns extends StatefulWidget {
+  const CostaGoHomeCampaigns(
+      {super.key, required this.store, required this.onAction});
+  final CostaGoCampaignStore store;
+  final Future<void> Function(BuildContext, String) onAction;
+  @override
+  State<CostaGoHomeCampaigns> createState() => _CostaGoHomeCampaignsState();
+}
+
+class _CostaGoHomeCampaignsState extends State<CostaGoHomeCampaigns>
+    with WidgetsBindingObserver {
+  Timer? timer;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) schedule();
+    });
+  }
+
+  void schedule() {
+    timer?.cancel();
+    unawaited(widget.store.refresh());
+    timer = Timer.periodic(
+        widget.store.ttl, (_) => unawaited(widget.store.refresh(force: true)));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      schedule();
+    } else {
+      timer?.cancel();
+    }
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: widget.store,
+      builder: (context, _) {
+        final items = widget.store.forPlacement('HOME');
+        if (items.isEmpty) return const SizedBox.shrink();
+        return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: CostaGoCampaignCard(
+                campaign: items.first,
+                store: widget.store,
+                onAction: widget.onAction));
+      });
+}
+
+class CostaGoCampaignCard extends StatelessWidget {
+  const CostaGoCampaignCard(
+      {super.key,
+      required this.campaign,
+      required this.store,
+      required this.onAction});
+  final CampaignData campaign;
+  final CostaGoCampaignStore store;
+  final Future<void> Function(BuildContext, String) onAction;
+  Future<void> open(BuildContext context, {bool action = false}) async {
+    try {
+      final item = await store.freshDetail(campaign['id'].toString());
+      if (!context.mounted) return;
+      if (action &&
+          item['ctaType'] != 'NONE' &&
+          item['ctaType'] != 'CAMPAIGN_DETAIL') {
+        final type = item['ctaType'],
+            destination = item['ctaDestination']?.toString() ?? '';
+        if (type == 'EXTERNAL_URL') {
+          if (!safeCampaignExternalUri(destination)) return;
+          final yes = await showDialog<bool>(
+              context: context,
+              builder: (c) => AlertDialog(
+                      title: const Text('Abrir enlace externo'),
+                      content: Text(Uri.parse(destination).host),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(c, false),
+                            child: const Text('Cancelar')),
+                        FilledButton(
+                            onPressed: () => Navigator.pop(c, true),
+                            child: const Text('Abrir'))
+                      ]));
+          if (yes != true) return;
+          final latest = await store.freshDetail(item['id'].toString());
+          if (latest['ctaType'] != type ||
+              latest['ctaDestination'] != destination) {
+            return;
+          }
+          await launchUrl(Uri.parse(destination),
+              mode: LaunchMode.externalApplication);
+        } else {
+          final route = type == 'MEMBERSHIP'
+              ? 'membership'
+              : type == 'SUPPORT'
+                  ? 'support'
+                  : type == 'INTERNAL_ROUTE'
+                      ? destination
+                      : '';
+          if (route.isNotEmpty && context.mounted) {
+            await onAction(context, route);
+          }
+        }
+      } else {
+        await Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => CostaGoCampaignDetail(
+                    store: store,
+                    id: item['id'].toString(),
+                    onAction: onAction)));
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Esta campaña ya no está disponible.')));
+      }
+      await store.refresh(force: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    final assets = campaign['assets'] as List? ?? [];
+    final kind = Theme.of(context).brightness == Brightness.dark &&
+            assets.contains('DARK')
+        ? 'DARK'
+        : assets.contains('THUMBNAIL')
+            ? 'THUMBNAIL'
+            : 'MAIN';
+    final variant = campaign['variant'];
+    final accent = switch (variant) {
+      'CHRISTMAS' => c.tertiary,
+      'CARNIVAL' => c.secondary,
+      'SUMMER' => c.primary,
+      _ => c.primary
+    };
+    return Material(
+        color: c.surface.withValues(alpha: .94),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: BorderSide(color: accent.withValues(alpha: .25))),
+        child: InkWell(
+            onTap: () => open(context),
+            child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (assets.contains(kind))
+                        Padding(
+                            padding: const EdgeInsets.only(right: 12),
+                            child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: Image.network(
+                                    store.imageUrl(campaign, kind),
+                                    headers: store.headers,
+                                    width: 76,
+                                    height: 88,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        const SizedBox.shrink()))),
+                      Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Text(campaign['title']?.toString() ?? '',
+                                style: Theme.of(context).textTheme.titleMedium),
+                            if ((campaign['subtitle']?.toString() ?? '')
+                                .isNotEmpty)
+                              Text(campaign['subtitle'].toString(),
+                                  style: TextStyle(color: c.onSurfaceVariant)),
+                            if (campaign['ctaType'] != 'NONE' &&
+                                (campaign['ctaText']?.toString() ?? '')
+                                    .isNotEmpty)
+                              TextButton(
+                                  onPressed: () => open(context, action: true),
+                                  child: Text(campaign['ctaText'].toString())),
+                          ])),
+                    ]))));
+  }
+}
+
+class CostaGoCampaignHeaderDecoration extends StatelessWidget {
+  const CostaGoCampaignHeaderDecoration(
+      {super.key,
+      required this.store,
+      required this.child,
+      this.enabled = true});
+  final CostaGoCampaignStore store;
+  final Widget child;
+  final bool enabled;
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final campaign = enabled
+            ? store
+                .forPlacement('HOME')
+                .where((c) =>
+                    c['decorateHeader'] == true &&
+                    ['CHRISTMAS', 'CARNIVAL', 'SUMMER'].contains(c['variant']))
+                .firstOrNull
+            : null;
+        return Stack(clipBehavior: Clip.none, children: [
+          child,
+          if (campaign != null)
+            Positioned(
+                top: -4,
+                left: 5,
+                child: IgnorePointer(
+                    child: ExcludeSemantics(
+                        child: Icon(
+                            switch (campaign['variant']) {
+                              'CHRISTMAS' => Icons.ac_unit,
+                              'CARNIVAL' => Icons.celebration_outlined,
+                              _ => Icons.wb_sunny_outlined
+                            },
+                            size: 18,
+                            color: Theme.of(context).colorScheme.primary))))
+        ]);
+      });
+}
 
 /// Session-scoped, memory-only cache. Financial rewards and advertising are unrelated.
 class CostaGoCampaignStore extends ChangeNotifier {
@@ -176,7 +413,7 @@ class _CostaGoCampaignScreenState extends State<CostaGoCampaignScreen>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         appBar: AppBar(title: const Text('Campañas Costa-Go'), actions: [
           IconButton(
               tooltip: 'Actualizar',
@@ -443,7 +680,7 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
   @override
   Widget build(BuildContext context) {
     final c = campaign;
-    return Scaffold(
+    return CostaGoScaffold(
         appBar: AppBar(title: const Text('Campaña Costa-Go'), actions: [
           IconButton(
               onPressed: busy ? null : reload,

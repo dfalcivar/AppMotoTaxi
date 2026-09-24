@@ -4,7 +4,7 @@ import {ConsoleModal} from './console-ui';
 import {ecuDate} from './console-model';
 import './costa-go-campaigns.css';
 
-type Campaign={id?:string;version?:number;internalName:string;title:string;subtitle:string;description:string;audience:string;startsAt:string;endsAt:string;priority:number;allZones:boolean;zoneIds:string[];variant:string;placements:string[];ctaType:string;ctaText:string;ctaDestination:string;terms:string;status?:string;enabled?:boolean;assets?:string[];reviewReason?:string;history?:{action:string;reason:string;createdAt:string;actor:string}[]};
+type Campaign={decorateHeader?:boolean;id?:string;version?:number;internalName:string;title:string;subtitle:string;description:string;audience:string;startsAt:string;endsAt:string;priority:number;allZones:boolean;zoneIds:string[];variant:string;placements:string[];ctaType:string;ctaText:string;ctaDestination:string;terms:string;status?:string;enabled?:boolean;assets?:string[];reviewReason?:string;history?:{action:string;reason:string;createdAt:string;actor:string}[]};
 const root='/v1/admin/costa-go-campaigns';
 const states:Record<string,string>={DRAFT:'Borrador',PENDING_APPROVAL:'Pendiente de aprobación',APPROVED:'Aprobada',REJECTED:'Rechazada',ACTIVE:'Activa',PAUSED:'Pausada',FINISHED:'Finalizada'};
 const audiences:Record<string,string>={PASSENGER:'Pasajeros',DRIVER:'Conductores',BOTH:'Ambos'};
@@ -64,7 +64,7 @@ export function CostaGoCampaigns({token,permissions}:{token:string;permissions:s
       {form.ctaType!=='NONE'&&<label>Texto del botón<input required maxLength={80} value={form.ctaText} onChange={e=>update('ctaText',e.target.value)}/></label>}
       {form.ctaType==='EXTERNAL_URL'&&<label className="wide">Destino HTTPS<input type="url" required value={form.ctaDestination} onChange={e=>update('ctaDestination',e.target.value)}/></label>}
       {form.ctaType==='INTERNAL_ROUTE'&&<label>Destino<select required value={form.ctaDestination} onChange={e=>update('ctaDestination',e.target.value)}><option value="">Selecciona una pantalla</option>{['support','membership','profile','activity','campaigns'].map((x,i)=><option key={x} value={x}>{['Soporte','Membresía (conductores)','Perfil','Actividad','Campañas'][i]}</option>)}</select></label>}
-      <label className="wide">Términos y condiciones<textarea rows={4} maxLength={12000} value={form.terms} onChange={e=>update('terms',e.target.value)}/></label>
+      <label className="wide"><input type="checkbox" checked={form.decorateHeader??false} onChange={e=>update('decorateHeader',e.target.checked)}/> Decorar sutilmente el encabezado de Home mientras esta campaña esté vigente</label><label className="wide">Términos y condiciones<textarea rows={4} maxLength={12000} value={form.terms} onChange={e=>update('terms',e.target.value)}/></label>
       <p className="wide">Las imágenes se agregan después de guardar el borrador. Referidos estará disponible cuando exista su flujo móvil.</p><div className="campaign-toolbar wide"><button type="button" className="secondary" disabled={busy} onClick={()=>setForm(null)}>Cancelar</button><button disabled={busy}>{busy?'Guardando…':'Guardar borrador'}</button></div>
     </form></ConsoleModal>}
     {selected&&!form&&<ConsoleModal title={selected.title} onClose={()=>{if(!busy){setSelected(null);setDecision(null);}}}>

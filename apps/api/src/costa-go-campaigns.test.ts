@@ -50,6 +50,15 @@ async function activate(overrides:Record<string,unknown>={}){
   let c=await create(overrides);for(const action of ['SUBMIT','APPROVE','ACTIVATE']){const r=await transition(c,action);expect(r.statusCode,r.body).toBe(200);c=r.json();}return c;
 }
 async function mobile(role='PASSENGER',query=''){return app.inject({url:'/v1/costa-go-campaigns'+query,headers:{'x-role':role}});}
+it('keeps header decoration opt-in and returns the approved explicit setting',async()=>{
+  expect(campaignSchema.parse(input()).decorateHeader).toBe(false);
+  const plain=await activate({priority:10,variant:'SUMMER'});
+  const decorated=await activate({priority:5,variant:'CHRISTMAS',decorateHeader:true});
+  const items=(await mobile()).json().items;
+  expect(items.find((x:any)=>x.id===plain.id).decorateHeader).toBe(false);
+  expect(items.find((x:any)=>x.id===decorated.id).decorateHeader).toBe(true);
+  expect(items.map((x:any)=>x.id)).toEqual([plain.id,decorated.id]);
+});
 it('selects authenticated audience, BOTH and priority without changing paid advertising',async()=>{
   const passenger=await activate({audience:'PASSENGER',priority:3}),driver=await activate({audience:'DRIVER',priority:5}),both=await activate({priority:10});
   expect((await mobile()).json().items.map((x:any)=>x.id)).toEqual([both.id,passenger.id]);

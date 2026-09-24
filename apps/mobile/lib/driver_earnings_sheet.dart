@@ -1,3 +1,4 @@
+import 'costa_go_coastal.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -128,7 +129,7 @@ class _DriverEarningsSheetState extends State<DriverEarningsSheet> {
         _ => 'Pago por uso',
       };
 
-  Future<void> _showHistory() => showModalBottomSheet<void>(
+  Future<void> _showHistory() => showCostaGoModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,

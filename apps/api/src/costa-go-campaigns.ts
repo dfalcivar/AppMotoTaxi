@@ -18,6 +18,7 @@ export const campaignSchema=z.object({
   subtitle:z.string().trim().max(240).default(''),description:z.string().trim().max(12000).default(''),
   audience:z.enum(['PASSENGER','DRIVER','BOTH']),startsAt:z.string().datetime({offset:true}),endsAt:z.string().datetime({offset:true}),
   priority:z.number().int().min(0).max(1000).default(0),allZones:z.boolean(),zoneIds:z.array(z.string().uuid()).max(100).default([]),
+  decorateHeader:z.boolean().default(false),
   variant:z.enum(['DEFAULT','CHRISTMAS','CARNIVAL','SUMMER','CUSTOM']).default('DEFAULT'),
   placements:z.array(z.enum(['HOME','CAMPAIGNS','NOTIFICATION'])).min(1).max(3).default(['CAMPAIGNS']),
   ctaType:z.enum(['NONE','CAMPAIGN_DETAIL','MEMBERSHIP','REFERRAL','SUPPORT','INTERNAL_ROUTE','EXTERNAL_URL']).default('NONE'),

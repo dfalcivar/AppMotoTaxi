@@ -1,3 +1,5 @@
+import 'costa_go_affiliates.dart';
+import 'costa_go_coastal.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1045,7 +1047,7 @@ Future<void> showTripSafety({
     }
   }
 
-  await showModalBottomSheet<void>(
+  await showCostaGoModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
     isScrollControlled: true,
@@ -2527,7 +2529,8 @@ class _SessionBootstrapState extends State<SessionBootstrap> {
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const CostaGoScaffold(
+          body: Center(child: CircularProgressIndicator()));
     }
     return session == null ? const Welcome() : homeForSession(session!);
   }
@@ -2657,7 +2660,7 @@ class ThemeSelector extends StatelessWidget {
 }
 
 Future<void> showCostaGoAppearanceSheet(BuildContext context) =>
-    showModalBottomSheet<void>(
+    showCostaGoModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
       showDragHandle: true,
@@ -2874,7 +2877,7 @@ class Welcome extends StatelessWidget {
         systemNavigationBarColor: Color(0xff081b2c),
         systemNavigationBarIconBrightness: Brightness.light,
       ),
-      child: Scaffold(
+      child: CostaGoScaffold(
           body: Stack(fit: StackFit.expand, children: [
         Image.asset('assets/images/atacames-login-hero.png', fit: BoxFit.cover),
         Container(
@@ -3159,7 +3162,7 @@ class _LoginState extends State<Login> {
   Widget build(BuildContext c) {
     final isDriver = widget.role == 'DRIVER';
     final scheme = Theme.of(c).colorScheme;
-    return Scaffold(
+    return CostaGoScaffold(
         appBar: AppBar(
             title:
                 Text(isDriver ? 'Acceso de conductor' : 'Acceso de pasajero'),
@@ -3675,7 +3678,7 @@ class _RecoveryState extends State<Recovery> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
+    return CostaGoScaffold(
       body: SafeArea(
         child: LayoutBuilder(builder: (context, constraints) {
           return SingleChildScrollView(
@@ -3915,7 +3918,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         appBar: AppBar(title: const Text('Verifica tu correo')),
         body: ListView(padding: const EdgeInsets.all(24), children: [
           const Icon(Icons.mark_email_read_outlined, size: 72),
@@ -4034,7 +4037,7 @@ class _ChangeTemporaryPasswordState extends State<ChangeTemporaryPassword> {
   @override
   Widget build(BuildContext context) => PopScope(
       canPop: false,
-      child: Scaffold(
+      child: CostaGoScaffold(
           appBar: AppBar(title: const Text('Protege tu cuenta')),
           body: ListView(padding: const EdgeInsets.all(24), children: [
             const Icon(Icons.password_outlined, size: 64),
@@ -4276,7 +4279,7 @@ class _RegisterState extends State<Register> {
   @override
   Widget build(BuildContext c) {
     final scheme = Theme.of(c).colorScheme;
-    return Scaffold(
+    return CostaGoScaffold(
       body: SafeArea(
         child: LayoutBuilder(builder: (context, constraints) {
           final horizontal = constraints.maxWidth < 380 ? 14.0 : 22.0;
@@ -4858,7 +4861,7 @@ class _ProfileState extends State<Profile> {
   @override
   Widget build(BuildContext c) {
     if (p == null) {
-      return Scaffold(
+      return CostaGoScaffold(
         appBar: AppBar(title: const Text('Mi perfil')),
         body: profileError == null
             ? ListView(
@@ -4932,7 +4935,7 @@ class _ProfileState extends State<Profile> {
         );
 
     const rowPadding = EdgeInsets.symmetric(horizontal: 14, vertical: 3);
-    return Scaffold(
+    return CostaGoScaffold(
         appBar: AppBar(title: const Text('Mi perfil')),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
@@ -5476,7 +5479,7 @@ class _RatingsScreenState extends State<RatingsScreen> {
             DateTime.tryParse(b['createdAt']?.toString() ?? '') ?? DateTime(0);
         return bDate.compareTo(aDate);
       });
-    return Scaffold(
+    return CostaGoScaffold(
       appBar: AppBar(title: const Text('Mis calificaciones')),
       body: RefreshIndicator(
         onRefresh: load,
@@ -5612,7 +5615,7 @@ class _ChangePasswordState extends State<ChangePassword> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         appBar: AppBar(title: const Text('Cambiar contraseña')),
         body: ListView(padding: const EdgeInsets.all(20), children: [
           const Icon(Icons.lock_reset_outlined, size: 62),
@@ -5739,7 +5742,7 @@ class _DriverApprovalScreenState extends State<DriverApprovalScreen> {
         profile?['approvalStatus']?.toString() ?? widget.session.approvalStatus;
     return PopScope(
         canPop: false,
-        child: Scaffold(
+        child: CostaGoScaffold(
           appBar: AppBar(
               title: const Text('Habilitación de conductor'),
               automaticallyImplyLeading: false),
@@ -5850,7 +5853,7 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
   }
 
   Future<void> upload(String type) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showCostaGoModalBottomSheet<String>(
         context: context,
         showDragHandle: true,
         builder: (sheetContext) => SafeArea(
@@ -5936,7 +5939,7 @@ class _DriverDocumentsScreenState extends State<DriverDocumentsScreen> {
       .firstOrNull;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         appBar: AppBar(title: const Text('Documentos habilitantes')),
         body: documents == null
             ? const Center(child: CircularProgressIndicator())
@@ -6070,7 +6073,7 @@ class _DriverEnrollmentScreenState extends State<DriverEnrollmentScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
       appBar: AppBar(title: const Text('Quiero conducir')),
       body: ListView(padding: const EdgeInsets.all(20), children: [
         Text('Activa tu perfil de conductor',
@@ -6306,43 +6309,16 @@ class _AccountHubState extends State<AccountHub> {
       Widget? trailing,
       Color? accent,
     }) {
-      final color = accent ?? scheme.primary;
-      return Card(
-        margin: const EdgeInsets.only(bottom: 10),
-        elevation: 0,
-        color: scheme.surfaceContainerLow,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .65)),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: ListTile(
-          minTileHeight: 74,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-          leading: Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: .1),
-              borderRadius: BorderRadius.circular(15),
-            ),
-            child: Icon(icon, color: color),
-          ),
-          title: Text(title,
-              style: theme.textTheme.titleSmall
-                  ?.copyWith(fontWeight: FontWeight.w800)),
-          subtitle: Text(subtitle,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant)),
-          trailing: trailing ??
-              Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
+      return CostaGoAccountTile(
+          icon: icon,
+          title: title,
+          subtitle: subtitle,
           onTap: onTap,
-        ),
-      );
+          trailing: trailing,
+          accent: accent);
     }
 
-    return Scaffold(
+    return CostaGoScaffold(
       appBar: AppBar(title: const Text('Mi cuenta')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 6, 20, 28),
@@ -6803,7 +6779,7 @@ class _NotificationPreferencesScreenState
       ),
     ];
 
-    return Scaffold(
+    return CostaGoScaffold(
       appBar: AppBar(
         title: const Text('Preferencias de notificaciones'),
         actions: [
@@ -6965,7 +6941,7 @@ class PrivacyAndData extends StatelessWidget {
   final Session session;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         appBar: AppBar(title: const Text('Privacidad y datos')),
         body: ListView(padding: const EdgeInsets.all(20), children: [
           const Icon(Icons.shield_outlined, size: 68),
@@ -7081,7 +7057,7 @@ class _DeleteAccountState extends State<DeleteAccount> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         appBar: AppBar(title: const Text('Eliminar mi cuenta')),
         body: ListView(padding: const EdgeInsets.all(20), children: [
           const Icon(Icons.delete_forever_outlined,
@@ -7215,7 +7191,7 @@ class _SupportCenterState extends State<SupportCenter> {
           .toLowerCase()
           .contains(query);
     }).toList();
-    return Scaffold(
+    return CostaGoScaffold(
       appBar: AppBar(title: const Text('Ayuda y soporte')),
       body: RefreshIndicator(
         onRefresh: load,
@@ -7702,7 +7678,7 @@ class _CreateSupportRequestState extends State<CreateSupportRequest> {
       onChanged: (value) => setState(() => contact = value!),
     );
 
-    return Scaffold(
+    return CostaGoScaffold(
       appBar: AppBar(title: const Text('Nueva solicitud')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
@@ -7945,7 +7921,7 @@ class _SupportIncidentDetailState extends State<SupportIncidentDetail> {
     final item = incident;
     final closed =
         item != null && ['RESUELTO', 'CERRADO'].contains(item['status']);
-    return Scaffold(
+    return CostaGoScaffold(
       appBar: AppBar(title: const Text('Detalle de soporte')),
       body: item == null
           ? Center(
@@ -8046,7 +8022,7 @@ class AboutCostaGo extends StatelessWidget {
   const AboutCostaGo({super.key});
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         backgroundColor: const Color(0xff020f24),
         body: Stack(children: [
           const Positioned.fill(
@@ -8904,7 +8880,7 @@ Future<void> rating(
     ];
   }
 
-  await showModalBottomSheet(
+  await showCostaGoModalBottomSheet(
     context: c,
     isScrollControlled: true,
     isDismissible: false,
@@ -9123,7 +9099,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Timer? timer;
   bool ratingPrompted = false;
   bool passengerChatOpen = false;
-  double sheetExtent = .35;
+  double sheetExtent = .52;
+  bool requestFormOpen = false;
   DateTime? lastRouteAt;
   double? routeDistanceMeters;
   double? routeDurationSeconds;
@@ -10131,6 +10108,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   void applyRepeatDraft(TripRepeatDraft draft) {
+    requestFormOpen = true;
     setState(() {
       pickup = draft.origin;
       dropoff = draft.destination;
@@ -10722,6 +10700,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   }
 
   Future<void> useFavorite(dynamic place, bool isOrigin) async {
+    requestFormOpen = true;
     final point = LatLng((place['latitude'] as num).toDouble(),
         (place['longitude'] as num).toDouble());
     setState(() {
@@ -10906,7 +10885,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
 
   Future<FavoritePlaceAction?> _showFavoritePlaceActions(
       BuildContext listContext, dynamic place) {
-    return showModalBottomSheet<FavoritePlaceAction>(
+    return showCostaGoModalBottomSheet<FavoritePlaceAction>(
       context: listContext,
       showDragHandle: true,
       isScrollControlled: true,
@@ -10986,7 +10965,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Future<void> showFavoritePlaces() async {
     await loadFavoritePlaces();
     if (!mounted) return;
-    await showModalBottomSheet<void>(
+    await showCostaGoModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
@@ -11238,7 +11217,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         return;
       }
       if (!mounted) return;
-      final r = await showModalBottomSheet<dynamic>(
+      final r = await showCostaGoModalBottomSheet<dynamic>(
           context: context,
           showDragHandle: true,
           builder: (sheetContext) => SafeArea(
@@ -11983,7 +11962,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     try {
       final trips = await api.scheduledTrips(widget.s.token);
       if (!mounted) return;
-      await showModalBottomSheet<void>(
+      await showCostaGoModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
@@ -13098,6 +13077,72 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
     );
   }
 
+  List<Widget> _homeContent(BuildContext context) => [
+        const CostaGoHomeHeader(),
+        CostaGoHomeCampaigns(
+            store: campaignsFor(widget.s),
+            onAction: (c, r) => openCampaignAction(c, widget.s, r)),
+        LayoutBuilder(builder: (context, box) {
+          final oneColumn = box.maxWidth < 300 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.4;
+          final width = oneColumn ? box.maxWidth : (box.maxWidth - 12) / 2;
+          return Wrap(spacing: 12, runSpacing: 12, children: [
+            SizedBox(
+                width: width,
+                child: CostaGoQuickActionCard(
+                    title: 'Solicitar mototaxi',
+                    subtitle: 'Viaja seguro en minutos',
+                    icon: Icons.local_taxi,
+                    officialVehicle: true,
+                    onTap: () {
+                      setState(() => requestFormOpen = true);
+                      _movePassengerSheet(.82);
+                    })),
+            SizedBox(
+                width: width,
+                child: CostaGoQuickActionCard(
+                    title: 'Mis viajes',
+                    subtitle: 'Historial y estado de tus viajes',
+                    icon: Icons.history,
+                    onTap: () async {
+                      final draft = await Navigator.push<TripRepeatDraft>(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => PassengerTripsView(widget.s)));
+                      if (draft != null && mounted) {
+                        setState(() => requestFormOpen = true);
+                        applyRepeatDraft(draft);
+                      }
+                    })),
+            SizedBox(
+                width: width,
+                child: CostaGoQuickActionCard(
+                    title: 'Comercios afiliados',
+                    subtitle: 'Negocios y servicios cerca de ti',
+                    icon: Icons.storefront_outlined,
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => CostaGoAffiliatesScreen(
+                                load: () => api.banners(
+                                    widget.s.token, 'PASSENGER_HOME',
+                                    serviceAreaId: selectedOriginArea?.id),
+                                imageUrl: _bannerImageUrl,
+                                onTap: _openBanner,
+                                onImpression: (b) => unawaited(
+                                    _reportBannerEvent(b, 'IMPRESSION'))))))),
+            SizedBox(
+                width: width,
+                child: CostaGoQuickActionCard(
+                    title: 'Mis direcciones',
+                    subtitle: 'Accesos rápidos',
+                    icon: Icons.star_outline,
+                    onTap: showFavoritePlaces)),
+          ]);
+        }),
+        const SizedBox(height: 32),
+      ];
+
   List<Widget> _requestContent(BuildContext context) => [
         if (serviceAreaCatalog?.reviewArea != null)
           Card(
@@ -13552,7 +13597,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) SystemNavigator.pop();
         },
-        child: Scaffold(
+        child: CostaGoScaffold(
           body: LayoutBuilder(builder: (context, constraints) {
             final safeTop = MediaQuery.paddingOf(context).top;
             return Stack(children: [
@@ -13618,6 +13663,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                 left: 28,
                 right: 28,
                 child: RoleAwareHeaderIsland(
+                  operational: active != null,
                   session: widget.s,
                   onAccount: () async {
                     final draft = await profile(context, widget.s);
@@ -13627,20 +13673,18 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               ),
               DraggableScrollableSheet(
                 controller: passengerSheetController,
-                initialChildSize: .35,
+                initialChildSize: .52,
                 minChildSize: .18,
                 maxChildSize: .92,
                 snap: true,
                 snapSizes: const [.28, .52, .9],
                 builder: (context, scrollController) {
                   passengerSheetScrollController = scrollController;
-                  return Material(
-                    color: Theme.of(context).colorScheme.surface,
-                    elevation: 16,
-                    shadowColor: Colors.black45,
-                    borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(editing ? 32 : 28)),
-                    clipBehavior: Clip.antiAlias,
+                  return CostaGoGlassSheet(
+                    overMap: active == null,
+                    decoration: active == null
+                        ? CostaGoDecorationIntensity.subtle
+                        : CostaGoDecorationIntensity.none,
                     child: ListView(
                       controller: scrollController,
                       padding: EdgeInsets.fromLTRB(
@@ -13678,8 +13722,24 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                             TextButton(
                                 onPressed: cancellationBusy ? null : cancel,
                                 child: const Text('Cancelar solicitud')),
-                        ] else
-                          ..._requestContent(context),
+                        ] else ...[
+                          if (!requestFormOpen)
+                            ..._homeContent(context)
+                          else ...[
+                            Row(children: [
+                              IconButton(
+                                  tooltip: 'Volver a los accesos',
+                                  onPressed: () {
+                                    setState(() => requestFormOpen = false);
+                                    _movePassengerSheet(.52);
+                                  },
+                                  icon: const Icon(Icons.arrow_back)),
+                              const Expanded(
+                                  child: CostaGoHomeHeader(request: true))
+                            ]),
+                            ..._requestContent(context),
+                          ]
+                        ],
                       ],
                     ),
                   );
@@ -15209,7 +15269,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
   Future<void> showDriverScheduledTrips() async {
     await refreshScheduled(force: true);
     if (!mounted) return;
-    await showModalBottomSheet<void>(
+    await showCostaGoModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -16617,7 +16677,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<bool> _submitMembershipTransferProof(
       BuildContext context, Map<String, dynamic> order) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showCostaGoModalBottomSheet<String>(
         context: context,
         showDragHandle: true,
         builder: (sheetContext) => SafeArea(
@@ -16700,7 +16760,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           barrierDismissible: false,
           builder: (dialogContext) => StatefulBuilder(
             builder: (dialogContext, setDialogState) => Dialog.fullscreen(
-              child: Scaffold(
+              child: CostaGoScaffold(
                 appBar: AppBar(
                   leading: IconButton(
                     tooltip: 'Regresar',
@@ -17213,7 +17273,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       BuildContext context, Map<String, dynamic> point) async {
     final phone = point['phone']?.toString();
     final displayName = _collectionPointDisplayName(point);
-    await showModalBottomSheet<void>(
+    await showCostaGoModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -17350,7 +17410,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
       final points =
           raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
       if (!context.mounted) return;
-      await showModalBottomSheet<void>(
+      await showCostaGoModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
@@ -17504,7 +17564,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ((order['breakdown'] as Map?)?['vatAmount'] as num?)?.toDouble() ??
             (order['vatAmount'] as num?)?.toDouble() ??
             0;
-    final submitted = await showModalBottomSheet<bool>(
+    final submitted = await showCostaGoModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -18040,7 +18100,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     final expiresAt = DateTime.tryParse(order['expiresAt']?.toString() ?? '');
     final breakdown = Map<String, dynamic>.from(
         order['breakdown'] as Map? ?? const <String, dynamic>{});
-    final result = await showModalBottomSheet<MembershipPaymentOrderResult>(
+    final result = await showCostaGoModalBottomSheet<
+            MembershipPaymentOrderResult>(
           context: hostContext,
           isScrollControlled: true,
           useSafeArea: true,
@@ -18323,7 +18384,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
       if (!hostContext.mounted) return false;
       var filter = 'ALL';
-      final transferSubmitted = await showModalBottomSheet<bool>(
+      final transferSubmitted = await showCostaGoModalBottomSheet<bool>(
         context: hostContext,
         isScrollControlled: true,
         useSafeArea: true,
@@ -18840,7 +18901,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         ? 'TRIP_PACK'
         : 'PERIODIC';
     var orderGenerationInProgress = false;
-    await showModalBottomSheet<void>(
+    await showCostaGoModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
@@ -18950,31 +19011,33 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               }
 
               Future<void> openWallet() async {
-                final order = await showModalBottomSheet<Map<String, dynamic>>(
-                    context: sheetContext,
-                    isScrollControlled: true,
-                    useSafeArea: true,
-                    showDragHandle: true,
-                    builder: (_) => DriverWalletSheet(
-                          load: () async => Map<String, dynamic>.from(
-                              await api.call('GET', '/v1/driver/wallet',
-                                  token: widget.s.token) as Map),
-                          setEnabled: (enabled) async {
-                            await api.call(
-                                'PUT', '/v1/driver/wallet/preference',
-                                token: widget.s.token,
-                                body: {'enabled': enabled});
-                          },
-                          createOrder: (amount, key) async =>
-                              Map<String, dynamic>.from(await api.call('POST',
-                                  '/v1/driver/membership/payment-orders',
-                                  token: widget.s.token,
-                                  body: {
-                                'topUpAmount': amount,
-                                'idempotencyKey': key,
-                                'intendedMethod': 'CASH'
-                              }) as Map),
-                        ));
+                final order =
+                    await showCostaGoModalBottomSheet<Map<String, dynamic>>(
+                        context: sheetContext,
+                        isScrollControlled: true,
+                        useSafeArea: true,
+                        showDragHandle: true,
+                        builder: (_) => DriverWalletSheet(
+                              load: () async => Map<String, dynamic>.from(
+                                  await api.call('GET', '/v1/driver/wallet',
+                                      token: widget.s.token) as Map),
+                              setEnabled: (enabled) async {
+                                await api.call(
+                                    'PUT', '/v1/driver/wallet/preference',
+                                    token: widget.s.token,
+                                    body: {'enabled': enabled});
+                              },
+                              createOrder: (amount, key) async =>
+                                  Map<String, dynamic>.from(await api.call(
+                                      'POST',
+                                      '/v1/driver/membership/payment-orders',
+                                      token: widget.s.token,
+                                      body: {
+                                    'topUpAmount': amount,
+                                    'idempotencyKey': key,
+                                    'intendedMethod': 'CASH'
+                                  }) as Map),
+                            ));
                 if (order != null && sheetContext.mounted) {
                   setSheetState(() => pendingOrder = order);
                   final result =
@@ -19312,7 +19375,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: CostaGoSpace.md,
                                 vertical: CostaGoSpace.md),
-                            onTap: () => showModalBottomSheet<void>(
+                            onTap: () => showCostaGoModalBottomSheet<void>(
                               context: sheetContext,
                               isScrollControlled: true,
                               useSafeArea: true,
@@ -20448,7 +20511,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) SystemNavigator.pop();
         },
-        child: Scaffold(
+        child: CostaGoScaffold(
           body: LayoutBuilder(builder: (context, constraints) {
             final safeTop = MediaQuery.paddingOf(context).top;
             return Stack(children: [
@@ -20507,6 +20570,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 left: 12,
                 right: 12,
                 child: RoleAwareHeaderIsland(
+                  operational: active != null || offers.isNotEmpty,
                   session: widget.s,
                   onOpenMembership: _openMembershipFromNotification,
                   onAccount: () async {
@@ -20548,13 +20612,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                 snapSizes: const [.28, .52, .9],
                 builder: (context, scrollController) {
                   driverSheetScrollController = scrollController;
-                  return Material(
-                    color: Theme.of(context).colorScheme.surface,
-                    elevation: 16,
-                    shadowColor: Colors.black45,
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(28)),
-                    clipBehavior: Clip.antiAlias,
+                  return CostaGoGlassSheet(
+                    overMap: active == null,
+                    decoration: active == null
+                        ? CostaGoDecorationIntensity.subtle
+                        : CostaGoDecorationIntensity.none,
                     child: ListView(
                       controller: scrollController,
                       padding: EdgeInsets.fromLTRB(
@@ -20574,6 +20636,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           ),
                         ),
                         const SizedBox(height: 7),
+                        if (active == null && offers.isEmpty) ...[
+                          const CostaGoHomeHeader(),
+                          CostaGoHomeCampaigns(
+                              store: campaignsFor(widget.s),
+                              onAction: (c, r) =>
+                                  openCampaignAction(c, widget.s, r)),
+                        ],
                         ..._driverSheetContent(context, action),
                       ],
                     ),

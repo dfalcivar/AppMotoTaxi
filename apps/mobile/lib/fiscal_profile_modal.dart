@@ -1,3 +1,4 @@
+import 'costa_go_coastal.dart';
 import 'package:flutter/material.dart';
 
 import 'costa_go_design.dart';
@@ -5,7 +6,7 @@ import 'costa_go_design.dart';
 Future<bool> showFiscalProfileModal(BuildContext context,
     {required Future<dynamic> Function() load,
     required Future<dynamic> Function(Map<String, dynamic>) save}) async {
-  return await showModalBottomSheet<bool>(
+  return await showCostaGoModalBottomSheet<bool>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,

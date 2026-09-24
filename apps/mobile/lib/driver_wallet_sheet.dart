@@ -1,3 +1,4 @@
+import 'costa_go_coastal.dart';
 import 'package:flutter/material.dart';
 
 import 'costa_go_design.dart';
@@ -380,7 +381,7 @@ class _DriverWalletSheetState extends State<DriverWalletSheet> {
   Future<void> _showAllMovements(
       BuildContext context, List<Map<String, dynamic>> movements) async {
     var filter = _WalletMovementFilter.all;
-    await showModalBottomSheet<void>(
+    await showCostaGoModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,

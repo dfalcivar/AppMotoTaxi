@@ -1,3 +1,4 @@
+import 'costa_go_coastal.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:app_links/app_links.dart';
@@ -610,7 +611,7 @@ class _FleetScannerState extends State<_FleetScanner> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
       appBar: AppBar(
           title: const Text('Escanear mototaxi'),
           leading: IconButton(
@@ -709,7 +710,7 @@ class _FleetProfileEntriesState extends State<FleetProfileEntries>
     setState(() => opening = true);
     try {
       if (firstUnit) {
-        await showModalBottomSheet<bool>(
+        await showCostaGoModalBottomSheet<bool>(
             context: context,
             isScrollControlled: true,
             useSafeArea: true,
@@ -1062,7 +1063,7 @@ class _FleetScreenState extends State<FleetScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
+    return CostaGoScaffold(
         appBar: AppBar(
             title: Text(widget.ownerOnly
                 ? 'Mi flota'
@@ -1312,7 +1313,7 @@ class _FleetScreenState extends State<FleetScreen> {
   }
 
   Future<void> add() async {
-    final saved = await showModalBottomSheet<bool>(
+    final saved = await showCostaGoModalBottomSheet<bool>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
@@ -1445,6 +1446,11 @@ class _VehicleFormState extends State<_VehicleForm> {
           child: Form(
               key: form,
               child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const SizedBox(height: 8),
+                const CircleAvatar(
+                    radius: 28,
+                    child: Icon(Icons.local_taxi_outlined, size: 30)),
+                const SizedBox(height: 12),
                 Row(children: [
                   Expanded(
                       child: Text(
@@ -1495,7 +1501,11 @@ class _VehicleFormState extends State<_VehicleForm> {
                           )),
                         ]
                       ])),
-                field('identifier', 'Placa o registro', Icons.badge_outlined),
+                CostaGoFormSection(
+                    title: 'Identificación de la unidad',
+                    icon: Icons.badge_outlined,
+                    child: field('identifier', 'Placa o registro',
+                        Icons.badge_outlined)),
                 if (!linkExisting) ...[
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Expanded(child: field('brand', 'Marca', null)),
@@ -1613,7 +1623,7 @@ class _VehicleDetailState extends State<VehicleDetail> {
   Widget build(BuildContext context) {
     final v = data?['vehicle'];
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
+    return CostaGoScaffold(
         appBar: AppBar(title: Text(v?['identifier'] ?? 'Detalle de mototaxi')),
         body: SafeArea(
             child: ListView(padding: const EdgeInsets.all(16), children: [
@@ -1669,7 +1679,7 @@ class _VehicleDetailState extends State<VehicleDetail> {
                   onPressed: busy
                       ? null
                       : () async {
-                          final saved = await showModalBottomSheet<bool>(
+                          final saved = await showCostaGoModalBottomSheet<bool>(
                               context: context,
                               isScrollControlled: true,
                               useSafeArea: true,
@@ -1854,7 +1864,7 @@ class _VehicleDetailState extends State<VehicleDetail> {
   }
 
   Future<dynamic> pickDocument(String kind) async {
-    final source = await showModalBottomSheet<String>(
+    final source = await showCostaGoModalBottomSheet<String>(
         context: context,
         useSafeArea: true,
         builder: (c) => Column(mainAxisSize: MainAxisSize.min, children: [

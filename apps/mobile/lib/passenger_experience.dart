@@ -397,10 +397,13 @@ class RoleAwareHeaderIsland extends StatelessWidget {
     required this.session,
     required this.onAccount,
     this.onOpenMembership,
+    this.operational = false,
   });
   final Session session;
   final Future<void> Function() onAccount;
   final Future<void> Function()? onOpenMembership;
+
+  final bool operational;
 
   String get firstName {
     final value = session.name.trim().split(RegExp(r'\s+')).firstOrNull ??
@@ -409,9 +412,12 @@ class RoleAwareHeaderIsland extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context) => CostaGoCampaignHeaderDecoration(
+      store: campaignsFor(session),
+      enabled: !operational,
+      child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 330),
+          constraints: const BoxConstraints(maxWidth: 390),
           child: Material(
             color: Theme.of(context).colorScheme.surface.withValues(alpha: .96),
             elevation: 5,
@@ -426,8 +432,8 @@ class RoleAwareHeaderIsland extends StatelessWidget {
                   child: Image.network(
                     '$base/v1/users/${session.id}/profile-photo',
                     headers: {'Authorization': 'Bearer ${session.token}'},
-                    width: 34,
-                    height: 34,
+                    width: 42,
+                    height: 42,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => const Icon(
                       Icons.account_circle_outlined,
@@ -465,7 +471,7 @@ class RoleAwareHeaderIsland extends StatelessWidget {
             ]),
           ),
         ),
-      );
+      ));
 }
 
 class PassengerTripsView extends StatefulWidget {
@@ -522,7 +528,7 @@ class _PassengerTripsViewState extends State<PassengerTripsView> {
   }
 
   Future<void> chooseFilter() async {
-    final value = await showModalBottomSheet<String>(
+    final value = await showCostaGoModalBottomSheet<String>(
         context: context,
         builder: (context) => const SafeArea(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -582,10 +588,10 @@ class _PassengerTripsViewState extends State<PassengerTripsView> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
         appBar: AppBar(title: const Text('Mis viajes'), actions: [
           IconButton(
-              onPressed: () => showModalBottomSheet<void>(
+              onPressed: () => showCostaGoModalBottomSheet<void>(
                   context: context,
                   builder: (_) => SafeArea(
                       child: Padding(
@@ -866,7 +872,7 @@ class _PassengerActivityViewState extends State<PassengerActivityView> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
       appBar: AppBar(title: const Text('Actividad')),
       body: RefreshIndicator(
           onRefresh: () => load(true),
@@ -1175,7 +1181,7 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => CostaGoScaffold(
       appBar: AppBar(title: const Text('Notificaciones'), actions: [
         if (items.any((e) => e['readAt'] == null))
           TextButton(
@@ -1273,7 +1279,7 @@ Future<_NotificationDetailAction?> _showNotificationDetailSheet({
             (value) => Map<String, dynamic>.from(value as Map),
             onError: (_) => null,
           );
-  return showModalBottomSheet<_NotificationDetailAction>(
+  return showCostaGoModalBottomSheet<_NotificationDetailAction>(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
@@ -1509,9 +1515,9 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
   @override
   Widget build(BuildContext context) {
     final item = trip;
-    if (loading) return const Scaffold(body: _PassengerSkeleton());
+    if (loading) return const CostaGoScaffold(body: _PassengerSkeleton());
     if (item == null) {
-      return Scaffold(
+      return CostaGoScaffold(
           appBar: AppBar(title: const Text('Detalle del viaje')),
           body: _PassengerError(message: error!, retry: load));
     }
@@ -1520,7 +1526,7 @@ class _PassengerTripDetailState extends State<PassengerTripDetail> {
         destination = LatLng((item['destinationLatitude'] as num).toDouble(),
             (item['destinationLongitude'] as num).toDouble());
     final vehicle = item['vehicleDetails'];
-    return Scaffold(
+    return CostaGoScaffold(
         appBar: AppBar(title: const Text('Detalle del viaje')),
         body: SafeArea(
           top: false,

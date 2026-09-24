@@ -1,3 +1,4 @@
+import 'costa_go_coastal.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'fleet.dart';
@@ -126,7 +127,7 @@ class _FleetReportState extends State<FleetReportScreen> {
   @override
   Widget build(BuildContext context) {
     final summary = data?['summary'];
-    return Scaffold(
+    return CostaGoScaffold(
         appBar: AppBar(title: const Text('Resumen de flota'), actions: [
           IconButton(
               onPressed: notifications,

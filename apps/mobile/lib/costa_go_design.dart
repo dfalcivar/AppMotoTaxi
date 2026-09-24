@@ -28,30 +28,30 @@ abstract final class CostaGoElevation {
 enum CostaGoStatusTone { info, success, warning, danger, neutral }
 
 abstract final class CostaGoPalette {
-  static const primary = Color(0xff527da8);
-  static const primaryDark = Color(0xff3f6387);
-  static const primaryLight = Color(0xff8fafcc);
-  static const primaryContainer = Color(0xffe7eff7);
-  static const surfaceAccent = Color(0xfff4f8fb);
-  static const borderAccent = Color(0xffd8e3ec);
-  static const controlActive = Color(0xff6f8eae);
-  static const textPrimary = Color(0xff20242a);
-  static const textSecondary = Color(0xff667085);
+  static const primary = Color(0xff0875d1);
+  static const primaryDark = Color(0xff06549c);
+  static const primaryLight = Color(0xff79c8ff);
+  static const primaryContainer = Color(0xffe0f1ff);
+  static const surfaceAccent = Color(0xfff0f8ff);
+  static const borderAccent = Color(0xffcfe5f5);
+  static const controlActive = Color(0xff258ddc);
+  static const textPrimary = Color(0xff10223b);
+  static const textSecondary = Color(0xff586b84);
   static const cardLight = Colors.white;
 
   // Alias de compatibilidad para componentes anteriores; todos apuntan a
-  // tokens semánticos y evitan reintroducir azules saturados.
+  // tokens semánticos compartidos por todas las pantallas.
   static const softBlue = surfaceAccent;
   static const selectedBlue = primaryContainer;
   static const blueBorder = borderAccent;
 
-  static const darkPrimary = Color(0xff8fafcc);
+  static const darkPrimary = Color(0xff79c8ff);
   static const darkPrimaryPressed = Color(0xff6f91b0);
   static const darkPrimaryLight = Color(0xffaec4d8);
-  static const darkSoftBlue = Color(0xff202a33);
-  static const darkSelectedBlue = Color(0xff2b3946);
-  static const darkBlueBorder = Color(0xff3b4a58);
-  static const cardDark = Color(0xff181d22);
+  static const darkSoftBlue = Color(0xff152f48);
+  static const darkSelectedBlue = Color(0xff1b3c59);
+  static const darkBlueBorder = Color(0xff355670);
+  static const cardDark = Color(0xff11283e);
   static const onDarkBackground = Color(0xffe6e9ed);
 }
 
@@ -259,7 +259,7 @@ abstract final class CostaGoTheme {
     );
     final scheme = generatedScheme.copyWith(
       primary: dark ? CostaGoPalette.darkPrimary : CostaGoPalette.primary,
-      onPrimary: dark ? const Color(0xff17212a) : Colors.black,
+      onPrimary: dark ? const Color(0xff17212a) : Colors.white,
       primaryContainer: dark
           ? CostaGoPalette.darkSelectedBlue
           : CostaGoPalette.primaryContainer,
@@ -271,7 +271,7 @@ abstract final class CostaGoTheme {
           dark ? const Color(0xff2b333a) : const Color(0xffeef2f5),
       onSecondaryContainer:
           dark ? const Color(0xffd8dde2) : CostaGoPalette.textPrimary,
-      surface: dark ? const Color(0xff12171b) : const Color(0xfffbfcfd),
+      surface: dark ? const Color(0xff0d2033) : const Color(0xfffbfcfd),
       onSurface:
           dark ? CostaGoPalette.onDarkBackground : CostaGoPalette.textPrimary,
       onSurfaceVariant:
@@ -294,7 +294,7 @@ abstract final class CostaGoTheme {
     );
     final semantics = CostaGoSemanticColors.forBrightness(brightness);
     final brand = CostaGoBrandColors.forBrightness(brightness);
-    final background = dark ? const Color(0xff101417) : const Color(0xfff6f7f8);
+    final background = dark ? const Color(0xff08192a) : const Color(0xfff1f8fd);
     final surfaceLow = brand.card;
     final outline = brand.border;
     final baseTextTheme = ThemeData(brightness: brightness).textTheme;

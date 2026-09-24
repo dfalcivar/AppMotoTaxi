@@ -1,3 +1,4 @@
+import 'costa_go_coastal.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -304,7 +305,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
-      return Scaffold(
+      return CostaGoScaffold(
         appBar: AppBar(title: const Text('Navegación')),
         body: Center(
           child: Padding(
@@ -329,7 +330,7 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen>
     return PopScope(
       canPop: true,
       onPopInvokedWithResult: (_, __) => unawaited(_stopNavigation()),
-      child: Scaffold(
+      child: CostaGoScaffold(
         body: Stack(children: [
           Positioned.fill(
             child: _initializing

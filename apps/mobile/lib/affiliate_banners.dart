@@ -14,6 +14,8 @@ class AffiliateBanners extends StatefulWidget {
     this.onAvailabilityChanged,
     this.rotationSeconds = 5,
     this.onImpression,
+    this.emptyBuilder,
+    this.errorBuilder,
   });
 
   final Future<List<dynamic>> Function() load;
@@ -23,6 +25,8 @@ class AffiliateBanners extends StatefulWidget {
   final ValueChanged<bool>? onAvailabilityChanged;
   final int rotationSeconds;
   final ValueChanged<Map<String, dynamic>>? onImpression;
+  final WidgetBuilder? emptyBuilder;
+  final WidgetBuilder? errorBuilder;
 
   @override
   State<AffiliateBanners> createState() => _AffiliateBannersState();
@@ -45,6 +49,8 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
   int page = 0;
   bool? lastAvailability;
   String? lastImpressionKey;
+  bool loaded = false;
+  bool failed = false;
 
   @override
   void initState() {
@@ -89,6 +95,8 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
         }
       }
       setState(() {
+        loaded = true;
+        failed = false;
         banners = weighted.isEmpty
             ? [Map<String, dynamic>.from(fallbackBanner)]
             : weighted;
@@ -97,6 +105,12 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
       reportAvailability(source.isNotEmpty);
       reportImpression(page);
     } catch (_) {
+      if (mounted) {
+        setState(() {
+          loaded = true;
+          failed = true;
+        });
+      }
       // La publicidad no bloquea el flujo principal si la red falla.
       if (mounted && banners.isEmpty) {
         setState(() => banners = [Map<String, dynamic>.from(fallbackBanner)]);
@@ -297,6 +311,16 @@ class _AffiliateBannersState extends State<AffiliateBanners> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.emptyBuilder != null &&
+        loaded &&
+        !banners.any((b) => b['isFallback'] != true)) {
+      return failed && widget.errorBuilder != null
+          ? widget.errorBuilder!(context)
+          : widget.emptyBuilder!(context);
+    }
+    if (widget.emptyBuilder != null && !loaded) {
+      return const LinearProgressIndicator();
+    }
     if (banners.isEmpty) return const SizedBox.shrink();
     final compact = widget.variant == AffiliateBannerVariant.compact;
     return LayoutBuilder(builder: (context, constraints) {
