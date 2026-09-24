@@ -5,6 +5,15 @@ import 'package:url_launcher/url_launcher.dart';
 
 typedef CampaignData = Map<String, dynamic>;
 
+String? campaignImageKind(List assets, Brightness brightness,
+    {bool thumbnail = false}) {
+  if (thumbnail && assets.contains('THUMBNAIL')) return 'THUMBNAIL';
+  if (brightness == Brightness.dark && assets.contains('DARK')) return 'DARK';
+  if (assets.contains('MAIN')) return 'MAIN';
+  if (assets.contains('DARK')) return 'DARK';
+  return null;
+}
+
 /// HOME exists only when the authenticated backend supplies an eligible item.
 class CostaGoHomeCampaigns extends StatefulWidget {
   const CostaGoHomeCampaigns(
@@ -15,38 +24,25 @@ class CostaGoHomeCampaigns extends StatefulWidget {
   State<CostaGoHomeCampaigns> createState() => _CostaGoHomeCampaignsState();
 }
 
-class _CostaGoHomeCampaignsState extends State<CostaGoHomeCampaigns>
-    with WidgetsBindingObserver {
-  Timer? timer;
+class _CostaGoHomeCampaignsState extends State<CostaGoHomeCampaigns> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) schedule();
-    });
-  }
-
-  void schedule() {
-    timer?.cancel();
-    unawaited(widget.store.refresh());
-    timer = Timer.periodic(
-        widget.store.ttl, (_) => unawaited(widget.store.refresh(force: true)));
+    widget.store.watch();
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      schedule();
-    } else {
-      timer?.cancel();
+  void didUpdateWidget(CostaGoHomeCampaigns oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.unwatch();
+      widget.store.watch();
     }
   }
 
   @override
   void dispose() {
-    timer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    widget.store.unwatch();
     super.dispose();
   }
 
@@ -58,10 +54,16 @@ class _CostaGoHomeCampaignsState extends State<CostaGoHomeCampaigns>
         if (items.isEmpty) return const SizedBox.shrink();
         return Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: CostaGoCampaignCard(
-                campaign: items.first,
-                store: widget.store,
-                onAction: widget.onAction));
+            child: TweenAnimationBuilder<double>(
+                key: ValueKey(items.first['id']),
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 180),
+                builder: (_, value, child) =>
+                    Opacity(opacity: value, child: child),
+                child: CostaGoCampaignCard(
+                    campaign: items.first,
+                    store: widget.store,
+                    onAction: widget.onAction)));
       });
 }
 
@@ -140,12 +142,8 @@ class CostaGoCampaignCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = Theme.of(context).colorScheme;
     final assets = campaign['assets'] as List? ?? [];
-    final kind = Theme.of(context).brightness == Brightness.dark &&
-            assets.contains('DARK')
-        ? 'DARK'
-        : assets.contains('THUMBNAIL')
-            ? 'THUMBNAIL'
-            : 'MAIN';
+    final kind = campaignImageKind(assets, Theme.of(context).brightness,
+        thumbnail: true);
     final variant = campaign['variant'];
     final accent = switch (variant) {
       'CHRISTMAS' => c.tertiary,
@@ -166,19 +164,27 @@ class CostaGoCampaignCard extends StatelessWidget {
                 child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (assets.contains(kind))
-                        Padding(
-                            padding: const EdgeInsets.only(right: 12),
-                            child: ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
-                                child: Image.network(
-                                    store.imageUrl(campaign, kind),
-                                    headers: store.headers,
-                                    width: 76,
-                                    height: 88,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) =>
-                                        const SizedBox.shrink()))),
+                      if (kind != null)
+                        Image.network(store.imageUrl(campaign, kind),
+                            headers: store.headers,
+                            fit: BoxFit.cover,
+                            cacheWidth: 228,
+                            frameBuilder: (context, child, frame,
+                                    synchronous) =>
+                                frame == null && !synchronous
+                                    ? const SizedBox.shrink()
+                                    : Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 12),
+                                        child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(16),
+                                            child: SizedBox(
+                                                width: 76,
+                                                height: 80,
+                                                child: child))),
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox.shrink()),
                       Expanded(
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -200,7 +206,8 @@ class CostaGoCampaignCard extends StatelessWidget {
   }
 }
 
-class CostaGoCampaignHeaderDecoration extends StatelessWidget {
+/// Small avatar overlay; eligibility and ordering come from the existing store.
+class CostaGoCampaignHeaderDecoration extends StatefulWidget {
   const CostaGoCampaignHeaderDecoration(
       {super.key,
       required this.store,
@@ -210,39 +217,87 @@ class CostaGoCampaignHeaderDecoration extends StatelessWidget {
   final Widget child;
   final bool enabled;
   @override
+  State<CostaGoCampaignHeaderDecoration> createState() =>
+      _CampaignHeaderState();
+}
+
+class _CampaignHeaderState extends State<CostaGoCampaignHeaderDecoration> {
+  @override
+  void initState() {
+    super.initState();
+    widget.store.watch();
+  }
+
+  @override
+  void didUpdateWidget(CostaGoCampaignHeaderDecoration oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.unwatch();
+      widget.store.watch();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.store.unwatch();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => ListenableBuilder(
-      listenable: store,
+      listenable: widget.store,
       builder: (context, _) {
-        final campaign = enabled
-            ? store
-                .forPlacement('HOME')
-                .where((c) =>
-                    c['decorateHeader'] == true &&
-                    ['CHRISTMAS', 'CARNIVAL', 'SUMMER'].contains(c['variant']))
-                .firstOrNull
-            : null;
+        final campaign = widget.enabled ? widget.store.headerCampaign : null;
         return Stack(clipBehavior: Clip.none, children: [
-          child,
+          widget.child,
           if (campaign != null)
             Positioned(
-                top: -4,
-                left: 5,
+                top: -5,
+                left: -2,
+                width: 25,
+                height: 19,
                 child: IgnorePointer(
                     child: ExcludeSemantics(
-                        child: Icon(
-                            switch (campaign['variant']) {
-                              'CHRISTMAS' => Icons.ac_unit,
-                              'CARNIVAL' => Icons.celebration_outlined,
-                              _ => Icons.wb_sunny_outlined
-                            },
-                            size: 18,
-                            color: Theme.of(context).colorScheme.primary))))
+                        child: _CampaignDecorationAsset(
+                            campaign: campaign, store: widget.store)))),
         ]);
       });
 }
 
+class _CampaignDecorationAsset extends StatelessWidget {
+  const _CampaignDecorationAsset({required this.campaign, required this.store});
+  final CampaignData campaign;
+  final CostaGoCampaignStore store;
+  @override
+  Widget build(BuildContext context) {
+    final local = switch (campaign['variant']) {
+      'CHRISTMAS' => 'christmas_hat',
+      'CARNIVAL' => 'carnival_mask',
+      'SUMMER' => 'summer_detail',
+      _ => null,
+    };
+    Widget fallback() => local == null
+        ? const SizedBox.shrink()
+        : Image.asset('assets/campaigns/header/$local.png',
+            key: ValueKey('campaign-decoration-$local'),
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const SizedBox.shrink());
+    final assets = campaign['assets'] as List? ?? [];
+    // DECORATION is a separate authenticated resource, never MAIN or THUMBNAIL.
+    if (!assets.contains('DECORATION')) return fallback();
+    return Image.network(store.imageUrl(campaign, 'DECORATION'),
+        headers: store.headers,
+        key: ValueKey('campaign-decoration-remote-${campaign['id']}'),
+        fit: BoxFit.contain,
+        cacheWidth: 100,
+        frameBuilder: (_, child, frame, synchronous) =>
+            frame == null && !synchronous ? fallback() : child,
+        errorBuilder: (_, __, ___) => fallback());
+  }
+}
+
 /// Session-scoped, memory-only cache. Financial rewards and advertising are unrelated.
-class CostaGoCampaignStore extends ChangeNotifier {
+class CostaGoCampaignStore extends ChangeNotifier with WidgetsBindingObserver {
   CostaGoCampaignStore(
       {required this.load,
       required this.detail,
@@ -255,6 +310,48 @@ class CostaGoCampaignStore extends ChangeNotifier {
   final Map<String, String> headers;
   final Duration ttl;
   List<CampaignData> _items = [];
+  int _watchers = 0;
+  Timer? _refreshTimer;
+  void watch() {
+    if (_disposed || ++_watchers != 1) return;
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed && _watchers > 0) _startRefresh();
+    });
+  }
+
+  void unwatch() {
+    if (_watchers == 0 || --_watchers != 0) return;
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+  }
+
+  void _startRefresh() {
+    _refreshTimer?.cancel();
+    unawaited(refresh(force: true));
+    _refreshTimer = Timer.periodic(ttl, (_) => unawaited(refresh(force: true)));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _watchers > 0) {
+      _startRefresh();
+    } else {
+      _refreshTimer?.cancel();
+    }
+  }
+
+  CampaignData? get headerCampaign {
+    final first = _items
+        .where((item) => current(item) && item['decorateHeader'] == true)
+        .firstOrNull;
+    return first != null &&
+            ['CHRISTMAS', 'CARNIVAL', 'SUMMER', 'CUSTOM']
+                .contains(first['variant'])
+        ? first
+        : null;
+  }
+
   DateTime? _loadedAt;
   Duration _clockOffset = Duration.zero;
   Future<void>? _pending;
@@ -351,6 +448,8 @@ class CostaGoCampaignStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _expiration?.cancel();
     _itemExpiration?.cancel();
     super.dispose();
@@ -514,13 +613,9 @@ class CampaignImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final assets = campaign['assets'] as List? ?? [];
-    final kind = Theme.of(context).brightness == Brightness.dark &&
-            assets.contains('DARK')
-        ? 'DARK'
-        : thumbnail && assets.contains('THUMBNAIL')
-            ? 'THUMBNAIL'
-            : 'MAIN';
-    if (!assets.contains(kind)) return const SizedBox.shrink();
+    final kind = campaignImageKind(assets, Theme.of(context).brightness,
+        thumbnail: thumbnail);
+    if (kind == null) return const SizedBox.shrink();
     return Padding(
         padding: const EdgeInsets.only(bottom: 16),
         child: ClipRRect(

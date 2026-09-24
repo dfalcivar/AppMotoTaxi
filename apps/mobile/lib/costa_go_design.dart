@@ -1,3 +1,4 @@
+import 'costa_go_coastal.dart';
 import 'package:flutter/material.dart';
 
 abstract final class CostaGoSpace {
@@ -13,8 +14,8 @@ abstract final class CostaGoSpace {
 abstract final class CostaGoRadius {
   static const double small = 12;
   static const double medium = 16;
-  static const double large = 20;
-  static const double sheet = 28;
+  static const double large = 24;
+  static const double sheet = 36;
   static const double pill = 999;
 }
 
@@ -358,7 +359,8 @@ abstract final class CostaGoTheme {
         ),
       ),
       cardTheme: CardThemeData(
-        elevation: 0,
+        elevation: 1.5,
+        shadowColor: scheme.primary.withValues(alpha: .08),
         margin: const EdgeInsets.symmetric(vertical: CostaGoSpace.xs),
         color: surfaceLow,
         surfaceTintColor: Colors.transparent,
@@ -756,24 +758,12 @@ class CostaGoSurface extends StatelessWidget {
           CostaGoStatusTone.neutral =>
             scheme.outlineVariant.withValues(alpha: .86),
         };
-    final content = Padding(padding: padding, child: child);
-    return Material(
-      color: background,
-      elevation: CostaGoElevation.card(Theme.of(context).brightness),
-      shadowColor: CostaGoElevation.shadow(scheme),
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CostaGoRadius.large),
-        side: BorderSide(color: border),
-      ),
-      child: onTap == null
-          ? content
-          : InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(CostaGoRadius.large),
-              child: content,
-            ),
-    );
+    return CostaGoCard(
+        backgroundColor: background,
+        borderColor: border,
+        padding: padding,
+        onTap: onTap,
+        child: child);
   }
 }
 

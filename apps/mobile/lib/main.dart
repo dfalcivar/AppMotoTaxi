@@ -3163,215 +3163,197 @@ class _LoginState extends State<Login> {
     final isDriver = widget.role == 'DRIVER';
     final scheme = Theme.of(c).colorScheme;
     return CostaGoScaffold(
+        extendBodyBehindAppBar: true,
         appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            foregroundColor: Colors.white,
+            titleTextStyle: Theme.of(c)
+                .textTheme
+                .titleLarge
+                ?.copyWith(color: Colors.white, fontWeight: FontWeight.w800),
+            systemOverlayStyle: const SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: Brightness.light,
+                statusBarBrightness: Brightness.dark),
             title:
                 Text(isDriver ? 'Acceso de conductor' : 'Acceso de pasajero'),
-            actions: const [ThemeSelector()]),
-        body: Container(
-            decoration: BoxDecoration(
-                gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                  scheme.primaryContainer.withValues(alpha: .5),
-                  scheme.surface,
-                ])),
+            actions: const [ThemeSelector(onPhoto: true)]),
+        body: CostaGoAuthBackground(
             child: SafeArea(
-                top: false,
                 child: LayoutBuilder(
                     builder: (context, constraints) => SingleChildScrollView(
-                        padding: const EdgeInsets.all(24),
+                        padding: const EdgeInsets.fromLTRB(
+                            24, kToolbarHeight + 24, 24, 24),
                         child: ConstrainedBox(
                             constraints: BoxConstraints(
-                                minHeight: constraints.maxHeight - 48),
+                                minHeight:
+                                    (constraints.maxHeight - kToolbarHeight - 48)
+                                        .clamp(0, double.infinity)),
                             child: Center(
                                 child: ConstrainedBox(
                                     constraints:
                                         const BoxConstraints(maxWidth: 460),
-                                    child: Card(
-                                        elevation: 4,
-                                        shadowColor: scheme.shadow
-                                            .withValues(alpha: .18),
+                                    child: CostaGoAuthSurface(
                                         child: Padding(
                                             padding: const EdgeInsets.all(24),
-                                            child: Column(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Container(
-                                                      width: 112,
-                                                      height: 112,
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                              14),
-                                                      decoration: BoxDecoration(
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(32),
-                                                          gradient:
-                                                              const LinearGradient(
-                                                                  colors: [
-                                                                CostaGoPalette
-                                                                    .primary,
-                                                                CostaGoPalette
-                                                                    .primaryDark
-                                                              ])),
-                                                      child: Image.asset(
-                                                          'assets/images/costa-go-emblem.png')),
-                                                  const SizedBox(height: 18),
-                                                  Text(
-                                                      isDriver
-                                                          ? 'Bienvenido, conductor'
-                                                          : '¡Hola! ¿A dónde vamos?',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: Theme.of(c)
-                                                          .textTheme
-                                                          .headlineSmall
-                                                          ?.copyWith(
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .bold)),
-                                                  const SizedBox(height: 6),
-                                                  Text(
-                                                      isDriver
-                                                          ? 'Ingresa para recibir solicitudes cercanas.'
-                                                          : 'Ingresa para solicitar tu próxima mototaxi.',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: Theme.of(c)
-                                                          .textTheme
-                                                          .bodyMedium
-                                                          ?.copyWith(
-                                                              color: scheme
-                                                                  .onSurfaceVariant)),
-                                                  const SizedBox(height: 24),
-                                                  TextField(
-                                                      controller: email,
-                                                      keyboardType:
-                                                          TextInputType
-                                                              .emailAddress,
-                                                      textInputAction:
-                                                          TextInputAction.next,
-                                                      decoration: const InputDecoration(
-                                                          labelText:
-                                                              'Correo electrónico',
-                                                          prefixIcon: Icon(Icons
-                                                              .alternate_email))),
-                                                  const SizedBox(height: 14),
-                                                  TextField(
-                                                      controller: password,
-                                                      obscureText:
-                                                          !showPassword,
-                                                      textInputAction:
-                                                          TextInputAction.done,
-                                                      onSubmitted: (_) =>
-                                                          busy ? null : go(),
-                                                      decoration: InputDecoration(
-                                                          labelText:
-                                                              'Contraseña',
-                                                          prefixIcon:
-                                                              const Icon(Icons
-                                                                  .lock_outline),
-                                                          suffixIcon: IconButton(
-                                                              tooltip: showPassword
-                                                                  ? 'Ocultar contraseña'
-                                                                  : 'Mostrar contraseña',
-                                                              onPressed: () =>
-                                                                  setState(() =>
-                                                                      showPassword =
-                                                                          !showPassword),
-                                                              icon: Icon(showPassword
-                                                                  ? Icons
-                                                                      .visibility_off_outlined
-                                                                  : Icons
-                                                                      .visibility_outlined)))),
-                                                  if (error != null) ...[
-                                                    const SizedBox(height: 14),
-                                                    Container(
-                                                        width: double.infinity,
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .all(12),
-                                                        decoration: BoxDecoration(
-                                                            color: scheme
-                                                                .errorContainer,
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        12)),
-                                                        child: Row(children: [
-                                                          Icon(
-                                                              Icons
-                                                                  .error_outline,
-                                                              color: scheme
-                                                                  .onErrorContainer),
-                                                          const SizedBox(
-                                                              width: 10),
-                                                          Expanded(
-                                                              child: Text(
-                                                                  error!,
-                                                                  style: TextStyle(
-                                                                      color: scheme
-                                                                          .onErrorContainer)))
-                                                        ]))
-                                                  ],
-                                                  const SizedBox(height: 22),
-                                                  FilledButton.icon(
-                                                      onPressed:
-                                                          busy ? null : go,
-                                                      icon: busy
-                                                          ? const SizedBox(
-                                                              width: 20,
-                                                              height: 20,
-                                                              child:
-                                                                  CircularProgressIndicator(
-                                                                      strokeWidth:
-                                                                          2))
-                                                          : Icon(isDriver
+                                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                              Image.asset(
+                                                  'assets/images/costa-go-emblem.png',
+                                                  width: 110,
+                                                  height: 116),
+                                              const Text('Costa-Go',
+                                                  style: TextStyle(
+                                                      fontSize: 32,
+                                                      fontWeight:
+                                                          FontWeight.w900)),
+                                              Text('Tu ruta, más cerca',
+                                                  style: TextStyle(
+                                                      color: scheme.primary,
+                                                      fontStyle:
+                                                          FontStyle.italic,
+                                                      fontSize: 18)),
+                                              const SizedBox(height: 18),
+                                              Text(
+                                                  isDriver
+                                                      ? 'Bienvenido, conductor'
+                                                      : '¡Hola! ¿A dónde vamos?',
+                                                  textAlign: TextAlign.center,
+                                                  style: Theme.of(c)
+                                                      .textTheme
+                                                      .headlineSmall
+                                                      ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.bold)),
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                  isDriver
+                                                      ? 'Ingresa para recibir solicitudes cercanas.'
+                                                      : 'Ingresa para solicitar tu próxima mototaxi.',
+                                                  textAlign: TextAlign.center,
+                                                  style: Theme.of(c)
+                                                      .textTheme
+                                                      .bodyMedium
+                                                      ?.copyWith(
+                                                          color: scheme
+                                                              .onSurfaceVariant)),
+                                              const SizedBox(height: 24),
+                                              TextField(
+                                                  controller: email,
+                                                  keyboardType: TextInputType
+                                                      .emailAddress,
+                                                  textInputAction:
+                                                      TextInputAction.next,
+                                                  decoration: const InputDecoration(
+                                                      labelText:
+                                                          'Correo electrónico',
+                                                      prefixIcon: Icon(Icons
+                                                          .alternate_email))),
+                                              const SizedBox(height: 14),
+                                              TextField(
+                                                  controller: password,
+                                                  obscureText: !showPassword,
+                                                  textInputAction:
+                                                      TextInputAction.done,
+                                                  onSubmitted: (_) =>
+                                                      busy ? null : go(),
+                                                  decoration: InputDecoration(
+                                                      labelText: 'Contraseña',
+                                                      prefixIcon: const Icon(
+                                                          Icons.lock_outline),
+                                                      suffixIcon: IconButton(
+                                                          tooltip: showPassword
+                                                              ? 'Ocultar contraseña'
+                                                              : 'Mostrar contraseña',
+                                                          onPressed: () =>
+                                                              setState(() =>
+                                                                  showPassword =
+                                                                      !showPassword),
+                                                          icon: Icon(showPassword
                                                               ? Icons
-                                                                  .sports_motorsports_outlined
+                                                                  .visibility_off_outlined
                                                               : Icons
-                                                                  .person_outline),
-                                                      label: Text(busy
-                                                          ? 'Ingresando…'
-                                                          : 'Ingresar')),
-                                                  if (biometricSession !=
-                                                      null) ...[
-                                                    const SizedBox(height: 10),
-                                                    OutlinedButton.icon(
-                                                      onPressed: busy
-                                                          ? null
-                                                          : biometricLogin,
-                                                      icon: const Icon(
-                                                          Icons.fingerprint),
-                                                      label: const Text(
-                                                          'Ingresar con biometría'),
-                                                    ),
-                                                  ],
-                                                  const SizedBox(height: 10),
-                                                  TextButton.icon(
-                                                      onPressed: () =>
-                                                          Navigator.push(
-                                                              c,
-                                                              MaterialPageRoute(
-                                                                  builder: (_) =>
-                                                                      const Recovery())),
-                                                      icon: const Icon(
-                                                          Icons.key_outlined),
-                                                      label: const Text(
-                                                          'Recuperar contraseña')),
-                                                  TextButton.icon(
-                                                      onPressed: () =>
-                                                          Navigator.push(
-                                                              c,
-                                                              MaterialPageRoute(
-                                                                  builder: (_) =>
-                                                                      const Register())),
-                                                      icon: const Icon(Icons
-                                                          .person_add_alt_1_outlined),
-                                                      label: const Text(
-                                                          'Crear una cuenta'))
-                                                ])))))))))));
+                                                                  .visibility_outlined)))),
+                                              if (error != null) ...[
+                                                const SizedBox(height: 14),
+                                                Container(
+                                                    width: double.infinity,
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                            12),
+                                                    decoration: BoxDecoration(
+                                                        color: scheme
+                                                            .errorContainer,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(12)),
+                                                    child: Row(children: [
+                                                      Icon(Icons.error_outline,
+                                                          color: scheme
+                                                              .onErrorContainer),
+                                                      const SizedBox(width: 10),
+                                                      Expanded(
+                                                          child: Text(error!,
+                                                              style: TextStyle(
+                                                                  color: scheme
+                                                                      .onErrorContainer)))
+                                                    ]))
+                                              ],
+                                              const SizedBox(height: 22),
+                                              FilledButton.icon(
+                                                  onPressed: busy ? null : go,
+                                                  icon: busy
+                                                      ? const SizedBox(
+                                                          width: 20,
+                                                          height: 20,
+                                                          child:
+                                                              CircularProgressIndicator(
+                                                                  strokeWidth:
+                                                                      2))
+                                                      : Icon(isDriver
+                                                          ? Icons
+                                                              .sports_motorsports_outlined
+                                                          : Icons
+                                                              .person_outline),
+                                                  label: Text(busy
+                                                      ? 'Ingresando…'
+                                                      : 'Ingresar')),
+                                              if (biometricSession != null) ...[
+                                                const SizedBox(height: 10),
+                                                OutlinedButton.icon(
+                                                  onPressed: busy
+                                                      ? null
+                                                      : biometricLogin,
+                                                  icon: const Icon(
+                                                      Icons.fingerprint),
+                                                  label: const Text(
+                                                      'Ingresar con biometría'),
+                                                ),
+                                              ],
+                                              const SizedBox(height: 10),
+                                              TextButton.icon(
+                                                  onPressed: () => Navigator.push(
+                                                      c,
+                                                      MaterialPageRoute(
+                                                          builder: (_) =>
+                                                              const Recovery())),
+                                                  icon: const Icon(
+                                                      Icons.key_outlined),
+                                                  label: const Text(
+                                                      'Recuperar contraseña')),
+                                              TextButton.icon(
+                                                  onPressed: () => Navigator.push(
+                                                      c,
+                                                      MaterialPageRoute(
+                                                          builder: (_) =>
+                                                              const Register())),
+                                                  icon: const Icon(Icons
+                                                      .person_add_alt_1_outlined),
+                                                  label: const Text(
+                                                      'Crear una cuenta'))
+                                            ])))))))))));
   }
 }
 
@@ -6440,18 +6422,6 @@ class _AccountHubState extends State<AccountHub> {
             ),
           ),
           actionCard(
-            icon: Icons.campaign_outlined,
-            title: 'Campañas Costa-Go',
-            subtitle: 'Novedades, beneficios y campañas disponibles',
-            onTap: () => Navigator.push(
-                c,
-                MaterialPageRoute(
-                    builder: (_) => CostaGoCampaignScreen(
-                        store: campaignsFor(widget.s),
-                        onAction: (context, route) =>
-                            openCampaignAction(context, widget.s, route)))),
-          ),
-          actionCard(
             icon: Icons.notifications_none_rounded,
             title: 'Notificaciones',
             subtitle: 'Preferencias y configuración',
@@ -8458,23 +8428,10 @@ class _PassengerSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: padding ?? const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color ?? scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(CostaGoRadius.large),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .75)),
-        boxShadow: [
-          BoxShadow(
-            color: CostaGoElevation.shadow(scheme),
-            blurRadius: 16,
-            offset: const Offset(0, 5),
-          )
-        ],
-      ),
-      child: child,
-    );
+    return CostaGoCard(
+        padding: padding ?? const EdgeInsets.all(16),
+        backgroundColor: color,
+        child: child);
   }
 }
 
@@ -9099,7 +9056,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
   Timer? timer;
   bool ratingPrompted = false;
   bool passengerChatOpen = false;
-  double sheetExtent = .52;
+  double sheetExtent = .60;
   bool requestFormOpen = false;
   DateTime? lastRouteAt;
   double? routeDistanceMeters;
@@ -13082,65 +13039,59 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         CostaGoHomeCampaigns(
             store: campaignsFor(widget.s),
             onAction: (c, r) => openCampaignAction(c, widget.s, r)),
-        LayoutBuilder(builder: (context, box) {
-          final oneColumn = box.maxWidth < 300 ||
-              MediaQuery.textScalerOf(context).scale(1) > 1.4;
-          final width = oneColumn ? box.maxWidth : (box.maxWidth - 12) / 2;
-          return Wrap(spacing: 12, runSpacing: 12, children: [
-            SizedBox(
-                width: width,
-                child: CostaGoQuickActionCard(
-                    title: 'Solicitar mototaxi',
-                    subtitle: 'Viaja seguro en minutos',
-                    icon: Icons.local_taxi,
-                    officialVehicle: true,
-                    onTap: () {
-                      setState(() => requestFormOpen = true);
-                      _movePassengerSheet(.82);
-                    })),
-            SizedBox(
-                width: width,
-                child: CostaGoQuickActionCard(
-                    title: 'Mis viajes',
-                    subtitle: 'Historial y estado de tus viajes',
-                    icon: Icons.history,
-                    onTap: () async {
-                      final draft = await Navigator.push<TripRepeatDraft>(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => PassengerTripsView(widget.s)));
-                      if (draft != null && mounted) {
-                        setState(() => requestFormOpen = true);
-                        applyRepeatDraft(draft);
-                      }
-                    })),
-            SizedBox(
-                width: width,
-                child: CostaGoQuickActionCard(
-                    title: 'Comercios afiliados',
-                    subtitle: 'Negocios y servicios cerca de ti',
-                    icon: Icons.storefront_outlined,
-                    onTap: () => Navigator.push(
+        CostaGoQuickActionGrid(children: [
+          Padding(
+              padding: EdgeInsets.zero,
+              child: CostaGoQuickActionCard(
+                  title: 'Solicitar mototaxi',
+                  subtitle: 'Viaja seguro en minutos',
+                  icon: Icons.electric_rickshaw_outlined,
+                  onTap: () {
+                    setState(() => requestFormOpen = true);
+                    _movePassengerSheet(.82);
+                  })),
+          Padding(
+              padding: EdgeInsets.zero,
+              child: CostaGoQuickActionCard(
+                  title: 'Mis viajes',
+                  subtitle: 'Historial y estado de tus viajes',
+                  icon: Icons.schedule_outlined,
+                  onTap: () async {
+                    final draft = await Navigator.push<TripRepeatDraft>(
                         context,
                         MaterialPageRoute(
-                            builder: (_) => CostaGoAffiliatesScreen(
-                                load: () => api.banners(
-                                    widget.s.token, 'PASSENGER_HOME',
-                                    serviceAreaId: selectedOriginArea?.id),
-                                imageUrl: _bannerImageUrl,
-                                onTap: _openBanner,
-                                onImpression: (b) => unawaited(
-                                    _reportBannerEvent(b, 'IMPRESSION'))))))),
-            SizedBox(
-                width: width,
-                child: CostaGoQuickActionCard(
-                    title: 'Mis direcciones',
-                    subtitle: 'Accesos rápidos',
-                    icon: Icons.star_outline,
-                    onTap: showFavoritePlaces)),
-          ]);
-        }),
-        const SizedBox(height: 32),
+                            builder: (_) => PassengerTripsView(widget.s)));
+                    if (draft != null && mounted) {
+                      setState(() => requestFormOpen = true);
+                      applyRepeatDraft(draft);
+                    }
+                  })),
+          Padding(
+              padding: EdgeInsets.zero,
+              child: CostaGoQuickActionCard(
+                  title: 'Comercios afiliados',
+                  subtitle: 'Negocios y servicios cerca de ti',
+                  icon: Icons.storefront_outlined,
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => CostaGoAffiliatesScreen(
+                              load: () => api.banners(
+                                  widget.s.token, 'PASSENGER_HOME',
+                                  serviceAreaId: selectedOriginArea?.id),
+                              imageUrl: _bannerImageUrl,
+                              onTap: _openBanner,
+                              onImpression: (b) => unawaited(
+                                  _reportBannerEvent(b, 'IMPRESSION'))))))),
+          Padding(
+              padding: EdgeInsets.zero,
+              child: CostaGoQuickActionCard(
+                  title: 'Mis direcciones',
+                  subtitle: 'Accesos rápidos',
+                  icon: Icons.star_outline,
+                  onTap: showFavoritePlaces)),
+        ]),
+        const SizedBox(height: 115),
       ];
 
   List<Widget> _requestContent(BuildContext context) => [
@@ -13673,17 +13624,17 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
               ),
               DraggableScrollableSheet(
                 controller: passengerSheetController,
-                initialChildSize: .52,
+                initialChildSize: .60,
                 minChildSize: .18,
                 maxChildSize: .92,
                 snap: true,
-                snapSizes: const [.28, .52, .9],
+                snapSizes: const [.28, .60, .9],
                 builder: (context, scrollController) {
                   passengerSheetScrollController = scrollController;
                   return CostaGoGlassSheet(
                     overMap: active == null,
                     decoration: active == null
-                        ? CostaGoDecorationIntensity.subtle
+                        ? CostaGoDecorationIntensity.medium
                         : CostaGoDecorationIntensity.none,
                     child: ListView(
                       controller: scrollController,
@@ -13731,7 +13682,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                                   tooltip: 'Volver a los accesos',
                                   onPressed: () {
                                     setState(() => requestFormOpen = false);
-                                    _movePassengerSheet(.52);
+                                    _movePassengerSheet(.60);
                                   },
                                   icon: const Icon(Icons.arrow_back)),
                               const Expanded(

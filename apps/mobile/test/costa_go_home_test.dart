@@ -89,12 +89,16 @@ void main() {
                 enabled: enabled,
                 child: const Text('Usuario real'))));
     await tester.pumpWidget(app());
-    expect(find.byIcon(Icons.celebration_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.wb_sunny_outlined), findsNothing);
-    expect(find.byIcon(Icons.ac_unit), findsNothing);
+    expect(find.byKey(const ValueKey('campaign-decoration-carnival_mask')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('campaign-decoration-summer_detail')),
+        findsNothing);
+    expect(find.byKey(const ValueKey('campaign-decoration-christmas_hat')),
+        findsNothing);
     enabled = false;
     await tester.pumpWidget(app());
-    expect(find.byIcon(Icons.celebration_outlined), findsNothing);
+    expect(find.byKey(const ValueKey('campaign-decoration-carnival_mask')),
+        findsNothing);
     await tester.pumpWidget(const SizedBox());
     store.dispose();
   });
@@ -187,4 +191,32 @@ void main() {
       }
     }
   }
+  testWidgets('quick grid matches each row height to longest content',
+      (tester) async {
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Padding(
+                padding: const EdgeInsets.all(14),
+                child: CostaGoQuickActionGrid(children: [
+                  CostaGoQuickActionCard(
+                      key: const ValueKey('short'),
+                      title: 'Mis direcciones',
+                      subtitle: 'Accesos rápidos',
+                      icon: Icons.star_outline,
+                      onTap: () {}),
+                  CostaGoQuickActionCard(
+                      key: const ValueKey('long'),
+                      title: 'Comercios afiliados',
+                      subtitle: 'Negocios y servicios cerca de ti',
+                      icon: Icons.storefront_outlined,
+                      onTap: () {}),
+                ])))));
+    expect(tester.getSize(find.byKey(const ValueKey('short'))).height,
+        tester.getSize(find.byKey(const ValueKey('long'))).height);
+    expect(tester.takeException(), isNull);
+  });
 }

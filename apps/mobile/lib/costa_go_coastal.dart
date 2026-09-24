@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 enum CostaGoDecorationIntensity { none, subtle, medium }
@@ -90,7 +90,9 @@ class CostaGoFormSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      child: CostaGoCard(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
           Icon(icon, color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: 10),
@@ -100,7 +102,7 @@ class CostaGoFormSection extends StatelessWidget {
         ]),
         const SizedBox(height: 14),
         child,
-      ]));
+      ])));
 }
 
 /// Static, non-interactive scenery. No seasonal state or campaign inference.
@@ -114,78 +116,64 @@ class CostaGoCoastalDecoration extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (intensity == CostaGoDecorationIntensity.none) return child;
-    final colors = Theme.of(context).colorScheme;
     return Stack(children: [
-      Positioned.fill(
+      Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
           child: IgnorePointer(
               child: ExcludeSemantics(
-                  child: RepaintBoundary(
-                      child: CustomPaint(
-                          painter: _CoastalPainter(
-                              colors.primary,
-                              intensity == CostaGoDecorationIntensity.medium
-                                  ? .18
-                                  : .075)))))),
+                  child: Opacity(
+            opacity: intensity == CostaGoDecorationIntensity.medium ? .38 : .17,
+            child: ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (bounds) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  Color(0x18FFFFFF),
+                  Color(0x99FFFFFF),
+                  Colors.white,
+                ],
+                stops: [0, .36, .66, 1],
+              ).createShader(bounds),
+              // Filter only the decorative layer: text and controls stay sharp.
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: .5, sigmaY: .5),
+                child: ColorFiltered(
+                  // 45% saturation, 85% contrast: midway between earlier treatments.
+                  colorFilter: const ColorFilter.matrix([
+                    .4819,
+                    .3344,
+                    .0337,
+                    0,
+                    24,
+                    .0994,
+                    .7169,
+                    .0337,
+                    0,
+                    30,
+                    .0994,
+                    .3344,
+                    .4162,
+                    0,
+                    36,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                  ]),
+                  child: Image.asset('assets/images/coastal-landscape.png',
+                      fit: BoxFit.fitWidth),
+                ),
+              ),
+            ),
+          )))),
       child,
     ]);
   }
-}
-
-class _CoastalPainter extends CustomPainter {
-  const _CoastalPainter(this.color, this.opacity);
-  final Color color;
-  final double opacity;
-  @override
-  void paint(Canvas canvas, Size size) {
-    final h = math.min(size.height * .24, 120.0), w = size.width;
-    final paint = Paint()..color = color.withValues(alpha: opacity);
-    for (var i = 0; i < 3; i++) {
-      final y = size.height - h * (.35 + i * .22);
-      final path = Path()
-        ..moveTo(0, y)
-        ..cubicTo(w * .3, y - h * .6, w * .5, y + h * .65, w, y - h * .1)
-        ..lineTo(w, size.height)
-        ..lineTo(0, size.height)
-        ..close();
-      canvas.drawPath(path, paint);
-    }
-    // Silhouettes stay at the lower corners, away from primary content.
-    for (final side in [false, true]) {
-      canvas.save();
-      canvas.translate(side ? w : 0, size.height);
-      if (side) canvas.scale(-1, 1);
-      final trunk = Path()
-        ..moveTo(22, 0)
-        ..quadraticBezierTo(27, -h * .5, 40, -h * .82);
-      canvas.drawPath(
-          trunk,
-          Paint()
-            ..color = color.withValues(alpha: opacity)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 4
-            ..strokeCap = StrokeCap.round);
-      for (var i = 0; i < 5; i++) {
-        final angle = -math.pi + i * math.pi / 4;
-        final end = Offset(
-            40 + math.cos(angle) * 30, -h * .82 + math.sin(angle) * 14 + 12);
-        canvas.drawPath(
-            Path()
-              ..moveTo(40, -h * .82)
-              ..quadraticBezierTo(
-                  (40 + end.dx) / 2, -h * .82 - 13, end.dx, end.dy),
-            Paint()
-              ..color = color.withValues(alpha: opacity)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 5
-              ..strokeCap = StrokeCap.round);
-      }
-      canvas.restore();
-    }
-  }
-
-  @override
-  bool shouldRepaint(_CoastalPainter old) =>
-      color != old.color || opacity != old.opacity;
 }
 
 /// Shared page shell; business widgets and navigation remain unchanged.
@@ -243,21 +231,26 @@ class CostaGoGlassSheet extends StatelessWidget {
         color: Colors.transparent,
         elevation: 10,
         shadowColor: c.shadow.withValues(alpha: .16),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(36)),
         clipBehavior: Clip.antiAlias,
-        child: DecoratedBox(
-            decoration: BoxDecoration(
-                gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      c.surface.withValues(alpha: overMap ? .84 : 1.0),
-                      c.primaryContainer.withValues(alpha: overMap ? .74 : 1.0)
-                    ]),
-                border: Border(
-                    top: BorderSide(color: c.onPrimary.withValues(alpha: .4)))),
-            child:
-                CostaGoCoastalDecoration(intensity: decoration, child: child)));
+        child: BackdropFilter(
+            enabled: overMap,
+            filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+            child: DecoratedBox(
+                decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          c.surface.withValues(alpha: overMap ? .72 : 1.0),
+                          c.primaryContainer
+                              .withValues(alpha: overMap ? .62 : 1.0)
+                        ]),
+                    border: Border(
+                        top: BorderSide(
+                            color: c.onPrimary.withValues(alpha: .4)))),
+                child: CostaGoCoastalDecoration(
+                    intensity: decoration, child: child))));
   }
 }
 
@@ -265,37 +258,151 @@ class CostaGoHomeHeader extends StatelessWidget {
   const CostaGoHomeHeader({super.key, this.request = false});
   final bool request;
   @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      child: LayoutBuilder(
-          builder: (context, box) => Row(children: [
-                Image.asset('assets/images/costa-go-emblem.png',
-                    width: 64, height: 64),
-                const SizedBox(width: 12),
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Text('Costa-Go',
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w900)),
-                      Text(request ? 'Solicitar mototaxi' : 'Siempre contigo',
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.primary,
-                              fontWeight: FontWeight.w700)),
-                    ])),
-                if (box.maxWidth > 430 &&
-                    MediaQuery.textScalerOf(context).scale(1) < 1.4)
-                  SizedBox(
-                      width: 130,
-                      child: Text('Juntos llegamos más lejos',
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.primary,
-                              fontStyle: FontStyle.italic))),
-              ])));
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    final brand = Row(children: [
+      Image.asset('assets/images/costa-go-emblem.png', width: 64, height: 76),
+      const SizedBox(width: 7),
+      Flexible(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text.rich(
+            TextSpan(children: [
+              const TextSpan(text: 'Costa-'),
+              TextSpan(text: 'Go', style: TextStyle(color: c.primary))
+            ]),
+            style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w900,
+                color: c.onSurface,
+                letterSpacing: -1)),
+        Text(request ? 'Solicitar mototaxi' : 'Siempre contigo',
+            style: TextStyle(
+                fontSize: 13, color: c.primary, fontWeight: FontWeight.w700)),
+      ])),
+    ]);
+    final slogan = Semantics(
+        label: 'Juntos llegamos más lejos',
+        image: true,
+        child: ExcludeSemantics(
+            child: Align(
+                alignment: Alignment.centerRight,
+                child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 170),
+                    child: ColorFiltered(
+                      // Display the supplied artwork itself. Knock out its pale backdrop
+                      // using blue/red separation; no replacement font or redrawn strokes.
+                      colorFilter: const ColorFilter.matrix([
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        153,
+                        0,
+                        0,
+                        0,
+                        0,
+                        255,
+                        -3,
+                        0,
+                        3,
+                        0,
+                        -300,
+                      ]),
+                      child: Image.asset(
+                          'assets/images/costa-go-slogan-reference.png',
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high),
+                    )))));
+    return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: LayoutBuilder(builder: (context, box) {
+          if (box.maxWidth < 320 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.3) {
+            return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [brand, const SizedBox(height: 8), slogan]);
+          }
+          return Row(children: [
+            Expanded(flex: 2, child: brand),
+            const SizedBox(width: 8),
+            Expanded(child: slogan)
+          ]);
+        }));
+  }
+}
+
+/// Shared tonal surface for forms and navigation cards.
+class CostaGoCard extends StatelessWidget {
+  const CostaGoCard(
+      {super.key,
+      required this.child,
+      this.padding = const EdgeInsets.all(16),
+      this.onTap,
+      this.backgroundColor,
+      this.borderColor});
+  final Color? backgroundColor, borderColor;
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final VoidCallback? onTap;
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    return Container(
+        decoration:
+            BoxDecoration(borderRadius: BorderRadius.circular(24), boxShadow: [
+          BoxShadow(
+              color: c.primary.withValues(alpha: .07),
+              blurRadius: 20,
+              offset: const Offset(0, 6))
+        ]),
+        child: Material(
+            color: backgroundColor ?? c.surface.withValues(alpha: .94),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+                side: BorderSide(
+                    color: borderColor ??
+                        c.outlineVariant.withValues(alpha: .45))),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+                onTap: onTap, child: Padding(padding: padding, child: child))));
+  }
+}
+
+class CostaGoQuickActionGrid extends StatelessWidget {
+  const CostaGoQuickActionGrid({super.key, required this.children});
+  final List<Widget> children;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
+        final single = box.maxWidth < 340 ||
+            MediaQuery.textScalerOf(context).scale(1) > 1.3;
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < children.length; i += single ? 1 : 2) ...[
+                if (i > 0) const SizedBox(height: 10),
+                if (single)
+                  children[i]
+                else
+                  IntrinsicHeight(
+                      child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                        Expanded(child: children[i]),
+                        const SizedBox(width: 10),
+                        Expanded(
+                            child: i + 1 < children.length
+                                ? children[i + 1]
+                                : const SizedBox.shrink()),
+                      ])),
+              ],
+            ]);
+      });
 }
 
 class CostaGoQuickActionCard extends StatelessWidget {
@@ -313,45 +420,88 @@ class CostaGoQuickActionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).colorScheme;
-    return Material(
-        color: c.surface.withValues(alpha: .96),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: BorderSide(color: c.outlineVariant.withValues(alpha: .55))),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-            onTap: onTap,
-            child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                              color: c.primaryContainer,
-                              shape: BoxShape.circle),
-                          child: officialVehicle
-                              ? Image.asset('assets/images/costa-go-emblem.png',
-                                  width: 28, height: 28)
-                              : Icon(icon, color: c.primary, size: 28)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                            Text(title,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleSmall
-                                    ?.copyWith(fontWeight: FontWeight.w800)),
-                            const SizedBox(height: 4),
-                            Text(subtitle,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(color: c.onSurfaceVariant)),
-                          ])),
-                    ]))));
+    return CostaGoCard(
+        onTap: onTap,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
+        child: Row(children: [
+          Container(
+              width: 40,
+              height: 48,
+              decoration: BoxDecoration(
+                  color: c.primaryContainer.withValues(alpha: .7),
+                  shape: BoxShape.circle),
+              child: Icon(icon, size: 29, color: c.primary)),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(title,
+                    style: TextStyle(
+                        fontSize: 14,
+                        height: 1.2,
+                        fontWeight: FontWeight.w800,
+                        color: c.onSurface)),
+                const SizedBox(height: 5),
+                Text(subtitle,
+                    style: TextStyle(
+                        fontSize: 12, height: 1.3, color: c.onSurfaceVariant)),
+              ])),
+          const SizedBox(width: 2),
+          Icon(Icons.chevron_right_rounded,
+              size: 18, color: c.onSurfaceVariant),
+        ]));
+  }
+}
+
+class CostaGoAuthBackground extends StatelessWidget {
+  const CostaGoAuthBackground({super.key, required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    return Stack(fit: StackFit.expand, children: [
+      Image.asset('assets/images/atacames-login-hero.png', fit: BoxFit.cover),
+      DecoratedBox(
+          decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+            const Color(0xff032d50).withValues(alpha: .4),
+            c.surface.withValues(alpha: .72)
+          ]))),
+      CostaGoCoastalDecoration(
+          intensity: CostaGoDecorationIntensity.medium, child: child),
+    ]);
+  }
+}
+
+/// Login uses a stronger glass treatment than dense financial forms.
+class CostaGoAuthSurface extends StatelessWidget {
+  const CostaGoAuthSurface({super.key, required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    return Container(
+        decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(32),
+            gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  c.surface.withValues(alpha: .88),
+                  c.primaryContainer.withValues(alpha: .78)
+                ]),
+            border: Border.all(color: Colors.white.withValues(alpha: .45)),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withValues(alpha: .16),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12))
+            ]),
+        child: child);
   }
 }

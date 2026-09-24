@@ -412,44 +412,66 @@ class RoleAwareHeaderIsland extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => CostaGoCampaignHeaderDecoration(
-      store: campaignsFor(session),
-      enabled: !operational,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 390),
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(
           child: Material(
-            color: Theme.of(context).colorScheme.surface.withValues(alpha: .96),
-            elevation: 5,
-            shadowColor: Colors.black26,
-            borderRadius: BorderRadius.circular(999),
-            clipBehavior: Clip.antiAlias,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              IconButton(
-                tooltip: 'Mi cuenta',
-                onPressed: onAccount,
-                icon: ClipOval(
-                  child: Image.network(
-                    '$base/v1/users/${session.id}/profile-photo',
-                    headers: {'Authorization': 'Bearer ${session.token}'},
-                    width: 42,
-                    height: 42,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.account_circle_outlined,
-                      size: 34,
-                    ),
-                  ),
-                ),
-              ),
-              Flexible(
-                child: Text('Hola, $firstName',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
-              ),
-              const SizedBox(width: 8),
-              ValueListenableBuilder<int>(
+              color: c.surface.withValues(alpha: .95),
+              elevation: 5,
+              shadowColor: c.primary.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(40),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                  onTap: onAccount,
+                  child: Padding(
+                      padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
+                      child: Row(children: [
+                        CostaGoCampaignHeaderDecoration(
+                            store: campaignsFor(session),
+                            enabled: !operational,
+                            child: ClipOval(
+                                child: Image.network(
+                                    '$base/v1/users/${session.id}/profile-photo',
+                                    headers: {
+                                      'Authorization': 'Bearer ${session.token}'
+                                    },
+                                    width: 46,
+                                    height: 46,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => CircleAvatar(
+                                        radius: 23,
+                                        backgroundColor: c.primaryContainer,
+                                        child: Icon(Icons.person_outline,
+                                            color: c.primary))))),
+                        const SizedBox(width: 10),
+                        Expanded(
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              Text('¡Hola, $firstName!',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 16)),
+                              const SizedBox(height: 2),
+                              Text(
+                                  session.role == 'DRIVER'
+                                      ? 'Tu jornada, más cerca'
+                                      : '¿A dónde vamos hoy?',
+                                  style: TextStyle(
+                                      color: c.onSurfaceVariant, fontSize: 12)),
+                            ])),
+                      ]))))),
+      const SizedBox(width: 12),
+      Material(
+          color: c.surface.withValues(alpha: .96),
+          elevation: 5,
+          shadowColor: c.primary.withValues(alpha: .12),
+          shape: const CircleBorder(),
+          child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: ValueListenableBuilder<int>(
                 valueListenable: UserNotificationStore.instance.unread,
                 builder: (context, unread, _) => Badge(
                   isLabelVisible: unread > 0,
@@ -467,11 +489,9 @@ class RoleAwareHeaderIsland extends StatelessWidget {
                     icon: const Icon(Icons.notifications_none_rounded),
                   ),
                 ),
-              ),
-            ]),
-          ),
-        ),
-      ));
+              ))),
+    ]);
+  }
 }
 
 class PassengerTripsView extends StatefulWidget {
