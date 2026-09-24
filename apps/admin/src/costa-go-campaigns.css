@@ -37,6 +37,6 @@
 .campaign-island-content small {display:block}
 .campaign-island-art {position:absolute;inset:0;pointer-events:none}
 .campaign-island-art img {width:100%;height:100%;object-fit:fill}
-.campaign-island-art.mode-EDGES {mask:linear-gradient(#000,#000) top/100% 12px no-repeat,linear-gradient(#000,#000) bottom/100% 8px no-repeat,linear-gradient(#000,#000) left/12px 100% no-repeat,linear-gradient(#000,#000) right/12px 100% no-repeat}
+.campaign-island-art.mode-EDGES {mask-image:radial-gradient(ellipse closest-side at center,rgba(0,0,0,.12) 0%,rgba(0,0,0,.12) 45%,rgba(0,0,0,.65) 75%,#000 100%);-webkit-mask-image:radial-gradient(ellipse closest-side at center,rgba(0,0,0,.12) 0%,rgba(0,0,0,.12) 45%,rgba(0,0,0,.65) 75%,#000 100%)}
 .campaign-island-art.mode-AVATAR_ACCENT {inset:4px auto auto 6px;width:25px;height:19px;z-index:2}
 @media(max-width:760px){.campaign-resource-variants{grid-template-columns:1fr}}

@@ -299,8 +299,19 @@ class _CampaignHeaderState extends State<CostaGoCampaignHeaderDecoration> {
                 child: ClipRRect(
                     borderRadius: BorderRadius.circular(40),
                     child: mode == 'EDGES'
-                        ? ClipPath(
-                            clipper: const _IslandEdgesClipper(),
+                        ? ShaderMask(
+                            blendMode: BlendMode.dstIn,
+                            shaderCallback: (bounds) => const RadialGradient(
+                                  radius: .5,
+                                  transform: _IslandEdgesTransform(),
+                                  colors: [
+                                    Color(0x1FFFFFFF),
+                                    Color(0x1FFFFFFF),
+                                    Color(0xA6FFFFFF),
+                                    Color(0xFFFFFFFF)
+                                  ],
+                                  stops: [0, .45, .75, 1],
+                                ).createShader(bounds),
                             child: decoration)
                         : decoration)),
           widget.child,
@@ -311,17 +322,20 @@ class _CampaignHeaderState extends State<CostaGoCampaignHeaderDecoration> {
       });
 }
 
-class _IslandEdgesClipper extends CustomClipper<Path> {
-  const _IslandEdgesClipper();
+/// An elliptical fade preserves the artwork at every edge without a hard cut.
+/// Matches the admin preview's closest-side ellipse, including short islands.
+class _IslandEdgesTransform extends GradientTransform {
+  const _IslandEdgesTransform();
   @override
-  Path getClip(Size size) => Path()
-    ..fillType = PathFillType.evenOdd
-    ..addRect(Offset.zero & size)
-    ..addRRect(RRect.fromRectAndRadius(
-        Rect.fromLTRB(12, 12, size.width - 12, size.height - 8),
-        const Radius.circular(24)));
-  @override
-  bool shouldReclip(_IslandEdgesClipper oldClipper) => false;
+  Matrix4 transform(Rect bounds, {TextDirection? textDirection}) {
+    final shortest = bounds.shortestSide;
+    if (shortest <= 0) return Matrix4.identity();
+    final sx = bounds.width / shortest;
+    final sy = bounds.height / shortest;
+    return Matrix4.diagonal3Values(sx, sy, 1)
+      ..setTranslationRaw(
+          bounds.center.dx * (1 - sx), bounds.center.dy * (1 - sy), 0);
+  }
 }
 
 class _CampaignDecorationAsset extends StatelessWidget {

@@ -49,7 +49,7 @@ Cargar o borrar devuelve la campaña a borrador: enviar a aprobación → aproba
 
 ## 4. Administrador
 
-Crear/Editar incluye cuatro grupos explicados con General/Claro/Oscuro. Archivos seleccionados y eliminaciones se aplican al guardar; también pueden administrarse desde el resumen. Campos opcionales, recomendaciones de tamaño, zona segura, transparencia y CTA reales. Miniaturas de recursos y preview aproximado de isla con selector de tema. EDGES protege el centro; FULL_OVERLAY requiere diseño transparente adecuado; AVATAR_ACCENT conserva el detalle pequeño.
+Crear/Editar incluye cuatro grupos explicados con General/Claro/Oscuro. Archivos seleccionados y eliminaciones se aplican al guardar; también pueden administrarse desde el resumen. Campos opcionales, recomendaciones de tamaño, zona segura, transparencia y CTA reales. Miniaturas de recursos y preview aproximado de isla con selector de tema. EDGES suaviza la decoración hacia el centro; FULL_OVERLAY requiere diseño transparente adecuado; AVATAR_ACCENT conserva el detalle pequeño.
 
 ## 5. Flutter
 
@@ -59,7 +59,7 @@ Crear/Editar incluye cuatro grupos explicados con General/Claro/Oscuro. Archivos
 - Detalle: mainImage del tema, cargada al abrir. Error elimina imagen y espacio. Vigencia humanizada en idioma/hora local con MaterialLocalizations.
 - Isla: HEADER → DECORATION solo con permiso explícito → pequeño respaldo local de Navidad/Carnaval/Verano → normal. Error de red deja isla normal. No inferencia por fecha o ciudad.
 - decorateHeader=false/NONE no carga ni muestra decoración. Una campaña de mayor prioridad decora la isla, independientemente de la card.
-- EDGES recorta el centro; FULL_OVERLAY detrás del contenido; AVATAR_ACCENT junto al avatar. IgnorePointer y ExcludeSemantics mantienen interacción/accesibilidad.
+- EDGES aplica un desvanecido elíptico: contorno visible y opacidad del 12% en el centro; FULL_OVERLAY detrás del contenido; AVATAR_ACCENT junto al avatar. IgnorePointer y ExcludeSemantics mantienen interacción/accesibilidad.
 - Pasajero y conductor comparten RoleAwareHeaderIsland y selección de recursos. Avatar, saludo, campana y badge se mantienen. Durante operación se conserva la supresión de decoración existente.
 - CTA real procede del backend. Beneficios usan Benefit Engine, estado activado y vigencia reales; no se vuelve a ofrecer activación ya consumida. Campañas informativas no añaden botón vacío.
 

@@ -46,6 +46,6 @@ export function CampaignResources({campaign,token,disabled,onUpload,onRemove,fil
  <div className={`campaign-island-preview ${dark?'is-dark':''}`}>
  {campaign.decorateHeader&&campaign.headerDecorationMode!=='NONE'&&header&&<div className={`campaign-island-art mode-${campaign.headerDecorationMode??'AVATAR_ACCENT'}`}><Preview campaign={campaign} token={token} kind={header} file={files[header]}/></div>}
  <div className="campaign-island-content"><span aria-hidden="true">👤</span><div><strong>Hola, Usuario</strong><small>¿A dónde vamos hoy?</small></div><span aria-hidden="true">♧</span></div>
- </div><p><small>El contenido queda encima del overlay. Bordes protege el centro. Esta vista no incluye los pequeños recursos locales de respaldo.</small></p>
+ </div><p><small>El contenido queda encima del overlay. Bordes desvanece suavemente la decoración hacia el centro, sin cortes rectangulares. Esta vista no incluye los pequeños recursos locales de respaldo.</small></p>
  </section>;
 }
