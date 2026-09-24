@@ -42,7 +42,7 @@ export async function registerFleetRoutes(app:FastifyInstance,authenticate:Authe
     if(req.url.startsWith('/v1/admin/')){
       const user=requirePermission(req,manage?'fleet:manage':'fleet:view');
       // A permission override never removes the mandatory cooperative boundary.
-      if(!['ADMIN','SUPER_ADMIN','ANALISTA_COOPERATIVA'].includes(user.role))throw new fleet.FleetError('FORBIDDEN',403);
+      if(!['ADMIN','SUPER_ADMIN','ANALISTA_COOPERATIVA'].includes(user.role)&&!user.customRoleId)throw new fleet.FleetError('FORBIDDEN',403);
       return {id:user.id!,admin:true,cooperativeId:user.role==='ANALISTA_COOPERATIVA'?user.cooperativeId:undefined,ip:req.ip};
     }
     const user=await authenticate(req,reply,{allowPendingDriver:true});

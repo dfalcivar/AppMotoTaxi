@@ -1,0 +1,20 @@
+.rbac-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1rem}
+.rbac-heading h2{margin:.25rem 0}
+.rbac-role-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.75rem}
+.rbac-role-card{border:1px solid #d8e3f4;border-radius:14px;padding:1rem;display:flex;justify-content:space-between;gap:1rem}
+.rbac-role-card strong,.rbac-role-card small{display:block}
+.rbac-role-card small,.rbac-role-card p{color:#5c6c86}
+.rbac-role-card p{margin:.5rem 0}
+.rbac-role-card summary{cursor:pointer}
+.rbac-editor{width:min(900px,95vw);max-height:90vh;overflow:auto}
+.rbac-fields{display:grid;grid-template-columns:1fr 2fr auto;gap:.75rem;align-items:end}
+.rbac-fields label{display:grid;gap:.25rem}
+.rbac-matrix{max-height:45vh;overflow:auto;display:grid;gap:.5rem;margin:1rem 0}
+.rbac-group{border:1px solid #d8e3f4;border-radius:10px;padding:.65rem}
+.rbac-group-heading{display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+.rbac-group-heading button{border:0;background:none;text-align:left;font-weight:700;cursor:pointer}
+.rbac-group-heading label,.rbac-permissions label{display:flex;align-items:center;gap:.5rem;cursor:pointer}
+.rbac-permissions{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.5rem;padding:.75rem 0 0}
+.rbac-subgroups{display:grid;gap:.75rem;padding:.65rem 0 0}.rbac-subgroup-heading{font-weight:650;display:flex;align-items:center;gap:.5rem}
+.rbac-permissions small{display:block;color:#6b7890;font-size:.75rem}
+@media(max-width:650px){.rbac-fields{grid-template-columns:1fr}.rbac-heading{align-items:flex-start;flex-direction:column}}

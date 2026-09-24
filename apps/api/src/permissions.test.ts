@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasPermission, permissionsForRole } from "./permissions.js";
+import { hasPermission, permissionsForRole, permissionsForCustomRole } from "./permissions.js";
 
 describe("matriz de permisos administrativos", () => {
   it('reserva edición de identidad y eliminación incompleta a administradores autorizados',()=>{
@@ -46,6 +46,18 @@ describe("matriz de permisos administrativos", () => {
     expect(permissions).not.toContain("incidents:manage");
     expect(permissions).not.toContain("unknown:permission");
   });
+});
+
+it('resuelve roles configurables sin heredar el rol base ni aceptar permisos desconocidos',()=>{
+  const permissions=permissionsForCustomRole(['drivers:view','drivers:approve','unknown:action']);
+  expect(permissions).toContain('drivers:view');
+  expect(permissions).toContain('drivers:approve');
+  expect(permissions).not.toContain('settings:manage');
+  expect(permissions).not.toContain('unknown:action');
+});
+
+it('mantiene acceso absoluto del superadministrador aunque exista un override antiguo',()=>{
+  expect(permissionsForRole('ADMIN',[{permission:'roles:manage',allowed:false}])).toContain('roles:manage');
 });
 
 it("permite al rol comercial consultar banners y su segmentación territorial", () => {

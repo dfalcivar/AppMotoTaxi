@@ -17,6 +17,11 @@ export const allPermissions = [
   "fleet:manage",
   "FACTURACION_VER",
   "FACTURACION_ADMINISTRAR",
+  "FACTURACION_CONSULTAR_ESTADO",
+  "FACTURACION_REINTENTAR",
+  "FACTURACION_DESCARGAR",
+  "FACTURACION_REENVIAR",
+  "FACTURACION_NOTA_CREDITO",
   "CLIENTES_FISCALES_VER",
   "CLIENTES_FISCALES_EDITAR",
   "FACTURACION_DASHBOARD_VER",
@@ -29,6 +34,9 @@ export const allPermissions = [
   "drivers:view",
   "drivers:manage",
   "drivers:approve",
+  "drivers:reject",
+  "drivers:request_corrections",
+  "drivers:suspend",
   "drivers:documents:view",
   "drivers:documents:manage",
   "cooperatives:view",
@@ -65,6 +73,12 @@ export const allPermissions = [
   "commercial:campaigns:view",
   "commercial:campaigns:manage",
   "commercial:campaigns:review",
+  "commercial:campaigns:approve",
+  "commercial:campaigns:reject",
+  "commercial:campaigns:request_correction",
+  "commercial:campaigns:pause",
+  "commercial:campaigns:resume",
+  "commercial:campaigns:cancel",
   "commercial:plans:manage",
   "settings:view",
   "settings:manage",
@@ -176,12 +190,26 @@ export function permissionsForRole(
   role: AdminRole,
   overrides: readonly PermissionOverride[] = []
 ): Permission[] {
+  if (role === "ADMIN" || role === "SUPER_ADMIN") return [...allPermissions];
   const resolved = new Set<Permission>(rolePermissions[role]);
   for (const override of overrides) {
     if (!knownPermissions.has(override.permission)) continue;
     const permission = override.permission as Permission;
     if (override.allowed) resolved.add(permission);
     else resolved.delete(permission);
+  }
+  return allPermissions.filter(permission => resolved.has(permission));
+}
+
+export function permissionsForCustomRole(
+  permissions: readonly string[],
+  overrides: readonly PermissionOverride[] = []
+): Permission[] {
+  const resolved = new Set<string>(permissions.filter(permission => knownPermissions.has(permission)));
+  for (const override of overrides) {
+    if (!knownPermissions.has(override.permission)) continue;
+    if (override.allowed) resolved.add(override.permission);
+    else resolved.delete(override.permission);
   }
   return allPermissions.filter(permission => resolved.has(permission));
 }

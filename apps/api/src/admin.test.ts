@@ -208,6 +208,41 @@ describe("consola administrativa", () => {
     expect(mobileDenied.statusCode).toBe(403);
   });
 
+  it('rechaza acceso por API a funciones críticas aunque un rol configurable falsamente incluya permisos heredados',async()=>{
+    const customToken=tokenFor({id:'11111111-1111-4111-8111-111111111111',email:'operador@example.test',
+      name:'Operador',role:'ADMIN_OPERACIONES',customRoleId:'22222222-2222-4222-8222-222222222222',
+      permissions:['drivers:view','drivers:approve','memberships:view','FACTURACION_VER','roles:manage']});
+    const headers={authorization:`Bearer ${customToken}`};
+    expect((await app.inject({method:'GET',url:'/v1/admin/access/roles',headers})).statusCode).toBe(403);
+    expect((await app.inject({method:'GET',url:'/v1/admin/access/permissions',headers})).statusCode).toBe(403);
+    expect((await app.inject({method:'GET',url:'/v1/admin/access/users',headers})).statusCode).toBe(403);
+    expect((await app.inject({method:'PATCH',url:'/v1/admin/fiscal/config/vat',headers,payload:{vatRatePercent:15}})).statusCode).toBe(403);
+    expect((await app.inject({method:'POST',url:'/v1/admin/driver-approvals/DRV-001/decision',headers,
+      payload:{decision:'APPROVE',observation:''}})).statusCode).toBe(200);
+  });
+
+  it('separa rechazo de aprobación en el endpoint de conductores',async()=>{
+    const token=tokenFor({email:'revisor@example.test',name:'Revisor',role:'ADMIN_OPERACIONES',
+      customRoleId:'22222222-2222-4222-8222-222222222222',permissions:['drivers:view','drivers:reject']});
+    const headers={authorization:`Bearer ${token}`};
+    expect((await app.inject({method:'GET',url:'/v1/admin/driver-approvals',headers})).statusCode).toBe(200);
+    expect((await app.inject({method:'POST',url:'/v1/admin/driver-approvals/DRV-001/decision',headers,
+      payload:{decision:'APPROVE',observation:''}})).statusCode).toBe(403);
+    expect((await app.inject({method:'POST',url:'/v1/admin/driver-approvals/DRV-001/decision',headers,
+      payload:{decision:'REJECT',observation:'Documentos inválidos'}})).statusCode).toBe(200);
+  });
+
+  it('bloquea notas de crédito y aprobación comercial sin el permiso de esa acción',async()=>{
+    const token=tokenFor({email:'operador@example.test',name:'Operador',role:'ADMIN_OPERACIONES',
+      customRoleId:'22222222-2222-4222-8222-222222222222',
+      permissions:['FACTURACION_VER','FACTURACION_CONSULTAR_ESTADO','commercial:campaigns:view','commercial:campaigns:reject']});
+    const headers={authorization:`Bearer ${token}`};
+    expect((await app.inject({method:'POST',url:'/v1/admin/fiscal/invoices/11111111-1111-4111-8111-111111111111/credit-note',headers,
+      payload:{}})).statusCode).toBe(403);
+    expect((await app.inject({method:'POST',url:'/v1/admin/commercial/campaigns/11111111-1111-4111-8111-111111111111/action',headers,
+      payload:{action:'APPROVE',note:''}})).statusCode).toBe(403);
+  });
+
   it("solo permite al administrador restablecer contraseñas", async () => {
     const denied = await app.inject({
       method: "POST",

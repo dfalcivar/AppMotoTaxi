@@ -7,6 +7,8 @@ export interface SessionUser {
   role: AdminRole;
   permissions: string[];
   cooperativeId?: string;
+  customRoleId?: string;
+  customRoleName?: string;
   mustChangePassword?: boolean;
   expiresAt?: number;
 }

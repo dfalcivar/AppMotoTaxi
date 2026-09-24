@@ -17,6 +17,7 @@ import {
   allPermissions,
   hasPermission,
   isAdminRole,
+  permissionsForCustomRole,
   permissionsForRole,
   rolePermissions,
   type AdminRole,
@@ -48,6 +49,8 @@ export interface SessionUser {
   permissions?: Permission[];
   cooperativeId?: string;
   administrativeSource?: "WEB_ADMIN" | "MOBILE_ADMIN";
+  customRoleId?: string;
+  customRoleName?: string;
   expiresAt?: number;
 }
 interface Driver { id: string; name: string; email?: string; phone: string; vehicle: string; status: DriverStatus; documents: string; rating: number }
@@ -198,6 +201,7 @@ const cooperativeSchema = z.object({
 const cooperativeUpdateSchema = cooperativeSchema.partial();
 const adminAccessSchema = z.object({
   role: z.enum(adminRoles),
+  customRoleId: z.string().uuid().nullable().optional(),
   cooperativeId: z.string().uuid().nullable().optional(),
   overrides: z.array(z.object({
     permission: z.enum(allPermissions),
@@ -205,6 +209,10 @@ const adminAccessSchema = z.object({
   })).max(allPermissions.length).default([])
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
   message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
+}).refine(value => !value.customRoleId || value.role === 'ADMIN_OPERACIONES', {
+  message: 'CUSTOM_ROLE_REQUIRES_OPERATIONS_BASE'
+}).refine(value => !value.customRoleId || value.overrides.length===0, {
+  message:'CUSTOM_ROLE_OVERRIDES_NOT_ALLOWED'
 }).transform(value => ({ ...value, cooperativeId: value.role === "ANALISTA_COOPERATIVA" ? value.cooperativeId : null }));
 const adminUserCreateSchema = z.object({
   fullName: z.string().trim().min(3).max(120),
@@ -212,10 +220,21 @@ const adminUserCreateSchema = z.object({
   phone: z.string().trim().min(8).max(24),
   password: strongPasswordSchema,
   role: z.enum(["SUPER_ADMIN", "ADMIN_OPERACIONES", "SOPORTE", "ANALISTA_COOPERATIVA", "COLLECTOR", "FINANCE", "COMMERCIAL"]),
+  customRoleId: z.string().uuid().nullable().optional(),
   cooperativeId: z.string().uuid().nullable().optional()
 }).refine(value => value.role !== "ANALISTA_COOPERATIVA" || Boolean(value.cooperativeId), {
   message: "COOPERATIVE_REQUIRED_FOR_ANALYST"
+}).refine(value => !value.customRoleId || value.role === 'ADMIN_OPERACIONES', {
+  message: 'CUSTOM_ROLE_REQUIRES_OPERATIONS_BASE'
 }).transform(value => ({ ...value, cooperativeId: value.role === "ANALISTA_COOPERATIVA" ? value.cooperativeId : null }));
+const customRoleSchema = z.object({
+  name:z.string().trim().min(3).max(80),
+  description:z.string().trim().max(500).default(''),
+  enabled:z.boolean().default(true),
+  permissions:z.array(z.enum(allPermissions)).max(allPermissions.length)
+    .refine(items=>new Set(items).size===items.length,{message:'DUPLICATE_PERMISSION'})
+}).refine(value=>!value.permissions.some(p=>['roles:manage','users:manage'].includes(p)),
+  {message:'SUPER_ADMIN_PERMISSION_RESERVED'});
 const internalCampaignTypeSchema = z.enum(["COSTA_GO", "PAYMENT_POINT", "STRATEGIC_ALLIANCE", "COURTESY"]);
 const bannerSchema = z.object({
   title: z.string().trim().min(3).max(120),
@@ -346,10 +365,42 @@ export function requireAdminSession(request: FastifyRequest): SessionUser & { ro
 }
 export function requirePermission(request: FastifyRequest, permission: Permission) {
   const user = requireAdminSession(request);
+  if ((permission === 'roles:manage' || permission === 'users:manage') &&
+      (!['ADMIN','SUPER_ADMIN'].includes(user.role) || user.customRoleId ||
+        user.administrativeSource==='MOBILE_ADMIN')) throw new Error('FORBIDDEN');
   if (!hasPermission(user.role, permission, user.permissions)) throw new Error("FORBIDDEN");
   return user;
 }
-function guardError(error: unknown, reply: any) { const message = error instanceof Error ? error.message : "ERROR"; if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message }); if (message === "FORBIDDEN" || message === "COOPERATIVE_SCOPE_REQUIRED") return reply.code(403).send({ error: message }); if (["INVALID_WHATSAPP_NUMBER","WHATSAPP_NUMBER_REQUIRED"].includes(message)) return reply.code(400).send({ error: message, message:"Ingresa un número de WhatsApp válido, por ejemplo 0991234567." }); throw error; }
+function requireSuperAdmin(request: FastifyRequest) {
+  const actor = requirePermission(request, "roles:manage");
+  if (!['ADMIN', 'SUPER_ADMIN'].includes(actor.role) || actor.customRoleId) throw new Error('FORBIDDEN');
+  return actor;
+}
+function requireDriverDecisionViewer(request:FastifyRequest){
+  const actor=requirePermission(request,'drivers:view');
+  if(!(['drivers:approve','drivers:reject','drivers:request_corrections','drivers:suspend'] as Permission[])
+    .some(permission=>hasPermission(actor.role,permission,actor.permissions)))throw new Error('FORBIDDEN');
+  return actor;
+}
+async function assignedCustomRole(id: string) {
+  const [role] = await database()`
+    select r.id::text, r.name, r.enabled,
+      coalesce(array_agg(p.permission) filter (where p.permission is not null), array[]::text[]) as permissions
+    from admin_custom_roles r
+    left join admin_custom_role_permissions p on p.role_id=r.id
+    where r.id=${id} group by r.id
+  ` as unknown as Array<{id:string;name:string;enabled:boolean;permissions:string[]}>;
+  if (!role || !role.enabled) throw new Error('ADMIN_ROLE_DISABLED');
+  return role;
+}
+async function resolvedAccess(role: AdminRole, customRoleId: string | null | undefined,
+  overrides: readonly PermissionOverride[] = []) {
+  if (!customRoleId) return {permissions:permissionsForRole(role,overrides)};
+  const custom = await assignedCustomRole(customRoleId);
+  return {customRoleId:custom.id,customRoleName:custom.name,
+    permissions:permissionsForCustomRole(custom.permissions,overrides)};
+}
+function guardError(error: unknown, reply: any) { const message = error instanceof Error ? error.message : "ERROR"; if (message === "UNAUTHORIZED") return reply.code(401).send({ error: message }); if (message === "FORBIDDEN" || message === "COOPERATIVE_SCOPE_REQUIRED") return reply.code(403).send({ error: message }); if (message === 'ADMIN_ROLE_DISABLED') return reply.code(409).send({error:message}); if (["INVALID_WHATSAPP_NUMBER","WHATSAPP_NUMBER_REQUIRED"].includes(message)) return reply.code(400).send({ error: message, message:"Ingresa un número de WhatsApp válido, por ejemplo 0991234567." }); throw error; }
 
 export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
   publishTripStatus(tripId: string, status: string): void;
@@ -378,6 +429,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     if (process.env.DATABASE_URL) {
       const rows = await database()`
         select id, email, full_name, role, cooperative_id::text as "cooperativeId",
+          admin_custom_role_id::text as "customRoleId",
           must_change_password as "mustChangePassword"
         from users
         where lower(email) = lower(${parsed.data.email})
@@ -385,13 +437,16 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
           and status = 'ACTIVE'
           and role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE', 'COMMERCIAL')
       `;
-      const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole; cooperativeId?: string; mustChangePassword: boolean } | undefined;
+      const account = rows[0] as { id: string; email: string; full_name: string; role: AdminRole; cooperativeId?: string; customRoleId?:string; mustChangePassword: boolean } | undefined;
       if (!account) return reply.code(401).send({ error: "INVALID_CREDENTIALS" });
       const overrides = await database()`
         select permission, allowed
         from admin_permission_overrides
         where user_id=${account.id}
       ` as unknown as PermissionOverride[];
+      let access:Awaited<ReturnType<typeof resolvedAccess>>;
+      try{access=await resolvedAccess(account.role,account.customRoleId,overrides);}
+      catch(error){if((error as Error).message==='ADMIN_ROLE_DISABLED')return reply.code(403).send({error:'ADMIN_ROLE_DISABLED'});throw error;}
       const user: SessionUser = {
         id: account.id,
         email: account.email,
@@ -400,7 +455,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
         cooperativeId: account.cooperativeId,
         sessionId: randomUUID(),
         mustChangePassword: Boolean(account.mustChangePassword),
-        permissions: permissionsForRole(account.role, overrides),
+        ...access,
         expiresAt: Date.now() + 8 * 60 * 60 * 1000
       };
       const sessionId = user.sessionId!;
@@ -436,7 +491,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       update users set password_hash=crypt(${body.password},gen_salt('bf')),
         must_change_password=false,active_session_id=null,updated_at=now()
       where id=${actor.id} and not(password_hash=crypt(${body.password},password_hash))
-      returning id::text,email,full_name,role,cooperative_id::text as "cooperativeId"
+      returning id::text,email,full_name,role,cooperative_id::text as "cooperativeId",
+        admin_custom_role_id::text as "customRoleId"
     `;
     if (!updated) return reply.code(409).send({ error:"PASSWORD_MUST_BE_DIFFERENT" });
     const overrides = await database()`select permission,allowed from admin_permission_overrides where user_id=${actor.id}` as unknown as PermissionOverride[];
@@ -444,7 +500,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       id:String(updated.id),email:String(updated.email),name:String(updated.full_name),role:updated.role as AdminRole,
       cooperativeId:updated.cooperativeId ? String(updated.cooperativeId) : undefined,
       sessionId:randomUUID(),mustChangePassword:false,
-      permissions:permissionsForRole(updated.role as AdminRole,overrides),expiresAt:Date.now()+8*60*60*1000
+      ...await resolvedAccess(updated.role as AdminRole,updated.customRoleId as string|undefined,overrides),expiresAt:Date.now()+8*60*60*1000
     };
     const sessionId=user.sessionId!; const expiresAt=user.expiresAt!; const actorId=actor.id;
     const token=tokenFor(user); const tokenHash=createHash("sha256").update(token).digest("hex");
@@ -462,32 +518,96 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
 
   app.get("/v1/admin/me", async (request, reply) => { try { return requireAdminSession(request); } catch (e) { return guardError(e, reply); } });
   app.get("/v1/admin/access/roles", async (request, reply) => { try {
-    requirePermission(request, "roles:manage");
+    requireSuperAdmin(request);
     return adminRoles.map(role => ({ role, permissions: rolePermissions[role] }));
   } catch (e) { return guardError(e, reply); } });
+  app.get('/v1/admin/access/permissions',async(request,reply)=>{try{
+    requireSuperAdmin(request);return allPermissions;
+  }catch(e){return guardError(e,reply);}});
+  app.get('/v1/admin/access/custom-roles',async(request,reply)=>{try{
+    requireSuperAdmin(request);
+    if(!process.env.DATABASE_URL)return [];
+    return await database()`
+      select r.id::text,r.name,r.description,r.enabled,r.created_at as "createdAt",
+        r.updated_at as "updatedAt",
+        coalesce(array_agg(distinct p.permission) filter(where p.permission is not null),array[]::text[]) as permissions,
+        count(distinct u.id)::int as "userCount",
+        coalesce(jsonb_agg(distinct jsonb_build_object('id',u.id::text,'name',u.full_name,'email',u.email))
+          filter(where u.id is not null),'[]'::jsonb) as users
+      from admin_custom_roles r
+      left join admin_custom_role_permissions p on p.role_id=r.id
+      left join users u on u.admin_custom_role_id=r.id and u.deleted_at is null
+      group by r.id order by lower(r.name)
+    `;
+  }catch(e){return guardError(e,reply);}});
+  app.post('/v1/admin/access/custom-roles',async(request,reply)=>{try{
+    const actor=requireSuperAdmin(request),body=customRoleSchema.parse(request.body);
+    if(!process.env.DATABASE_URL||!actor.id)return reply.code(503).send({error:'DATABASE_UNAVAILABLE'});
+    const role=await database().begin(async tx=>{
+      const [created]=await tx`insert into admin_custom_roles(name,description,enabled,created_by,updated_by)
+        values(${body.name},${body.description},${body.enabled},${actor.id!},${actor.id!})
+        returning id::text,name,description,enabled`;
+      for(const permission of body.permissions)await tx`insert into admin_custom_role_permissions(role_id,permission)
+        values(${created!.id},${permission})`;
+      return created;
+    });
+    await persistAudit(actor,'ADMIN_ROLE_CREATED','ADMIN_ROLE',String(role!.id),
+      `${body.name}; permisos: ${body.permissions.join(', ')}`);
+    return reply.code(201).send({...role,permissions:body.permissions,userCount:0,users:[]});
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:'INVALID_ROLE',details:e.issues});
+    if((e as {code?:string}).code==='23505')return reply.code(409).send({error:'ROLE_NAME_EXISTS'});
+    return guardError(e,reply);}});
+  app.put('/v1/admin/access/custom-roles/:id',async(request,reply)=>{try{
+    const actor=requireSuperAdmin(request),id=z.string().uuid().parse((request.params as {id:string}).id),
+      body=customRoleSchema.parse(request.body);
+    if(!process.env.DATABASE_URL||!actor.id)return reply.code(503).send({error:'DATABASE_UNAVAILABLE'});
+    const updated=await database().begin(async tx=>{
+      const [previous]=await tx`select id::text,name,enabled from admin_custom_roles where id=${id} for update`;
+      if(!previous)return null;
+      const [role]=await tx`update admin_custom_roles set name=${body.name},description=${body.description},
+        enabled=${body.enabled},updated_by=${actor.id!},updated_at=now() where id=${id}
+        returning id::text,name,description,enabled`;
+      await tx`delete from admin_custom_role_permissions where role_id=${id}`;
+      for(const permission of body.permissions)await tx`insert into admin_custom_role_permissions(role_id,permission)
+        values(${id},${permission})`;
+      await tx`update admin_sessions set revoked_at=coalesce(revoked_at,now()) where revoked_at is null
+        and user_id in(select id from users where admin_custom_role_id=${id})`;
+      await tx`update users set active_session_id=null where admin_custom_role_id=${id}`;
+      return {role,previous};
+    });
+    if(!updated)return reply.code(404).send({error:'ROLE_NOT_FOUND'});
+    await persistAudit(actor,'ADMIN_ROLE_UPDATED','ADMIN_ROLE',id,
+      `${updated.previous.name} → ${body.name}; activo: ${updated.previous.enabled} → ${body.enabled}; permisos: ${body.permissions.join(', ')}`);
+    return {...updated.role,permissions:body.permissions};
+  }catch(e){if(e instanceof z.ZodError)return reply.code(400).send({error:'INVALID_ROLE',details:e.issues});
+    if((e as {code?:string}).code==='23505')return reply.code(409).send({error:'ROLE_NAME_EXISTS'});
+    return guardError(e,reply);}});
   app.get("/v1/admin/access/users", async (request, reply) => { try {
-    requirePermission(request, "roles:manage");
+    requireSuperAdmin(request);
     if (!process.env.DATABASE_URL) return [];
     return await database()`
       select u.id::text, u.full_name as name, u.email, u.phone_e164 as phone, u.role,
         u.cooperative_id::text as "cooperativeId", c.name as "cooperativeName",
+        u.admin_custom_role_id::text as "customRoleId", r.name as "customRoleName",
         u.status, u.must_change_password as "mustChangePassword", u.created_at as "createdAt",
         u.updated_at as "updatedAt",
         coalesce(jsonb_agg(jsonb_build_object('permission', permission.permission, 'allowed', permission.allowed))
           filter (where permission.permission is not null), '[]'::jsonb) as overrides
       from users u
       left join cooperatives c on c.id=u.cooperative_id
+      left join admin_custom_roles r on r.id=u.admin_custom_role_id
       left join admin_permission_overrides permission on permission.user_id=u.id
       where u.deleted_at is null
         and u.role in ('ADMIN', 'SUPPORT', 'SUPER_ADMIN', 'ADMIN_OPERACIONES', 'SOPORTE', 'ANALISTA_COOPERATIVA', 'COLLECTOR', 'FINANCE', 'COMMERCIAL')
-      group by u.id, c.name
+      group by u.id, c.name, r.name
       order by u.created_at
     `;
   } catch (e) { return guardError(e, reply); } });
   app.post("/v1/admin/access/users", async (request, reply) => { try {
-    const actor = requirePermission(request, "roles:manage");
+    const actor = requireSuperAdmin(request);
     const body = adminUserCreateSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    if(body.customRoleId)await assignedCustomRole(body.customRoleId);
     const normalizedPhone = normalizePhone(body.phone);
     if (!normalizedPhone) return reply.code(400).send({ error: "INVALID_PHONE" });
     const normalizedEmail = normalizeEmail(body.email);
@@ -500,10 +620,10 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const [account] = await database()`
       insert into users
         (phone_e164, full_name, email, password_hash, role, status,
-          cooperative_id, phone_verified_at, terms_accepted_at, must_change_password)
+          cooperative_id, admin_custom_role_id, phone_verified_at, terms_accepted_at, must_change_password)
       values (${normalizedPhone}, ${body.fullName}, ${normalizedEmail},
         crypt(${body.password}, gen_salt('bf')), ${body.role}, 'ACTIVE',
-        ${body.cooperativeId ?? null}, now(), now(), true)
+        ${body.cooperativeId ?? null}, ${body.customRoleId??null}, now(), now(), true)
       returning id::text, full_name as name, email, role,
         cooperative_id::text as "cooperativeId"
     `;
@@ -523,27 +643,32 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return guardError(e, reply);
   } });
   app.patch("/v1/admin/access/users/:id", async (request, reply) => { try {
-    const actor = requirePermission(request, "roles:manage");
+    const actor = requireSuperAdmin(request);
     const body = adminAccessSchema.parse(request.body);
     if (!process.env.DATABASE_URL) return reply.code(503).send({ error: "DATABASE_UNAVAILABLE" });
+    const access=await resolvedAccess(body.role,body.customRoleId,body.overrides);
     const id = (request.params as { id: string }).id;
     const updated = await database().begin(async tx => {
+      await tx`select pg_advisory_xact_lock(45239901)`;
       const [current] = await tx`select id::text, role from users where id=${id} for update`;
       if (!current || !isAdminRole(String(current.role))) return null;
       if ((current.role === "ADMIN" || current.role === "SUPER_ADMIN") &&
           body.role !== "ADMIN" && body.role !== "SUPER_ADMIN") {
         const [remaining] = await tx`
           select count(*)::int as total from users
-          where id<>${id} and status='ACTIVE' and role in ('ADMIN', 'SUPER_ADMIN')
+          where id<>${id} and status='ACTIVE' and deleted_at is null
+            and role in ('ADMIN', 'SUPER_ADMIN')
         `;
         if (Number(remaining?.total ?? 0) === 0) throw new Error("LAST_SUPER_ADMIN");
       }
       const [account] = await tx`
         update users set role=${body.role}, cooperative_id=${body.cooperativeId ?? null},
+          admin_custom_role_id=${body.customRoleId??null},
           active_session_id=null, updated_at=now()
         where id=${id}
         returning id::text, full_name as name, email, role, cooperative_id::text as "cooperativeId"
       `;
+      await tx`update admin_sessions set revoked_at=coalesce(revoked_at,now()) where user_id=${id} and revoked_at is null`;
       await tx`delete from admin_permission_overrides where user_id=${id}`;
       for (const override of body.overrides) {
         await tx`
@@ -555,8 +680,8 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     });
     if (!updated) return reply.code(404).send({ error: "NOT_FOUND" });
     await persistAudit(actor, "ADMIN_ACCESS_UPDATED", "USER", id,
-      `Rol ${body.role}; cooperativa ${body.cooperativeId ?? "sin alcance"}`);
-    return { ...updated, permissions: permissionsForRole(body.role, body.overrides) };
+      `Rol ${body.customRoleId??body.role}; cooperativa ${body.cooperativeId ?? "sin alcance"}`);
+    return { ...updated, ...access };
   } catch (e) {
     if (e instanceof z.ZodError) return reply.code(400).send({ error: "INVALID_ACCESS_CONFIGURATION", details: e.issues });
     if (e instanceof Error && e.message === "LAST_SUPER_ADMIN") return reply.code(409).send({ error: e.message });
@@ -873,7 +998,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
   } catch(e) { return guardError(e, reply); } });
   app.get("/v1/admin/driver-approvals", async (request, reply) => { try {
-    requirePermission(request, "drivers:approve");
+    requireDriverDecisionViewer(request);
     if (!process.env.DATABASE_URL) return [];
     const sql = database();
     return sql`
@@ -899,7 +1024,14 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     `;
   } catch(e) { return guardError(e, reply); } });
   app.post("/v1/admin/driver-approvals/:id/decision", async (request, reply) => { try {
-    const actor=requirePermission(request,"drivers:approve"); const body=approvalDecisionSchema.parse(request.body);
+    requirePermission(request,'drivers:view');
+    const body=approvalDecisionSchema.parse(request.body);
+    const granular={REJECT:'drivers:reject',OBSERVE:'drivers:request_corrections',
+      REQUEST_CORRECTIONS:'drivers:request_corrections',SUSPEND:'drivers:suspend'} as const;
+    let actor:ReturnType<typeof requirePermission>;
+    if(body.decision==='APPROVE')actor=requirePermission(request,'drivers:approve');
+    else try{actor=requirePermission(request,granular[body.decision]);}
+      catch{actor=requirePermission(request,'drivers:approve');}
     if (!process.env.DATABASE_URL) return { ok:true };
     const driverId=(request.params as {id:string}).id;
     const required=requiredDriverDocuments;
@@ -940,7 +1072,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     return guardError(e,reply);
   } });
   app.get("/v1/admin/driver-approvals/:id/history", async (request, reply) => { try {
-    requirePermission(request,"drivers:approve"); if(!process.env.DATABASE_URL)return [];
+    requireDriverDecisionViewer(request); if(!process.env.DATABASE_URL)return [];
     const id=(request.params as {id:string}).id;
     return database()`select r.id::text,r.previous_status as "previousStatus",r.next_status as "nextStatus",r.decision,r.observation,r.created_at as "createdAt",coalesce(u.full_name,u.email,'Sistema') reviewer from driver_approval_reviews r left join users u on u.id=r.reviewer_id where r.driver_id=${id} order by r.created_at desc`;
   } catch(e){return guardError(e,reply);} });

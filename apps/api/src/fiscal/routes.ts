@@ -136,7 +136,7 @@ export async function registerFiscalRoutes(app:FastifyInstance){
   app.get('/v1/admin/fiscal/config',async(req,reply)=>{try{requirePermission(req,'FACTURACION_VER');const [settings]=await database()`select vat_rate_percent::float8 as "vatRatePercent",updated_at as "vatUpdatedAt" from operational_settings where id=1`,config=billingConfiguration(),providerReady=billingProvider().configured;return {...config,providerReady,
     profilesEnabled:true,emissionAvailable:config.enabled&&providerReady&&Boolean(config.cutoverAt)&&(config.environment!=='TEST'||Boolean(config.testOrderCode||config.testDriverId)),...settings};}catch(e){return fiscalError(e,reply);}});
   app.patch('/v1/admin/fiscal/config/vat',async(req,reply)=>{try{
-    const actor=requirePermission(req,'FACTURACION_ADMINISTRAR'),input=vatRateSchema.parse(req.body);
+    const actor=requirePermission(req,'settings:manage'),input=vatRateSchema.parse(req.body);
     const [previous]=await database()`select vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`;
     const [settings]=await database()`update operational_settings set vat_rate_percent=${input.vatRatePercent},updated_at=now(),updated_by=${actor.id!} where id=1 returning vat_rate_percent::float8 as "vatRatePercent",updated_at as "vatUpdatedAt"`;
     if(!settings)throw new Error('FISCAL_OPERATION_FAILED');
@@ -203,7 +203,15 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     }};
   }catch(e){return fiscalError(e,reply);}});
   app.post('/v1/admin/fiscal/invoices/:id/:action',async(req,reply)=>{try{
-    requirePermission(req,'FACTURACION_ADMINISTRAR');const params=req.params as {id:string;action:string},id=uuid.parse(params.id),svc=new FacturaService();
+    const params=req.params as {id:string;action:string};
+    const actionPermission:Record<string,'FACTURACION_CONSULTAR_ESTADO'|'FACTURACION_REINTENTAR'|'FACTURACION_DESCARGAR'|'FACTURACION_REENVIAR'|'FACTURACION_NOTA_CREDITO'>={
+      status:'FACTURACION_CONSULTAR_ESTADO',retry:'FACTURACION_REINTENTAR',
+      xml:'FACTURACION_DESCARGAR',ride:'FACTURACION_DESCARGAR',
+      email:'FACTURACION_REENVIAR','credit-note':'FACTURACION_NOTA_CREDITO'
+    };
+    const permission=actionPermission[params.action];if(!permission)throw new Error('FISCAL_CONTEXT_UNAVAILABLE');
+    try{requirePermission(req,permission);}catch{requirePermission(req,'FACTURACION_ADMINISTRAR');}
+    const id=uuid.parse(params.id),svc=new FacturaService();
     if(params.action==='status')return await svc.reconcileInvoice(id);
     if(params.action==='retry')return await svc.retryInvoice(id);
     if(params.action==='xml'||params.action==='ride')return await svc.artifact(id,params.action);
