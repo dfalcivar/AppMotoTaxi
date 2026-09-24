@@ -414,6 +414,7 @@ class RoleAwareHeaderIsland extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).colorScheme;
+    final campaignStore = campaignsFor(session);
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Expanded(
           child: Material(
@@ -425,7 +426,7 @@ class RoleAwareHeaderIsland extends StatelessWidget {
               child: InkWell(
                   onTap: onAccount,
                   child: CostaGoCampaignHeaderDecoration(
-                      store: campaignsFor(session),
+                      store: campaignStore,
                       enabled: !operational,
                       child: Padding(
                           padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
@@ -451,18 +452,35 @@ class RoleAwareHeaderIsland extends StatelessWidget {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                  Text('¡Hola, $firstName!',
+                                  Text(
+                                      '¡Hola, $firstName!${session.role == 'DRIVER' ? ' 👋' : ''}',
                                       style: const TextStyle(
                                           fontWeight: FontWeight.w800,
                                           fontSize: 16)),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                      session.role == 'DRIVER'
-                                          ? 'Tu jornada, más cerca'
-                                          : '¿A dónde vamos hoy?',
-                                      style: TextStyle(
-                                          color: c.onSurfaceVariant,
-                                          fontSize: 12)),
+                                  ListenableBuilder(
+                                    listenable: campaignStore,
+                                    builder: (context, _) =>
+                                        !showIslandSubtitle(
+                                                operational: operational,
+                                                decorated: session.role ==
+                                                        'DRIVER' &&
+                                                    campaignStore
+                                                            .headerCampaign !=
+                                                        null)
+                                            ? const SizedBox.shrink()
+                                            : Padding(
+                                                padding: const EdgeInsets.only(
+                                                    top: 2),
+                                                child: Text(
+                                                  session.role == 'DRIVER'
+                                                      ? 'Listo para recibir viajes'
+                                                      : '¿A dónde vamos hoy?',
+                                                  style: TextStyle(
+                                                      color: c.onSurfaceVariant,
+                                                      fontSize: 12),
+                                                ),
+                                              ),
+                                  ),
                                 ])),
                           ])))))),
       const SizedBox(width: 12),

@@ -1143,7 +1143,7 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     ]);
     const vatRatePercent = Number(settingsRows[0]?.vatRatePercent ?? 0);
     const pricedPlans = plans.map(plan => ({ ...plan, ...taxBreakdown(plan.amount, vatRatePercent) }));
-    const benefitCoverage=await database()`select id,benefit_code as code,effective_from as "effectiveFrom",effective_until as "effectiveUntil",
+    const benefitCoverage=await database()`select id,benefit_code as code,benefit_value::float8 as "durationDays",effective_from as "effectiveFrom",effective_until as "effectiveUntil",
       case when effective_from>now() then 'PENDING' else 'ACTIVE' end as status from benefit_redemptions where user_id=${user.id!}
       and benefit_type='COURTESY_DAYS' and status in ('ACTIVE','PENDING') and effective_until>now() order by effective_from`;
     const renewalTax = taxBreakdown(membership?.estimatedNextRenewalAmount ?? 0, vatRatePercent);

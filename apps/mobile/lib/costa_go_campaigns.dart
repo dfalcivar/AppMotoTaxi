@@ -6,6 +6,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 typedef CampaignData = Map<String, dynamic>;
 
+bool showIslandSubtitle({required bool operational, required bool decorated}) =>
+    operational || !decorated;
+
 /// Only resolve the requested surface; header artwork never becomes a card.
 String? campaignResourceKind(List assets, String surface, Brightness brightness,
     {bool allowLightInDark = false}) {

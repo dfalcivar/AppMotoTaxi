@@ -31,6 +31,11 @@ CostaGoCampaignStore storeFor(
       ttl: ttl,
     );
 void main() {
+  test('decorated header keeps the greeting and hides only its subtitle', () {
+    expect(showIslandSubtitle(operational: false, decorated: true), isFalse);
+    expect(showIslandSubtitle(operational: false, decorated: false), isTrue);
+    expect(showIslandSubtitle(operational: true, decorated: true), isTrue);
+  });
   test(
       'cache refreshes within the same session, shares requests and never retains stale data on failure',
       () async {

@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'driver_wallet_sheet.dart';
+import 'membership_courtesy_view.dart';
 import 'driver_earnings_sheet.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -1537,7 +1538,8 @@ ReferralGateway referralsFor(Session session) {
     try {
       final p = await Geolocator.getLastKnownPosition();
       if (p != null &&
-          DateTime.now().difference(p.timestamp) < const Duration(minutes: 15)) {
+          DateTime.now().difference(p.timestamp) <
+              const Duration(minutes: 15)) {
         return {'latitude': p.latitude, 'longitude': p.longitude};
       }
     } catch (_) {}
@@ -18978,7 +18980,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               final prepaidBalanceLow = prepaidIsCurrent &&
                   !prepaidBalanceInsufficient &&
                   prepaidBalanceNeedsAttention(walletSummary ?? const {});
-              final courtesyActive = data['eligibility']?['benefit'] != null;
+              final courtesy = activeMembershipCourtesy(data);
+              final courtesyActive = courtesy != null;
+              final prepaidForDisplay = prepaidIsCurrent && !courtesyActive;
+              final currentTripPackForDisplay =
+                  currentIsTripPack && !courtesyActive;
+              final prepaidInsufficientForDisplay =
+                  prepaidBalanceInsufficient && !courtesyActive;
               final effectiveStatus = courtesyActive
                   ? 'ACTIVE'
                   : prepaidIsCurrent
@@ -19117,21 +19125,30 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 CostaGoSpace.lg,
                                 CostaGoSpace.xxl),
                             children: [
-                          if (data['benefitCoverage'] is List)
-                            for (final benefit
-                                in data['benefitCoverage'] as List)
-                              Card(
-                                  child: ListTile(
-                                      leading: const Icon(Icons.redeem),
-                                      title: Text(benefit['status'] == 'PENDING'
-                                          ? 'Cortesía programada'
-                                          : 'Cortesía por beneficio activa'),
-                                      subtitle: Text(
-                                          'Desde: ${DateTime.parse(benefit['effectiveFrom'].toString()).toLocal()}\nHasta: ${DateTime.parse(benefit['effectiveUntil'].toString()).toLocal()}\nTus compras y saldo se conservan.'))),
-                          if (!prepaidBalanceInsufficient)
+                          if (!courtesyActive &&
+                              data['benefitCoverage'] is List &&
+                              (data['benefitCoverage'] as List).any((item) =>
+                                  item is Map && item['status'] == 'PENDING'))
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                  bottom: CostaGoSpace.sm),
+                              child: CostaGoSurface(
+                                tone: CostaGoStatusTone.info,
+                                padding: const EdgeInsets.all(CostaGoSpace.sm),
+                                child: Text(
+                                  'Cortesía programada para más adelante.',
+                                  style: Theme.of(sheetContext)
+                                      .textTheme
+                                      .bodyMedium,
+                                ),
+                              ),
+                            ),
+                          if (!prepaidInsufficientForDisplay)
                             Wrap(spacing: 10, runSpacing: 8, children: [
                               CostaGoStatusChip(
-                                label: _membershipStatusLabel(effectiveStatus),
+                                label: courtesyActive
+                                    ? 'Cortesía activa'
+                                    : _membershipStatusLabel(effectiveStatus),
                                 icon: effectiveStatus == 'INSUFFICIENT_BALANCE'
                                     ? Icons.money_off_csred_rounded
                                     : effectiveStatus == 'LOW_BALANCE'
@@ -19144,27 +19161,33 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 tone: statusTone,
                               ),
                               CostaGoStatusChip(
-                                label: prepaidIsCurrent
-                                    ? 'Pago por uso'
-                                    : currentIsTripPack
-                                        ? 'Por viajes'
-                                        : 'Por período',
-                                icon: prepaidIsCurrent
-                                    ? Icons.account_balance_wallet_outlined
-                                    : currentIsTripPack
-                                        ? Icons.route_outlined
-                                        : Icons.event_repeat_outlined,
-                                tone: prepaidIsCurrent
-                                    ? prepaidBalanceInsufficient
-                                        ? CostaGoStatusTone.danger
-                                        : prepaidBalanceLow
-                                            ? CostaGoStatusTone.warning
-                                            : CostaGoStatusTone.success
-                                    : CostaGoStatusTone.info,
+                                label: courtesyActive
+                                    ? 'Por período'
+                                    : prepaidIsCurrent
+                                        ? 'Pago por uso'
+                                        : currentIsTripPack
+                                            ? 'Por viajes'
+                                            : 'Por período',
+                                icon: courtesyActive
+                                    ? Icons.card_giftcard_outlined
+                                    : prepaidIsCurrent
+                                        ? Icons.account_balance_wallet_outlined
+                                        : currentIsTripPack
+                                            ? Icons.route_outlined
+                                            : Icons.event_repeat_outlined,
+                                tone: courtesyActive
+                                    ? CostaGoStatusTone.info
+                                    : prepaidIsCurrent
+                                        ? prepaidBalanceInsufficient
+                                            ? CostaGoStatusTone.danger
+                                            : prepaidBalanceLow
+                                                ? CostaGoStatusTone.warning
+                                                : CostaGoStatusTone.success
+                                        : CostaGoStatusTone.info,
                               ),
                             ]),
                           const SizedBox(height: CostaGoSpace.sm),
-                          prepaidBalanceInsufficient
+                          prepaidInsufficientForDisplay
                               ? _insufficientWalletOverview(
                                   sheetContext,
                                   available: walletAvailable,
@@ -19172,7 +19195,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   onRecharge: () => unawaited(openWallet()),
                                 )
                               : CostaGoSurface(
-                                  tone: prepaidBalanceInsufficient
+                                  tone: prepaidInsufficientForDisplay
                                       ? CostaGoStatusTone.danger
                                       : CostaGoStatusTone.info,
                                   padding:
@@ -19188,7 +19211,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                     CrossAxisAlignment.start,
                                                 children: [
                                                   Text(
-                                                      prepaidIsCurrent
+                                                      prepaidForDisplay
                                                           ? 'Modalidad actual'
                                                           : 'Plan actual',
                                                       style: Theme.of(
@@ -19201,52 +19224,63 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                                   .colorScheme
                                                                   .onSurfaceVariant)),
                                                   const SizedBox(height: 2),
-                                                  Text(
-                                                    prepaidIsCurrent
-                                                        ? prepaidBalanceInsufficient
-                                                            ? 'Sin saldo disponible'
-                                                            : 'Pago por uso'
-                                                        : planName.isNotEmpty
-                                                            ? planName
-                                                            : 'Sin plan activo',
-                                                    style:
-                                                        Theme.of(sheetContext)
-                                                            .textTheme
-                                                            .titleLarge
-                                                            ?.copyWith(
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w900),
-                                                  ),
+                                                  if (courtesy != null)
+                                                    MembershipCourtesyHeading(
+                                                        description: courtesy
+                                                            .description)
+                                                  else
+                                                    Text(
+                                                      prepaidForDisplay
+                                                          ? prepaidBalanceInsufficient
+                                                              ? 'Sin saldo disponible'
+                                                              : 'Pago por uso'
+                                                          : planName.isNotEmpty
+                                                              ? planName
+                                                              : 'Sin plan activo',
+                                                      style: Theme.of(
+                                                              sheetContext)
+                                                          .textTheme
+                                                          .titleLarge
+                                                          ?.copyWith(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w900),
+                                                    ),
                                                 ]),
                                           ),
                                           CostaGoIconBadge(
-                                            icon: prepaidIsCurrent
-                                                ? prepaidBalanceInsufficient
-                                                    ? Icons
-                                                        .money_off_csred_rounded
-                                                    : prepaidBalanceLow
+                                            icon: courtesyActive
+                                                ? Icons
+                                                    .workspace_premium_outlined
+                                                : prepaidIsCurrent
+                                                    ? prepaidBalanceInsufficient
                                                         ? Icons
-                                                            .warning_amber_rounded
+                                                            .money_off_csred_rounded
+                                                        : prepaidBalanceLow
+                                                            ? Icons
+                                                                .warning_amber_rounded
+                                                            : Icons
+                                                                .account_balance_wallet_outlined
+                                                    : currentIsTripPack
+                                                        ? Icons.route_outlined
                                                         : Icons
-                                                            .account_balance_wallet_outlined
-                                                : currentIsTripPack
-                                                    ? Icons.route_outlined
-                                                    : Icons
-                                                        .calendar_month_outlined,
-                                            tone: prepaidIsCurrent
-                                                ? prepaidBalanceInsufficient
-                                                    ? CostaGoStatusTone.danger
-                                                    : prepaidBalanceLow
+                                                            .calendar_month_outlined,
+                                            tone: courtesyActive
+                                                ? CostaGoStatusTone.info
+                                                : prepaidIsCurrent
+                                                    ? prepaidBalanceInsufficient
                                                         ? CostaGoStatusTone
-                                                            .warning
-                                                        : CostaGoStatusTone
-                                                            .success
-                                                : CostaGoStatusTone.info,
+                                                            .danger
+                                                        : prepaidBalanceLow
+                                                            ? CostaGoStatusTone
+                                                                .warning
+                                                            : CostaGoStatusTone
+                                                                .success
+                                                    : CostaGoStatusTone.info,
                                             size: 52,
                                           ),
                                         ]),
-                                    if (prepaidIsCurrent) ...[
+                                    if (prepaidForDisplay) ...[
                                       const Divider(height: CostaGoSpace.lg),
                                       _membershipDetailLine(
                                         'Saldo prepago disponible',
@@ -19306,7 +19340,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                           ]),
                                         ),
                                       ],
-                                    ] else if (currentIsTripPack) ...[
+                                    ] else if (currentTripPackForDisplay) ...[
                                       const SizedBox(height: CostaGoSpace.md),
                                       Row(
                                           crossAxisAlignment:
@@ -19394,19 +19428,26 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                       ),
                                     ] else ...[
                                       const Divider(height: CostaGoSpace.lg),
+                                      if (courtesy != null)
+                                        _membershipDetailLine(
+                                            'Vigente hasta',
+                                            formatEcuadorCompactDate(
+                                                courtesy.expiresAt)),
                                       _membershipDetailLine('Viajes del ciclo',
                                           '${membership['completedTrips'] ?? 0}'),
                                       _membershipDetailLine(
                                           'Renovación estimada',
                                           '\$${((membership['estimatedNextRenewalAmount'] as num?) ?? 0).toStringAsFixed(2)} + IVA'),
                                     ],
-                                    if (!prepaidIsCurrent &&
-                                        !currentIsTripPack &&
+                                    if (!prepaidForDisplay &&
+                                        !currentTripPackForDisplay &&
+                                        !courtesyActive &&
                                         extraAmount > 0)
                                       _membershipDetailLine(
                                           'Excedente acumulado',
                                           '\$${extraAmount.toStringAsFixed(2)}'),
-                                    if (!prepaidIsCurrent) ...[
+                                    if (!prepaidForDisplay &&
+                                        !courtesyActive) ...[
                                       const Divider(height: CostaGoSpace.lg),
                                       if (membership['expiresAt'] != null)
                                         _membershipDetailLine(
@@ -19545,7 +19586,7 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                             ]),
                           ),
                           const SizedBox(height: 8),
-                          if (prepaidBalanceInsufficient)
+                          if (prepaidInsufficientForDisplay)
                             CostaGoSurface(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: CostaGoSpace.md,
