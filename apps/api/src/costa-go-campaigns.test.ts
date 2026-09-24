@@ -112,7 +112,7 @@ it('validates CTA destinations and limits membership actions to drivers',()=>{
   expect(campaignSchema.safeParse(input({ctaType:'INTERNAL_ROUTE',ctaText:'Acción',ctaDestination:'fake-route'})).success).toBe(false);
   expect(campaignSchema.safeParse(input({ctaType:'MEMBERSHIP',ctaText:'Planes'})).success).toBe(false);
   expect(campaignSchema.safeParse(input({ctaType:'MEMBERSHIP',ctaText:'Planes',audience:'DRIVER'})).success).toBe(true);
-  expect(campaignSchema.safeParse(input({ctaType:'REFERRAL',ctaText:'Invitar'})).success).toBe(false);
+  expect(campaignSchema.safeParse(input({ctaType:'REFERRAL',ctaText:'Invitar'})).success).toBe(true);
 });
 it('stores validated images, resets approval, protects assets, and audits changes',async()=>{
   let c=await activate();const data=await sharp({create:{width:2,height:2,channels:3,background:'#123456'}}).png().toBuffer();

@@ -106,6 +106,12 @@ export async function prepareCommercialAcceptance(tx:TransactionSql,tripId:strin
   if(!trip?.economics)return null;
   const [existing]=await tx`select snapshot from trip_commercial_assignments where trip_id=${tripId} and driver_id=${driverId}`;
   if(existing)return {replay:true,wallet:existing.snapshot.billingMode==='PAY_PER_USE',economic:existing.snapshot};
+  const [benefit]=await tx`select active_courtesy_benefit(${driverId}) as id`;
+  if(benefit?.id) {
+    const economic={...trip.economics,billingMode:"BENEFIT_COURTESY",appliedCommission:"0.00",benefitRedemptionId:String(benefit.id),source:"BENEFIT / COURTESY"};
+    await persistCommercialAssignment(tx,tripId,driverId,null,economic);
+    return {replay:false,wallet:false,benefit:true,economic};
+  }
   const [cycle]=await tx`select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null for update`;
   const valid=cycle&&['ACTIVE','EXPIRING','PAYMENT_DUE','GRACE_PERIOD'].includes(cycle.status)
     &&(cycle.status!=='GRACE_PERIOD'||cycle.grace_allows_trips_applied)

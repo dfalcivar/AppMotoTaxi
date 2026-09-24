@@ -160,6 +160,7 @@ async function nearbyDrivers(
         where dd.driver_id=d.user_id and dd.status='SUSPENDED'
       )
       and ((select not membership_enforcement_enabled from operational_settings where id=1)
+        or active_courtesy_benefit(d.user_id) is not null
         or exists(select 1 from driver_wallets w cross join operational_settings os
           where os.id=1 and os.arrival_commercial_configuration->>'enabled'='true' and w.driver_id=d.user_id and w.enabled
             and w.total-w.reserved>=coalesce((select least(round(platform_commission_cents_per_leg::numeric/100*os.membership_extra_trip_share_percent/100,2),

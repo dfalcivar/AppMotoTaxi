@@ -64,6 +64,12 @@ beforeAll(async()=>{
     alter table driver_offers add column search_round integer default 1;
     alter table driver_offers add column offered_at timestamptz default now();`);
   await pg.exec(await readFile(new URL('../migrations/088_arrival_commercial_model.sql',import.meta.url),'utf8'));
+  await pg.exec(`alter table driver_memberships add column expires_at timestamptz;
+    alter table audit_log add column previous_value jsonb;
+    create table driver_documents(driver_id uuid,status text);
+    create table costa_go_campaigns(id uuid primary key);
+    create table costa_go_campaign_areas(campaign_id uuid,service_area_id uuid);`);
+  await pg.exec(await readFile(new URL('../migrations/101_costa_go_benefits.sql',import.meta.url),'utf8'));
 },30000);
 beforeEach(async()=>{
   await pg.exec('truncate audit_log,passenger_cancellations,trip_events,driver_offers,scheduled_trip_responses,trips,drivers,operational_settings,users cascade');
@@ -513,4 +519,21 @@ describe('ciclos de cancelaciones independientes del calendario',()=>{
     for(const days of [0,-1,1.5,3651])expect(passengerCancellationPolicySchema.safeParse({...policy,cycleDurationDays:days}).success).toBe(false);
     for(const days of [1,30,60,90,3650])expect(passengerCancellationPolicySchema.parse({...policy,cycleDurationDays:days}).cycleDurationDays).toBe(days);
   });
+});
+
+it('courtesy acceptance, replay and completion do not debit wallet or consume a paid package',async()=>{
+ const membership=await makeCycle();
+ await pg.query(`update driver_memberships set plan_type_snapshot='TRIP_PACK',completed_trips=0,included_trips_snapshot=80,expires_at=now()+interval '30 days' where id=$1`,[membership]);
+ const before=await cycle(membership);
+ await pg.query(`insert into driver_wallets(driver_id,total,enabled) values($1,20,true)`,[driver]);
+ await pg.exec(`insert into benefit_definitions(code,name,benefit_type,value,audience,one_time,max_per_user,starts_at,ends_at,status) values('TEST_COURTESY','Test','COURTESY_DAYS',15,'DRIVER',true,1,now()-interval '1 day',now()+interval '1 day','ACTIVE')`);
+ await pg.query(`insert into benefit_redemptions(benefit_id,benefit_code,user_id,audience,benefit_type,benefit_value,one_time,source,effective_from,effective_until) select id,code,$1,'DRIVER',benefit_type,value,true,'CAMPAIGN',now()-interval '1 minute',now()+interval '15 days' from benefit_definitions where code='TEST_COURTESY'`,[driver]);
+ const id=await economicTrip();await consume(id);await consume(id);
+ expect(await cycle(membership)).toEqual(before);
+ const a=(await pg.query<any>('select snapshot from trip_commercial_assignments where trip_id=$1',[id])).rows[0]!.snapshot;
+ expect(a).toMatchObject({billingMode:'BENEFIT_COURTESY',appliedCommission:'0.00',passengerTotal:'3.50'});
+ await pg.query(`update trips set status='IN_PROGRESS',started_at=now() where id=$1`,[id]);
+ await pg.query(`update trips set status='COMPLETED',completed_at=now() where id=$1`,[id]);
+ expect((await pg.query<any>('select total,reserved from driver_wallets where driver_id=$1',[driver])).rows[0]).toEqual({total:'20.00',reserved:'0.00'});
+ expect((await pg.query('select * from membership_cycle_trip_usages')).rows).toHaveLength(0);
 });

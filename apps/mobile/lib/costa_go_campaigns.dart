@@ -1,4 +1,5 @@
 import 'costa_go_coastal.dart';
+import 'costa_go_benefits.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -109,13 +110,15 @@ class CostaGoCampaignCard extends StatelessWidget {
           await launchUrl(Uri.parse(destination),
               mode: LaunchMode.externalApplication);
         } else {
-          final route = type == 'MEMBERSHIP'
-              ? 'membership'
-              : type == 'SUPPORT'
-                  ? 'support'
-                  : type == 'INTERNAL_ROUTE'
-                      ? destination
-                      : '';
+          final route = type == 'REFERRAL'
+              ? 'referrals'
+              : type == 'MEMBERSHIP'
+                  ? 'membership'
+                  : type == 'SUPPORT'
+                      ? 'support'
+                      : type == 'INTERNAL_ROUTE'
+                          ? destination
+                          : '';
           if (route.isNotEmpty && context.mounted) {
             await onAction(context, route);
           }
@@ -303,11 +306,13 @@ class CostaGoCampaignStore extends ChangeNotifier with WidgetsBindingObserver {
       required this.detail,
       required this.imageUrl,
       required this.headers,
+      this.benefits,
       this.ttl = const Duration(minutes: 5)});
   final Future<CampaignData> Function() load;
   final Future<CampaignData> Function(String id) detail;
   final String Function(CampaignData campaign, String kind) imageUrl;
   final Map<String, String> headers;
+  final CostaGoBenefitsService? benefits;
   final Duration ttl;
   List<CampaignData> _items = [];
   int _watchers = 0;
@@ -798,6 +803,12 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
                 style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 20),
             Text(c['description']?.toString() ?? ''),
+            if (c['benefitCode'] != null && widget.store.benefits != null)
+              CostaGoBenefitPanel(
+                  key: ValueKey('${c['id']}:${c['benefitCode']}'),
+                  service: widget.store.benefits!,
+                  code: c['benefitCode'].toString(),
+                  campaignId: widget.id),
             if ((c['terms'] ?? '').toString().isNotEmpty) ...[
               const SizedBox(height: 24),
               Text('Términos y condiciones',

@@ -29,6 +29,22 @@ import UniformTypeIdentifiers
       binaryMessenger: registrar.messenger()
     )
     channel.setMethodCallHandler { [weak self] call, result in
+      if call.method == "share" {
+        let arguments = call.arguments as? [String: Any]
+        guard let text = arguments?["text"] as? String, !text.isEmpty,
+              let presenter = self?.activeViewController() else {
+          result(FlutterError(code: "SHARE_UNAVAILABLE", message: "No se pudo compartir", details: nil)); return
+        }
+        let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        if let popover = activity.popoverPresentationController {
+          popover.sourceView = presenter.view
+          popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 0, height: 0)
+          popover.permittedArrowDirections = []
+        }
+        presenter.present(activity, animated: true)
+        result(nil)
+        return
+      }
       if call.method == "openNotificationSettings" {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { result(nil); return }
         UIApplication.shared.open(url, options: [:]) { _ in result(nil) }

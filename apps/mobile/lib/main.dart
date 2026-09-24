@@ -32,6 +32,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'affiliate_banners.dart';
 import 'costa_go_campaigns.dart';
+import 'costa_go_benefits.dart';
+import 'costa_go_referrals.dart';
 import 'chat_sheet.dart';
 import 'driver_navigation.dart';
 import 'in_app_notification_banner.dart';
@@ -327,6 +329,7 @@ bool prepaidModalityIsCurrent({
   required Map<String, dynamic> eligibility,
   required Map<String, dynamic> wallet,
 }) {
+  if (eligibility['benefit'] != null) return false;
   if (wallet['enabled'] != true) return false;
   final eligibilityReason = eligibility['reason']?.toString();
   if (eligibility['eligible'] != true &&
@@ -1529,6 +1532,40 @@ class _CampaignNavigationObserver extends NavigatorObserver {
   }
 }
 
+ReferralGateway referralsFor(Session session) {
+  Future<Map<String, dynamic>> point() async {
+    try {
+      final p = await Geolocator.getLastKnownPosition();
+      if (p != null &&
+          DateTime.now().difference(p.timestamp) < const Duration(minutes: 15)) {
+        return {'latitude': p.latitude, 'longitude': p.longitude};
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  return ReferralGateway(
+      sessionKey: '${session.token}:${session.role}',
+      load: () async {
+        final p = await point();
+        final query = p.isEmpty
+            ? ''
+            : '?latitude=${p['latitude']}&longitude=${p['longitude']}';
+        return Map<String, dynamic>.from(await Api()
+            .call('GET', '/v1/referrals$query', token: session.token) as Map);
+      },
+      attribute: (code, id, source) async => Map<String, dynamic>.from(
+              await Api().call('POST', '/v1/referrals/attribute',
+                  token: session.token,
+                  body: {
+                'code': code,
+                'programId': id,
+                'source': source,
+                ...await point()
+              }) as Map),
+      share: shareText);
+}
+
 CostaGoCampaignStore campaignsFor(Session session) {
   final key = '${session.token}:${session.role}';
   if (_costaCampaignSession == key && _costaCampaignStore != null) {
@@ -1552,6 +1589,27 @@ CostaGoCampaignStore campaignsFor(Session session) {
   }
 
   return _costaCampaignStore = CostaGoCampaignStore(
+    benefits: CostaGoBenefitsService(
+      read: (code, id) async {
+        await locate();
+        return Map<String, dynamic>.from(await Api().call('GET',
+            "/v1/benefits/$code?campaignId=$id${query.isEmpty ? '' : '&${query.substring(1)}'}",
+            token: session.token) as Map);
+      },
+      claim: (code, id) async {
+        await locate();
+        final coordinates =
+            Uri.splitQueryString(query.isEmpty ? '' : query.substring(1));
+        return Map<String, dynamic>.from(await Api().call(
+            'POST', '/v1/benefits/$code/claim',
+            token: session.token,
+            body: {
+              'campaignId': id,
+              for (final entry in coordinates.entries)
+                entry.key: double.parse(entry.value)
+            }) as Map);
+      },
+    ),
     load: () async {
       await locate();
       return Map<String, dynamic>.from(await Api()
@@ -1572,6 +1630,12 @@ CostaGoCampaignStore campaignsFor(Session session) {
 
 Future<void> openCampaignAction(
     BuildContext context, Session session, String route) async {
+  if (route == 'referrals') {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) =>
+            CostaGoReferralsScreen(gateway: referralsFor(session))));
+    return;
+  }
   if (route == 'membership' && session.role == 'DRIVER') {
     FleetLinks.membershipPending.value = true;
     return;
@@ -1602,6 +1666,22 @@ class ApiException implements Exception {
 
 String mensajeApi(dynamic code) =>
     const {
+      'REFERRAL_ALREADY_ATTRIBUTED':
+          'Tu cuenta ya tiene un referente y no puede cambiarlo.',
+      'REFERRAL_NOT_AVAILABLE': 'El programa o código no está disponible.',
+      'REFERRAL_TOO_LATE':
+          'El código se ingresa durante los primeros 7 días, antes de iniciar un viaje o recibir beneficios.',
+      'SELF_REFERRAL_NOT_ALLOWED': 'No puedes referirte a ti mismo.',
+      'REFERRAL_ACCOUNT_REQUIRED': 'Confirma tu cuenta para continuar.',
+      'REFERRER_MUST_PRECEDE_USER':
+          'El referente debe tener una cuenta anterior a la tuya.',
+      'REFERRAL_TEST_ACCOUNT':
+          'Las cuentas de prueba no participan en referidos.',
+      'ALREADY_REDEEMED': 'Ya activaste este beneficio.',
+      'NOT_ELIGIBLE': 'Tu cuenta no cumple las condiciones de este beneficio.',
+      'BENEFIT_EXPIRED': 'La campaña o el beneficio ya venció.',
+      'BENEFIT_LIMIT_REACHED': 'Este beneficio ya no está disponible.',
+      'BENEFIT_UNAVAILABLE': 'Este beneficio no está disponible.',
       'PRICE_CONFIRMATION_REQUIRED':
           'El precio cambió. Revisa y confirma nuevamente el resumen del viaje.',
       'INSUFFICIENT_AVAILABLE_BALANCE':
@@ -13091,6 +13171,7 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
                   icon: Icons.star_outline,
                   onTap: showFavoritePlaces)),
         ]),
+        CostaGoReferralCard(gateway: referralsFor(widget.s)),
         const SizedBox(height: 115),
       ];
 
@@ -16549,15 +16630,20 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
         prepaidBalanceNeedsAttention(driverWalletSummary ?? const {});
     final prepaidBalanceInsufficient = prepaidIsCurrent &&
         prepaidBalanceIsInsufficient(driverWalletSummary ?? const {});
-    final effectiveStatus = prepaidIsCurrent
-        ? (prepaidBalanceInsufficient
-            ? 'INSUFFICIENT_BALANCE'
-            : prepaidBalanceLow
-                ? 'LOW_BALANCE'
-                : 'ACTIVE')
-        : status;
-    final showTripPackEmblem =
-        !prepaidIsCurrent && currentIsTripPack && effectiveStatus == 'ACTIVE';
+    final courtesyActive = data['eligibility']?['benefit'] != null;
+    final effectiveStatus = courtesyActive
+        ? 'ACTIVE'
+        : prepaidIsCurrent
+            ? (prepaidBalanceInsufficient
+                ? 'INSUFFICIENT_BALANCE'
+                : prepaidBalanceLow
+                    ? 'LOW_BALANCE'
+                    : 'ACTIVE')
+            : status;
+    final showTripPackEmblem = !courtesyActive &&
+        !prepaidIsCurrent &&
+        currentIsTripPack &&
+        effectiveStatus == 'ACTIVE';
     final color = switch (effectiveStatus) {
       'ACTIVE' => const Color(0xff24964f),
       'INSUFFICIENT_BALANCE' => const Color(0xffc93f3f),
@@ -16589,15 +16675,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
           };
     return Semantics(
       button: true,
-      label: prepaidIsCurrent
-          ? prepaidBalanceInsufficient
-              ? 'Membresía Costa-Go, pago por uso sin saldo suficiente'
-              : prepaidBalanceLow
-                  ? 'Membresía Costa-Go, pago por uso con saldo por agotarse'
-                  : 'Membresía Costa-Go, pago por uso activo'
-          : currentIsTripPack
-              ? 'Paquete por viajes, ${_membershipStatusLabel(effectiveStatus)}'
-              : 'Membresía por período, ${_membershipStatusLabel(effectiveStatus)}',
+      label: courtesyActive
+          ? 'Cortesía por beneficio activa'
+          : prepaidIsCurrent
+              ? prepaidBalanceInsufficient
+                  ? 'Membresía Costa-Go, pago por uso sin saldo suficiente'
+                  : prepaidBalanceLow
+                      ? 'Membresía Costa-Go, pago por uso con saldo por agotarse'
+                      : 'Membresía Costa-Go, pago por uso activo'
+              : currentIsTripPack
+                  ? 'Paquete por viajes, ${_membershipStatusLabel(effectiveStatus)}'
+                  : 'Membresía por período, ${_membershipStatusLabel(effectiveStatus)}',
       child: Material(
         color: color.withValues(alpha: .18),
         elevation: 4,
@@ -18890,13 +18978,16 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
               final prepaidBalanceLow = prepaidIsCurrent &&
                   !prepaidBalanceInsufficient &&
                   prepaidBalanceNeedsAttention(walletSummary ?? const {});
-              final effectiveStatus = prepaidIsCurrent
-                  ? (prepaidBalanceInsufficient
-                      ? 'INSUFFICIENT_BALANCE'
-                      : prepaidBalanceLow
-                          ? 'LOW_BALANCE'
-                          : 'ACTIVE')
-                  : status;
+              final courtesyActive = data['eligibility']?['benefit'] != null;
+              final effectiveStatus = courtesyActive
+                  ? 'ACTIVE'
+                  : prepaidIsCurrent
+                      ? (prepaidBalanceInsufficient
+                          ? 'INSUFFICIENT_BALANCE'
+                          : prepaidBalanceLow
+                              ? 'LOW_BALANCE'
+                              : 'ACTIVE')
+                      : status;
               final statusTone = switch (effectiveStatus) {
                 'ACTIVE' => currentIsTripPack
                     ? CostaGoStatusTone.info
@@ -19026,6 +19117,17 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 CostaGoSpace.lg,
                                 CostaGoSpace.xxl),
                             children: [
+                          if (data['benefitCoverage'] is List)
+                            for (final benefit
+                                in data['benefitCoverage'] as List)
+                              Card(
+                                  child: ListTile(
+                                      leading: const Icon(Icons.redeem),
+                                      title: Text(benefit['status'] == 'PENDING'
+                                          ? 'Cortesía programada'
+                                          : 'Cortesía por beneficio activa'),
+                                      subtitle: Text(
+                                          'Desde: ${DateTime.parse(benefit['effectiveFrom'].toString()).toLocal()}\nHasta: ${DateTime.parse(benefit['effectiveUntil'].toString()).toLocal()}\nTus compras y saldo se conservan.'))),
                           if (!prepaidBalanceInsufficient)
                             Wrap(spacing: 10, runSpacing: 8, children: [
                               CostaGoStatusChip(
@@ -20595,6 +20697,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                   openCampaignAction(c, widget.s, r)),
                         ],
                         ..._driverSheetContent(context, action),
+                        if (active == null && offers.isEmpty)
+                          CostaGoReferralCard(gateway: referralsFor(widget.s)),
                       ],
                     ),
                   );

@@ -56,7 +56,7 @@ class MainActivity : FlutterFragmentActivity() {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, text)
                         }
-                        startActivity(Intent.createChooser(intent, "Compartir viaje"))
+                        startActivity(Intent.createChooser(intent, "Compartir Costa-Go"))
                         result.success(null)
                     }
                     "openUrl" -> {

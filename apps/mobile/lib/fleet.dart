@@ -1,3 +1,4 @@
+import 'costa_go_referrals.dart';
 import 'costa_go_coastal.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -81,12 +82,14 @@ class FleetLinks {
   static final membershipPending = ValueNotifier<bool>(false);
   static StreamSubscription<Uri>? subscription;
   static Future<void> initialize() async {
+    await ReferralLinks.initialize();
     final prefs = await SharedPreferences.getInstance();
     pending.value = prefs.getString('fleet.pendingQr') ?? '';
     membershipPending.value =
         prefs.getBool('navigation.pendingMembership') ?? false;
     final links = AppLinks();
     Future<void> receive(Uri uri) async {
+      if (await ReferralLinks.receive(uri)) return;
       if (membershipLink(uri)) {
         await prefs.setBool('navigation.pendingMembership', true);
         membershipPending.value = true;

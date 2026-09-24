@@ -77,7 +77,9 @@ export async function recordAcceptedTripMembershipUsage(tx: TransactionSql, trip
   if (!trip) return;
   await lockMembershipBilling(tx, driverId);
   const commercial=await prepareCommercialAcceptance(tx,tripId,driverId);
-  if(commercial?.wallet||commercial?.replay)return;
+  if(commercial?.wallet||commercial?.replay||commercial?.benefit)return;
+  const [benefit]=await tx`select active_courtesy_benefit(${driverId}) as id`;
+  if(benefit?.id)return;
   const [cycle] = await tx`select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null for update`;
   if (!cycle || !['ACTIVE','EXPIRING','GRACE_PERIOD','PAYMENT_DUE'].includes(String(cycle.status))) return;
   const [settings] = await tx`select membership_usage_billing_enabled as enabled from operational_settings where id=1`;

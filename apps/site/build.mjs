@@ -28,6 +28,7 @@ await writeFile(
   `window.COSTA_GO_PUBLIC_CONFIG=${JSON.stringify({
     apiBaseUrl: process.env.PUBLIC_API_BASE_URL ?? "https://mototaxi-atacames-api.onrender.com",
     // Browser-only, referrer-restricted key. Never use the server or Android key here.
+    appStoreUrl: process.env.PUBLIC_APP_STORE_URL ?? null,
     googleMapsWebApiKey,
     googleMapsConfigured: Boolean(googleMapsWebApiKey),
   })};\n`,
@@ -36,7 +37,7 @@ await writeFile(
 
 // Render/Cloudflare can cache config.js longer than HTML. Version every reference so
 // a new deploy never combines a fresh page with stale environment configuration.
-for (const page of ["viaje/index.html", "anunciarme/index.html", "anunciarme/comprobante/index.html", "cooperativas/index.html"]) {
+for (const page of ["r/index.html", "viaje/index.html", "anunciarme/index.html", "anunciarme/comprobante/index.html", "cooperativas/index.html"]) {
   const file = resolve(output, page);
   const html = await readFile(file, "utf8");
   await writeFile(file, html.replaceAll('/config.js', `/config.js?v=${publicConfigVersion}`), "utf8");

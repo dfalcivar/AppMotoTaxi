@@ -7,6 +7,8 @@ import { calculateTerritorialFare } from "./fare-engine.js";
 import { configuredScheduledQuote, legacyScheduledConfirmation, registerScheduledArrivalRoutes } from './scheduled-arrival.js';
 import { immediateQuote, ensureSearchSession, settleDriverCancelledCommercialAssignment } from './arrival-commercial.js';
 import {registerCommercialEconomicsRoutes} from './commercial-economics-admin.js';
+import {registerReferralRoutes,referralSchedulerTick} from './referrals.js';
+import {registerBenefitRoutes} from './benefits.js';
 import {registerCostaGoCampaignRoutes} from './costa-go-campaigns.js';
 import {packageEconomicsTick} from './package-economics.js';
 import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
@@ -489,6 +491,8 @@ export async function buildApp() {
   await registerDriverEarningsRoutes(app);
   await registerScheduledArrivalRoutes(app);
   await registerCommercialEconomicsRoutes(app);
+  await registerBenefitRoutes(app, authenticatedUser);
+  await registerReferralRoutes(app, authenticatedUser);
   await registerCostaGoCampaignRoutes(app,authenticatedUser);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
@@ -501,6 +505,9 @@ export async function buildApp() {
   }, 30_000);
   fleetScheduler.unref();
   app.addHook('onClose',async()=>clearInterval(fleetScheduler));
+  const referralScheduler=setInterval(()=>void referralSchedulerTick().catch(error=>app.log.error({err:error},'referral_scheduler_failed')),15000);
+  referralScheduler.unref();
+  app.addHook('onClose',async()=>clearInterval(referralScheduler));
   const membershipScheduler = setInterval(() => {
     void membershipSchedulerTick().catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
     void packageEconomicsTick().catch(error=>app.log.error({err:error},'package_economics_failed'));
@@ -673,6 +680,7 @@ export async function buildApp() {
               and d.last_location is not null
               and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
               and ((select not membership_enforcement_enabled from operational_settings where id=1)
+                or active_courtesy_benefit(d.user_id) is not null
                 or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
                   and trip_offer_economics(${trip.tripId},1) is not null and commercial_driver_can_accept(d.user_id,${trip.tripId},1))
                 or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
@@ -727,7 +735,8 @@ export async function buildApp() {
           where d.is_available=true and fleet_driver_can_receive(d.user_id) and u.status='ACTIVE' and d.approval_status='APROBADO' and d.last_location is not null
           and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
-            or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
+            or active_courtesy_benefit(d.user_id) is not null
+                or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
               and trip_offer_economics(${trip.tripId},${bounds.round}) is not null and commercial_driver_can_accept(d.user_id,${trip.tripId},${bounds.round}))
             or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
               and (dm.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') or (dm.status='GRACE_PERIOD' and dm.grace_allows_trips_applied=true))
@@ -809,7 +818,8 @@ export async function buildApp() {
             where dd.driver_id=d.user_id and dd.status='SUSPENDED'
           )
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
-            or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
+            or active_courtesy_benefit(d.user_id) is not null
+                or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
               and trip_offer_economics(t.id,t.driver_search_round) is not null and commercial_driver_can_accept(d.user_id,t.id,t.driver_search_round))
             or exists (
               select 1 from driver_memberships dm

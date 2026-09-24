@@ -13,6 +13,8 @@ export const adminRoles = [
 export type AdminRole = typeof adminRoles[number];
 
 export const allPermissions = [
+  "benefits:view",
+  "benefits:manage",
   "costa_campaigns:view",
   "costa_campaigns:create",
   "costa_campaigns:edit",

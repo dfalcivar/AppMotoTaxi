@@ -24,15 +24,16 @@ export const campaignSchema=z.object({
   ctaType:z.enum(['NONE','CAMPAIGN_DETAIL','MEMBERSHIP','REFERRAL','SUPPORT','INTERNAL_ROUTE','EXTERNAL_URL']).default('NONE'),
   ctaText:z.string().trim().max(80).default(''),ctaDestination:z.string().trim().max(2048).default(''),
   terms:z.string().trim().max(12000).default(''),
+  benefitCode:z.string().regex(/^[A-Z][A-Z0-9_]{2,79}$/).nullable().default(null),
 }).superRefine((v,c)=>{
   const issue=(path:string,message:string)=>c.addIssue({code:'custom',path:[path],message});
   if(Date.parse(v.endsAt)<=Date.parse(v.startsAt))issue('endsAt','El fin debe ser posterior al inicio.');
   if(!v.allZones&&!v.zoneIds.length)issue('zoneIds','Selecciona al menos una zona.');
   if(v.allZones&&v.zoneIds.length)issue('zoneIds','Todas las zonas no admite una selección parcial.');
   if(v.ctaType!=='NONE'&&!v.ctaText)issue('ctaText','Escribe el texto de la acción.');
-  if(v.ctaType==='REFERRAL')issue('ctaType','Referidos aún no tiene un destino móvil disponible.');
+
   if(v.ctaType==='EXTERNAL_URL'&&!safeCampaignUrl(v.ctaDestination))issue('ctaDestination','Usa una dirección HTTPS pública sin credenciales.');
-  if(v.ctaType==='INTERNAL_ROUTE'&&!['support','membership','profile','activity','campaigns'].includes(v.ctaDestination))issue('ctaDestination','Destino interno no disponible.');
+  if(v.ctaType==='INTERNAL_ROUTE'&&!['support','membership','profile','activity','campaigns','referrals'].includes(v.ctaDestination))issue('ctaDestination','Destino interno no disponible.');
   if((v.ctaType==='MEMBERSHIP'||(v.ctaType==='INTERNAL_ROUTE'&&v.ctaDestination==='membership'))&&v.audience!=='DRIVER')issue('audience','Membresía solo está disponible para conductores.');
 });
 const idSchema=z.object({id:z.string().uuid()});
@@ -48,6 +49,7 @@ const transitions:Record<string,{from:string[];to:string;permission:Permission}>
   FINISH:{from:['DRAFT','PENDING_APPROVAL','APPROVED','REJECTED','ACTIVE','PAUSED'],to:'FINISHED',permission:'costa_campaigns:deactivate'},
 };
 const campaignErrors:Record<string,string>={
+  CAMPAIGN_INVALID_BENEFIT:'Selecciona un beneficio compatible con la audiencia y usa Detalle de campaña como acción.',
   CAMPAIGN_NOT_FOUND:'La campaña no está disponible.',
   CAMPAIGN_VERSION_CONFLICT:'La campaña cambió mientras la editabas. Actualiza el detalle antes de continuar.',
   CAMPAIGN_FINISHED:'La campaña está finalizada. Puedes duplicarla para crear un nuevo borrador.',
@@ -92,6 +94,12 @@ async function validateAreas(tx:any,ids:string[]) {
     if(!area)throw new Error('CAMPAIGN_INVALID_ZONE');
   }
 }
+async function validateBenefit(tx:any,b:any) {
+ if(!b.benefitCode)return;
+ const [benefit]=await tx`select audience,status from benefit_definitions where code=${b.benefitCode}`;
+ if(!benefit||benefit.status==='ARCHIVED'||benefit.audience!=='BOTH'&&benefit.audience!==b.audience)throw new Error('CAMPAIGN_INVALID_BENEFIT');
+ if(b.ctaType!=='CAMPAIGN_DETAIL')throw new Error('CAMPAIGN_INVALID_BENEFIT');
+}
 async function writeAreas(tx:any,id:string,ids:string[]) {
   await validateAreas(tx,ids);
   await tx`delete from costa_go_campaign_areas where campaign_id=${id}`;
@@ -103,7 +111,7 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
   app.get(root+'/options',guarded(async request=>{
     requirePermission(request,'costa_campaigns:view');
     return {zones:await database()`select id::text,name,code,enabled from service_areas order by name`,states:campaignStates,
-      internalRoutes:['support','membership','profile','activity','campaigns'],referralAvailable:false};
+      internalRoutes:['support','membership','profile','activity','campaigns'],referralAvailable:true};
   }));
   app.get(root,guarded(async request=>{
     requirePermission(request,'costa_campaigns:view');
@@ -129,7 +137,7 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
     const result=await database().begin(async tx=>{
       const [row]=await tx`insert into costa_go_campaigns(internal_name,title,audience,starts_at,ends_at,priority,all_zones,content,created_by,updated_by)
         values(${internalName},${title},${audience},${startsAt},${endsAt},${priority},${allZones},${tx.json(content)},${actor.id??null},${actor.id??null}) returning id`;
-      await writeAreas(tx,row!.id,zoneIds);const result=present(await record(tx,row!.id));await audit(tx,actor,row!.id,'CREATED',null,result);return result;
+      await validateBenefit(tx,b);await writeAreas(tx,row!.id,zoneIds);const result=present(await record(tx,row!.id));await audit(tx,actor,row!.id,'CREATED',null,result);return result;
     });return reply.code(201).send(result);
   }));
   app.put(root+'/:id',guarded(async request=>{
@@ -141,7 +149,7 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
       const previous=present(await record(tx,id));
       await tx`update costa_go_campaigns set internal_name=${internalName},title=${title},audience=${audience},starts_at=${startsAt},ends_at=${endsAt},priority=${priority},all_zones=${allZones},content=${tx.json(content)},
         status='DRAFT',enabled=false,reviewed_by=null,reviewed_at=null,review_reason=null,updated_by=${actor.id??null},updated_at=now(),version=version+1 where id=${id}`;
-      await writeAreas(tx,id,zoneIds);const result=present(await record(tx,id));await audit(tx,actor,id,'EDITED',previous,result);return result;
+      await validateBenefit(tx,b);await writeAreas(tx,id,zoneIds);const result=present(await record(tx,id));await audit(tx,actor,id,'EDITED',previous,result);return result;
     });
   }));
   app.post(root+'/:id/actions',guarded(async request=>{
@@ -152,7 +160,7 @@ export async function registerCostaGoCampaignRoutes(app:FastifyInstance,authenti
       if(!transition.from.includes(old.status))throw new Error('CAMPAIGN_INVALID_TRANSITION');
       if(['SUBMIT','APPROVE','ACTIVATE'].includes(b.action)) {
         const campaign=campaignSchema.parse(present(await record(tx,id)));
-        await validateAreas(tx,campaign.zoneIds);
+        await validateAreas(tx,campaign.zoneIds);await validateBenefit(tx,campaign);
         const [valid]=await tx`select ends_at>now() as valid from costa_go_campaigns where id=${id}`;
         if(!valid?.valid)throw new Error('CAMPAIGN_EXPIRED');
       }

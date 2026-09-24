@@ -300,6 +300,7 @@ export async function requireMobileUser(request: FastifyRequest, reply: FastifyR
 }
 
 export interface DriverEligibility {
+  benefit?: Record<string,unknown>;
   eligible: boolean;
   reason?: string;
   membership?: Record<string, unknown>;
@@ -323,6 +324,8 @@ export async function driverMembershipEligibility(driverId: string, tripId?:stri
   if (!driver || driver.accountStatus !== "ACTIVE") return { eligible: false, reason: "DRIVER_ACCOUNT_INACTIVE", enforcementEnabled: true };
   if (driver.approvalStatus !== "APROBADO") return { eligible: false, reason: "DRIVER_NOT_APPROVED", enforcementEnabled: true };
   if (driver.hasSuspendedDocuments) return { eligible: false, reason: "DRIVER_DOCUMENTS_INVALID", enforcementEnabled: true };
+  const [benefit] = await database()`select r.id,r.effective_from as "effectiveFrom",r.effective_until as "effectiveUntil",r.benefit_code as code from benefit_redemptions r where r.id=active_courtesy_benefit(${driverId})`;
+  if(benefit)return {eligible:true,enforcementEnabled:true,benefit};
   const [membership] = await database()`
     select id::text, status, starts_at as "startsAt", expires_at as "expiresAt",
       grace_ends_at as "graceEndsAt", suspension_at as "suspensionAt",
@@ -938,19 +941,21 @@ export async function membershipSchedulerTick(): Promise<void> {
       `;
       return updated;
     });
-    if (transition) {
+    const [benefitCoverage]=await database()`select active_courtesy_benefit(${item.driverId}) as id`;
+    if (transition&&!benefitCoverage?.id) {
       void sendPush(item.driverId, "Membresía pendiente de renovación", transition.status === "GRACE_PERIOD" ? "Tu período de gracia ya comenzó. Revisa la fecha límite en Costa-Go." : "Renueva tu membresía antes de la hora de suspensión.", { type: "MEMBERSHIP_PAYMENT_DUE", membershipId: item.id }).catch(() => undefined);
     }
   }
-  const due = await database()`select id::text,driver_id::text as "driverId" from driver_memberships where cycle_closed_at is null and suspension_at is not null and suspension_at<=now() and status in ('GRACE_PERIOD','PAYMENT_DUE') order by suspension_at limit 100`;
+  const due = await database()`select id::text,driver_id::text as "driverId" from driver_memberships where cycle_closed_at is null and suspension_at is not null and suspension_at<=now() and status in ('GRACE_PERIOD','PAYMENT_DUE') and active_courtesy_benefit(driver_id) is null order by suspension_at limit 100`;
   for (const item of due) {
     const outcome = await database().begin(async tx => {
       const [membership] = await tx`select status from driver_memberships where id=${item.id} for update`;
       if (!membership || !["GRACE_PERIOD", "PAYMENT_DUE"].includes(String(membership.status))) return;
+      const [coverage]=await tx`select active_courtesy_benefit(${item.driverId}) as id`;if(coverage?.id)return;
       const [activeTrip] = await tx`select id from trips where driver_id=${item.driverId} and status in ${tx(ACTIVE_TRIP_STATES as unknown as string[])} limit 1`;
       const status = activeTrip ? "SUSPENSION_PENDING_ACTIVE_TRIP" : "SUSPENDED_NON_PAYMENT";
       await tx`update driver_memberships set status=${status},suspension_pending_active_trip=${Boolean(activeTrip)},suspended_non_payment_at=case when ${Boolean(activeTrip)} then suspended_non_payment_at else now() end,updated_at=now() where id=${item.id}`;
-      if (!activeTrip) await tx`update drivers set is_available=false where user_id=${item.driverId}`;
+      if (!activeTrip) await tx`update drivers set is_available=false where user_id=${item.driverId} and active_courtesy_benefit(user_id) is null`;
       return status;
     });
     if (outcome) void sendPush(item.driverId, "Membresía Costa-Go", outcome === "SUSPENDED_NON_PAYMENT" ? "Tu membresía venció. Renueva para volver a recibir solicitudes." : "Finaliza tu viaje actual y renueva tu membresía.", { type: outcome, membershipId: item.id }).catch(() => undefined);
@@ -958,14 +963,14 @@ export async function membershipSchedulerTick(): Promise<void> {
 
   const pendingAfterTrip = await database()`
     select dm.id::text,dm.driver_id::text as "driverId" from driver_memberships dm
-    where dm.cycle_closed_at is null and dm.status='SUSPENSION_PENDING_ACTIVE_TRIP'
+    where dm.cycle_closed_at is null and dm.status='SUSPENSION_PENDING_ACTIVE_TRIP' and active_courtesy_benefit(dm.driver_id) is null
       and not exists(select 1 from trips t where t.driver_id=dm.driver_id and t.status in ${database()(ACTIVE_TRIP_STATES as unknown as string[])})
     limit 100
   `;
   for (const item of pendingAfterTrip) {
     const [updated] = await database()`update driver_memberships set status='SUSPENDED_NON_PAYMENT',suspension_pending_active_trip=false,suspended_non_payment_at=now(),updated_at=now() where id=${item.id} and status='SUSPENSION_PENDING_ACTIVE_TRIP' returning id`;
     if (updated) {
-      await database()`update drivers set is_available=false where user_id=${item.driverId}`;
+      await database()`update drivers set is_available=false where user_id=${item.driverId} and active_courtesy_benefit(user_id) is null`;
       void sendPush(item.driverId, "Membresía vencida", "Tu viaje terminó y la recepción de nuevas solicitudes quedó pausada. Renueva para reconectarte.", { type: "MEMBERSHIP_SUSPENDED_NON_PAYMENT", membershipId: item.id }).catch(() => undefined);
     }
   }
@@ -1138,10 +1143,14 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     ]);
     const vatRatePercent = Number(settingsRows[0]?.vatRatePercent ?? 0);
     const pricedPlans = plans.map(plan => ({ ...plan, ...taxBreakdown(plan.amount, vatRatePercent) }));
+    const benefitCoverage=await database()`select id,benefit_code as code,effective_from as "effectiveFrom",effective_until as "effectiveUntil",
+      case when effective_from>now() then 'PENDING' else 'ACTIVE' end as status from benefit_redemptions where user_id=${user.id!}
+      and benefit_type='COURTESY_DAYS' and status in ('ACTIVE','PENDING') and effective_until>now() order by effective_from`;
     const renewalTax = taxBreakdown(membership?.estimatedNextRenewalAmount ?? 0, vatRatePercent);
     return {
       membership: membership ? { ...membership, estimatedRenewalTax: renewalTax } : { status: "PENDING" },
       eligibility,
+      benefitCoverage,
       plans: pricedPlans,
       pendingOrder,
       tax: { vatRatePercent, pricesIncludeVat: false }

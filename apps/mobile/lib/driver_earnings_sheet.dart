@@ -120,6 +120,7 @@ class _DriverEarningsSheetState extends State<DriverEarningsSheet> {
   }
 
   String _billingMode(dynamic value) => switch (value?.toString()) {
+        'BENEFIT_COURTESY' => 'Cortesía por beneficio',
         'TRIP_PACKAGE' => 'Por viajes',
         'PERIOD_PLAN' ||
         'PERIOD_PLAN_INCLUDED' ||

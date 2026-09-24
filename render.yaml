@@ -138,6 +138,9 @@ services:
         sync: false
     routes:
       - type: rewrite
+        source: /r/*
+        destination: /r/index.html
+      - type: rewrite
         source: /viaje/*
         destination: /viaje/index.html
       - type: rewrite
