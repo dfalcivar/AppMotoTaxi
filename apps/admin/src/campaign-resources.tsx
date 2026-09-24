@@ -2,10 +2,10 @@ import {useEffect,useState} from 'react';
 import {apiUrl} from './api';
 
 export const resourceGroups=[
-  {kind:'THUMBNAIL',title:'Imagen para Home',help:'Miniatura compacta junto al título de la card. Recomendado: 480 × 320 px.'},
-  {kind:'MAIN',title:'Imagen principal',help:'Se muestra al abrir el detalle. Recomendado: 1280 × 720 px, sin botones dibujados.'},
-  {kind:'HEADER',title:'Decoración de isla superior',help:'Overlay PNG/WebP con transparencia real. Recomendado: 1200 × 240 px. Deja el centro, el avatar y el saludo despejados.'},
-  {kind:'DECORATION',title:'Decoración adicional',help:'Recurso secundario opcional, reservado para otras superficies. No sustituye la miniatura ni decora la isla salvo que lo habilites expresamente.'},
+  {kind:'THUMBNAIL',title:'Imagen para Home',help:'En la app ocupa 76 × 80 px junto al título y se recorta para llenar el espacio. Prepara una imagen casi cuadrada, por ejemplo 456 × 480 px, con el motivo centrado y margen alrededor. Evita texto pequeño: título y botón se muestran aparte.'},
+  {kind:'MAIN',title:'Imagen principal',help:'Al abrir el detalle ocupa el ancho disponible en un área de 220 px de alto. La app ajusta la imagen completa sin recortarla. Recomendado: 1280 × 720 px; deja los elementos importantes centrados y no dibujes botones.'},
+  {kind:'HEADER',title:'Decoración de isla superior',help:'La isla mide aproximadamente 328 × 58 px en un móvil típico; su ancho cambia según el teléfono. Para Bordes o Superposición completa, prepara un PNG/WebP transparente de referencia de 1200 × 210 px, sin márgenes vacíos arriba o abajo y con el centro, avatar y saludo despejados. Para Acento de avatar se muestra solo en 25 × 19 px; usa un detalle simple.'},
+  {kind:'DECORATION',title:'Decoración adicional',help:'Recurso secundario opcional; no reemplaza la miniatura. Si habilitas su uso en la isla, se adapta al modo elegido: sigue la recomendación de Decoración de isla superior (marco ancho o pequeño acento de avatar).'},
 ];
 export type VisualCampaign={id?:string;version?:number;assets?:string[];headerDecorationMode?:string;decorateHeader?:boolean;useDecorativeAssetForHeader?:boolean;allowLightAssetsInDark?:boolean};
 function Preview({token,campaign,kind,file}:{token:string;campaign:VisualCampaign;kind:string;file?:File}){

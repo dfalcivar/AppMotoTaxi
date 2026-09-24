@@ -41,6 +41,17 @@ Para Cloudflare R2: crear bucket privado, generar credenciales de lectura/escrit
 
 ## 3. Upload, reemplazo y validaciones
 
+Medidas de diseño en la app (píxeles lógicos; las resoluciones recomendadas dan margen para pantallas de mayor densidad):
+
+| Recurso | Espacio y ajuste en Flutter | Archivo recomendado |
+| --- | --- | --- |
+| Miniatura Home | 76 × 80; `cover` recorta los bordes | 456 × 480 px, casi cuadrado; motivo centrado y sin texto pequeño |
+| Imagen principal del detalle | Ancho disponible × 220 de alto; `contain` muestra la imagen completa | 1280 × 720 px como referencia; el ancho visible depende del teléfono |
+| Decoración de isla, Bordes/Superposición completa | Aproximadamente 328 × 58 en un móvil típico; `fill` adapta al ancho disponible | 1200 × 210 px, PNG/WebP transparente, sin márgenes exteriores y con centro despejado |
+| Acento de avatar en la isla | 25 × 19; `contain` | Detalle simple de aproximadamente 200 × 152 px |
+
+La decoración adicional no tiene una dimensión propia fija. Si se habilita para la isla, se representa con las mismas dimensiones y ajustes del modo de isla elegido. Como el ancho de pantalla cambia, ninguna proporción garantiza idéntico resultado en todos los teléfonos; revisar la vista previa y la app con un móvil estrecho.
+
 JPG/PNG/WebP estáticos, máximo 2 MB y 4096 px/lado, límite de 16 millones de píxeles. Backend verifica extensión, MIME, formato decodificado, dimensiones y animación; Sharp decodifica, orienta y elimina metadatos. No admite SVG/GIF. HEADER exige PNG/WebP con transparencia real; DECORATION usado expresamente como header debe ser compatible.
 
 La referencia se cambia solo tras validación y almacenamiento correctos, dentro de una transacción con control de versión. Fallos mantienen el recurso anterior. Se registra actor, campaña, tipo, clave anterior/nueva, tamaño, versión y fecha en auditoría. Borrar elimina la referencia sin romper campañas duplicadas. Objetos huérfanos no se eliminan automáticamente: una limpieza futura deberá comprobar referencias.
