@@ -120,6 +120,8 @@ Total cobrado, Total facturado y Pendiente de facturar son métricas diferentes.
 
 Listados paginados de 25 registros. Detalle fiscal muestra las últimas 100 operaciones de auditoría y notas; todos los registros permanecen en la BD. El administrador no puede eliminar histórico desde este módulo.
 
+La pestaña **Notas de crédito** permite revisar documentos de todos los clientes con filtros de período, origen, estado y búsqueda. Su detalle muestra el estado, la factura de origen, la autorización, los errores del proveedor y los enlaces PDF/XML disponibles, sin permitir crear notas desde esa lista. La creación permanece en el detalle de una factura autorizada. Si Dátil rechaza una nota con `ERROR` y no devolvió ID remoto, el detalle de la factura permite reintentar esa misma nota y clave idempotente. El reintento comprueba los créditos ya reservados para evitar superar el total de la factura; no modifica el pago ni la membresía.
+
 ## Eliminación y privacidad
 
 La transición existente de `users.deleted_at` elimina el vínculo del conductor. Si ya no quedan vínculos para ese cliente, elimina físicamente el perfil reutilizable y desactiva la identidad fiscal. Conserva referencias, pagos, snapshots, documentos y auditoría financiera, sin copiar nuevamente esos datos a un perfil activo.

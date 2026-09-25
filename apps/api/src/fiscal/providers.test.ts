@@ -21,7 +21,11 @@ describe('Dátil provider',()=>{
     expect(payload.pagos).toEqual([{medio:'transferencia',total:11.5}]);
     expect(payload.items[0].descripcion).toBe('Recarga de saldo Costa-Go');
     const note=buildDatilCreditNotePayload({...document,reason:'Anulación',invoice_number:'001-002-000000001',invoice_issued_at:'2026-09-22T12:00:00-05:00'},config) as any;
-    expect(note).toMatchObject({tipo_documento_modificado:'01',numero_documento_modificado:'001-002-000000001',motivo:'Anulación'});expect(note).not.toHaveProperty('pagos');
+    expect(note).toMatchObject({tipo_documento_modificado:'01',numero_documento_modificado:'001-002-000000001',motivo:'Anulación'});
+    expect(note).not.toHaveProperty('pagos');
+    expect(note.totales).not.toHaveProperty('propina');
+    expect(note.totales).not.toHaveProperty('descuento');
+    expect(note.totales).toMatchObject({total_sin_impuestos:10,importe_total:11.5});
   });
 
   it('preserves the advertiser RUC and paid advertising totals',()=>{

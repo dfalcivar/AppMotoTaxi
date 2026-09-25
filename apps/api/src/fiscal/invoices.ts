@@ -164,6 +164,34 @@ export class FacturaService {
     });
   }
 
+  async retryCreditNote(noteId:string){const config=this.ensureProviderEnabled();
+    return database().begin(async tx=>{
+      const [note]=await tx`select n.id::text,n.invoice_id::text,n.amount,n.status,n.remote_id,n.provider,n.environment,
+        n.emission_eligible,i.source,i.payment_id,i.total,i.client_id from fiscal_credit_notes n
+        join fiscal_invoices i on i.id=n.invoice_id where n.id=${noteId} for update of i,n`;
+      if(!note||note.status!=='ERROR'||note.remote_id||!note.emission_eligible||
+        note.provider!==config.provider||note.environment!==config.environment)throw new Error('FISCAL_DOCUMENT_NOT_RETRYABLE');
+      if(config.environment==='TEST'){
+        if(note.source==='PUBLICIDAD'){
+          if(note.payment_id!==config.testAdvertisingPaymentId)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+        }else if(note.source==='MEMBRESIA'){
+          const [selected]=await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id
+            where p.id=${note.payment_id} and (upper(o.short_code)=${config.testOrderCode}
+              or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP')))`;
+          if(!selected)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+        }else throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+      }
+      const [reserved]=await tx`select coalesce(sum(amount),0) as amount from fiscal_credit_notes
+        where invoice_id=${note.invoice_id} and id<>${noteId} and status not in ('ERROR','RECHAZADA','ANULADA')`;
+      if(cents(note.amount)>cents(note.total)-cents(reserved?.amount??0))throw new Error('INVALID_CREDIT_NOTE_AMOUNT');
+      const [updated]=await tx`update fiscal_credit_notes set status='PENDIENTE_REINTENTO',next_attempt_at=now(),
+        provider_error_code=null,provider_error_message=null,updated_at=now() where id=${noteId} returning id::text,status`;
+      await tx`insert into fiscal_audit(client_id,entity_type,entity_id,event_type,actor_process)
+        values(${note.client_id},'NOTA_CREDITO',${noteId},'NotaCreditoReintentada','ADMIN')`;
+      return updated;
+    });
+  }
+
   private async processPendingCreditNotes(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId&&!config.testAdvertisingPaymentId))return;const seq=datilSequenceConfiguration();
     const notes=await database()`update fiscal_credit_notes set status='ENVIANDO',attempt_count=attempt_count+1,updated_at=now() where id in
       (select id from fiscal_credit_notes where emission_eligible and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))

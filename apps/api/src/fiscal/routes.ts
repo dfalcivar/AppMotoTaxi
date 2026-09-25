@@ -186,12 +186,44 @@ export async function registerFiscalRoutes(app:FastifyInstance){
       order by created_at desc limit ${q.limit} offset ${q.offset}`;
     return {items:rows,total:Number(rows[0]?.totalCount??0)};
   }catch(e){return fiscalError(e,reply);}});
+  app.get('/v1/admin/fiscal/credit-notes',async(req,reply)=>{try{
+    requirePermission(req,'FACTURACION_VER');const q=fiscalFilterSchema.parse(req.query);reply.header('Cache-Control','private, no-store');
+    const rows=await database()`select n.id::text,n.invoice_id::text as "invoiceId",n.document_number as number,
+      n.amount::float8,n.reason,n.status,n.provider,n.environment,n.provider_error_code as "errorCode",
+      n.provider_error_message as "errorMessage",n.created_at as "createdAt",n.issued_at as "issuedAt",
+      n.authorized_at as "authorizedAt",i.document_number as "invoiceNumber",i.source,i.concept,
+      i.fiscal_snapshot as profile,count(*) over()::int as "totalCount"
+      from fiscal_credit_notes n join fiscal_invoices i on i.id=n.invoice_id
+      where (${q.start??null}::date is null or n.created_at>=(${q.start??null}::date::timestamp at time zone 'America/Guayaquil'))
+      and (${q.end??null}::date is null or n.created_at<((${q.end??null}::date+1)::timestamp at time zone 'America/Guayaquil'))
+      and (${q.source??null}::text is null or i.source=${q.source??null})
+      and (${q.status??null}::text is null or n.status=${q.status??null}
+        or (${q.status??null}='PENDING_ALL' and n.status in ('PENDIENTE','PENDIENTE_INTEGRACION','ENVIANDO','RECIBIDA','PENDIENTE_REINTENTO')))
+      and (${q.clientId??null}::uuid is null or i.client_id=${q.clientId??null})
+      and (${q.search}='' or concat_ws(' ',n.document_number,i.document_number,n.reason,i.fiscal_snapshot->>'legalName',i.fiscal_snapshot->>'identification') ilike ${'%'+q.search+'%'})
+      order by n.created_at desc,n.id desc limit ${q.limit} offset ${q.offset}`;
+    return {items:rows,total:Number(rows[0]?.totalCount??0)};
+  }catch(e){return fiscalError(e,reply);}});
+  app.get('/v1/admin/fiscal/credit-notes/:id',async(req,reply)=>{try{
+    requirePermission(req,'FACTURACION_VER');const id=uuid.parse((req.params as {id:string}).id);reply.header('Cache-Control','private, no-store');
+    const [note]=await database()`select n.id::text,n.invoice_id::text as "invoiceId",n.document_number as "documentNumber",
+      n.amount::float8,n.subtotal::float8,n.tax_amount::float8 as tax,n.status,n.reason,n.provider,n.environment,
+      n.remote_id as "remoteId",n.access_key as "accessKey",n.authorization_number as "authorizationNumber",
+      n.issued_at as "issuedAt",n.authorized_at as "authorizedAt",n.created_at as "createdAt",
+      n.xml_location as "xmlUrl",n.ride_location as "rideUrl",n.provider_error_code as "errorCode",
+      n.provider_error_message as "errorMessage",i.document_number as "invoiceNumber",i.concept,i.source,
+      i.fiscal_snapshot as profile from fiscal_credit_notes n join fiscal_invoices i on i.id=n.invoice_id where n.id=${id}`;
+    if(!note)return reply.code(404).send({message:'No se encontró la nota de crédito.'});
+    const history=await database()`select event_type as event,result,created_at as date from fiscal_audit
+      where entity_type='NOTA_CREDITO' and entity_id=${id} order by created_at desc limit 100`;
+    return {note,history};
+  }catch(e){return fiscalError(e,reply);}});
   app.get('/v1/admin/fiscal/invoices/:id',async(req,reply)=>{try{
     requirePermission(req,'FACTURACION_VER');const id=uuid.parse((req.params as any).id);reply.header('Cache-Control','private, no-store');
     const [invoice]=await database()`select * from fiscal_invoices where id=${id}`;
     if(!invoice)return reply.code(404).send({message:'No se encontró el documento.'});
     const history=await database()`select event_type as event,result,created_at as date from fiscal_audit where entity_type='FACTURA' and entity_id=${id} order by created_at desc`;
-    const creditNotes=await database()`select id::text,document_number as "documentNumber",amount::float8,status,reason,issued_at as "issuedAt",authorized_at as "authorizedAt",provider_error_code as "errorCode" from fiscal_credit_notes where invoice_id=${id} order by created_at desc`;
+    const creditNotes=await database()`select id::text,document_number as "documentNumber",amount::float8,status,reason,issued_at as "issuedAt",authorized_at as "authorizedAt",provider_error_code as "errorCode",provider_error_message as "errorMessage" from fiscal_credit_notes where invoice_id=${id} order by created_at desc`;
     const [credits]=await database()`select coalesce(sum(amount),0)::float8 as reserved from fiscal_credit_notes where invoice_id=${id} and status not in ('ERROR','RECHAZADA','ANULADA')`;
     const remainingCreditAmount=Math.max(0,Math.round((Number(invoice.total)-Number(credits?.reserved??0))*100)/100);
     const config=billingConfiguration(),providerReady=billingProvider().configured,ready=config.enabled&&providerReady&&Boolean(config.cutoverAt)&&(config.environment!=='TEST'||Boolean(config.testOrderCode||config.testDriverId||config.testAdvertisingPaymentId));
@@ -218,6 +250,11 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     if(params.action==='email')return await svc.resendEmail(id);
     if(params.action==='credit-note')return await svc.createCreditNote(id,creditNoteSchema.parse(req.body));
     throw new Error('FISCAL_CONTEXT_UNAVAILABLE');
+  }catch(e){return fiscalError(e,reply);}});
+  app.post('/v1/admin/fiscal/credit-notes/:id/retry',async(req,reply)=>{try{
+    try{requirePermission(req,'FACTURACION_REINTENTAR');}catch{requirePermission(req,'FACTURACION_ADMINISTRAR');}
+    const id=uuid.parse((req.params as {id:string}).id);
+    return await new FacturaService().retryCreditNote(id);
   }catch(e){return fiscalError(e,reply);}});
   app.get('/v1/admin/fiscal/payments',async(req,reply)=>{try{
     requirePermission(req,'FACTURACION_VER');const q=fiscalFilterSchema.parse(req.query);

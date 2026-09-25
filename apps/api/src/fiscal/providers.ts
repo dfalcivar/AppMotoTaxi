@@ -105,7 +105,9 @@ function commonPayload(document:Record<string,unknown>,config:DatilConfig){const
 
 export function buildDatilInvoicePayload(document:Record<string,unknown>,configOverride?:DatilConfig){const config=configOverride??datilConfig(process.env);if(!config)throw new FiscalProviderError('DATIL_NOT_CONFIGURED','Dátil no está configurado.',false);const {_parts,...payload}=commonPayload(document,config);return payload;}
 export function buildDatilCreditNotePayload(document:Record<string,unknown>,configOverride?:DatilConfig){const config=configOverride??datilConfig(process.env);if(!config)throw new FiscalProviderError('DATIL_NOT_CONFIGURED','Dátil no está configurado.',false);
-  const {_parts,...base}=commonPayload(document,config);const {pagos:_payments,...withoutPayments}=base;return {...withoutPayments,
+  const {_parts,...base}=commonPayload(document,config);const {pagos:_payments,...withoutPayments}=base;
+  const {propina:_propina,descuento:_descuento,...creditTotals}=withoutPayments.totales;
+  return {...withoutPayments,totales:creditTotals,
     fecha_emision_documento_modificado:fiscalDateTime(field(document,'invoiceIssuedAt','invoice_issued_at')),
     numero_documento_modificado:String(field(document,'invoiceNumber','invoice_number')),tipo_documento_modificado:'01',
     motivo:String(field(document,'reason','reason')??'Anulación o devolución')};}

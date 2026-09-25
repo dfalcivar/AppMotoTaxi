@@ -229,9 +229,31 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     expect(response.statusCode).toBe(200);
     expect(response.json().creditNotes).toMatchObject([{amount:8,status:'PENDIENTE',reason:'Devolución restante'},{amount:4,status:'PENDIENTE',reason:'Devolución parcial'}]);
     expect(response.json().remainingCreditAmount).toBe(0);
+    const listing=await app.inject({url:'/v1/admin/fiscal/credit-notes?status=PENDIENTE',headers:{authorization:`Bearer ${tokenFor({id:actorId,name:'Admin',email:'admin@example.test',role:'ADMIN'})}`}});
+    expect(listing.statusCode).toBe(200);
+    expect(listing.json()).toMatchObject({total:2,items:[{invoiceId:invoice.id,amount:8,status:'PENDIENTE'},{invoiceId:invoice.id,amount:4,status:'PENDIENTE'}]});
+    const noteDetail=await app.inject({url:`/v1/admin/fiscal/credit-notes/${listing.json().items[0].id}`,headers:{authorization:`Bearer ${tokenFor({id:actorId,name:'Admin',email:'admin@example.test',role:'ADMIN'})}`}});
+    expect(noteDetail.statusCode).toBe(200);
+    expect(noteDetail.json().note).toMatchObject({invoiceId:invoice.id,amount:8,reason:'Devolución restante'});
     await app.close();
     vi.stubEnv('FACTURACION_ENVIRONMENT','PRODUCTION');
     await expect(svc.createCreditNote(invoice.id,{amount:0.01,reason:'Otro ambiente',idempotencyKey:'00000000-0000-4000-8000-000000000034'})).rejects.toThrow('FISCAL_DOCUMENT_NOT_AUTHORIZED');
+  });
+  it('retries a rejected credit note without permitting duplicate credits for one invoice',async()=>{
+    await service.save(owner,input,{});await pay();await new FacturaService().collectCommittedPayments();
+    const [invoice]=(await pg.query<any>('select id from fiscal_invoices')).rows;
+    await pg.exec("update fiscal_invoices set status='AUTORIZADA',emission_eligible=true,document_number='001-002-000000001',access_key='TEST-ONLY',authorization_number='TEST-ONLY',authorized_at=now()");
+    vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2026-09-22T00:00:00Z');
+    const svc=new FacturaService({name:'DATIL',configured:true} as any);
+    const first=await svc.createCreditNote(invoice.id,{amount:12,reason:'Devolución',idempotencyKey:'00000000-0000-4000-8000-000000000041'});
+    await pg.query("update fiscal_credit_notes set status='ERROR',provider_error_code='DATIL_HTTP_400' where id=$1",[first.id]);
+    const second=await svc.createCreditNote(invoice.id,{amount:12,reason:'Devolución repetida',idempotencyKey:'00000000-0000-4000-8000-000000000042'});
+    await pg.query("update fiscal_credit_notes set status='ERROR',provider_error_code='DATIL_HTTP_400' where id=$1",[second.id]);
+    expect(await svc.retryCreditNote(first.id)).toMatchObject({id:first.id,status:'PENDIENTE_REINTENTO'});
+    await expect(svc.retryCreditNote(second.id)).rejects.toThrow('INVALID_CREDIT_NOTE_AMOUNT');
+    await expect(svc.retryCreditNote(first.id)).rejects.toThrow('FISCAL_DOCUMENT_NOT_RETRYABLE');
+    const notes=(await pg.query<any>('select status from fiscal_credit_notes order by created_at,id')).rows;
+    expect(notes.map(note=>note.status).sort()).toEqual(['ERROR','PENDIENTE_REINTENTO']);
   });
   it('deletion retains paid and authorized historical metrics',async()=>{
     await service.save(owner,input,{});await pay();await new FacturaService().collectCommittedPayments();
