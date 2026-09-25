@@ -159,6 +159,29 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     await pg.exec("update advertising_payments set status='APPROVED',settlement_status='RECONCILED'");
     await new FacturaService().collectCommittedPayments();expect((await pg.query('select * from fiscal_invoices')).rows).toHaveLength(1);
   });
+  it('emits only the selected commercial payment already pending in TEST',async()=>{
+    const otherOrder='00000000-0000-4000-8000-000000000080';
+    const selectedPayment='00000000-0000-4000-8000-000000000081';
+    const otherPayment='00000000-0000-4000-8000-000000000082';
+    await service.save({type:'COMERCIO',id:advertiserId},{...input,identificationType:'RUC',identification:'1790012345001'},{});
+    await pg.query('insert into advertising_orders(id,advertiser_id) values($1,$2)',[otherOrder,advertiserId]);
+    for(const [payment,order] of [[selectedPayment,adOrder],[otherPayment,otherOrder]])
+      await pg.query("insert into advertising_payments(id,advertiser_id,order_id,amount,status,settlement_status) values($1,$2,$3,25,'APPROVED','RECONCILED')",[payment,advertiserId,order]);
+    vi.stubEnv('FACTURACION_ENABLED','true');vi.stubEnv('FACTURACION_CUTOVER_AT','2020-01-01T00:00:00Z');
+    vi.stubEnv('FACTURACION_TEST_ORDER_CODE','');vi.stubEnv('DATIL_ESTABLISHMENT_CODE','001');vi.stubEnv('DATIL_EMISSION_POINT','002');
+    const emit=vi.fn(async()=>({status:'RECIBIDA' as const,remoteId:'commercial-test-only',providerStatus:'RECIBIDO'}));
+    const svc=new FacturaService({name:'DATIL',configured:true,emitirFactura:emit} as any);
+    await svc.collectCommittedPayments();await svc.processPending();
+    expect(emit).not.toHaveBeenCalled();
+    expect((await pg.query<any>('select status from fiscal_invoices')).rows.map(row=>row.status)).toEqual(['PENDIENTE_INTEGRACION','PENDIENTE_INTEGRACION']);
+    vi.stubEnv('FACTURACION_TEST_ADVERTISING_PAYMENT_ID',selectedPayment);
+    await svc.processPending();await svc.processPending();
+    expect(emit).toHaveBeenCalledTimes(1);
+    const rows=(await pg.query<any>('select payment_id,status,emission_eligible,remote_id from fiscal_invoices')).rows;
+    expect(rows).toHaveLength(2);
+    expect(rows.find(row=>row.payment_id===selectedPayment)).toMatchObject({status:'RECIBIDA',emission_eligible:true,remote_id:'commercial-test-only'});
+    expect(rows.find(row=>row.payment_id===otherPayment)).toMatchObject({status:'PENDIENTE_INTEGRACION',emission_eligible:false,remote_id:null});
+  });
   it('deletion erases reusable profiles/links but preserves financial snapshots',async()=>{
     await service.save(owner,input,{});await pay();await new FacturaService().collectCommittedPayments();
     await pg.query('update users set deleted_at=now() where id=$1',[driverId]);

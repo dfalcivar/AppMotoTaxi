@@ -24,6 +24,17 @@ describe('Dátil provider',()=>{
     expect(note).toMatchObject({tipo_documento_modificado:'01',numero_documento_modificado:'001-002-000000001',motivo:'Anulación'});expect(note).not.toHaveProperty('pagos');
   });
 
+  it('preserves the advertiser RUC and paid advertising totals',()=>{
+    const payload=buildDatilInvoicePayload({...document,external_reference:'costago:PUBLICIDAD:123e4567-e89b-42d3-a456-426614174000:FACTURA',
+      fiscal_snapshot:{identificationType:'RUC',identification:'0802475509001',legalName:'Cafeteria Disfruta',address:'Atacames',billingEmail:'cafeteria@example.test'},
+      subtotal:25,tax_amount:3.75,total:28.75,concept:'Publicidad Costa-Go',service_type:'PUBLICIDAD',payment_method:'CASH'},config) as any;
+    expect(payload.comprador).toMatchObject({tipo_identificacion:'04',identificacion:'0802475509001'});
+    expect(payload.totales).toMatchObject({total_sin_impuestos:25,importe_total:28.75});
+    expect(payload.totales.impuestos[0]).toMatchObject({base_imponible:25,valor:3.75});
+    expect(payload.items[0].descripcion).toBe('Publicidad Costa-Go');
+    expect(payload.pagos).toEqual([{medio:'efectivo',total:28.75}]);
+  });
+
   it('serializes PostgreSQL timestamps as ISO 8601 for invoices and credit notes',()=>{
     const issuedAt=new Date('2026-09-23T02:15:00.000Z');
     const invoice=buildDatilInvoicePayload({...document,issued_at:issuedAt},config) as any;

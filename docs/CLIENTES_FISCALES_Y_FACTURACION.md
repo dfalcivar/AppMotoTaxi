@@ -136,6 +136,7 @@ FACTURACION_PROVIDER=DATIL
 FACTURACION_ENVIRONMENT=TEST
 FACTURACION_CUTOVER_AT=<fecha-y-hora-futura-coordinada-en-ISO-8601>
 FACTURACION_TEST_ORDER_CODE=<codigo-visible-de-la-orden-pendiente-de-membresia-o-recarga>
+FACTURACION_TEST_ADVERTISING_PAYMENT_ID=<uuid-del-pago-de-publicidad-seleccionado>
 FACTURACION_EMAIL_MODE=PROVIDER
 FACTURACION_SMTP_ENABLED=false
 FACTURACION_FROM_EMAIL=
@@ -157,7 +158,7 @@ DATIL_WEBHOOK_TOKEN=
 
 Las claves y la contraseña del certificado se cargan únicamente como secretos de Render. Activar solo `FACTURACION_ENABLED` no emite nada si falta la configuración o la fecha de corte. La fecha debe fijarse antes del primer pago que se quiera emitir; todo registro anterior conserva `emission_eligible=false`. No almacenar credenciales reales en Git.
 
-En `TEST`, la emisión exige además `FACTURACION_TEST_ORDER_CODE`. Solo la orden de membresía o recarga con ese código visible puede enviarse a Dátil; los demás pagos nuevos quedan como `PENDIENTE_INTEGRACION`. Crear primero la orden desde la app del conductor o con **Crear recarga** en la fila de su membresía del panel; esta acción solo crea una orden pendiente, sin cobrar ni acreditar saldo. Copiar el código, configurar el corte antes de confirmar su pago y comprobar en el panel que la emisión está habilitada. Una cortesía no genera factura. El correo fiscal del cliente se incluye en el comprador y Dátil gestiona el envío tras la autorización. Al terminar la prueba, desactivar `FACTURACION_ENABLED` y retirar el código de prueba.
+En `TEST`, la emisión requiere una selección explícita. `FACTURACION_TEST_ORDER_CODE` permite la orden de membresía o recarga indicada; `FACTURACION_TEST_DRIVER_ID` permite los pagos del conductor seleccionado; `FACTURACION_TEST_ADVERTISING_PAYMENT_ID` permite **un solo pago de publicidad conciliado** por su UUID. Los demás pagos quedan como `PENDIENTE_INTEGRACION`. Si el pago de publicidad seleccionado ya tenía una factura local en ese estado, el worker habilita esa misma factura para el envío, siempre que el pago y su snapshot fiscal sean posteriores al corte, no estén reversados y correspondan al proveedor y ambiente actuales. No crea otra factura ni habilita pagos históricos anteriores al corte. Una cortesía no genera factura. El correo fiscal del cliente se incluye en el comprador y Dátil gestiona el envío tras la autorización. Al terminar la prueba, desactivar `FACTURACION_ENABLED` y retirar la selección de prueba.
 
 ### Habilitación de Dátil
 

@@ -13,7 +13,7 @@ const delaySeconds=(attempt:number)=>Math.min(3600,30*Math.pow(2,Math.max(0,atte
 
 export class FacturaService {
   constructor(private provider:ProveedorFacturacion=billingProvider()){}
-  private ensureProviderEnabled(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId))throw new Error('FISCAL_PROVIDER_DISABLED');return config;}
+  private ensureProviderEnabled(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId&&!config.testAdvertisingPaymentId))throw new Error('FISCAL_PROVIDER_DISABLED');return config;}
 
   async collectCommittedPayments() {
     const config=billingConfiguration();
@@ -24,8 +24,9 @@ export class FacturaService {
         const [testOrder]=config.environment==='TEST'&&job.source==='MEMBRESIA'
           ?await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${job.payment_id}
             and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP')))`:[];
+        const selectedAdvertisingPayment=job.source==='PUBLICIDAD'&&job.payment_id===config.testAdvertisingPaymentId;
         const eligible=Boolean(config.cutoverAt&&new Date(job.paid_at)>=config.cutoverAt&&job.fiscal_snapshot&&
-          (config.environment!=='TEST'||testOrder));
+          (config.environment!=='TEST'||testOrder||selectedAdvertisingPayment));
         const [invoice]=await tx`insert into fiscal_invoices(external_reference,source,service_type,zone_id,payment_id,document_type,
           client_id,fiscal_snapshot,concept,subtotal,tax_amount,total,currency,provider,environment,email_to,paid_at,status,
           payment_method,vat_rate_percent,emission_eligible,next_attempt_at)
@@ -83,12 +84,25 @@ export class FacturaService {
   }
 
   async processPending() {
-    const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId))return;
+    const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId&&!config.testAdvertisingPaymentId))return;
+    if(config.environment==='TEST'&&config.testAdvertisingPaymentId){
+      // A payment collected before this one-payment allowlist was configured already has
+      // a durable local invoice. Promote that document only; never create a second one.
+      const promoted=await database()`update fiscal_invoices i set status='PENDIENTE',emission_eligible=true,next_attempt_at=now(),updated_at=now()
+        from fiscal_billing_outbox o where i.source='PUBLICIDAD' and i.payment_id=${config.testAdvertisingPaymentId}::uuid
+          and i.status='PENDIENTE_INTEGRACION' and not i.emission_eligible and i.provider=${config.provider} and i.environment='TEST'
+          and i.fiscal_snapshot is not null and i.paid_at>=${config.cutoverAt} and o.source=i.source and o.payment_id=i.payment_id
+          and o.document_type=i.document_type and not o.payment_reversed and o.paid_at>=${config.cutoverAt}
+        returning i.id,i.client_id`;
+      for(const invoice of promoted)await database()`insert into fiscal_audit(client_id,entity_type,entity_id,event_type,actor_process)
+        values(${invoice.client_id},'FACTURA',${invoice.id},'FacturaHabilitadaParaPrueba','BILLING_WORKER')`;
+    }
     const rows=await database()`update fiscal_invoices set status='ENVIANDO',attempt_count=attempt_count+1,updated_at=now()
       where id in (select id from fiscal_invoices where emission_eligible and fiscal_snapshot is not null
         and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
         and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
-        and (${config.environment}<>'TEST' or (source='MEMBRESIA' and exists(select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=fiscal_invoices.payment_id
+        and (${config.environment}<>'TEST' or (source='PUBLICIDAD' and payment_id=${config.testAdvertisingPaymentId}::uuid)
+          or (source='MEMBRESIA' and exists(select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=fiscal_invoices.payment_id
           and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP'))))))
         and not exists(select 1 from fiscal_billing_outbox o where o.source=fiscal_invoices.source and o.payment_id=fiscal_invoices.payment_id and o.payment_reversed)
         order by created_at limit 10 for update skip locked) returning *`;
@@ -129,11 +143,12 @@ export class FacturaService {
     return database().begin(async tx=>{
       const [invoice]=await tx`select * from fiscal_invoices where id=${invoiceId} and status='AUTORIZADA' for update`;if(!invoice)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       if(!invoice.emission_eligible||invoice.provider!==config.provider||invoice.environment!==config.environment)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
-      if(config.environment==='TEST'){
+      if(config.environment==='TEST'&&invoice.source!=='PUBLICIDAD'){
         const [selected]=await tx`select 1 from membership_payments p join membership_payment_orders o on o.id=p.order_id where p.id=${invoice.payment_id}
           and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP')))`;
         if(invoice.source!=='MEMBRESIA'||!selected)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       }
+      if(config.environment==='TEST'&&invoice.source==='PUBLICIDAD'&&invoice.payment_id!==config.testAdvertisingPaymentId)throw new Error('FISCAL_DOCUMENT_NOT_AUTHORIZED');
       const total=cents(invoice.total),amount=cents(input.amount);if(amount<1||amount>total)throw new Error('INVALID_CREDIT_NOTE_AMOUNT');
       const [existing]=await tx`select id::text,status from fiscal_credit_notes where idempotency_key=${input.idempotencyKey}::uuid`;if(existing)return existing;
       const [reserved]=await tx`select coalesce(sum(amount),0) as amount from fiscal_credit_notes
@@ -149,11 +164,13 @@ export class FacturaService {
     });
   }
 
-  private async processPendingCreditNotes(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId))return;const seq=datilSequenceConfiguration();
+  private async processPendingCreditNotes(){const config=billingConfiguration();if(!config.enabled||!config.cutoverAt||!this.provider.configured||(config.environment==='TEST'&&!config.testOrderCode&&!config.testDriverId&&!config.testAdvertisingPaymentId))return;const seq=datilSequenceConfiguration();
     const notes=await database()`update fiscal_credit_notes set status='ENVIANDO',attempt_count=attempt_count+1,updated_at=now() where id in
       (select id from fiscal_credit_notes where emission_eligible and (status in ('PENDIENTE','PENDIENTE_REINTENTO','RECIBIDA') or (status='ENVIANDO' and updated_at<now()-interval '10 minutes'))
        and coalesce(next_attempt_at,now())<=now() and provider=${config.provider} and environment=${config.environment}
-       and (${config.environment}<>'TEST' or exists(select 1 from fiscal_invoices i join membership_payments p on p.id=i.payment_id join membership_payment_orders o on o.id=p.order_id where i.id=fiscal_credit_notes.invoice_id and i.source='MEMBRESIA'
+       and (${config.environment}<>'TEST' or exists(select 1 from fiscal_invoices i where i.id=fiscal_credit_notes.invoice_id
+         and i.source='PUBLICIDAD' and i.payment_id=${config.testAdvertisingPaymentId}::uuid)
+         or exists(select 1 from fiscal_invoices i join membership_payments p on p.id=i.payment_id join membership_payment_orders o on o.id=p.order_id where i.id=fiscal_credit_notes.invoice_id and i.source='MEMBRESIA'
          and (upper(o.short_code)=${config.testOrderCode} or (o.driver_id=${config.testDriverId}::uuid and o.purpose in ('WALLET_TOPUP','MEMBERSHIP')))))
        order by created_at limit 5 for update skip locked) returning *`;
     for(let note of notes){try{

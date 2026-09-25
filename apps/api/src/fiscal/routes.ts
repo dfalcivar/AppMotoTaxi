@@ -134,7 +134,7 @@ export async function registerFiscalRoutes(app:FastifyInstance){
   }catch{return reply.code(202).send({accepted:true,matched:false});}});
 
   app.get('/v1/admin/fiscal/config',async(req,reply)=>{try{requirePermission(req,'FACTURACION_VER');const [settings]=await database()`select vat_rate_percent::float8 as "vatRatePercent",updated_at as "vatUpdatedAt" from operational_settings where id=1`,config=billingConfiguration(),providerReady=billingProvider().configured;return {...config,providerReady,
-    profilesEnabled:true,emissionAvailable:config.enabled&&providerReady&&Boolean(config.cutoverAt)&&(config.environment!=='TEST'||Boolean(config.testOrderCode||config.testDriverId)),...settings};}catch(e){return fiscalError(e,reply);}});
+    profilesEnabled:true,emissionAvailable:config.enabled&&providerReady&&Boolean(config.cutoverAt)&&(config.environment!=='TEST'||Boolean(config.testOrderCode||config.testDriverId||config.testAdvertisingPaymentId)),...settings};}catch(e){return fiscalError(e,reply);}});
   app.patch('/v1/admin/fiscal/config/vat',async(req,reply)=>{try{
     const actor=requirePermission(req,'settings:manage'),input=vatRateSchema.parse(req.body);
     const [previous]=await database()`select vat_rate_percent::float8 as "vatRatePercent" from operational_settings where id=1`;
@@ -194,7 +194,7 @@ export async function registerFiscalRoutes(app:FastifyInstance){
     const creditNotes=await database()`select id::text,document_number as "documentNumber",amount::float8,status,reason,issued_at as "issuedAt",authorized_at as "authorizedAt",provider_error_code as "errorCode" from fiscal_credit_notes where invoice_id=${id} order by created_at desc`;
     const [credits]=await database()`select coalesce(sum(amount),0)::float8 as reserved from fiscal_credit_notes where invoice_id=${id} and status not in ('ERROR','RECHAZADA','ANULADA')`;
     const remainingCreditAmount=Math.max(0,Math.round((Number(invoice.total)-Number(credits?.reserved??0))*100)/100);
-    const config=billingConfiguration(),providerReady=billingProvider().configured,ready=config.enabled&&providerReady&&Boolean(config.cutoverAt)&&(config.environment!=='TEST'||Boolean(config.testOrderCode||config.testDriverId));
+    const config=billingConfiguration(),providerReady=billingProvider().configured,ready=config.enabled&&providerReady&&Boolean(config.cutoverAt)&&(config.environment!=='TEST'||Boolean(config.testOrderCode||config.testDriverId||config.testAdvertisingPaymentId));
     return {invoice,history,creditNotes,remainingCreditAmount,actionsEnabled:{
       status:ready&&Boolean(invoice.remote_id)&&!['AUTORIZADA','ANULADA'].includes(invoice.status),
       retry:ready&&Boolean(invoice.emission_eligible)&&['ERROR','RECHAZADA','PENDIENTE_REINTENTO','RECIBIDA'].includes(invoice.status),
