@@ -254,6 +254,14 @@ class CostaGoBenefitCard extends StatelessWidget {
                             padding: const EdgeInsets.only(top: 8),
                             child: Text('Desde $from',
                                 textAlign: TextAlign.center)),
+                      if (status == 'PENDING' &&
+                          benefit?['benefitType'] == 'FREE_TRIPS' &&
+                          from.isEmpty)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                                'Tus ${grant?['remainingTrips'] ?? benefit?['value']} viajes comenzarán después de tu cobertura actual. Tendrás ${grant?['validityDays'] ?? benefit?['expirationDays']} días para usarlos desde el primer viaje de cortesía.',
+                                textAlign: TextAlign.center)),
                       if (until.isNotEmpty)
                         Padding(
                             padding: const EdgeInsets.only(top: 8),

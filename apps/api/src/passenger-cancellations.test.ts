@@ -65,12 +65,14 @@ beforeAll(async()=>{
     alter table driver_offers add column offered_at timestamptz default now();`);
   await pg.exec(await readFile(new URL('../migrations/088_arrival_commercial_model.sql',import.meta.url),'utf8'));
   await pg.exec(`alter table driver_memberships add column expires_at timestamptz;
+    alter table driver_memberships add column grace_ends_at timestamptz;
     alter table audit_log add column previous_value jsonb;
     create table driver_documents(driver_id uuid,status text);
     create table costa_go_campaigns(id uuid primary key);
     create table costa_go_campaign_areas(campaign_id uuid,service_area_id uuid);`);
   await pg.exec(await readFile(new URL('../migrations/101_costa_go_benefits.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../migrations/105_benefit_free_trips.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/106_defer_free_trip_benefits.sql',import.meta.url),'utf8'));
 },30000);
 beforeEach(async()=>{
   await pg.exec('truncate audit_log,passenger_cancellations,trip_events,driver_offers,scheduled_trip_responses,trips,benefit_definitions,drivers,operational_settings,users cascade');
@@ -120,15 +122,19 @@ async function grantFreeTrips(count:number) {
 const assignment=async(id:string)=>(await pg.query<any>('select snapshot from trip_commercial_assignments where trip_id=$1',[id])).rows[0]?.snapshot;
 
 describe('free trips granted by a benefit',()=>{
- it('covers the Costa-Go commission without changing the passenger fare or a purchased package',async()=>{
+ it('preserves the purchased package first, then covers Costa-Go commission without changing the passenger fare',async()=>{
    const redemptionId=await grantFreeTrips(2);
    const cycleId=await makeCycle();
-   await pg.query("update driver_memberships set plan_type_snapshot='TRIP_PACK',completed_trips=1,included_trips_snapshot=10 where id=$1",[cycleId]);
+   await pg.query("update driver_memberships set plan_type_snapshot='TRIP_PACK',completed_trips=1,included_trips_snapshot=2 where id=$1",[cycleId]);
+   const paidTrip=await economicTrip('0.20');
+   await consume(paidTrip);
+   expect(await assignment(paidTrip)).toMatchObject({billingMode:'TRIP_PACKAGE',passengerTotal:'3.50'});
+   expect((await pg.query<any>('select remaining_trips from benefit_free_trip_credits')).rows[0].remaining_trips).toBe(2);
    const tripId=await economicTrip('0.20');
    await Promise.all([consume(tripId),consume(tripId)]);
    expect(await assignment(tripId)).toMatchObject({billingMode:'BENEFIT_FREE_TRIP',appliedCommission:'0.00',passengerTotal:'3.50',benefitRedemptionId:redemptionId});
    expect((await pg.query<any>('select remaining_trips from benefit_free_trip_credits')).rows[0].remaining_trips).toBe(1);
-   expect((await cycle(cycleId)).completed_trips).toBe(1);
+   expect((await cycle(cycleId)).completed_trips).toBe(2);
    expect((await pg.query<any>('select count(*)::int as count from benefit_free_trip_usages')).rows[0].count).toBe(1);
    await cancelPassengerTrip(passenger,tripId);
    expect((await pg.query<any>('select remaining_trips from benefit_free_trip_credits')).rows[0].remaining_trips).toBe(2);

@@ -6,12 +6,20 @@ export async function consumeFreeTripBenefit(tx:TransactionSql,tripId:string,dri
  const [existing]=await tx`select u.id,c.redemption_id from benefit_free_trip_usages u
    join benefit_free_trip_credits c on c.id=u.credit_id where u.trip_id=${tripId} and u.driver_id=${driverId}`;
  if(existing)return {redemptionId:String(existing.redemption_id),usageId:String(existing.id)};
- const [credit]=await tx`select c.id,c.redemption_id,c.remaining_trips from benefit_free_trip_credits c
+ const [credit]=await tx`select c.id,c.redemption_id,c.remaining_trips,c.activation_pending,c.validity_days from benefit_free_trip_credits c
    join benefit_redemptions r on r.id=c.redemption_id
    where c.user_id=${driverId} and r.id=active_free_trip_benefit(${driverId})
-     and c.remaining_trips>0 and c.expires_at>now()
+     and c.remaining_trips>0 and (c.activation_pending or c.expires_at>now())
    order by c.expires_at,c.id limit 1 for update of c`;
  if(!credit)return null;
+ if(credit.activation_pending){
+   const days=Number(credit.validity_days);
+   await tx`update benefit_redemptions set status='ACTIVE',effective_from=now(),
+     effective_until=now()+${days}*interval '1 day',expires_at=now()+${days}*interval '1 day'
+     where id=${credit.redemption_id} and status='PENDING'`;
+   await tx`update benefit_free_trip_credits set activation_pending=false,
+     expires_at=now()+${days}*interval '1 day' where id=${credit.id}`;
+ }
  const [usage]=await tx`insert into benefit_free_trip_usages(credit_id,trip_id,driver_id)
    values(${credit.id},${tripId},${driverId}) on conflict(trip_id,driver_id) do nothing returning id`;
  if(!usage)return null;

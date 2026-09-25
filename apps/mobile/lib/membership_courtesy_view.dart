@@ -30,6 +30,7 @@ ActiveMembershipCourtesy? activeMembershipCourtesy(Map<String, dynamic> data,
   final instant = now ?? DateTime.now();
   for (final raw in rows) {
     if (raw is! Map ||
+        (raw['benefitType'] != null && raw['benefitType'] != 'COURTESY_DAYS') ||
         raw['id']?.toString() != eligibleBenefit['id']?.toString() ||
         raw['status'] != 'ACTIVE') {
       continue;
@@ -50,6 +51,41 @@ ActiveMembershipCourtesy? activeMembershipCourtesy(Map<String, dynamic> data,
         expiresAt: end, days: days > 0 ? days : null);
   }
   return null;
+}
+
+class FreeTripBenefitCoverage {
+  const FreeTripBenefitCoverage({required this.id,required this.remainingTrips,required this.originalTrips,
+    required this.validityDays,required this.pending,required this.waitingFor,this.expiresAt});
+  final String id;
+  final int remainingTrips,originalTrips,validityDays;
+  final bool pending;
+  final String? waitingFor;
+  final DateTime? expiresAt;
+
+  String get availabilityDescription => switch(waitingFor) {
+    'TRIP_PACK' => 'Comenzarán al agotar los viajes de tu paquete actual.',
+    'PERIODIC' => 'Comenzarán cuando termine tu membresía actual.',
+    'COURTESY' => 'Comenzarán cuando termine tu cortesía por días.',
+    _ => 'Comenzarán al aceptar el próximo viaje elegible.',
+  };
+}
+
+List<FreeTripBenefitCoverage> freeTripBenefitCoverages(Map<String,dynamic> data,{DateTime? now}) {
+  final rows=data['benefitCoverage'];
+  if(rows is! List)return const [];
+  final instant=now??DateTime.now();
+  return [for(final raw in rows) if(raw is Map && raw['benefitType']=='FREE_TRIPS')
+    if(raw['status']=='PENDING' || raw['status']=='ACTIVE' &&
+      (DateTime.tryParse(raw['effectiveUntil']?.toString()??'')?.isAfter(instant)??false))
+      FreeTripBenefitCoverage(
+        id:raw['id']?.toString()??'',
+        remainingTrips:(raw['remainingTrips'] as num?)?.toInt()??0,
+        originalTrips:(raw['originalTrips'] as num?)?.toInt()??0,
+        validityDays:(raw['validityDays'] as num?)?.toInt()??0,
+        pending:raw['status']=='PENDING',
+        waitingFor:raw['waitingFor']?.toString(),
+        expiresAt:DateTime.tryParse(raw['effectiveUntil']?.toString()??''),
+      )];
 }
 
 class MembershipCourtesyHeading extends StatelessWidget {

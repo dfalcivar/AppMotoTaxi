@@ -27,7 +27,7 @@ beforeAll(async()=>{pg=new PGlite();state.sql=sqlFor(pg);await pg.exec(`
  create table costa_go_campaigns(id uuid primary key,title text,content jsonb,audience text,enabled boolean,status text,starts_at timestamptz,ends_at timestamptz,all_zones boolean,priority int default 0);
  create table costa_go_campaign_areas(campaign_id uuid,service_area_id uuid);
  create table audit_log(actor_id uuid,action text,entity_type text,entity_id text,previous_value jsonb,next_value jsonb,reason text,created_at timestamptz default now());
- `);for(const file of ['101_costa_go_benefits.sql','102_referrals.sql','103_referral_rule_snapshots.sql','105_benefit_free_trips.sql'])await pg.exec(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
+ `);for(const file of ['101_costa_go_benefits.sql','102_referrals.sql','103_referral_rule_snapshots.sql','105_benefit_free_trips.sql','106_defer_free_trip_benefits.sql'])await pg.exec(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
  const auth=async(r:any,s:any)=>{if(!r.headers['x-user']){s.code(401).send({error:'UNAUTHORIZED'});return;}return {id:r.headers['x-user'],email:'',name:'',role:r.headers['x-role']??'DRIVER'};};
  await registerBenefitRoutes(app,auth);await registerReferralRoutes(app,auth);
 },30000);

@@ -18913,9 +18913,13 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
 
   Future<void> _showMembershipDetails() async {
     if (_membershipSheetOpeningOrOpen) return;
-    final data = membershipData;
-    if (data == null || !mounted) return;
     _membershipSheetOpeningOrOpen = true;
+    await refreshMembership(force: true);
+    final data = membershipData;
+    if (data == null || !mounted) {
+      _membershipSheetOpeningOrOpen = false;
+      return;
+    }
     Map<String, dynamic>? walletSummary;
     try {
       walletSummary = Map<String, dynamic>.from(await api
@@ -18982,12 +18986,28 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                   prepaidBalanceNeedsAttention(walletSummary ?? const {});
               final courtesy = activeMembershipCourtesy(data);
               final courtesyActive = courtesy != null;
-              final prepaidForDisplay = prepaidIsCurrent && !courtesyActive;
+              final freeTripCoverages = freeTripBenefitCoverages(data);
+              final eligibleBenefitId =
+                  (data['eligibility']?['benefit'] as Map?)?['id']?.toString();
+              final activeFreeTripRows = freeTripCoverages.where((item) =>
+                  !item.pending && item.id == eligibleBenefitId).toList();
+              final activeFreeTrips = activeFreeTripRows.isEmpty
+                  ? null
+                  : activeFreeTripRows.first;
+              final pendingFreeTrips =
+                  freeTripCoverages.where((item) => item.pending).toList();
+              final readyFreeTripRows = pendingFreeTrips.where((item) =>
+                  item.id == eligibleBenefitId &&
+                  item.waitingFor == 'NEXT_TRIP').toList();
+              final displayFreeTrips = activeFreeTrips ??
+                  (readyFreeTripRows.isEmpty ? null : readyFreeTripRows.first);
+              final prepaidForDisplay =
+                  prepaidIsCurrent && !courtesyActive && displayFreeTrips == null;
               final currentTripPackForDisplay =
-                  currentIsTripPack && !courtesyActive;
+                  currentIsTripPack && !courtesyActive && displayFreeTrips == null;
               final prepaidInsufficientForDisplay =
-                  prepaidBalanceInsufficient && !courtesyActive;
-              final effectiveStatus = courtesyActive
+                  prepaidBalanceInsufficient && !courtesyActive && displayFreeTrips == null;
+              final effectiveStatus = courtesyActive || displayFreeTrips != null
                   ? 'ACTIVE'
                   : prepaidIsCurrent
                       ? (prepaidBalanceInsufficient
@@ -19128,7 +19148,9 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                           if (!courtesyActive &&
                               data['benefitCoverage'] is List &&
                               (data['benefitCoverage'] as List).any((item) =>
-                                  item is Map && item['status'] == 'PENDING'))
+                                  item is Map &&
+                                  item['benefitType'] == 'COURTESY_DAYS' &&
+                                  item['status'] == 'PENDING'))
                             Padding(
                               padding: const EdgeInsets.only(
                                   bottom: CostaGoSpace.sm),
@@ -19143,11 +19165,39 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                 ),
                               ),
                             ),
+                          for (final pendingTrips in pendingFreeTrips)
+                            if (pendingTrips.id != displayFreeTrips?.id)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: CostaGoSpace.sm),
+                              child: CostaGoSurface(
+                                tone: CostaGoStatusTone.info,
+                                padding: const EdgeInsets.all(CostaGoSpace.md),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('${pendingTrips.remainingTrips} viajes de cortesía programados',
+                                        style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                                    const SizedBox(height: 4),
+                                    Text(pendingTrips.availabilityDescription),
+                                    if (pendingTrips.waitingFor == 'TRIP_PACK')
+                                      Text('Viajes pendientes del paquete: ${tripPackProgress.remaining}.'),
+                                    if (pendingTrips.waitingFor == 'PERIODIC' &&
+                                        membership['expiresAt'] != null)
+                                      Text('Fin previsto de la membresía: ${formatEcuadorCompactDate(DateTime.parse(membership['expiresAt'].toString()))}.'),
+                                    Text('Vigencia: ${pendingTrips.validityDays} días desde el primer viaje de cortesía.'),
+                                  ],
+                                ),
+                              ),
+                            ),
                           if (!prepaidInsufficientForDisplay)
                             Wrap(spacing: 10, runSpacing: 8, children: [
                               CostaGoStatusChip(
                                 label: courtesyActive
                                     ? 'Cortesía activa'
+                                    : displayFreeTrips != null
+                                        ? displayFreeTrips.pending
+                                            ? 'Cortesía lista para usar'
+                                            : 'Viajes de cortesía activos'
                                     : _membershipStatusLabel(effectiveStatus),
                                 icon: effectiveStatus == 'INSUFFICIENT_BALANCE'
                                     ? Icons.money_off_csred_rounded
@@ -19163,6 +19213,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                               CostaGoStatusChip(
                                 label: courtesyActive
                                     ? 'Por período'
+                                    : displayFreeTrips != null
+                                        ? 'Por viajes'
                                     : prepaidIsCurrent
                                         ? 'Pago por uso'
                                         : currentIsTripPack
@@ -19170,6 +19222,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                             : 'Por período',
                                 icon: courtesyActive
                                     ? Icons.card_giftcard_outlined
+                                    : displayFreeTrips != null
+                                        ? Icons.confirmation_number_outlined
                                     : prepaidIsCurrent
                                         ? Icons.account_balance_wallet_outlined
                                         : currentIsTripPack
@@ -19177,6 +19231,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                             : Icons.event_repeat_outlined,
                                 tone: courtesyActive
                                     ? CostaGoStatusTone.info
+                                    : displayFreeTrips != null
+                                        ? CostaGoStatusTone.info
                                     : prepaidIsCurrent
                                         ? prepaidBalanceInsufficient
                                             ? CostaGoStatusTone.danger
@@ -19228,6 +19284,11 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                     MembershipCourtesyHeading(
                                                         description: courtesy
                                                             .description)
+                                                  else if (displayFreeTrips != null)
+                                                    Text(displayFreeTrips.pending
+                                                        ? 'Viajes de cortesía listos'
+                                                        : 'Viajes de cortesía activos',
+                                                        style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900))
                                                   else
                                                     Text(
                                                       prepaidForDisplay
@@ -19252,6 +19313,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                             icon: courtesyActive
                                                 ? Icons
                                                     .workspace_premium_outlined
+                                                : displayFreeTrips != null
+                                                    ? Icons.confirmation_number_outlined
                                                 : prepaidIsCurrent
                                                     ? prepaidBalanceInsufficient
                                                         ? Icons
@@ -19267,6 +19330,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                                             .calendar_month_outlined,
                                             tone: courtesyActive
                                                 ? CostaGoStatusTone.info
+                                                : displayFreeTrips != null
+                                                    ? CostaGoStatusTone.info
                                                 : prepaidIsCurrent
                                                     ? prepaidBalanceInsufficient
                                                         ? CostaGoStatusTone
@@ -19280,7 +19345,20 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                             size: 52,
                                           ),
                                         ]),
-                                    if (prepaidForDisplay) ...[
+                                    if (displayFreeTrips != null) ...[
+                                      const Divider(height: CostaGoSpace.lg),
+                                      _membershipDetailLine('Viajes disponibles',
+                                          '${displayFreeTrips.remainingTrips} de ${displayFreeTrips.originalTrips}'),
+                                      if (displayFreeTrips.expiresAt != null &&
+                                          !displayFreeTrips.pending)
+                                        _membershipDetailLine('Vigente hasta',
+                                            formatEcuadorCompactDate(displayFreeTrips.expiresAt!)),
+                                      if (displayFreeTrips.pending)
+                                        _membershipDetailLine('Vigencia',
+                                            '${displayFreeTrips.validityDays} días desde el primer uso'),
+                                      _membershipDetailLine('Comisión Costa-Go',
+                                          'Cubierta por la cortesía'),
+                                    ] else if (prepaidForDisplay) ...[
                                       const Divider(height: CostaGoSpace.lg),
                                       _membershipDetailLine(
                                         'Saldo prepago disponible',
@@ -19442,12 +19520,14 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
                                     if (!prepaidForDisplay &&
                                         !currentTripPackForDisplay &&
                                         !courtesyActive &&
+                                        displayFreeTrips == null &&
                                         extraAmount > 0)
                                       _membershipDetailLine(
                                           'Excedente acumulado',
                                           '\$${extraAmount.toStringAsFixed(2)}'),
                                     if (!prepaidForDisplay &&
-                                        !courtesyActive) ...[
+                                        !courtesyActive &&
+                                        displayFreeTrips == null) ...[
                                       const Divider(height: CostaGoSpace.lg),
                                       if (membership['expiresAt'] != null)
                                         _membershipDetailLine(

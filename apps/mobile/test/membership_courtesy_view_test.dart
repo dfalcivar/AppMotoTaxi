@@ -53,6 +53,31 @@ void main() {
     expect(courtesy?.description, '15 días gratis de membresía');
   });
 
+  test('free trips show pending balance and become active after the paid plan', () {
+    final pending = freeTripBenefitCoverages({
+      'benefitCoverage': [
+        {'id':'gift-1','benefitType':'FREE_TRIPS','status':'PENDING',
+          'remainingTrips':80,'originalTrips':80,'validityDays':30,
+          'waitingFor':'TRIP_PACK','effectiveFrom':null,'effectiveUntil':null}
+      ]
+    }, now: start);
+    expect(pending, hasLength(1));
+    expect(pending.first.pending, isTrue);
+    expect(pending.first.availabilityDescription, contains('agotar'));
+    expect(pending.first.remainingTrips, 80);
+    expect(pending.first.expiresAt, isNull);
+    final active = freeTripBenefitCoverages({
+      'benefitCoverage': [
+        {'id':'gift-1','benefitType':'FREE_TRIPS','status':'ACTIVE',
+          'remainingTrips':79,'originalTrips':80,'validityDays':30,
+          'effectiveUntil':end.toIso8601String()}
+      ]
+    }, now: start);
+    expect(active.single.pending, isFalse);
+    expect(active.single.remainingTrips, 79);
+    expect(active.single.expiresAt, end);
+  });
+
   for (final brightness in [Brightness.light, Brightness.dark]) {
     testWidgets('courtesy heading is readable in $brightness with large text',
         (tester) async {

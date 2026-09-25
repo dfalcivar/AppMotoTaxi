@@ -7,6 +7,7 @@ vi.mock('./database.js',()=>({database:()=>state.sql}));
 vi.mock('./admin.js',()=>({requirePermission:(r:any,p:string)=>{if(r.headers['x-admin']!=='yes')throw new Error('FORBIDDEN');return {id:'00000000-0000-4000-8000-000000000001',role:'SUPER_ADMIN',email:'test@example.test'};}}));
 vi.mock('./service-areas.js',()=>({resolveServiceArea:async()=>undefined}));
 import {registerBenefitRoutes,benefitSchema} from './benefits.js';
+import {consumeFreeTripBenefit} from './benefit-free-trips.js';
 const uid='00000000-0000-4000-8000-000000000001',cid='00000000-0000-4000-8000-000000000002';
 const app=Fastify();let pg:PGlite;
 function sqlFor(client:any):any {const sql=async(parts:TemplateStringsArray,...values:any[])=>(await client.query(parts.reduce((s,p,i)=>s+(i?`$${i}`:'')+p,''),values)).rows;return Object.assign(sql,{begin:(fn:any)=>client.transaction((tx:any)=>fn(sqlFor(tx))),json:JSON.stringify});}
@@ -25,6 +26,7 @@ beforeAll(async()=>{pg=new PGlite();state.sql=sqlFor(pg);
  create table audit_log(actor_id uuid,action text,entity_type text,entity_id text,previous_value jsonb,next_value jsonb,reason text,created_at timestamptz default now());`);
  await pg.exec(await readFile(new URL('../migrations/101_costa_go_benefits.sql',import.meta.url),'utf8'));
  await pg.exec(await readFile(new URL('../migrations/105_benefit_free_trips.sql',import.meta.url),'utf8'));
+ await pg.exec(await readFile(new URL('../migrations/106_defer_free_trip_benefits.sql',import.meta.url),'utf8'));
  await registerBenefitRoutes(app,async(r,s)=>{if(!r.headers['x-user']){s.code(401).send({error:'UNAUTHORIZED'});return;}return {id:String(r.headers['x-user']),role:(r.headers['x-role']??'DRIVER') as any,email:'test@example.test',name:'Test'};});
 },30000);
 beforeEach(async()=>{await pg.exec(`truncate benefit_redemptions,benefit_areas,benefit_definitions,costa_go_campaigns,audit_log,driver_memberships,driver_documents cascade;
@@ -128,6 +130,42 @@ it('activates configurable driver trip credits with an independent balance and e
  expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBe(response.json().redemption.id);
  expect((await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0].remainingTrips).toBe(80);
  expect((await app.inject({method:'POST',url:'/v1/benefits/FOUNDER_FREE_TRIPS/claim',headers:{'x-user':uid},payload:{campaignId:cid}})).statusCode).toBe(409);
+});
+
+it('waits for the paid trip package to run out before starting gifted trip validity',async()=>{
+ await pg.exec(`insert into driver_memberships(driver_id,status,plan_type_snapshot,completed_trips,included_trips_snapshot)
+   values('${uid}','ACTIVE','TRIP_PACK',199,200)`);
+ const body={...payload(),code:'WAITING_FREE_TRIPS',benefitType:'FREE_TRIPS',value:80,expirationDays:30};
+ const created=await app.inject({method:'POST',url:'/v1/admin/benefits',headers:{'x-admin':'yes'},payload:body});expect(created.statusCode,created.body).toBe(201);
+ await pg.exec(`update costa_go_campaigns set content='{"benefitCode":"WAITING_FREE_TRIPS"}'`);
+ const response=await app.inject({method:'POST',url:'/v1/benefits/WAITING_FREE_TRIPS/claim',headers:{'x-user':uid},payload:{campaignId:cid}});
+ expect(response.json().redemption).toMatchObject({status:'PENDING',remainingTrips:80,validityDays:30,effectiveFrom:null,effectiveUntil:null});
+ expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBeNull();
+ const mine=(await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0];
+ expect(mine.status).toBe('PENDING');
+ await pg.exec(`update benefit_redemptions set effective_from=now()-interval '31 days',effective_until=now()-interval '1 day',expires_at=now()-interval '1 day' where benefit_code='WAITING_FREE_TRIPS';
+   update benefit_free_trip_credits set expires_at=now()-interval '1 day'`);
+ expect((await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0].status).toBe('PENDING');
+ await pg.exec(`update driver_memberships set completed_trips=200,status='EXHAUSTED' where driver_id='${uid}';
+   insert into trips(id) values('${cid}')`);
+ expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBe(response.json().redemption.id);
+ const usage=await state.sql.begin((tx:any)=>consumeFreeTripBenefit(tx,cid,uid));expect(usage?.redemptionId).toBe(response.json().redemption.id);
+ const active=(await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0];
+ expect(active).toMatchObject({status:'ACTIVE',remainingTrips:79});
+ expect(Date.parse(active.effectiveUntil)-Date.parse(active.effectiveFrom)).toBe(30*86400000);
+});
+
+it('waits for the periodic membership to expire before gifted trips can be used',async()=>{
+ await pg.exec(`insert into driver_memberships(driver_id,status,plan_type_snapshot,expires_at,completed_trips,included_trips_snapshot)
+   values('${uid}','ACTIVE','PERIODIC',now()+interval '15 days',0,100)`);
+ const body={...payload(),code:'AFTER_PERIODIC_TRIPS',benefitType:'FREE_TRIPS',value:80,expirationDays:30};
+ expect((await app.inject({method:'POST',url:'/v1/admin/benefits',headers:{'x-admin':'yes'},payload:body})).statusCode).toBe(201);
+ await pg.exec(`update costa_go_campaigns set content='{"benefitCode":"AFTER_PERIODIC_TRIPS"}'`);
+ const grant=await app.inject({method:'POST',url:'/v1/benefits/AFTER_PERIODIC_TRIPS/claim',headers:{'x-user':uid},payload:{campaignId:cid}});
+ expect(grant.json().redemption.status).toBe('PENDING');
+ expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBeNull();
+ await pg.exec(`update driver_memberships set expires_at=now()-interval '1 second',status='PAYMENT_DUE' where driver_id='${uid}'`);
+ expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBe(grant.json().redemption.id);
 });
 
 it('rejects passenger or fractional trip credits',()=>{

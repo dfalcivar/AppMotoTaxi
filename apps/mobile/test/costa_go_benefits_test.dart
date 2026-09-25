@@ -90,4 +90,21 @@ void main() {
     expect(find.text('Tu cuenta no cumple las condiciones.'), findsOneWidget);
     expect(find.text('Activar cortesía'), findsNothing);
   });
+  testWidgets('pending free trips show their balance without a false expiry date',
+      (tester) async {
+    final service = CostaGoBenefitsService(
+        read: (c, id) async => {
+              'benefit': {'benefitType':'FREE_TRIPS','value':80,'valueLabel':'80 viajes gratis',
+                'expirationDays':30},
+              'state':'ALREADY_REDEEMED',
+              'redemption': {'status':'PENDING','remainingTrips':80,
+                'validityDays':30,'effectiveFrom':null,'effectiveUntil':null}
+            },
+        claim: (c,id) async => throw StateError('must not claim'));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: CostaGoBenefitPanel(
+      service:service,code:'BEN_FREE_TRIPS_TEST',campaignId:'campaign'))));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Tus 80 viajes comenzarán'), findsOneWidget);
+    expect(find.textContaining('Válido hasta'), findsNothing);
+  });
 }

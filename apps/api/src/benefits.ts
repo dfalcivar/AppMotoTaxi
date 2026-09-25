@@ -39,7 +39,7 @@ const guard=(fn:(r:FastifyRequest,s:FastifyReply)=>Promise<unknown>)=>async(r:Fa
  throw e;
 }};
 function definition(r:any){return {id:r.id,code:r.code,name:r.name,description:r.description,benefitType:r.benefit_type,...benefitPresentation(r.benefit_type,Number(r.value)),value:Number(r.value),expirationDays:r.expiration_days??null,audience:r.audience,oneTime:r.one_time,requiresActivation:r.requires_activation,startsAt:r.starts_at,endsAt:r.ends_at,maxGlobal:r.max_global,maxPerUser:r.max_per_user,status:r.status,zoneIds:r.zone_ids??[],version:r.version,redemptions:Number(r.redemptions??0),totalGranted:Number(r.total_granted??0)};}
-export function redemption(r:any){const now=Date.now();return {id:r.id,benefitCode:r.benefit_code,campaignId:r.campaign_id,benefitType:r.benefit_type,value:Number(r.benefit_value),remainingTrips:r.remaining_trips==null?undefined:Number(r.remaining_trips),source:r.source,status:['ACTIVE','PENDING'].includes(r.status)?new Date(r.effective_until).getTime()<=now?'EXPIRED':r.remaining_trips!=null&&Number(r.remaining_trips)===0?'USED':new Date(r.effective_from).getTime()>now?'PENDING':'ACTIVE':r.status,effectiveFrom:r.effective_from,effectiveUntil:r.effective_until,redeemedAt:r.redeemed_at};}
+export function redemption(r:any){const now=Date.now(),waiting=r.activation_pending===true;return {id:r.id,benefitCode:r.benefit_code,campaignId:r.campaign_id,benefitType:r.benefit_type,value:Number(r.benefit_value),remainingTrips:r.remaining_trips==null?undefined:Number(r.remaining_trips),validityDays:r.validity_days==null?undefined:Number(r.validity_days),source:r.source,status:waiting?'PENDING':['ACTIVE','PENDING'].includes(r.status)?new Date(r.effective_until).getTime()<=now?'EXPIRED':r.remaining_trips!=null&&Number(r.remaining_trips)===0?'USED':new Date(r.effective_from).getTime()>now?'PENDING':'ACTIVE':r.status,effectiveFrom:waiting?null:r.effective_from,effectiveUntil:waiting?null:r.effective_until,redeemedAt:r.redeemed_at};}
 async function audit(tx:any,actor:string|null,action:string,id:string,previous:any,next:any,reason=''){
  await tx`insert into audit_log(actor_id,action,entity_type,entity_id,previous_value,next_value,reason) values(${actor},${action},'BENEFIT',${id},${tx.json(previous)},${tx.json(next)},${reason})`;
 }
@@ -54,22 +54,34 @@ export async function claimBenefit(tx:any,user:SessionUser,code:string,campaignI
 }
 async function applyBenefitGrant(tx:any,user:SessionUser,b:any,input:{source:string;campaignId?:string;zoneId:string|null;referenceId?:string}) {
  let starts:unknown=new Date();
+ let waitingForCoverage=false;
  if(b.benefit_type==='COURTESY_DAYS') {
  const [coverage]=await tx`select greatest(now(),
    coalesce((select max(greatest(expires_at,case when status='GRACE_PERIOD' and grace_allows_trips_applied then grace_ends_at end)) from driver_memberships where driver_id=${user.id!} and cycle_closed_at is null and (status in ('ACTIVE','EXPIRING') or status='GRACE_PERIOD' and grace_allows_trips_applied)),now()),
    coalesce((select max(effective_until) from benefit_redemptions where user_id=${user.id!} and benefit_type='COURTESY_DAYS' and status in ('ACTIVE','PENDING')),now())) as starts`;
  starts=coverage.starts;
  }
+ if(b.benefit_type==='FREE_TRIPS') {
+   const [coverage]=await tx`select active_courtesy_benefit(${user.id!}) is not null or exists(
+     select 1 from driver_memberships m where m.driver_id=${user.id!} and m.cycle_closed_at is null
+       and ((m.plan_type_snapshot='TRIP_PACK' and m.status in ('ACTIVE','EXPIRING','PAYMENT_DUE','GRACE_PERIOD')
+         and m.completed_trips<m.included_trips_snapshot and (m.expires_at is null or m.expires_at>now()))
+       or (m.plan_type_snapshot<>'TRIP_PACK' and
+         ((m.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') and m.expires_at>now())
+           or (m.status='GRACE_PERIOD' and m.grace_allows_trips_applied and m.grace_ends_at>now()))))) as waiting`;
+   waitingForCoverage=Boolean(coverage.waiting);
+ }
  const [r]=await tx`insert into benefit_redemptions(benefit_id,benefit_code,user_id,campaign_id,audience,zone_id,benefit_type,benefit_value,one_time,source,reference_id,effective_from,effective_until,expires_at,metadata)
  values(${b.id},${b.code},${user.id!},${input.campaignId??null},${user.role},${input.zoneId},${b.benefit_type},${b.value},${b.one_time},${input.source},${input.referenceId??null},${starts},${starts}::timestamptz+${b.benefit_type==='COURTESY_DAYS'?b.value:b.expiration_days}::numeric*interval '1 day',${starts}::timestamptz+${b.benefit_type==='COURTESY_DAYS'?b.value:b.expiration_days}::numeric*interval '1 day',${tx.json({origin:input.source,definitionVersion:b.version,name:b.name})}) returning *`;
+ if(waitingForCoverage){await tx`update benefit_redemptions set status='PENDING' where id=${r.id}`;r.status='PENDING';}
  if(b.benefit_type==='PROMOTIONAL_BALANCE') {
  const [credit]=await tx`insert into benefit_promotional_credits(redemption_id,user_id,currency,original_amount,remaining,expires_at) values(${r.id},${user.id!},'USD',${b.value},${b.value},${r.effective_until}) returning id`;
  await tx`insert into benefit_promotional_movements(credit_id,kind,amount,reference_id,idempotency_key) values(${credit.id},'GRANT',${b.value},${input.referenceId??r.id},${'benefit-credit:'+r.id})`;
  }
  if(b.benefit_type==='FREE_TRIPS') {
- await tx`insert into benefit_free_trip_credits(redemption_id,user_id,original_trips,remaining_trips,expires_at)
-   values(${r.id},${user.id!},${Number(b.value)},${Number(b.value)},${r.effective_until})`;
- r.remaining_trips=Number(b.value);
+ await tx`insert into benefit_free_trip_credits(redemption_id,user_id,original_trips,remaining_trips,expires_at,activation_pending,validity_days)
+   values(${r.id},${user.id!},${Number(b.value)},${Number(b.value)},${r.effective_until},${waitingForCoverage},${b.expiration_days})`;
+ r.remaining_trips=Number(b.value);r.activation_pending=waitingForCoverage;r.validity_days=b.expiration_days;
  }
  await audit(tx,user.id!,'BENEFIT_CLAIMED',r.id,null,redemption(r));
  return {success:true,benefit:definition(b),redemption:redemption(r)};
@@ -130,14 +142,14 @@ export async function registerBenefitRoutes(app:FastifyInstance,authenticate:Aut
  app.get(root+'/:id/history',guard(async r=>{requirePermission(r,'benefits:view');const {id}=z.object({id:z.string().uuid()}).parse(r.params);return {items:await database()`select a.*,u.full_name as actor from audit_log a left join users u on u.id=a.actor_id where a.entity_type='BENEFIT' and (a.entity_id=${id} or a.entity_id in (select r.id::text from benefit_redemptions r where r.benefit_id=${id})) order by a.created_at desc limit 100`};}));
  app.get(root+'/redemptions',guard(async r=>{
  requirePermission(r,'benefits:view');const q=z.object({code:z.string().max(80).optional(),audience:z.enum(['DRIVER','PASSENGER']).optional(),zone:z.string().uuid().optional(),from:z.string().datetime({offset:true}).optional(),until:z.string().datetime({offset:true}).optional(),status:z.enum(['PENDING','ACTIVE','USED','EXPIRED','CANCELLED','FAILED']).optional(),offset:z.coerce.number().int().min(0).default(0)}).parse(r.query);
- const rows=await database()`select r.*,f.remaining_trips,u.full_name,c.title as campaign_title,count(*) over()::int as total from benefit_redemptions r join users u on u.id=r.user_id left join costa_go_campaigns c on c.id=r.campaign_id left join benefit_free_trip_credits f on f.redemption_id=r.id
+ const rows=await database()`select r.*,f.remaining_trips,f.activation_pending,f.validity_days,u.full_name,c.title as campaign_title,count(*) over()::int as total from benefit_redemptions r join users u on u.id=r.user_id left join costa_go_campaigns c on c.id=r.campaign_id left join benefit_free_trip_credits f on f.redemption_id=r.id
  where (${q.code??null}::text is null or r.benefit_code=${q.code??null}) and (${q.audience??null}::text is null or r.audience=${q.audience??null})
  and (${q.zone??null}::uuid is null or r.zone_id=${q.zone??null}) and (${q.from??null}::timestamptz is null or r.redeemed_at>=${q.from??null}) and (${q.until??null}::timestamptz is null or r.redeemed_at<${q.until??null})
- and (${q.status??null}::text is null or (case when r.status in ('ACTIVE','PENDING') then case when r.effective_until<=now() then 'EXPIRED' when f.remaining_trips=0 then 'USED' when r.effective_from>now() then 'PENDING' else 'ACTIVE' end else r.status end)=${q.status??null}) order by r.redeemed_at desc,r.id limit 50 offset ${q.offset}`;
+ and (${q.status??null}::text is null or (case when f.activation_pending then 'PENDING' when r.status in ('ACTIVE','PENDING') then case when r.effective_until<=now() then 'EXPIRED' when f.remaining_trips=0 then 'USED' when r.effective_from>now() then 'PENDING' else 'ACTIVE' end else r.status end)=${q.status??null}) order by r.redeemed_at desc,r.id limit 50 offset ${q.offset}`;
  return {items:rows.map(x=>({...redemption(x),user:x.full_name,userId:x.user_id,campaign:x.campaign_title,zoneId:x.zone_id})),total:rows[0]?.total??0};
  }));
  async function mobile(r:FastifyRequest,s:FastifyReply){const user=await authenticate(r,s);if(!user)return;if(!user.id||!['DRIVER','PASSENGER'].includes(user.role))throw new Error('FORBIDDEN');s.header('Cache-Control','private, no-store');return user;}
- app.get('/v1/benefits/mine',guard(async(r,s)=>{const user=await mobile(r,s);if(!user)return;const rows=await database()`select r.*,f.remaining_trips from benefit_redemptions r left join benefit_free_trip_credits f on f.redemption_id=r.id where r.user_id=${user.id!} order by r.redeemed_at desc limit 100`;return {items:rows.map(redemption)};}));
+ app.get('/v1/benefits/mine',guard(async(r,s)=>{const user=await mobile(r,s);if(!user)return;const rows=await database()`select r.*,f.remaining_trips,f.activation_pending,f.validity_days from benefit_redemptions r left join benefit_free_trip_credits f on f.redemption_id=r.id where r.user_id=${user.id!} order by r.redeemed_at desc limit 100`;return {items:rows.map(redemption)};}));
  app.get('/v1/benefits/available',guard(async(r,s)=>{const user=await mobile(r,s);if(!user)return;const point=location.parse(r.query);const area=point.latitude===undefined?undefined:await resolveServiceArea(user.id!,{latitude:point.latitude,longitude:point.longitude!});
  const rows=await database()`select b.*,c.id as campaign from benefit_definitions b join costa_go_campaigns c on c.content->>'benefitCode'=b.code where b.status='ACTIVE' and c.enabled and c.status='ACTIVE' and b.ends_at>now() and c.ends_at>now() order by c.priority desc limit 100`;
  const items=[];for(const b of rows){const [c]=await database()`select * from costa_go_campaigns where id=${b.campaign}`;try{await validateEligibility(database(),user,b,c,area?.id??null);items.push({...definition(b),campaignId:c!.id,state:'AVAILABLE'});}catch(e){if(!messages[(e as Error).message])throw e;}}return {items};
@@ -149,7 +161,7 @@ export async function registerBenefitRoutes(app:FastifyInstance,authenticate:Aut
  const [b]=await database()`select * from benefit_definitions where code=${code}`;
  const [c]=await database()`select * from costa_go_campaigns where id=${campaignId}`;
  if(!b||!c||c.content.benefitCode!==code||![user.role,'BOTH'].includes(c.audience))throw new Error('BENEFIT_UNAVAILABLE');
- const previous=await database()`select r.*,f.remaining_trips from benefit_redemptions r left join benefit_free_trip_credits f on f.redemption_id=r.id where r.user_id=${user.id!} and r.benefit_code=${code} order by r.redeemed_at desc limit 1`;
+ const previous=await database()`select r.*,f.remaining_trips,f.activation_pending,f.validity_days from benefit_redemptions r left join benefit_free_trip_credits f on f.redemption_id=r.id where r.user_id=${user.id!} and r.benefit_code=${code} order by r.redeemed_at desc limit 1`;
  let state='AVAILABLE';try{await validateEligibility(database(),user,b,c,area?.id??null);}catch(e){state=(e as Error).message;if(!messages[state])throw e;}
  return {benefit:definition(b),state,message:messages[state]??'',redemption:previous[0]?redemption(previous[0]):null};
  }));
