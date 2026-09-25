@@ -94,6 +94,16 @@ it('available/mine/detail follow server eligibility and never expose a claim but
  expect(definitions[0]).toMatchObject({redemptions:1,totalGranted:15});
  const history=await app.inject({url:`/v1/admin/benefits/${definitions[0].id}/history`,headers:{'x-admin':'yes'}});expect(history.statusCode,history.body).toBe(200);expect(history.json().items.map((h:any)=>h.action)).toContain('BENEFIT_CLAIMED');
 });
+it('generates a distinct immutable code for new benefits when the panel omits it',async()=>{
+ const {code:_code,...body}=payload();
+ const first=await app.inject({method:'POST',url:'/v1/admin/benefits',headers:{'x-admin':'yes'},payload:{...body,name:'Otra cortesía'}});
+ const second=await app.inject({method:'POST',url:'/v1/admin/benefits',headers:{'x-admin':'yes'},payload:{...body,name:'Tercera cortesía'}});
+ expect(first.statusCode,first.body).toBe(201);expect(second.statusCode,second.body).toBe(201);
+ expect(first.json().code).toMatch(/^BEN_COURTESY_DAYS_[A-F0-9]{24}$/);
+ expect(second.json().code).not.toBe(first.json().code);
+ const edit=await app.inject({method:'PUT',url:`/v1/admin/benefits/${first.json().id}`,headers:{'x-admin':'yes'},payload:{...body,code:'OTHER_CODE',version:first.json().version}});
+ expect(edit.json().error).toBe('BENEFIT_IDENTITY_IMMUTABLE');
+});
 it('requires applicable campaign and zone; no location does not mean all areas',async()=>{
  await pg.exec("update costa_go_campaigns set all_zones=false");expect((await claim()).json().error).toBe('NOT_ELIGIBLE');
  await pg.exec("update costa_go_campaigns set all_zones=true,content='{}'");expect((await claim()).json().error).toBe('BENEFIT_UNAVAILABLE');

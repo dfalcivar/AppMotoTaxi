@@ -1,5 +1,6 @@
 import type {FastifyInstance,FastifyRequest,FastifyReply} from 'fastify';
 import {z} from 'zod';
+import {randomBytes} from 'node:crypto';
 import {database} from './database.js';
 import {requirePermission,type SessionUser} from './admin.js';
 import {resolveServiceArea} from './service-areas.js';
@@ -24,6 +25,7 @@ export const benefitSchema=z.object({
  if(v.benefitType==='PROMOTIONAL_BALANCE'&&v.requiresActivation)issue('El saldo promocional se entrega automáticamente mediante referidos.');
  if(v.code==='DRIVER_FOUNDER_COURTESY'&&(v.benefitType!=='COURTESY_DAYS'||v.value!==15||!v.requiresActivation||!v.oneTime||v.audience!=='DRIVER'||v.maxPerUser!==1))issue('Conductor fundador requiere 15 días para conductores, una sola vez.');
 });
+function newBenefitCode(type:string){return `BEN_${type}_${randomBytes(12).toString('hex').toUpperCase()}`;}
 const messages:Record<string,string>={BENEFIT_REFERRAL_TERMS_LOCKED:'Este beneficio ya fue prometido a referidos. Crea otro código para cambiar sus condiciones económicas.',ALREADY_REDEEMED:'Ya activaste este beneficio.',NOT_ELIGIBLE:'Tu cuenta no cumple las condiciones de este beneficio.',BENEFIT_LIMIT_REACHED:'Este beneficio ya no está disponible.',BENEFIT_EXPIRED:'La vigencia del beneficio o de la campaña terminó.',BENEFIT_UNAVAILABLE:'El beneficio no está disponible.',BENEFIT_VERSION_CONFLICT:'La definición cambió. Actualiza antes de guardar.',BENEFIT_IDENTITY_IMMUTABLE:'El código, tipo y condición de una sola vez no pueden modificarse.',BENEFIT_INVALID_ZONE:'Una zona no está habilitada.',BENEFIT_CODE_EXISTS:'Ya existe un beneficio con ese código.'};
 const guard=(fn:(r:FastifyRequest,s:FastifyReply)=>Promise<unknown>)=>async(r:FastifyRequest,s:FastifyReply)=>{try{return await fn(r,s);}catch(e){
  if(e instanceof z.ZodError)return s.code(400).send({error:'INVALID_DATA',message:e.issues[0]?.message});
@@ -107,7 +109,8 @@ export async function registerBenefitRoutes(app:FastifyInstance,authenticate:Aut
  }));
  const write=async(r:FastifyRequest,edit:boolean)=>{
  const actor=requirePermission(r,'benefits:manage');const raw=r.body as any;
- const b=benefitSchema.parse(edit?Object.fromEntries(Object.entries(raw).filter(([k])=>k!=='version')):raw);
+ // Legacy API clients may provide a code. New clients omit it and receive a unique server-generated one.
+ const b=benefitSchema.parse(edit?Object.fromEntries(Object.entries(raw).filter(([k])=>k!=='version')):{...raw,code:raw.code??newBenefitCode(raw.benefitType)});
  const id=edit?z.object({id:z.string().uuid()}).parse(r.params).id:null;
  const version=edit?z.number().int().positive().parse(raw.version):null;
  return database().begin(async tx=>{
