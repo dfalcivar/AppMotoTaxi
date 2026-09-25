@@ -252,8 +252,10 @@ describe('fiscal integration, durable local payments and deletion',()=>{
     expect(await svc.retryCreditNote(first.id)).toMatchObject({id:first.id,status:'PENDIENTE_REINTENTO'});
     await expect(svc.retryCreditNote(second.id)).rejects.toThrow('INVALID_CREDIT_NOTE_AMOUNT');
     await expect(svc.retryCreditNote(first.id)).rejects.toThrow('FISCAL_DOCUMENT_NOT_RETRYABLE');
+    await pg.query("update fiscal_credit_notes set status='AUTORIZADA',document_number='001-002-000000001',authorized_at=now() where id=$1",[first.id]);
+    await expect(svc.retryCreditNote(second.id)).rejects.toThrow('INVALID_CREDIT_NOTE_AMOUNT');
     const notes=(await pg.query<any>('select status from fiscal_credit_notes order by created_at,id')).rows;
-    expect(notes.map(note=>note.status).sort()).toEqual(['ERROR','PENDIENTE_REINTENTO']);
+    expect(notes.map(note=>note.status).sort()).toEqual(['AUTORIZADA','ERROR']);
   });
   it('deletion retains paid and authorized historical metrics',async()=>{
     await service.save(owner,input,{});await pay();await new FacturaService().collectCommittedPayments();

@@ -47,6 +47,13 @@ export function FiscalAdmin({token,permissions}:{token:string;permissions:string
   async function retryCreditNote(id:string){
     if(!detail?.id||busy)return;
     setBusy(true);setError('');try{
+      const current=await apiFetch<any>(`/v1/admin/fiscal/invoices/${detail.id}`,token);
+      setDetail({...detail,...current});
+      const note=current.creditNotes?.find((item:any)=>item.id===id);
+      if(!note||note.status!=='ERROR'||Math.round(Number(current.remainingCreditAmount??0)*100)<Math.round(Number(note.amount)*100)){
+        setError('Esta factura ya fue acreditada o no tiene saldo suficiente. La nota no se enviará a Dátil.');
+        return;
+      }
       await apiFetch(`/v1/admin/fiscal/credit-notes/${id}/retry`,token,{method:'POST',body:'{}'});
       await open('invoices',detail.id);void load();
     }catch(e){setError(fiscalMessage(e));}finally{setBusy(false);}
@@ -77,7 +84,7 @@ export function FiscalAdmin({token,permissions}:{token:string;permissions:string
         <div className="fiscal-actions"><button type="button" className="secondary" disabled={busy} onClick={()=>setCreditDraft(null)}>Cancelar</button><button type="submit" className="primary" disabled={busy||!creditDraft.acknowledged}>{busy?'Registrando…':'Crear nota pendiente'}</button></div>
       </form>}
       <h3>Notas de crédito de esta factura</h3>
-      {detail.creditNotes?.length?<div className="fiscal-credit-list">{detail.creditNotes.map((note:any)=><article key={note.id}><strong>{note.documentNumber??'Sin número fiscal'} · {money(note.amount)}</strong><span>{statusNames[note.status]??note.status} · {date(note.authorizedAt??note.issuedAt)}</span><small>{note.reason}{note.errorCode?` · ${note.errorCode}: ${creditError(note.errorMessage)}`:''}</small>{note.status==='ERROR'&&(allowed('FACTURACION_REINTENTAR')||allowed('FACTURACION_ADMINISTRAR'))&&<button className="secondary" disabled={busy} onClick={()=>void retryCreditNote(note.id)}>Reintentar esta nota</button>}</article>)}</div>:<Empty/>}
+      {detail.creditNotes?.length?<div className="fiscal-credit-list">{detail.creditNotes.map((note:any)=><article key={note.id}><strong>{note.documentNumber??'Sin número fiscal'} · {money(note.amount)}</strong><span>{statusNames[note.status]??note.status} · {date(note.authorizedAt??note.issuedAt)}</span><small>{note.reason}{note.errorCode?` · ${note.errorCode}: ${creditError(note.errorMessage)}`:''}</small>{note.status==='ERROR'&&(allowed('FACTURACION_REINTENTAR')||allowed('FACTURACION_ADMINISTRAR'))&&(Math.round(Number(detail.remainingCreditAmount??0)*100)>=Math.round(Number(note.amount)*100)?<button className="secondary" disabled={busy} onClick={()=>void retryCreditNote(note.id)}>Reintentar esta nota</button>:<small>La factura ya no tiene saldo suficiente para reintentar esta nota.</small>)}</article>)}</div>:<Empty/>}
     </>;
   }
   function period(value:string){if(value==='custom')return;const now=new Date(`${today()}T12:00:00-05:00`),start=new Date(now);if(value==='week')start.setDate(now.getDate()-6);if(value==='month')start.setDate(1);if(value==='quarter'){start.setDate(1);start.setMonth(Math.floor(now.getMonth()/3)*3);}if(value==='year'){start.setDate(1);start.setMonth(0);}setFilters({...filters,start:start.toLocaleDateString('en-CA'),end:today()});}
