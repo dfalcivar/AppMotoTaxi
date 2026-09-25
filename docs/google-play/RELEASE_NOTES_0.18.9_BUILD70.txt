@@ -1,0 +1,5 @@
+<es-419>
+Renovamos la experiencia visual de Costa-Go y mejoramos las pantallas de inicio y membresía.
+Las campañas y beneficios vigentes aparecen según cada usuario. Las cortesías activas se muestran claramente como plan actual.
+Incorporamos el programa de referidos y corregimos detalles de estabilidad y presentación.
+</es-419>

@@ -1,65 +1,46 @@
-# Versión candidata a producción
+# Versión para Play Console
 
-Actualizado el 16 de septiembre de 2026.
+Actualizado el 24 de septiembre de 2026.
 
 - Aplicación: Costa-Go
-- Versión: `0.18.8`
-- Código de versión: `69`
-- Canal previsto: prueba abierta / producción en Play Console
+- Versión: `0.18.9`
+- Código de versión: `70`
+- Versión anterior subida: `0.18.8 (69)`
+- Application ID: `ec.atacames.mototaxi.mototaxi_atacames`
+- Canal: elegir en Play Console
+- Entorno de compilación: `production`
 - API: `https://mototaxi-atacames-api.onrender.com`
 - Mapas: Google
 - Proxy de laboratorio: no incluido
 
-## Cambios de esta versión
+## Cambios visibles desde 0.18.8
 
-- El resumen de ganancia neta ahora separa el valor generado por la tarifa
-  normal de los viajes del valor generado mediante la búsqueda de Costa-Go.
-- En pago por uso, **Ingresos con Costa-Go** muestra la tarifa de búsqueda que
-  queda para el conductor después de aplicar la comisión por viaje.
-- En planes o paquetes que cubren por completo la comisión, el desglose muestra
-  el valor completo generado por la búsqueda.
-- El resumen prioriza **Ingresos por viajes** y diferencia claramente
-  **Comisión Costa-Go** de **Tu ingreso** en cada movimiento.
-- Se conserva el resumen por hoy, semana, mes o período personalizado, junto con
-  los movimientos recientes y el historial por viaje.
+- Nueva experiencia visual costera en el acceso, Home y pantallas de membresía.
+- Campañas Costa-Go vigentes y aplicables mostradas dinámicamente, con recursos visuales y detalles de beneficios.
+- Programa de beneficios y referidos integrado en la aplicación.
+- Las cortesías activas se muestran como plan vigente dentro de «Plan actual», con duración y fecha de vencimiento.
+- El saludo del conductor y la decoración de la isla se adaptan a las campañas activas.
+- Ajustes de estabilidad y presentación del flujo de membresía.
 
-## Artefacto para Play Console
+El manifiesto Android no agregó permisos desde la versión 69. Se añadió el enlace interno `costa-go://referral`.
 
-- Archivo: `Costa-Go-0.18.8-build69.aab`
-- Tamaño: `113323966` bytes (`108.1 MB`)
-- SHA-256: `C7C471ABAE1830E2A6BBDBC792C064BDDDFBFAE281823CDFCC4A4B2818E143AE`
-- Application ID: `ec.atacames.mototaxi.mototaxi_atacames`
-- Android mínimo: API 24 (Android 7.0)
+## Artefacto firmado
+
+- Archivo: `apps/mobile/release/Costa-Go-0.18.9-build70.aab`
+- Tamaño: `115924736` bytes (110.6 MiB)
+- SHA-256: `130D9966F0B840E618A2E833B5E3F7E83075375CC3144929A7BA309D39F567EA`
+- Android mínimo: API 24
 - Android objetivo: API 36
-- Arquitecturas: `arm64-v8a`, `armeabi-v7a` y `x86_64`
-- Firebase: configuración incluida
-- Firma JAR: verificada correctamente
-- Certificado: `CN=Costa-Go Upload, OU=Mobile, O=Costa-Go, L=Atacames, ST=Esmeraldas, C=EC`
+- Arquitecturas: `arm64-v8a`, `armeabi-v7a`, `x86_64`
+- Firma JAR: verificada correctamente con `jarsigner`
+- Certificado de subida: `CN=Costa-Go Upload, OU=Mobile, O=Costa-Go, L=Atacames, ST=Esmeraldas, C=EC`
 - SHA-256 del certificado: `D0E9E2958DC8B0BE3934A12B3CF484A2E40DFD114FC834153FD534036F2D2292`
-- Certificado coincidente con los AAB anteriores de producción
+- Certificado coincidente con el de la versión 69.
 
-El certificado es autofirmado y el AAB no incluye sello de tiempo. `jarsigner`
-lo verifica correctamente y presenta las advertencias habituales para una clave
-de subida privada. Google Play realiza la firma final de distribución.
-
-## Seguridad de los datos y permisos
-
-Esta versión no agrega permisos Android ni nuevas categorías de datos respecto
-de `0.18.7`. El ajuste usa los datos de viajes y cobros que ya pertenecen a la
-cuenta autenticada del conductor; no incorpora un proveedor externo ni un nuevo
-tipo de recopilación.
+El certificado de subida es autofirmado y no incorpora sello de tiempo; `jarsigner` verifica el AAB y muestra las advertencias habituales de esa configuración.
 
 ## Notas para Play Console
 
-Nombre sugerido: `Costa-Go 0.18.8 (69)`
+Nombre sugerido: `Costa-Go 0.18.9 (70)`
 
-```text
-<es-419>
-Mejoramos el detalle de ganancias para conductores.
-Ahora la ganancia neta separa lo generado por la tarifa normal de los viajes y lo obtenido mediante la búsqueda de Costa-Go.
-También mostramos correctamente el valor según la modalidad de cobro, incluyendo planes, paquetes y pago por uso.
-</es-419>
-```
-
-Antes de cargar una versión posterior, incrementar nuevamente `versionName` y
-`versionCode`, generar un AAB sin proxy y actualizar este registro con su hash.
+Copiar el contenido de `RELEASE_NOTES_0.18.9_BUILD70.txt` en «Novedades de esta versión». El AAB está preparado localmente; no se ha cargado ni publicado en Play Console.
