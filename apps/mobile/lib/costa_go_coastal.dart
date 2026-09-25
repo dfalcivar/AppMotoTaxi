@@ -261,7 +261,8 @@ class CostaGoHomeHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = Theme.of(context).colorScheme;
     final brand = Row(children: [
-      Image.asset('assets/images/costa-go-emblem.png', width: 64, height: 76),
+      Image.asset('assets/images/costa-go-emblem.png',
+          width: request ? 52 : 64, height: request ? 60 : 76),
       const SizedBox(width: 7),
       Flexible(
           child:
@@ -272,15 +273,21 @@ class CostaGoHomeHeader extends StatelessWidget {
               TextSpan(text: 'Go', style: TextStyle(color: c.primary))
             ]),
             style: TextStyle(
-                fontSize: 26,
+                fontSize: request ? 22 : 26,
                 fontWeight: FontWeight.w900,
                 color: c.onSurface,
                 letterSpacing: -1)),
         Text(request ? 'Solicitar mototaxi' : 'Siempre contigo',
             style: TextStyle(
-                fontSize: 13, color: c.primary, fontWeight: FontWeight.w700)),
+                fontSize: request ? 12 : 13,
+                color: c.primary,
+                fontWeight: FontWeight.w700)),
       ])),
     ]);
+    if (request) {
+      return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4), child: brand);
+    }
     final slogan = Semantics(
         label: 'Juntos llegamos más lejos',
         image: true,
