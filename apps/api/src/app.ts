@@ -681,6 +681,7 @@ export async function buildApp() {
               and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
               and ((select not membership_enforcement_enabled from operational_settings where id=1)
                 or active_courtesy_benefit(d.user_id) is not null
+                or active_free_trip_benefit(d.user_id) is not null
                 or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
                   and trip_offer_economics(${trip.tripId},1) is not null and commercial_driver_can_accept(d.user_id,${trip.tripId},1))
                 or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
@@ -736,6 +737,7 @@ export async function buildApp() {
           and not exists (select 1 from driver_documents dd where dd.driver_id=d.user_id and dd.status='SUSPENDED')
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
             or active_courtesy_benefit(d.user_id) is not null
+            or active_free_trip_benefit(d.user_id) is not null
                 or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
               and trip_offer_economics(${trip.tripId},${bounds.round}) is not null and commercial_driver_can_accept(d.user_id,${trip.tripId},${bounds.round}))
             or exists(select 1 from driver_memberships dm where dm.driver_id=d.user_id and dm.cycle_closed_at is null
@@ -819,6 +821,7 @@ export async function buildApp() {
           )
           and ((select not membership_enforcement_enabled from operational_settings where id=1)
             or active_courtesy_benefit(d.user_id) is not null
+            or active_free_trip_benefit(d.user_id) is not null
                 or (exists(select 1 from driver_wallets w where w.driver_id=d.user_id and w.enabled)
               and trip_offer_economics(t.id,t.driver_search_round) is not null and commercial_driver_can_accept(d.user_id,t.id,t.driver_search_round))
             or exists (

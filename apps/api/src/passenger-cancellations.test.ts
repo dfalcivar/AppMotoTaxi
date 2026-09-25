@@ -70,9 +70,10 @@ beforeAll(async()=>{
     create table costa_go_campaigns(id uuid primary key);
     create table costa_go_campaign_areas(campaign_id uuid,service_area_id uuid);`);
   await pg.exec(await readFile(new URL('../migrations/101_costa_go_benefits.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/105_benefit_free_trips.sql',import.meta.url),'utf8'));
 },30000);
 beforeEach(async()=>{
-  await pg.exec('truncate audit_log,passenger_cancellations,trip_events,driver_offers,scheduled_trip_responses,trips,drivers,operational_settings,users cascade');
+  await pg.exec('truncate audit_log,passenger_cancellations,trip_events,driver_offers,scheduled_trip_responses,trips,benefit_definitions,drivers,operational_settings,users cascade');
   await pg.query('insert into users(id) values($1),($2)',[passenger,driver]);
   await pg.query('insert into drivers(user_id) values($1)',[driver]);
   await pg.exec('insert into operational_settings(id) values(1)');
@@ -105,7 +106,52 @@ async function economicTrip(commission='0.20') {
     theoreticalCommission:commission,economicConfigurationVersion:'test-v1'}),id]);
   return id;
 }
+async function grantFreeTrips(count:number) {
+ const [definition]= (await pg.query<{id:string}>(`insert into benefit_definitions
+   (code,name,benefit_type,value,audience,one_time,max_per_user,requires_activation,starts_at,ends_at,expiration_days,status)
+   values('TEST_FREE_TRIPS','Viajes de prueba','FREE_TRIPS',$1,'DRIVER',true,1,true,now()-interval '1 day',now()+interval '1 day',30,'ACTIVE') returning id`,[count])).rows;
+ const [redemption]=(await pg.query<{id:string}>(`insert into benefit_redemptions
+   (benefit_id,benefit_code,user_id,audience,benefit_type,benefit_value,one_time,source,effective_from,effective_until)
+   values($1,'TEST_FREE_TRIPS',$2,'DRIVER','FREE_TRIPS',$3,true,'CAMPAIGN',now(),now()+interval '30 days') returning id`,[definition!.id,driver,count])).rows;
+ await pg.query(`insert into benefit_free_trip_credits(redemption_id,user_id,original_trips,remaining_trips,expires_at)
+   values($1,$2,$3,$3,now()+interval '30 days')`,[redemption!.id,driver,count]);
+ return redemption!.id;
+}
 const assignment=async(id:string)=>(await pg.query<any>('select snapshot from trip_commercial_assignments where trip_id=$1',[id])).rows[0]?.snapshot;
+
+describe('free trips granted by a benefit',()=>{
+ it('covers the Costa-Go commission without changing the passenger fare or a purchased package',async()=>{
+   const redemptionId=await grantFreeTrips(2);
+   const cycleId=await makeCycle();
+   await pg.query("update driver_memberships set plan_type_snapshot='TRIP_PACK',completed_trips=1,included_trips_snapshot=10 where id=$1",[cycleId]);
+   const tripId=await economicTrip('0.20');
+   await Promise.all([consume(tripId),consume(tripId)]);
+   expect(await assignment(tripId)).toMatchObject({billingMode:'BENEFIT_FREE_TRIP',appliedCommission:'0.00',passengerTotal:'3.50',benefitRedemptionId:redemptionId});
+   expect((await pg.query<any>('select remaining_trips from benefit_free_trip_credits')).rows[0].remaining_trips).toBe(1);
+   expect((await cycle(cycleId)).completed_trips).toBe(1);
+   expect((await pg.query<any>('select count(*)::int as count from benefit_free_trip_usages')).rows[0].count).toBe(1);
+   await cancelPassengerTrip(passenger,tripId);
+   expect((await pg.query<any>('select remaining_trips from benefit_free_trip_credits')).rows[0].remaining_trips).toBe(2);
+   expect((await pg.query<any>('select reversal_reason from benefit_free_trip_usages')).rows[0].reversal_reason).toBe('PASSENGER_CANCELLED');
+ });
+ it('keeps the credit consumed after a driver cancellation and falls back when exhausted',async()=>{
+   await grantFreeTrips(1);
+   const first=await economicTrip();await consume(first);
+   await state.sql.begin((tx:any)=>settleDriverCancelledCommercialAssignment(tx,first,driver));
+   await pg.query("update trips set driver_id=null,assigned_at=null,status='SEARCHING' where id=$1",[first]);
+   expect((await pg.query<any>('select remaining_trips from benefit_free_trip_credits')).rows[0].remaining_trips).toBe(0);
+   const second=await economicTrip();
+   await expect(consume(second)).rejects.toThrow('MEMBERSHIP_REQUIRED');
+ });
+ it('does not spend an expired credit',async()=>{
+   await grantFreeTrips(1);
+   await pg.exec("update benefit_free_trip_credits set expires_at=now()-interval '1 second'");
+   const tripId=await economicTrip();
+   await expect(consume(tripId)).rejects.toThrow('MEMBERSHIP_REQUIRED');
+   expect((await pg.query<any>('select remaining_trips from benefit_free_trip_credits')).rows[0].remaining_trips).toBe(1);
+   expect((await pg.query('select * from benefit_free_trip_usages')).rows).toHaveLength(0);
+ });
+});
 
 describe('commercial acceptance integrated with existing membership usage',()=>{
   it('charges only the partial remainder of a period cap, then zero',async()=>{

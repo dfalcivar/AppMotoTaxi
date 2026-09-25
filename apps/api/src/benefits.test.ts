@@ -18,12 +18,13 @@ beforeAll(async()=>{pg=new PGlite();state.sql=sqlFor(pg);
  create table driver_documents(driver_id uuid,status text);
  create table driver_memberships(id uuid primary key default gen_random_uuid(),driver_id uuid,cycle_closed_at timestamptz,status text,expires_at timestamptz,grace_ends_at timestamptz,suspension_at timestamptz,grace_allows_trips_applied boolean,plan_type_snapshot text,completed_trips int,included_trips_snapshot int);
  create table driver_wallets(driver_id uuid,total numeric,reserved numeric,enabled boolean);
- create table arrival_search_exclusions(session_id uuid,driver_id uuid);create table trips(id uuid,arrival_search_session_id uuid);
+ create table arrival_search_exclusions(session_id uuid,driver_id uuid);create table trips(id uuid primary key,arrival_search_session_id uuid);
  create function trip_offer_economics(uuid,integer) returns jsonb language sql stable as $$select '{"theoreticalCommission":"0.25"}'::jsonb$$;
  create table costa_go_campaigns(id uuid primary key,title text,content jsonb,audience text,enabled boolean,status text,starts_at timestamptz,ends_at timestamptz,all_zones boolean,priority int default 0);
  create table costa_go_campaign_areas(campaign_id uuid,service_area_id uuid);
  create table audit_log(actor_id uuid,action text,entity_type text,entity_id text,previous_value jsonb,next_value jsonb,reason text,created_at timestamptz default now());`);
  await pg.exec(await readFile(new URL('../migrations/101_costa_go_benefits.sql',import.meta.url),'utf8'));
+ await pg.exec(await readFile(new URL('../migrations/105_benefit_free_trips.sql',import.meta.url),'utf8'));
  await registerBenefitRoutes(app,async(r,s)=>{if(!r.headers['x-user']){s.code(401).send({error:'UNAUTHORIZED'});return;}return {id:String(r.headers['x-user']),role:(r.headers['x-role']??'DRIVER') as any,email:'test@example.test',name:'Test'};});
 },30000);
 beforeEach(async()=>{await pg.exec(`truncate benefit_redemptions,benefit_areas,benefit_definitions,costa_go_campaigns,audit_log,driver_memberships,driver_documents cascade;
@@ -103,6 +104,28 @@ it('repeatable definitions are still idempotent within the same campaign',async(
  await pg.exec("update costa_go_campaigns set content='{"+ '"benefitCode":"REPEAT_COURTESY"' +"}'");
  const send=()=>app.inject({method:'POST',url:'/v1/benefits/REPEAT_COURTESY/claim',headers:{'x-user':uid},payload:{campaignId:cid}});
  const results=await Promise.all([send(),send()]);expect(results.map(r=>r.statusCode).sort()).toEqual([200,409]);
+});
+
+it('activates configurable driver trip credits with an independent balance and expiry',async()=>{
+ const body={...payload(),code:'FOUNDER_FREE_TRIPS',name:'Viajes de fundador',description:'Viajes sin comisión',benefitType:'FREE_TRIPS',value:80,expirationDays:30};
+ expect((await app.inject({method:'POST',url:'/v1/admin/benefits',headers:{'x-admin':'yes'},payload:body})).statusCode).toBe(201);
+ await pg.exec(`update costa_go_campaigns set content='{"benefitCode":"FOUNDER_FREE_TRIPS"}'`);
+ const response=await app.inject({method:'POST',url:'/v1/benefits/FOUNDER_FREE_TRIPS/claim',headers:{'x-user':uid},payload:{campaignId:cid}});
+ expect(response.statusCode,response.body).toBe(200);
+ expect(response.json().redemption).toMatchObject({benefitType:'FREE_TRIPS',remainingTrips:80,status:'ACTIVE'});
+ expect((await pg.query<any>('select original_trips,remaining_trips from benefit_free_trip_credits')).rows[0])
+   .toMatchObject({original_trips:80,remaining_trips:80});
+ expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBe(response.json().redemption.id);
+ expect((await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0].remainingTrips).toBe(80);
+ expect((await app.inject({method:'POST',url:'/v1/benefits/FOUNDER_FREE_TRIPS/claim',headers:{'x-user':uid},payload:{campaignId:cid}})).statusCode).toBe(409);
+});
+
+it('rejects passenger or fractional trip credits',()=>{
+ const base={...payload(),code:'FREE_TRIPS_TEST',benefitType:'FREE_TRIPS',value:2,expirationDays:30};
+ expect(benefitSchema.safeParse(base).success).toBe(true);
+ expect(benefitSchema.safeParse({...base,value:2.5}).success).toBe(false);
+ expect(benefitSchema.safeParse({...base,audience:'PASSENGER'}).success).toBe(false);
+ expect(benefitSchema.safeParse({...base,expirationDays:null}).success).toBe(false);
 });
 
 it('reserved referral infrastructure rejects self/duplicate referrals and cannot activate programs',async()=>{

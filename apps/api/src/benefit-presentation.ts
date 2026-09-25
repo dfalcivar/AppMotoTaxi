@@ -7,7 +7,7 @@ export function benefitPresentation(type:string,value:number) {
   case 'PROMOTIONAL_BALANCE':return {valueLabel:amount,typeLabel:'de saldo promocional'};
   case 'FIXED_DISCOUNT':return {valueLabel:amount,typeLabel:'de descuento'};
   case 'PERCENTAGE_DISCOUNT':return {valueLabel:`${count}%`,typeLabel:'de descuento'};
-  case 'FREE_TRIPS':return {valueLabel:`${count} ${value===1?'viaje':'viajes'}`,typeLabel:'gratis'};
+  case 'FREE_TRIPS':return {valueLabel:`${count} ${value===1?'viaje':'viajes'}`,typeLabel:'sin comisión Costa-Go'};
   default:return {valueLabel:'Tu beneficio',typeLabel:''};
  }
 }

@@ -1,4 +1,4 @@
-# Beneficios y recompensas Costa-Go — primera fase
+# Beneficios y recompensas Costa-Go
 
 ## Alcance operativo
 
@@ -6,15 +6,18 @@ El motor está separado de Campañas: una campaña referencia `benefitCode`; el 
 
 **Operativo:** `COURTESY_DAYS`, activación manual para conductores aprobados y activos, sin documentos ni membresía suspendidos. Preset del panel: `DRIVER_FOUNDER_COURTESY`, 15 días, una sola vez. No se insertan campañas ni beneficios activos mediante la migración.
 
-**Ampliación implementada:** referidos y activación automática de cortesías/saldo promocional acumulable. Véase [Referidos Costa-Go](costa-go-referrals.md). El saldo todavía no puede gastarse en viajes. Descuentos, viajes gratuitos, membresía y personalizado siguen bloqueados para activación.
+**Ampliación implementada:** referidos y activación automática de cortesías, viajes gratis para conductores y saldo promocional acumulable. Véase [Referidos Costa-Go](costa-go-referrals.md). El saldo promocional todavía no puede gastarse en viajes. Descuentos, membresía y personalizado siguen bloqueados para activación.
 
 ## Estructuras y migración
 
 `101_costa_go_benefits.sql` crea definiciones, áreas, redenciones e índices. No actualiza filas de producción existentes. Debe ejecutarse con el migrador habitual antes de arrancar esta versión de la API.
 
+`105_benefit_free_trips.sql` agrega créditos y consumos de viajes sin comisión, con saldo y vencimiento propios. Tampoco modifica paquetes comprados ni saldo real.
+
 - `benefit_definitions`: código único/inmutable, tipo, valor, audiencia, ventana de activación, límites, estado, configuración y versión optimista.
 - `benefit_areas`: áreas operativas actuales; sin selección significa alcance global.
 - `benefit_redemptions`: usuario real, campaña, código, valor/versionado, origen, cobertura, estado, zona y auditoría.
+- `benefit_free_trip_credits` y `benefit_free_trip_usages`: unidades concedidas, disponibles, consumidas y restituidas por cancelación del pasajero.
 - Infraestructura reservada: `benefit_promotional_credits`, `benefit_promotional_movements`, `benefit_reward_programs`, `benefit_referrals`, `benefit_reward_events`, `benefit_reward_progress`.
 - Contratos extensibles en `benefit-contracts.ts`: expiración, descuentos, eventos verificados, recompensas, referidos y progreso.
 
@@ -42,6 +45,14 @@ La redención es una cobertura independiente, identificada `BENEFIT / COURTESY`.
 - Al vencer, vuelve a aplicarse la elegibilidad habitual. Una suspensión manual o de cuenta/documentos prevalece sobre la cortesía.
 - El total del pasajero no cambia. Los viajes ya aceptados conservan su snapshot para completar/cancelar/reintentar.
 - Los estados programado/activo/vencido se derivan de fechas del servidor; no necesitan un cron para dejar de otorgar acceso.
+
+## Viajes gratis para conductor
+
+`FREE_TRIPS` requiere audiencia `DRIVER`, una cantidad entera de viajes y días de vigencia. Puede activarse desde una campaña o concederse automáticamente como premio de referidos. El claim acredita unidades al conductor, en un ledger independiente; no crea pagos ni facturas. La campaña define cuándo se puede activar y el campo de vigencia define hasta cuándo pueden usarse las unidades.
+
+Al aceptar un viaje, la API usa primero una cortesía por días vigente; si no existe, usa un crédito de viaje gratis antes de consumir paquete comprado o saldo. La asignación conserva el total del pasajero y registra `BENEFIT_FREE_TRIP` con comisión aplicada de $0. El uso ocurre una sola vez al aceptar, incluso ante reintentos. Una cancelación del pasajero antes de iniciar devuelve el crédito; una cancelación del conductor después de aceptar lo conserva consumido, igual que el paquete por viajes. Al agotarse o vencer el crédito, se aplica la modalidad de cobro habitual. Suspensiones de cuenta, documentos y membresía siguen bloqueando al conductor.
+
+`GET /v1/benefits/mine` y el historial administrativo exponen `remainingTrips`. Pausar la definición impide nuevas activaciones sin quitar unidades ya acreditadas.
 
 ## API
 
@@ -83,7 +94,7 @@ El wallet actual reserva, libera y liquida dinero real mediante SQL y snapshots 
 
 Referidos: implementación funcional posterior en [costa-go-referrals.md](costa-go-referrals.md), con programas administrables, enlaces personales, atribución y procesamiento automático de evidencia real. Reutiliza el mismo motor de concesión.
 
-Descuentos/viajes gratis: solo tipos y contratos; faltan aplicación al tarifario y pruebas financieras específicas. La expiración operativa de cortesía es su duración en días desde el inicio efectivo; los otros modos de expiración se reservan para handlers futuros.
+Descuentos: solo tipos y contratos; aún falta su aplicación al tarifario. La expiración operativa de cortesía es su duración en días desde el inicio efectivo; los otros modos de expiración se reservan para handlers futuros.
 
 Notificaciones: las redenciones auditadas sirven de referencia para el sistema existente. No se añadió otro motor push ni envío automático de correo. La activación se confirma en pantalla.
 

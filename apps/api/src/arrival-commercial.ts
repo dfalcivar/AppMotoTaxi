@@ -4,6 +4,7 @@ import type { TransactionSql } from 'postgres';
 import { database } from './database.js';
 import type { TerritorialFare } from './fare-engine.js';
 import { arrivalSearchBounds, immediateArrival } from './commercial-economics.js';
+import {consumeFreeTripBenefit} from './benefit-free-trips.js';
 
 export const commercialConfigurationSchema=z.object({
   enabled:z.boolean(),searchSessionMinutes:z.number().int().min(1).max(1440),
@@ -109,6 +110,13 @@ export async function prepareCommercialAcceptance(tx:TransactionSql,tripId:strin
   const [benefit]=await tx`select active_courtesy_benefit(${driverId}) as id`;
   if(benefit?.id) {
     const economic={...trip.economics,billingMode:"BENEFIT_COURTESY",appliedCommission:"0.00",benefitRedemptionId:String(benefit.id),source:"BENEFIT / COURTESY"};
+    await persistCommercialAssignment(tx,tripId,driverId,null,economic);
+    return {replay:false,wallet:false,benefit:true,economic};
+  }
+  const freeTrip=await consumeFreeTripBenefit(tx,tripId,driverId);
+  if(freeTrip) {
+    const economic={...trip.economics,billingMode:'BENEFIT_FREE_TRIP',appliedCommission:'0.00',
+      benefitRedemptionId:freeTrip.redemptionId,benefitUsageId:freeTrip.usageId,source:'BENEFIT / FREE_TRIP'};
     await persistCommercialAssignment(tx,tripId,driverId,null,economic);
     return {replay:false,wallet:false,benefit:true,economic};
   }
