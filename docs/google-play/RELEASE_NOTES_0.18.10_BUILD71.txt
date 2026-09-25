@@ -1,0 +1,5 @@
+<es-419>
+  Mejoramos la pantalla de solicitud de mototaxi con una cabecera más compacta.
+  Las cortesías de viajes para conductores ahora muestran si están programadas, sus viajes disponibles y cuándo comienza su vigencia.
+  Ajustamos la presentación de membresía y beneficios para que su estado sea más claro.
+</es-419>
