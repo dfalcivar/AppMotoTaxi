@@ -1196,7 +1196,7 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
       left join passenger_cancellation_cycles cy on cy.id=u.passenger_cancellation_cycle_id
       where u.deleted_at is null
         and exists(select 1 from mobile_account_roles mar where mar.user_id=u.id and mar.role='PASSENGER')
-      group by u.id,cy.ends_at order by u.created_at
+      group by u.id,cy.ends_at order by u.created_at desc, u.id desc
     `;
   } catch(e){return guardError(e,reply);} });
   app.patch("/v1/admin/passengers/:id", async (request, reply) => { try {

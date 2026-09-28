@@ -39,6 +39,7 @@ import { PassengerCancellationSettings, PassengerCancellationHistory } from './p
 import {RolesAndPermissions} from './roles-permissions.js';
 import './roles-permissions.css';
 import {visibleAdminModules,resolvedAdminModule} from './admin-navigation.js';
+import {ecuadorCalendarDate,registeredInRange,registrationDateRange,type RegistrationPeriod} from './passenger-registration.js';
 
 type Module = "costaCampaigns" | "home" | "fleet" | "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "notifications" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
 
@@ -587,12 +588,20 @@ function Drivers({token,canApprove,approvalPermissions,canViewDocuments,canManag
 function Passengers({token,canManage,canResetPasswords,canEditAccounts}:{token:string;canManage:boolean;canResetPasswords:boolean;canEditAccounts:boolean}) {
   const [data,setData]=useState<any[]>([]),[error,setError]=useState(''),[loading,setLoading]=useState(true),[accountMessage,setAccountMessage]=useState(''),[selected,setSelected]=useState<any>(),[decision,setDecision]=useState<any>(),[busy,setBusy]=useState(false);
   const [segment,setSegment]=useConsoleState('passenger-segment','ALL');
+  const [registrationPeriod,setRegistrationPeriod]=useState<RegistrationPeriod>('ALL');
+  const [registeredFrom,setRegisteredFrom]=useState(''),[registeredTo,setRegisteredTo]=useState('');
   async function load(){setLoading(true);try{setData(await apiFetch<any[]>('/v1/admin/passengers',token));setError('');}catch(e){setError(errorText(e));}finally{setLoading(false);}}
   useEffect(()=>{void load();},[token]);
   const openedRecord=useRef<string|undefined>(undefined);
   useEffect(()=>{const record=routeQuery().get('record');if(record&&data.length&&!openedRecord.current){openedRecord.current=record;setSelected(data.find(d=>d.id===record));}},[data]);
   const suspended=(p:any)=>p.status==='SUSPENDED'||(p.cancellationSuspended&&(!p.suspendedUntil||new Date(p.suspendedUntil).getTime()>Date.now()));
-  const list=data.filter(p=>segment==='ALL'||(segment==='ACTIVE'&&p.status==='ACTIVE'&&!suspended(p))||(segment==='SUSPENDED'&&suspended(p))||(segment==='NO_TRIPS'&&!p.trips)||(segment==='CANCELLATIONS'&&Number(p.cancellationCount)>0)||(segment==='RECENT'&&p.lastTrip&&new Date(p.lastTrip).getTime()>Date.now()-30*86400000));
+  const today=ecuadorCalendarDate(new Date())??'';
+  const registrationRange=registrationDateRange(registrationPeriod,today,registeredFrom,registeredTo);
+  const invalidRange=Boolean(registrationRange.from&&registrationRange.to&&registrationRange.from>registrationRange.to);
+  const list=data.filter(p=>(segment==='ALL'||(segment==='ACTIVE'&&p.status==='ACTIVE'&&!suspended(p))||(segment==='SUSPENDED'&&suspended(p))||(segment==='NO_TRIPS'&&!p.trips)||(segment==='CANCELLATIONS'&&Number(p.cancellationCount)>0)||(segment==='RECENT'&&p.lastTrip&&new Date(p.lastTrip).getTime()>Date.now()-30*86400000))&&(registrationPeriod==='ALL'||(!invalidRange&&registeredInRange(p.createdAt,registrationRange.from,registrationRange.to)))).sort((a,b)=>{
+    const aTime=Date.parse(a.createdAt??'')||0,bTime=Date.parse(b.createdAt??'')||0;
+    return bTime-aTime;
+  });
   async function update(reason:string){if(!decision)return;setBusy(true);try{await apiFetch('/v1/admin/passengers/'+decision.id,token,{method:'PATCH',body:JSON.stringify({status:!suspended(decision)?'SUSPENDED':'ACTIVE',reason})});setDecision(undefined);setSelected(undefined);setAccountMessage('Estado actualizado correctamente.');await load();}catch(e){setError(errorText(e));}finally{setBusy(false);}}
   return <>{loading?<LoadingState/>:<MetricStrip items={[
     {label:'Registrados',value:data.length,onClick:()=>setSegment('ALL')},
@@ -602,9 +611,10 @@ function Passengers({token,canManage,canResetPasswords,canEditAccounts}:{token:s
     {label:'Sin viajes',value:data.filter(p=>!p.trips).length,onClick:()=>setSegment('NO_TRIPS')},
     {label:'Con cancelaciones del ciclo',value:data.filter(p=>Number(p.cancellationCount)>0).length,tone:'warning',onClick:()=>setSegment('CANCELLATIONS')}
   ]}/>}
-  {error&&<ErrorState message={error} onRetry={()=>void load()}/>}<section className="card"><Header eyebrow="DIRECTORIO" title="Pasajeros" action={list.length+' registros'}/><div className="cg-directory-filters"><label>Segmento<select value={segment} onChange={e=>setSegment(e.target.value)}>{[['ALL','Todos'],['ACTIVE','Activos'],['RECENT','Con viajes recientes'],['SUSPENDED','Suspendidos'],['NO_TRIPS','Sin viajes'],['CANCELLATIONS','Con cancelaciones del ciclo']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><button className="link" onClick={()=>setSegment('ALL')}>Limpiar filtros</button></div><Notice success={accountMessage}/>
-  <Table directory headers={['Pasajero','Actividad','Estado','Cancelaciones','Acciones']} rows={list.map(p=>[
+  {error&&<ErrorState message={error} onRetry={()=>void load()}/>}<section className="card"><Header eyebrow="DIRECTORIO" title="Pasajeros" action={`${list.length} ${registrationPeriod==='ALL'?'registros':'registrados en el período'}`}/><div className="cg-directory-filters"><label>Segmento<select value={segment} onChange={e=>setSegment(e.target.value)}>{[['ALL','Todos'],['ACTIVE','Activos'],['RECENT','Con viajes recientes'],['SUSPENDED','Suspendidos'],['NO_TRIPS','Sin viajes'],['CANCELLATIONS','Con cancelaciones del ciclo']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label>Fecha de registro<select value={registrationPeriod} onChange={e=>setRegistrationPeriod(e.target.value as RegistrationPeriod)}><option value="ALL">Todas las fechas</option><option value="TODAY">Hoy</option><option value="LAST_7_DAYS">Últimos 7 días</option><option value="LAST_30_DAYS">Últimos 30 días</option><option value="CUSTOM">Elegir fechas</option></select></label>{registrationPeriod==='CUSTOM'&&<><label>Desde<input type="date" value={registeredFrom} max={registeredTo||undefined} onChange={e=>setRegisteredFrom(e.target.value)}/></label><label>Hasta<input type="date" value={registeredTo} min={registeredFrom||undefined} onChange={e=>setRegisteredTo(e.target.value)}/></label></>}<button className="link" onClick={()=>{setSegment('ALL');setRegistrationPeriod('ALL');setRegisteredFrom('');setRegisteredTo('');}}>Limpiar filtros</button></div>{invalidRange&&<p className="error" role="alert">La fecha inicial debe ser anterior o igual a la fecha final.</p>}<Notice success={accountMessage}/>
+  <Table directory headers={['Pasajero','Registrado','Actividad','Estado','Cancelaciones','Acciones']} rows={list.map(p=>[
     <PersonIdentity name={p.name} email={p.email} phone={p.phone}/>,
+    p.createdAt?ecuDate(p.createdAt):'Sin fecha',
     <div className="cg-directory-stack"><strong>{p.trips??0} viajes</strong><small>{p.lastTrip?`Último: ${ecuDate(p.lastTrip)}`:'Sin viajes registrados'}</small></div>,
     <Badge value={suspended(p)?'SUSPENDED':p.status}/>,
     <div className="cg-directory-stack"><strong>{p.cancellationCount??0} en el ciclo</strong><small>{Number(p.cancellationCount)>0?'Revisar en el detalle':'Sin incidencias vigentes'}</small></div>,
