@@ -1,9 +1,52 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Guías reales, videos y manuales oficiales para usar Costa-Go como conductor o pasajero.">
-<link rel="icon" href="/assets/costa-go-brand-mark-v2.png"><link rel="stylesheet" href="/assets/help/help.css">
-<title>Centro de ayuda | Costa-Go</title><script src="/config.js" defer></script><script type="module" src="/assets/help/help.js"></script></head>
-<body><a class="skip" href="#contenido">Saltar al contenido</a><header class="bar"><a class="brand" href="/"><img src="/assets/costa-go-brand-mark-v2.png" alt="" width="48" height="48">Costa-<b>Go</b></a><nav><a href="/">Inicio</a><a href="/ayuda#faq">Preguntas frecuentes</a><a href="mailto:soporte@costa-go.com">Soporte</a></nav></header>
-<main id="contenido"><div id="listing"><section class="hero"><span class="eyebrow">AYUDA Y CAPACITACIÓN</span><h1>Aprende a usar Costa-Go</h1><p>Guías oficiales basadas en los pasos actuales de la aplicación, con videos y manuales para consultar cuando los necesites.</p><label class="search">Buscar tutoriales<input id="search" type="search" placeholder="Ej. vincular mototaxi" autocomplete="off"></label><div class="audiences" role="group" aria-label="Filtrar por audiencia"><button type="button" data-audience="" aria-pressed="true">Todos</button><button type="button" data-audience="DRIVER" aria-pressed="false">Conductores</button><button type="button" data-audience="PASSENGER" aria-pressed="false">Pasajeros</button></div></section><div id="list-status" role="status">Cargando tutoriales…</div><section id="featured" hidden><h2>Tutoriales destacados</h2><div class="cards" id="featured-cards"></div></section><section id="categories"></section><section id="faq" hidden><h2>Preguntas frecuentes</h2><div id="faq-items"></div></section></div>
-<article id="detail" hidden><a class="back" href="/ayuda">← Todos los tutoriales</a><p class="eyebrow" id="article-category"></p><h1 id="article-title"></h1><p class="lead" id="article-summary"></p><div id="article-body"></div><section id="video-block" hidden><h2>Video paso a paso</h2><video id="article-video" controls preload="metadata" playsinline aria-label="Video tutorial"></video></section><section id="pdf-block" hidden><h2>Manual PDF</h2><p>Consulta las capturas reales de la aplicación y conserva el manual en tu dispositivo.</p><div class="actions"><a class="primary" id="pdf-view" target="_blank" rel="noopener noreferrer">Ver manual PDF</a><a class="secondary" id="pdf-download" download>Descargar manual</a></div><iframe id="pdf-frame" title="Vista previa del manual PDF" loading="lazy"></iframe></section><section class="help-note"><h2>¿Listo para seguir?</h2><p>Desde Google Play puedes abrir Costa-Go si ya la tienes instalada. En la app, entra a Mi perfil → Mis mototaxis.</p><a href="https://play.google.com/store/apps/details?id=ec.atacames.mototaxi.mototaxi_atacames">Abrir Costa-Go</a></section><section class="help-note"><h2>¿Aún necesitas ayuda?</h2><p>Si tu solicitud está en revisión o una unidad no aparece, el equipo de Costa-Go puede verificar el caso.</p><a href="mailto:soporte@costa-go.com">Contactar soporte</a></section></article>
-<section class="support" id="support"><div><h2>Estamos para ayudarte</h2><p>Escríbenos si necesitas asistencia con tu cuenta, una mototaxi o un viaje.</p></div><a href="mailto:soporte@costa-go.com">Contactar soporte</a></section></main><footer><span>© Costa-Go · COSTAGO S.A.S.</span><a href="/privacy.html">Privacidad</a></footer></body></html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Guías reales, videos y manuales oficiales para usar Costa-Go como conductor o pasajero.">
+  <link rel="icon" href="/assets/costa-go-brand-mark-v2.png">
+  <link rel="stylesheet" href="/assets/help/help.css">
+  <title>Centro de ayuda | Costa-Go</title>
+  <script src="/config.js" defer></script>
+  <script type="module" src="/assets/help/help.js"></script>
+</head>
+<body>
+  <a class="skip" href="#contenido">Saltar al contenido</a>
+  <header class="bar">
+    <a class="brand" href="/"><img src="/assets/costa-go-brand-mark-v2.png" alt="" width="40" height="40">Costa-<b>Go</b></a>
+    <nav aria-label="Navegación principal"><a href="/ayuda" aria-current="page">Centro de ayuda</a><a href="/ayuda#faq">Preguntas frecuentes</a><a href="mailto:soporte@costa-go.com">Contáctanos</a></nav>
+  </header>
+  <main id="contenido">
+    <div id="listing">
+      <section class="hero">
+        <div class="hero-copy"><span class="eyebrow">CENTRO DE AYUDA COSTA-GO</span><h1>¿En qué podemos ayudarte?</h1><p>Encuentra guías y videos para usar Costa-Go paso a paso.</p>
+          <label class="search" for="search"><span class="search-icon" aria-hidden="true">⌕</span><span class="sr-only">Buscar en las guías</span><input id="search" type="search" placeholder="Buscar ayuda…" autocomplete="off"></label>
+        </div>
+        <img class="hero-art" src="/assets/costa-go-mototaxi.png" alt="" aria-hidden="true">
+      </section>
+      <div class="audiences" role="group" aria-label="Filtrar guías por tipo de usuario" hidden>
+        <button type="button" data-audience="" aria-pressed="true">Todas las guías</button>
+        <button type="button" data-audience="DRIVER" aria-pressed="false" hidden>Conductores</button>
+        <button type="button" data-audience="PASSENGER" aria-pressed="false" hidden>Pasajeros</button>
+      </div>
+      <section class="guide-list" aria-labelledby="guide-heading">
+        <div class="section-head"><div><h2 id="guide-heading">Guías disponibles</h2><p id="guide-intro">Tutoriales publicados para ayudarte a comenzar.</p></div></div>
+        <div id="list-status" role="status">Cargando guías…</div>
+        <section id="featured" hidden><h3>Destacados</h3><div class="cards" id="featured-cards"></div></section>
+        <div id="categories"></div>
+      </section>
+      <section id="faq" hidden><h2>Preguntas frecuentes</h2><div id="faq-items"></div></section>
+    </div>
+    <article id="detail" hidden>
+      <a class="back" href="/ayuda">← Volver a las guías</a>
+      <header class="article-head"><p class="eyebrow" id="article-category"></p><h1 id="article-title"></h1><p class="lead" id="article-summary"></p></header>
+      <section id="video-block" class="media-section" hidden><h2>Video paso a paso</h2><p>Mira cómo hacerlo en la aplicación.</p><video id="article-video" controls preload="metadata" playsinline aria-label="Video tutorial"></video></section>
+      <section id="steps-block" class="steps-section" hidden><h2>Resumen de pasos</h2><ol id="quick-steps"></ol></section>
+      <details id="instructions" class="instructions"><summary>Instrucciones detalladas <span aria-hidden="true">⌄</span></summary><div id="article-body"></div></details>
+      <section id="pdf-block" class="pdf-section" hidden><div><h2>Manual PDF</h2><p>Consulta el manual completo con capturas de pantalla.</p></div><div class="actions"><a class="primary" id="pdf-view" target="_blank" rel="noopener noreferrer">Ver manual</a><a class="secondary" id="pdf-download" download>Descargar PDF</a></div></section>
+      <section class="help-note"><h2>¿Necesitas ayuda?</h2><p>El equipo de Costa-Go puede ayudarte con tu cuenta o solicitud.</p><a href="mailto:soporte@costa-go.com">Contactar soporte</a></section>
+    </article>
+  </main>
+  <footer><span>© Costa-Go · COSTAGO S.A.S.</span><a href="/privacy.html">Privacidad</a></footer>
+</body>
+</html>
