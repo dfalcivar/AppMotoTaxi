@@ -67,11 +67,15 @@ export async function saveFleetSettings(actor: FleetActor, input: unknown) {
 }
 export async function listVehicles(actor: FleetActor, search = '', page = 0, status = '', managedOnly = false,
   relationType: 'AUTHORIZED_DRIVER'|'OWNER_MANAGER'|'' = '', authorizedOnly = false,
-  registeredWithin: ''|'today'|'7d'|'30d' = '', newestFirst = false) {
+  registeredWithin: ''|'today'|'7d'|'30d' = '', newestFirst = false,
+  accountView: 'current'|'deleted'|'all' = 'all') {
   const sql=database();
   return sql`select v.id,v.identifier,v.brand,v.model,v.color,v.unit_number as "unitNumber",
     v.fleet_status as status,v.photo_id as "photoId",v.cooperative_id as "cooperativeId",c.name as cooperative,
     v.created_at as "createdAt",
+    (creator.deleted_at is not null and not exists(select 1 from user_vehicle_relations live_relation
+      join users live_user on live_user.id=live_relation.user_id and live_user.deleted_at is null
+      where live_relation.vehicle_id=v.id and live_relation.status in ('APPROVED','PENDING'))) as "accountOrphaned",
     v.declared_owner_name as "declaredOwnerName",s.id as "sessionId",s.driver_id as "currentDriverId",
     u.full_name as "currentDriverName",s.started_at as "startedAt",s.last_heartbeat as "lastHeartbeat",
     coalesce(d.is_available,false) and fleet_driver_can_receive(s.driver_id) as available,
@@ -79,6 +83,7 @@ export async function listVehicles(actor: FleetActor, search = '', page = 0, sta
       from user_vehicle_relations r where r.vehicle_id=v.id and r.user_id=${actor.id}),'[]'::jsonb) as relations,
     count(*) over()::int as "totalCount"
     from vehicles v left join cooperatives c on c.id=v.cooperative_id
+    left join users creator on creator.id=v.created_by
     left join driver_vehicle_sessions s on s.vehicle_id=v.id and s.status='ACTIVE'
     left join users u on u.id=s.driver_id left join drivers d on d.user_id=s.driver_id
     where v.merged_into is null and upper(v.identifier) not like 'DELETED-%'
@@ -89,6 +94,10 @@ export async function listVehicles(actor: FleetActor, search = '', page = 0, sta
         and (${!authorizedOnly} or (r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED'))))
       and (${!actor.cooperativeId} or v.cooperative_id=${actor.cooperativeId ?? null}::uuid)
       and (${!status} or v.fleet_status=${status})
+      and (${accountView === 'all'} or (${accountView === 'deleted'} =
+        (creator.deleted_at is not null and not exists(select 1 from user_vehicle_relations live_relation
+          join users live_user on live_user.id=live_relation.user_id and live_user.deleted_at is null
+          where live_relation.vehicle_id=v.id and live_relation.status in ('APPROVED','PENDING')))))
       and (${registeredWithin !== 'today'} or (v.created_at at time zone 'America/Guayaquil')::date =
         (now() at time zone 'America/Guayaquil')::date)
       and (${registeredWithin !== '7d'} or v.created_at >= now() - interval '7 days')
@@ -369,6 +378,12 @@ export async function notificationPreferences(actor:FleetActor,events?:string[])
 }
 export async function fleetDetail(actor:FleetActor,id:string,page=0,from='1970-01-01',to='2100-01-01'){
   const sql=database();const v=await authorizeVehicle(sql,actor,id);
+  const [registration]=actor.admin?await sql`select creator.full_name as "registeredByName",creator.email as "registeredByEmail",
+    (creator.deleted_at is not null) as "registeredByDeleted",
+    (creator.deleted_at is not null and not exists(select 1 from user_vehicle_relations relation
+      join users linked on linked.id=relation.user_id and linked.deleted_at is null
+      where relation.vehicle_id=${id} and relation.status in ('APPROVED','PENDING'))) as "accountOrphaned"
+    from vehicles vehicle left join users creator on creator.id=vehicle.created_by where vehicle.id=${id}`:[];
   const [manager]=await sql`select 1 from user_vehicle_relations where vehicle_id=${id} and user_id=${actor.id}
     and relation_type='OWNER_MANAGER' and status='APPROVED'`;
   const canManage=actor.admin===true||Boolean(manager);
@@ -413,7 +428,11 @@ export async function fleetDetail(actor:FleetActor,id:string,page=0,from='1970-0
     where c.vehicle_id=${id} order by c.created_at desc`:[];
   return {vehicle:{id:v.id,identifier:v.identifier,brand:v.brand,model:v.model,color:v.color,unitNumber:v.unit_number,
     maximumPassengers:v.maximum_passengers,status:v.fleet_status,photoId:v.photo_id,cooperativeId:v.cooperative_id,
-    declaredOwnerName:canManage?v.declared_owner_name:null},current:canManage?current??null:null,canManage,canUpload,relations,sessions,trips,files,history,claims};
+    declaredOwnerName:canManage?v.declared_owner_name:null,
+    registeredByName:registration?.registeredByDeleted?null:registration?.registeredByName??null,
+    registeredByEmail:registration?.registeredByDeleted?null:registration?.registeredByEmail??null,
+    registeredByDeleted:registration?.registeredByDeleted??false,
+    accountOrphaned:registration?.accountOrphaned??false},current:canManage?current??null:null,canManage,canUpload,relations,sessions,trips,files,history,claims};
 }
 
 export async function requestOwnership(actor:FleetActor,vehicleId:string,evidenceId:string,reason:string){

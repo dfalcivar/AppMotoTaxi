@@ -71,6 +71,18 @@ async function trip(driverId=ids.driver){
   return row.rows[0];
 }
 describe('fleet real SQL integration',()=>{
+  it('separates units from deleted creators until a current account is linked',async()=>{
+    const id=await unit('AF936A');
+    await pg.query("update user_vehicle_relations set status='REVOKED' where vehicle_id=$1",[id]);
+    await pg.query("update users set full_name='Cuenta eliminada',deleted_at=now() where id=$1",[ids.driver]);
+    const view=(accountView:'current'|'deleted'|'all')=>fleet.listVehicles(admin,'',0,'',false,'',false,'',true,accountView);
+    expect(await view('current')).toHaveLength(0);
+    expect(await view('deleted')).toMatchObject([{id,accountOrphaned:true}]);
+    expect((await fleet.fleetDetail(admin,id)).vehicle).toMatchObject({registeredByDeleted:true,registeredByName:null,accountOrphaned:true});
+    await fleet.setRelation(admin,id,ids.other,'AUTHORIZED_DRIVER','APPROVED','Nueva autorización verificada');
+    expect(await view('deleted')).toHaveLength(0);
+    expect(await view('current')).toMatchObject([{id,accountOrphaned:false}]);
+  });
   it.each([
     ['passenger only',false,false,'PASSENGER'],
     ['passenger and driver',true,false,'PASSENGER'],
