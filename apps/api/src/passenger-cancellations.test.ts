@@ -73,6 +73,7 @@ beforeAll(async()=>{
   await pg.exec(await readFile(new URL('../migrations/101_costa_go_benefits.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../migrations/105_benefit_free_trips.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../migrations/106_defer_free_trip_benefits.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/107_start_benefits_on_completed_trip.sql',import.meta.url),'utf8'));
 },30000);
 beforeEach(async()=>{
   await pg.exec('truncate audit_log,passenger_cancellations,trip_events,driver_offers,scheduled_trip_responses,trips,benefit_definitions,drivers,operational_settings,users cascade');
@@ -115,8 +116,8 @@ async function grantFreeTrips(count:number) {
  const [redemption]=(await pg.query<{id:string}>(`insert into benefit_redemptions
    (benefit_id,benefit_code,user_id,audience,benefit_type,benefit_value,one_time,source,effective_from,effective_until)
    values($1,'TEST_FREE_TRIPS',$2,'DRIVER','FREE_TRIPS',$3,true,'CAMPAIGN',now(),now()+interval '30 days') returning id`,[definition!.id,driver,count])).rows;
- await pg.query(`insert into benefit_free_trip_credits(redemption_id,user_id,original_trips,remaining_trips,expires_at)
-   values($1,$2,$3,$3,now()+interval '30 days')`,[redemption!.id,driver,count]);
+ await pg.query(`insert into benefit_free_trip_credits(redemption_id,user_id,original_trips,remaining_trips,expires_at,validity_days)
+   values($1,$2,$3,$3,now()+interval '30 days',30)`,[redemption!.id,driver,count]);
  return redemption!.id;
 }
 const assignment=async(id:string)=>(await pg.query<any>('select snapshot from trip_commercial_assignments where trip_id=$1',[id])).rows[0]?.snapshot;

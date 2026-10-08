@@ -1,6 +1,7 @@
 import type { TransactionSql } from 'postgres';
 import {prepareCommercialAcceptance,persistCommercialAssignment} from './arrival-commercial.js';
 import {consumeFreeTripBenefit,completeFreeTripBenefit,reversePassengerCancelledFreeTrip} from './benefit-free-trips.js';
+import {recordCourtesyTripAcceptance,completeCourtesyBenefit} from './benefit-courtesy.js';
 
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -21,6 +22,7 @@ export async function markMembershipTripCompleted(tx: TransactionSql, tripId: st
     from trips t where u.trip_id=t.id and t.id=${tripId} and t.driver_id=${driverId}
       and u.driver_id=${driverId} and t.status='COMPLETED' and u.reversed_at is null`;
   await completeFreeTripBenefit(tx,tripId,driverId);
+  await completeCourtesyBenefit(tx,tripId,driverId);
 }
 
 async function saveAmounts(tx: TransactionSql, cycle: Record<string, any>, used: number, adjustment?: number) {
@@ -79,9 +81,12 @@ export async function recordAcceptedTripMembershipUsage(tx: TransactionSql, trip
   if (!trip) return;
   await lockMembershipBilling(tx, driverId);
   const commercial=await prepareCommercialAcceptance(tx,tripId,driverId);
+  if(commercial?.benefit&&commercial.economic.billingMode==='BENEFIT_COURTESY'){
+    await recordCourtesyTripAcceptance(tx,tripId,driverId,String(commercial.economic.benefitRedemptionId));
+  }
   if(commercial?.wallet||commercial?.replay||commercial?.benefit)return;
   const [benefit]=await tx`select active_courtesy_benefit(${driverId}) as id`;
-  if(benefit?.id)return;
+  if(benefit?.id){await recordCourtesyTripAcceptance(tx,tripId,driverId,String(benefit.id));return;}
   // Scheduled trips do not have the immediate-arrival economic snapshot.
   if(!commercial&&await consumeFreeTripBenefit(tx,tripId,driverId))return;
   const [cycle] = await tx`select * from driver_memberships where driver_id=${driverId} and cycle_closed_at is null for update`;

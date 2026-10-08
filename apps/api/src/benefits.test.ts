@@ -8,6 +8,8 @@ vi.mock('./admin.js',()=>({requirePermission:(r:any,p:string)=>{if(r.headers['x-
 vi.mock('./service-areas.js',()=>({resolveServiceArea:async()=>undefined}));
 import {registerBenefitRoutes,benefitSchema} from './benefits.js';
 import {consumeFreeTripBenefit} from './benefit-free-trips.js';
+import {completeFreeTripBenefit} from './benefit-free-trips.js';
+import {recordCourtesyTripAcceptance,completeCourtesyBenefit} from './benefit-courtesy.js';
 const uid='00000000-0000-4000-8000-000000000001',cid='00000000-0000-4000-8000-000000000002';
 const app=Fastify();let pg:PGlite;
 function sqlFor(client:any):any {const sql=async(parts:TemplateStringsArray,...values:any[])=>(await client.query(parts.reduce((s,p,i)=>s+(i?`$${i}`:'')+p,''),values)).rows;return Object.assign(sql,{begin:(fn:any)=>client.transaction((tx:any)=>fn(sqlFor(tx))),json:JSON.stringify});}
@@ -19,7 +21,7 @@ beforeAll(async()=>{pg=new PGlite();state.sql=sqlFor(pg);
  create table driver_documents(driver_id uuid,status text);
  create table driver_memberships(id uuid primary key default gen_random_uuid(),driver_id uuid,cycle_closed_at timestamptz,status text,expires_at timestamptz,grace_ends_at timestamptz,suspension_at timestamptz,grace_allows_trips_applied boolean,plan_type_snapshot text,completed_trips int,included_trips_snapshot int);
  create table driver_wallets(driver_id uuid,total numeric,reserved numeric,enabled boolean);
- create table arrival_search_exclusions(session_id uuid,driver_id uuid);create table trips(id uuid primary key,arrival_search_session_id uuid);
+ create table arrival_search_exclusions(session_id uuid,driver_id uuid);create table trips(id uuid primary key,arrival_search_session_id uuid,driver_id uuid,status text,completed_at timestamptz);
  create function trip_offer_economics(uuid,integer) returns jsonb language sql stable as $$select '{"theoreticalCommission":"0.25"}'::jsonb$$;
  create table costa_go_campaigns(id uuid primary key,title text,content jsonb,audience text,enabled boolean,status text,starts_at timestamptz,ends_at timestamptz,all_zones boolean,priority int default 0);
  create table costa_go_campaign_areas(campaign_id uuid,service_area_id uuid);
@@ -27,20 +29,29 @@ beforeAll(async()=>{pg=new PGlite();state.sql=sqlFor(pg);
  await pg.exec(await readFile(new URL('../migrations/101_costa_go_benefits.sql',import.meta.url),'utf8'));
  await pg.exec(await readFile(new URL('../migrations/105_benefit_free_trips.sql',import.meta.url),'utf8'));
  await pg.exec(await readFile(new URL('../migrations/106_defer_free_trip_benefits.sql',import.meta.url),'utf8'));
+ await pg.exec(await readFile(new URL('../migrations/107_start_benefits_on_completed_trip.sql',import.meta.url),'utf8'));
  await registerBenefitRoutes(app,async(r,s)=>{if(!r.headers['x-user']){s.code(401).send({error:'UNAUTHORIZED'});return;}return {id:String(r.headers['x-user']),role:(r.headers['x-role']??'DRIVER') as any,email:'test@example.test',name:'Test'};});
 },30000);
-beforeEach(async()=>{await pg.exec(`truncate benefit_redemptions,benefit_areas,benefit_definitions,costa_go_campaigns,audit_log,driver_memberships,driver_documents cascade;
+beforeEach(async()=>{await pg.exec(`truncate benefit_redemptions,benefit_areas,benefit_definitions,costa_go_campaigns,audit_log,driver_memberships,driver_documents,trips cascade;
  update users set status='ACTIVE';update drivers set approval_status='APROBADO';
  insert into costa_go_campaigns values('${cid}','Fundadores','{"benefitCode":"DRIVER_FOUNDER_COURTESY"}','DRIVER',true,'ACTIVE',now()-interval '1 day',now()+interval '1 day',true,1);`);
  const r=await app.inject({method:'POST',url:'/v1/admin/benefits',headers:{'x-admin':'yes'},payload:payload()});expect(r.statusCode,r.body).toBe(201);
 });
 afterAll(async()=>{await app.close();await pg.close();});
 const claim=(campaignId=cid,extra={})=>app.inject({method:'POST',url:'/v1/benefits/DRIVER_FOUNDER_COURTESY/claim',headers:{'x-user':uid},payload:{campaignId,...extra}});
-it('grants 15 actual days without changing memberships or wallet; access expires by database time',async()=>{
- const r=await claim();expect(r.statusCode,r.body).toBe(200);const grant=r.json().redemption;expect(grant.status).toBe('ACTIVE');expect(Date.parse(grant.effectiveUntil)-Date.parse(grant.effectiveFrom)).toBe(15*86400000);
+it('starts 15 courtesy days only after a covered trip completes',async()=>{
+ const r=await claim();expect(r.statusCode,r.body).toBe(200);const grant=r.json().redemption;expect(grant).toMatchObject({status:'PENDING',effectiveFrom:null,effectiveUntil:null});
  expect((await pg.query<any>(`select active_courtesy_benefit('${uid}') as id`)).rows[0].id).toBe(grant.id);
  expect((await pg.query<any>(`select commercial_driver_can_accept('${uid}','${cid}',1) as ok`)).rows[0].ok).toBe(true);
  expect((await pg.query('select * from driver_memberships')).rows).toHaveLength(0);
+ await pg.exec(`insert into trips(id,driver_id,status) values('${cid}','${uid}','ASSIGNED')`);
+ await state.sql.begin((tx:any)=>recordCourtesyTripAcceptance(tx,cid,uid,grant.id));
+ await state.sql.begin((tx:any)=>completeCourtesyBenefit(tx,cid,uid));
+ expect((await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0].status).toBe('PENDING');
+ await pg.exec(`update trips set status='COMPLETED',completed_at=now() where id='${cid}'`);
+ await state.sql.begin((tx:any)=>completeCourtesyBenefit(tx,cid,uid));
+ const active=(await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0];
+ expect(active.status).toBe('ACTIVE');expect(Date.parse(active.effectiveUntil)-Date.parse(active.effectiveFrom)).toBe(15*86400000);
  await pg.exec("update benefit_redemptions set effective_from=now()-interval '16 days',effective_until=now()-interval '1 day'");
  expect((await pg.query<any>(`select active_courtesy_benefit('${uid}') as id`)).rows[0].id).toBe(null);
  expect((await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0].status).toBe('EXPIRED');
@@ -64,11 +75,18 @@ it('serializes double clicks/concurrent requests and replay after reinstall/devi
 });
 it('schedules after existing paid membership and preserves it byte for byte',async()=>{
  await pg.exec(`insert into driver_memberships(driver_id,status,expires_at,plan_type_snapshot) values('${uid}','ACTIVE',now()+interval '30 days','TRIP_PACK')`);
- const before=(await pg.query<any>('select * from driver_memberships')).rows[0];const r=(await claim()).json();expect(new Date(r.redemption.effectiveFrom).toISOString()).toBe(new Date(before.expires_at).toISOString());expect(r.redemption.status).toBe('PENDING');
+ const before=(await pg.query<any>('select * from driver_memberships')).rows[0];const r=(await claim()).json();expect(r.redemption).toMatchObject({effectiveFrom:null,effectiveUntil:null,status:'PENDING'});
  expect((await pg.query('select * from driver_memberships')).rows[0]).toEqual(before);
  await pg.exec("update driver_memberships set expires_at=expires_at+interval '30 days'");
- const after=(await pg.query<any>('select * from benefit_redemptions')).rows[0];expect(new Date(after.effective_until).getTime()-new Date(after.effective_from).getTime()).toBe(15*86400000);
- expect(new Date(after.effective_from).getTime()-new Date(before.expires_at).getTime()).toBe(30*86400000);
+ expect((await pg.query<any>('select activation_pending from benefit_redemptions')).rows[0].activation_pending).toBe(true);
+});
+it('keeps a previously scheduled courtesy usable when its original start arrives',async()=>{
+ const grant=(await claim()).json().redemption;
+ await pg.query(`update benefit_redemptions set activation_pending=false,status='PENDING',
+   effective_from=now()+interval '1 day',effective_until=now()+interval '16 days' where id=$1`,[grant.id]);
+ expect((await pg.query<any>(`select active_courtesy_benefit('${uid}') as id`)).rows[0].id).toBeNull();
+ await pg.query(`update benefit_redemptions set effective_from=now()-interval '1 second' where id=$1`,[grant.id]);
+ expect((await pg.query<any>(`select active_courtesy_benefit('${uid}') as id`)).rows[0].id).toBe(grant.id);
 });
 it('enforces global capacity, authenticated audience and server-owned amount',async()=>{
  expect((await claim(cid,{value:999,userId:cid})).statusCode).toBe(400);
@@ -91,7 +109,7 @@ it('available/mine/detail follow server eligibility and never expose a claim but
  await claim();
  expect((await app.inject({url:'/v1/benefits/available',headers})).json().items).toHaveLength(0);
  expect((await app.inject({url:`/v1/benefits/DRIVER_FOUNDER_COURTESY?campaignId=${cid}`,headers})).json().state).toBe('ALREADY_REDEEMED');
- const list=await app.inject({url:'/v1/admin/benefits/redemptions?status=ACTIVE&audience=DRIVER',headers:{'x-admin':'yes'}});expect(list.statusCode,list.body).toBe(200);expect(list.json().total).toBe(1);
+ const list=await app.inject({url:'/v1/admin/benefits/redemptions?status=PENDING&audience=DRIVER',headers:{'x-admin':'yes'}});expect(list.statusCode,list.body).toBe(200);expect(list.json().total).toBe(1);
  const definitions=(await app.inject({url:'/v1/admin/benefits',headers:{'x-admin':'yes'}})).json().items;
  expect(definitions[0]).toMatchObject({redemptions:1,totalGranted:15});
  const history=await app.inject({url:`/v1/admin/benefits/${definitions[0].id}/history`,headers:{'x-admin':'yes'}});expect(history.statusCode,history.body).toBe(200);expect(history.json().items.map((h:any)=>h.action)).toContain('BENEFIT_CLAIMED');
@@ -124,7 +142,7 @@ it('activates configurable driver trip credits with an independent balance and e
  await pg.exec(`update costa_go_campaigns set content='{"benefitCode":"FOUNDER_FREE_TRIPS"}'`);
  const response=await app.inject({method:'POST',url:'/v1/benefits/FOUNDER_FREE_TRIPS/claim',headers:{'x-user':uid},payload:{campaignId:cid}});
  expect(response.statusCode,response.body).toBe(200);
- expect(response.json().redemption).toMatchObject({benefitType:'FREE_TRIPS',remainingTrips:80,status:'ACTIVE'});
+ expect(response.json().redemption).toMatchObject({benefitType:'FREE_TRIPS',remainingTrips:80,status:'PENDING',effectiveFrom:null,effectiveUntil:null});
  expect((await pg.query<any>('select original_trips,remaining_trips from benefit_free_trip_credits')).rows[0])
    .toMatchObject({original_trips:80,remaining_trips:80});
  expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBe(response.json().redemption.id);
@@ -150,6 +168,13 @@ it('waits for the paid trip package to run out before starting gifted trip valid
    insert into trips(id) values('${cid}')`);
  expect((await pg.query<any>(`select active_free_trip_benefit('${uid}') as id`)).rows[0].id).toBe(response.json().redemption.id);
  const usage=await state.sql.begin((tx:any)=>consumeFreeTripBenefit(tx,cid,uid));expect(usage?.redemptionId).toBe(response.json().redemption.id);
+ const beforeComplete=(await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0];
+ expect(beforeComplete).toMatchObject({status:'PENDING',remainingTrips:79,effectiveFrom:null,effectiveUntil:null});
+ await pg.exec(`update trips set driver_id='${uid}',status='CANCELLED' where id='${cid}'`);
+ await state.sql.begin((tx:any)=>completeFreeTripBenefit(tx,cid,uid));
+ expect((await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0].effectiveFrom).toBeNull();
+ await pg.exec(`update trips set driver_id='${uid}',status='COMPLETED',completed_at=now() where id='${cid}'`);
+ await state.sql.begin((tx:any)=>completeFreeTripBenefit(tx,cid,uid));
  const active=(await app.inject({url:'/v1/benefits/mine',headers:{'x-user':uid}})).json().items[0];
  expect(active).toMatchObject({status:'ACTIVE',remainingTrips:79});
  expect(Date.parse(active.effectiveUntil)-Date.parse(active.effectiveFrom)).toBe(30*86400000);
@@ -193,9 +218,9 @@ it('reserved referral infrastructure rejects self/duplicate referrals and cannot
  expect((await pg.query('select * from benefit_redemptions')).rows).toHaveLength(0);
 });
 
-it('preserves current grace coverage before scheduling the new courtesy',async()=>{
- await pg.exec(`insert into driver_memberships(driver_id,status,expires_at,grace_ends_at,grace_allows_trips_applied) values('${uid}','GRACE_PERIOD',now()-interval '1 day',now()+interval '3 days',true)`);
- const current=(await pg.query<any>('select grace_ends_at from driver_memberships')).rows[0].grace_ends_at;
+it('preserves current grace coverage before making the new courtesy eligible',async()=>{
+ await pg.exec(`insert into driver_memberships(driver_id,status,plan_type_snapshot,expires_at,grace_ends_at,grace_allows_trips_applied) values('${uid}','GRACE_PERIOD','PERIODIC',now()-interval '1 day',now()+interval '3 days',true)`);
  const response=await claim();expect(response.statusCode,response.body).toBe(200);
- expect(new Date(response.json().redemption.effectiveFrom).toISOString()).toBe(new Date(current).toISOString());
+ expect(response.json().redemption).toMatchObject({status:'PENDING',effectiveFrom:null});
+ expect((await pg.query<any>(`select active_courtesy_benefit('${uid}') as id`)).rows[0].id).toBeNull();
 });

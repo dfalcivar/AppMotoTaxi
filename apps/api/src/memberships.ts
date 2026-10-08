@@ -324,7 +324,9 @@ export async function driverMembershipEligibility(driverId: string, tripId?:stri
   if (!driver || driver.accountStatus !== "ACTIVE") return { eligible: false, reason: "DRIVER_ACCOUNT_INACTIVE", enforcementEnabled: true };
   if (driver.approvalStatus !== "APROBADO") return { eligible: false, reason: "DRIVER_NOT_APPROVED", enforcementEnabled: true };
   if (driver.hasSuspendedDocuments) return { eligible: false, reason: "DRIVER_DOCUMENTS_INVALID", enforcementEnabled: true };
-  const [benefit] = await database()`select r.id,r.effective_from as "effectiveFrom",r.effective_until as "effectiveUntil",r.benefit_code as code from benefit_redemptions r where r.id=active_courtesy_benefit(${driverId})`;
+  const [benefit] = await database()`select r.id,case when r.activation_pending then null else r.effective_from end as "effectiveFrom",
+    case when r.activation_pending then null else r.effective_until end as "effectiveUntil",r.benefit_code as code
+    from benefit_redemptions r where r.id=active_courtesy_benefit(${driverId})`;
   if(benefit)return {eligible:true,enforcementEnabled:true,benefit};
   const [freeTripBenefit]=await database()`select r.id,r.effective_from as "effectiveFrom",r.effective_until as "effectiveUntil",r.benefit_code as code
     from benefit_redemptions r where r.id=active_free_trip_benefit(${driverId})`;
@@ -1148,23 +1150,24 @@ export async function registerMembershipRoutes(app: FastifyInstance): Promise<vo
     const pricedPlans = plans.map(plan => ({ ...plan, ...taxBreakdown(plan.amount, vatRatePercent) }));
     const benefitCoverage=await database()`select r.id,r.benefit_code as code,r.benefit_type as "benefitType",
       case when r.benefit_type='COURTESY_DAYS' then r.benefit_value::float8 end as "durationDays",
-      case when c.activation_pending then null else r.effective_from end as "effectiveFrom",
-      case when c.activation_pending then null else r.effective_until end as "effectiveUntil",
+      case when r.activation_pending or c.activation_pending then null else r.effective_from end as "effectiveFrom",
+      case when r.activation_pending or c.activation_pending then null else r.effective_until end as "effectiveUntil",
       c.remaining_trips as "remainingTrips",c.original_trips as "originalTrips",c.validity_days as "validityDays",
-      case when c.activation_pending then 'PENDING' when r.effective_from>now() then 'PENDING'
-        when c.remaining_trips=0 then 'USED' else 'ACTIVE' end as status,
-      case when c.activation_pending and exists(select 1 from driver_memberships m where m.driver_id=r.user_id
+      case when c.remaining_trips=0 then 'USED' when r.activation_pending or c.activation_pending then 'PENDING'
+        when r.effective_from>now() then 'PENDING' else 'ACTIVE' end as status,
+      case when (r.activation_pending or c.activation_pending) and exists(select 1 from driver_memberships m where m.driver_id=r.user_id
         and m.cycle_closed_at is null and m.plan_type_snapshot='TRIP_PACK' and m.status in ('ACTIVE','EXPIRING','PAYMENT_DUE','GRACE_PERIOD')
         and m.completed_trips<m.included_trips_snapshot and (m.expires_at is null or m.expires_at>now())) then 'TRIP_PACK'
         when c.activation_pending and active_courtesy_benefit(r.user_id) is not null then 'COURTESY'
-        when c.activation_pending and exists(select 1 from driver_memberships m where m.driver_id=r.user_id
+        when (r.activation_pending or c.activation_pending) and exists(select 1 from driver_memberships m where m.driver_id=r.user_id
           and m.cycle_closed_at is null and m.plan_type_snapshot<>'TRIP_PACK'
           and ((m.status in ('ACTIVE','EXPIRING','PAYMENT_DUE') and m.expires_at>now())
             or (m.status='GRACE_PERIOD' and m.grace_allows_trips_applied and m.grace_ends_at>now()))) then 'PERIODIC'
+        when r.activation_pending then 'FIRST_COMPLETED_TRIP'
         when c.activation_pending then 'NEXT_TRIP' end as "waitingFor"
       from benefit_redemptions r left join benefit_free_trip_credits c on c.redemption_id=r.id
       where r.user_id=${user.id!} and r.benefit_type in ('COURTESY_DAYS','FREE_TRIPS')
-        and r.status in ('ACTIVE','PENDING') and (c.activation_pending or r.effective_until>now())
+        and r.status in ('ACTIVE','PENDING') and (r.activation_pending or c.activation_pending or r.effective_until>now())
       order by r.redeemed_at`;
     const renewalTax = taxBreakdown(membership?.estimatedNextRenewalAmount ?? 0, vatRatePercent);
     return {

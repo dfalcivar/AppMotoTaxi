@@ -156,7 +156,7 @@ class CostaGoBenefitCard extends StatelessWidget {
         : used
             ? 'Beneficio utilizado'
             : status == 'PENDING'
-                ? 'Beneficio activado · inicio programado'
+                ? 'Beneficio listo · vigencia pendiente'
                 : claimed
                     ? 'Beneficio activado'
                     : data?['message']?.toString() ?? '';
@@ -255,12 +255,14 @@ class CostaGoBenefitCard extends StatelessWidget {
                             child: Text('Desde $from',
                                 textAlign: TextAlign.center)),
                       if (status == 'PENDING' &&
-                          benefit?['benefitType'] == 'FREE_TRIPS' &&
+                          ['FREE_TRIPS', 'COURTESY_DAYS'].contains(benefit?['benefitType']) &&
                           from.isEmpty)
                         Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Text(
-                                'Tus ${grant?['remainingTrips'] ?? benefit?['value']} viajes comenzarán después de tu cobertura actual. Tendrás ${grant?['validityDays'] ?? benefit?['expirationDays']} días para usarlos desde el primer viaje de cortesía.',
+                                benefit?['benefitType'] == 'FREE_TRIPS'
+                                    ? 'Tus ${grant?['remainingTrips'] ?? benefit?['value']} viajes estarán disponibles después de tu cobertura actual. Los ${grant?['validityDays'] ?? benefit?['expirationDays']} días de vigencia comenzarán al completar el primer viaje cubierto por este beneficio.'
+                                    : 'Tus ${benefit?['value']} días de cortesía comenzarán al completar el primer viaje cubierto por este beneficio, después de cualquier membresía vigente.',
                                 textAlign: TextAlign.center)),
                       if (until.isNotEmpty)
                         Padding(

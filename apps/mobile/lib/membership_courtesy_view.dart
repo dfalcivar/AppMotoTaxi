@@ -53,6 +53,24 @@ ActiveMembershipCourtesy? activeMembershipCourtesy(Map<String, dynamic> data,
   return null;
 }
 
+int? readyMembershipCourtesyDays(Map<String, dynamic> data) {
+  final eligibility = data['eligibility'];
+  if (eligibility is! Map || eligibility['eligible'] != true) return null;
+  final id = (eligibility['benefit'] as Map?)?['id']?.toString();
+  final rows = data['benefitCoverage'];
+  if (id == null || rows is! List) return null;
+  for (final row in rows) {
+    if (row is Map && row['id']?.toString() == id &&
+        row['benefitType'] == 'COURTESY_DAYS' &&
+        row['status'] == 'PENDING' &&
+        row['waitingFor'] == 'FIRST_COMPLETED_TRIP') {
+      final days = row['durationDays'];
+      return days is num && days > 0 ? days.toInt() : null;
+    }
+  }
+  return null;
+}
+
 class FreeTripBenefitCoverage {
   const FreeTripBenefitCoverage({required this.id,required this.remainingTrips,required this.originalTrips,
     required this.validityDays,required this.pending,required this.waitingFor,this.expiresAt});
@@ -66,7 +84,7 @@ class FreeTripBenefitCoverage {
     'TRIP_PACK' => 'Comenzarán al agotar los viajes de tu paquete actual.',
     'PERIODIC' => 'Comenzarán cuando termine tu membresía actual.',
     'COURTESY' => 'Comenzarán cuando termine tu cortesía por días.',
-    _ => 'Comenzarán al aceptar el próximo viaje elegible.',
+    _ => 'La vigencia comenzará al completar el primer viaje cubierto por este beneficio.',
   };
 }
 
@@ -89,15 +107,16 @@ List<FreeTripBenefitCoverage> freeTripBenefitCoverages(Map<String,dynamic> data,
 }
 
 class MembershipCourtesyHeading extends StatelessWidget {
-  const MembershipCourtesyHeading({super.key, required this.description});
+  const MembershipCourtesyHeading({super.key, required this.description, this.title = 'Cortesía activa'});
 
   final String description;
+  final String title;
 
   @override
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Cortesía activa',
+          Text(title,
               style: Theme.of(context)
                   .textTheme
                   .titleLarge

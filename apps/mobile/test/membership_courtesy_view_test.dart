@@ -53,6 +53,19 @@ void main() {
     expect(courtesy?.description, '15 días gratis de membresía');
   });
 
+  test('ready courtesy shows its days without an expiry before the first completed trip', () {
+    final ready = response(status: 'PENDING');
+    (ready['benefitCoverage'] as List).first
+      ..['benefitType'] = 'COURTESY_DAYS'
+      ..['waitingFor'] = 'FIRST_COMPLETED_TRIP';
+    (ready['benefitCoverage'] as List).first.remove('effectiveFrom');
+    (ready['benefitCoverage'] as List).first.remove('effectiveUntil');
+    expect(readyMembershipCourtesyDays(ready), 15);
+    expect(activeMembershipCourtesy(ready), isNull);
+    (ready['benefitCoverage'] as List).first['waitingFor'] = 'PERIODIC';
+    expect(readyMembershipCourtesyDays(ready), isNull);
+  });
+
   test('free trips show pending balance and become active after the paid plan', () {
     final pending = freeTripBenefitCoverages({
       'benefitCoverage': [
@@ -66,6 +79,14 @@ void main() {
     expect(pending.first.availabilityDescription, contains('agotar'));
     expect(pending.first.remainingTrips, 80);
     expect(pending.first.expiresAt, isNull);
+    final ready = freeTripBenefitCoverages({
+      'benefitCoverage': [
+        {'id':'gift-2','benefitType':'FREE_TRIPS','status':'PENDING',
+          'remainingTrips':80,'originalTrips':80,'validityDays':30,
+          'waitingFor':'NEXT_TRIP','effectiveFrom':null,'effectiveUntil':null}
+      ]
+    }, now: start);
+    expect(ready.single.availabilityDescription, contains('completar el primer viaje'));
     final active = freeTripBenefitCoverages({
       'benefitCoverage': [
         {'id':'gift-1','benefitType':'FREE_TRIPS','status':'ACTIVE',
