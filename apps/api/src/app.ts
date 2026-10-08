@@ -10,6 +10,7 @@ import {registerCommercialEconomicsRoutes} from './commercial-economics-admin.js
 import {registerReferralRoutes,referralSchedulerTick} from './referrals.js';
 import {registerBenefitRoutes} from './benefits.js';
 import {registerCostaGoCampaignRoutes} from './costa-go-campaigns.js';
+import {registerHelpCenterRoutes} from './help-center.js';
 import {packageEconomicsTick} from './package-economics.js';
 import { firstSearchBounds, nextSearchBounds, noDriverReason, driverSearchProgress, type DriverSearchSettings } from "./driver-search.js";
 import { cancellationSuspensionResponse } from './suspension-presentation.js';
@@ -494,6 +495,7 @@ export async function buildApp() {
   await registerBenefitRoutes(app, authenticatedUser);
   await registerReferralRoutes(app, authenticatedUser);
   await registerCostaGoCampaignRoutes(app,authenticatedUser);
+  registerHelpCenterRoutes(app);
   await registerCollectionAdminRoutes(app);
   await registerCommercialRoutes(app);
   await registerCooperativeDemoRoutes(app);

@@ -13,6 +13,8 @@ export const adminRoles = [
 export type AdminRole = typeof adminRoles[number];
 
 export const allPermissions = [
+  "help:view",
+  "help:manage",
   "benefits:view",
   "benefits:manage",
   "costa_campaigns:view",
@@ -132,6 +134,7 @@ export type Permission = typeof allPermissions[number];
 export interface PermissionOverride { permission: string; allowed: boolean }
 
 const operationsPermissions: Permission[] = [
+  "help:view",
   "dashboard:view", "passengers:view", "passengers:manage", "drivers:view",
   "drivers:manage", "drivers:approve", "drivers:documents:view",
   "drivers:documents:manage", "cooperatives:view", "cooperatives:manage",
@@ -143,6 +146,7 @@ const operationsPermissions: Permission[] = [
 ];
 
 const supportPermissions: Permission[] = [
+  "help:view", "help:manage",
   "dashboard:view", "passengers:view", "drivers:view", "trips:view",
   "support:view", "support:manage", "incidents:view", "incidents:manage",
   "faq:view", "faq:manage", "service_areas:view", "notifications:view", "notifications:test"

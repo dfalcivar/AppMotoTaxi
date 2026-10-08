@@ -1,4 +1,5 @@
 export const modulePermissions:Record<string,string[]>={
+  help:['help:view'],
   costaCampaigns:['costa_campaigns:view'],
   home:[],fleet:['fleet:view'],
   fiscal:['FACTURACION_VER','FACTURACION_DASHBOARD_VER','CLIENTES_FISCALES_VER'],

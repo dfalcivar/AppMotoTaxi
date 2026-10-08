@@ -34,3 +34,16 @@ export async function readCampaignAsset(key:string) {
   } catch {throw new Error('CAMPAIGN_STORAGE_UNAVAILABLE');}
   finally {client.destroy();}
 }
+
+export async function storeHelpAsset(data:Buffer,mime:string) {
+  const key='help/'+createHash('sha256').update(data).digest('hex');
+  const {client,bucket}=storage();
+  try {await client.send(new PutObjectCommand({Bucket:bucket,Key:key,Body:data,ContentType:mime}),{abortSignal:AbortSignal.timeout(30000)});return key;}
+  catch {throw new Error('HELP_STORAGE_UNAVAILABLE');} finally {client.destroy();}
+}
+export async function readHelpAsset(key:string) {
+  if(!/^help\/[a-f0-9]{64}$/.test(key))throw new Error('HELP_MEDIA_NOT_FOUND');
+  const {client,bucket}=storage();
+  try {const response=await client.send(new GetObjectCommand({Bucket:bucket,Key:key}),{abortSignal:AbortSignal.timeout(30000)});if(!response.Body)throw new Error();return Buffer.from(await response.Body.transformToByteArray());}
+  catch {throw new Error('HELP_STORAGE_UNAVAILABLE');} finally {client.destroy();}
+}

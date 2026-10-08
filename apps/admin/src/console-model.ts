@@ -7,10 +7,12 @@ export const consoleGroups = [
   { label: 'Finanzas y facturación', modules: ['fiscal'] },
   { label: 'Comercial y crecimiento', modules: ['commercial', 'advertising'] },
   { label: 'Comunicación', modules: ['costaCampaigns','notifications'] },
+  { label: 'Contenido', modules: ['help'] },
   { label: 'Cobertura y tarifas', modules: ['pricing', 'zones'] },
   { label: 'Gestión y soporte', modules: ['settings', 'incidents', 'access', 'audit', 'database'] },
 ];
 export const consoleDescriptions: Record<string,string> = {
+  help:'Publica tutoriales reales, videos y manuales para conductores y pasajeros.',
   costaCampaigns:'Administra campañas propias, audiencias, zonas, recursos y vigencia.',
   home:'Tu operación, prioridades y accesos en un solo lugar.', dashboard:'Analiza tendencias y consulta los registros detrás de cada indicador.',
   operations:'Sigue solicitudes, disponibilidad y viajes en tiempo real.', alerts:'Detecta novedades y revisa las entregas de notificaciones.',

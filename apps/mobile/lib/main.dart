@@ -9744,6 +9744,8 @@ class _PassengerState extends State<Passenger> with WidgetsBindingObserver {
         ...Map<String, dynamic>.from(push.data),
         'notificationId': push.data['internalNotificationId'],
       }));
+    } else if (target == NotificationTarget.help) {
+      unawaited(openHelpArticle(resolvedDeepLink));
     } else if (target == NotificationTarget.appStore) {
       unawaited(openAppUpdateStore(context, widget.s,
           notificationId: push.data['internalNotificationId']?.toString(),
@@ -14474,6 +14476,8 @@ class _DriverState extends State<Driver> with WidgetsBindingObserver {
     if (target == NotificationTarget.chat) {
       unawaited(openDriverChat(push.data['tripId'],
           notificationId: push.data['internalNotificationId']));
+    } else if (target == NotificationTarget.help) {
+      unawaited(openHelpArticle(resolvedDeepLink));
     } else if (target == NotificationTarget.appStore) {
       unawaited(openAppUpdateStore(context, widget.s,
           notificationId: push.data['internalNotificationId']?.toString(),

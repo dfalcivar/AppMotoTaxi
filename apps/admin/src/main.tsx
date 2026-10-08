@@ -33,6 +33,7 @@ const FareTerritories=lazy(()=>import("./fare-admin.js").then(m=>({default:m.Far
 const CommercialAdmin=lazy(()=>import("./commercial-admin.js").then(m=>({default:m.CommercialAdmin})));
 const FiscalAdmin = lazy(() => import('./fiscal-admin.js').then(module => ({default:module.FiscalAdmin})));
 const CostaGoCampaigns = lazy(() => import('./costa-go-campaigns.js').then(module => ({default:module.CostaGoCampaigns})));
+const HelpAdmin = lazy(() => import('./help-admin.js').then(module => ({default:module.HelpAdmin})));
 const NotificationsAdmin=lazy(()=>import('./notifications-admin.js').then(module=>({default:module.NotificationsAdmin})));
 import { AdminErrorBoundary } from "./observability.js";
 import { PassengerCancellationSettings, PassengerCancellationHistory } from './passenger-cancellations.js';
@@ -41,9 +42,10 @@ import './roles-permissions.css';
 import {visibleAdminModules,resolvedAdminModule} from './admin-navigation.js';
 import {ecuadorCalendarDate,registeredInRange,registrationDateRange,type RegistrationPeriod} from './passenger-registration.js';
 
-type Module = "costaCampaigns" | "home" | "fleet" | "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "notifications" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
+type Module = "help" | "costaCampaigns" | "home" | "fleet" | "fiscal" | "dashboard" | "operations" | "alerts" | "trips" | "drivers" | "memberships" | "passengers" | "cooperatives" | "notifications" | "pricing" | "zones" | "settings" | "advertising" | "commercial" | "incidents" | "access" | "audit" | "database";
 
 const labels: Record<Module, string> = {
+  help:'Centro de ayuda',
   costaCampaigns:'Campañas Costa-Go',
   home:"Inicio",
   fleet:'Mototaxis',
@@ -1028,6 +1030,7 @@ function App() {
       {currentModule === "advertising" && <Advertising token={session.token} admin={allowed("advertising:manage")} />}
       {currentModule === "commercial" && <CommercialAdmin token={session.token} permissions={session.user.permissions ?? []} />}
       {currentModule === 'costaCampaigns' && <Suspense fallback={<p role="status">Cargando campañas…</p>}><CostaGoCampaigns token={session.token} permissions={session.user.permissions ?? []}/></Suspense>}
+      {currentModule === 'help' && <Suspense fallback={<p role="status">Cargando centro de ayuda…</p>}><HelpAdmin token={session.token} permissions={session.user.permissions ?? []}/></Suspense>}
       {currentModule === "fiscal" && <Suspense fallback={<p role="status">Cargando módulo fiscal…</p>}><FiscalAdmin token={session.token} permissions={session.user.permissions ?? []} /></Suspense>}
       {currentModule === "incidents" && <SupportAdmin token={session.token} permissions={session.user.permissions??[]} />}
       {currentModule === "access" && <AccessManagement token={session.token} currentUserId={session.user.id} />}

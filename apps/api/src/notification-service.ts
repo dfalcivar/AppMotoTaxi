@@ -38,6 +38,7 @@ export interface NotificationResult {
 export function notificationRouteForCommand(type:string,deepLink?:string):string{
   const normalized=type.trim().toUpperCase();
   if(normalized==='APP_UPDATE')return 'APP_STORE';
+  if(deepLink && /^https:\/\/costa-go\.com\/ayuda(?:\/[a-z0-9-]+)?\/?$/.test(deepLink))return 'HELP_ARTICLE';
   if(normalized.startsWith('MEMBERSHIP_'))return 'MEMBERSHIP';
   if(deepLink?.startsWith('costa-go://trip/prepare'))return 'SMART_TRIP';
   return 'NOTIFICATIONS';

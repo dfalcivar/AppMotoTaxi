@@ -143,6 +143,12 @@ services:
         source: /r/*
         destination: /r/index.html
       - type: rewrite
+        source: /ayuda
+        destination: /ayuda/index.html
+      - type: rewrite
+        source: /ayuda/*
+        destination: /ayuda/index.html
+      - type: rewrite
         source: /viaje/*
         destination: /viaje/index.html
       - type: rewrite

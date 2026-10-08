@@ -10,7 +10,7 @@ const moduleNames:Record<string,string>={
   pricing:'Tarifas',zones:'Zonas',service:'Áreas de servicio',advertising:'Publicidad institucional',
   commercial:'Comercial y publicidad',settings:'Configuración',users:'Usuarios',roles:'Roles',
   audit:'Auditoría',database:'Estado del sistema',operations:'Operaciones',alerts:'Alertas',
-  notifications:'Notificaciones',notification:'Campañas de notificaciones',faq:'Preguntas frecuentes',
+  notifications:'Notificaciones',notification:'Campañas de notificaciones',faq:'Preguntas frecuentes',help:'Centro de ayuda',
   memberships:'Membresías',membership:'Planes y cortesías',payment:'Órdenes de pago',
   payments:'Pagos',collection:'Puntos de cobro',cash:'Cierres de caja',settlements:'Conciliaciones',
   financial:'Cuentas financieras',api:'Uso de API',costa:'Campañas Costa-Go'

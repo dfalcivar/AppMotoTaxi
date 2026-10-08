@@ -102,6 +102,7 @@ String _dayGroup(dynamic value) {
 }
 
 enum NotificationTarget {
+  help,
   chat,
   activeTrip,
   tripDetail,
@@ -257,6 +258,7 @@ Map<String, int> tripFareBreakdown(Map<String, dynamic> preview) {
 
 NotificationTarget notificationTargetFor(String? value) {
   final type = value?.toUpperCase();
+  if (type == 'HELP_ARTICLE') return NotificationTarget.help;
   if (type == 'CHAT') return NotificationTarget.chat;
   if (type == 'ACTIVE_TRIP') return NotificationTarget.activeTrip;
   if (type == 'TRIP_DETAIL') return NotificationTarget.tripDetail;
@@ -311,6 +313,23 @@ NotificationTarget notificationTargetFor(String? value) {
     return NotificationTarget.membership;
   }
   return NotificationTarget.inbox;
+}
+
+Uri? helpArticleUri(String? value) {
+  if (value == null) return null;
+  final uri = Uri.tryParse(value.trim());
+  if (uri == null || uri.scheme != 'https' || uri.host != 'costa-go.com' ||
+      uri.userInfo.isNotEmpty || uri.hasPort || uri.hasQuery || uri.hasFragment ||
+      !RegExp(r'^/ayuda(?:/[a-z0-9]+(?:-[a-z0-9]+)*)?/?$').hasMatch(uri.path)) {
+    return null;
+  }
+  return uri;
+}
+
+Future<void> openHelpArticle(String? value) async {
+  final uri = helpArticleUri(value);
+  if (uri == null) return;
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
 bool notificationUsesGeneralInAppBanner(
@@ -1114,10 +1133,12 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
   }
 
   Future<void> open(Map<String, dynamic> item) async {
-    final target = notificationTargetFor(item['type']?.toString());
     final data = item['data'] is Map
         ? Map<String, dynamic>.from(item['data'] as Map)
         : <String, dynamic>{};
+    final target = helpArticleUri(item['deepLink']?.toString() ?? data['deepLink']?.toString()) != null
+        ? NotificationTarget.help
+        : notificationTargetFor(item['type']?.toString());
     final id = (data['tripId'] ?? item['entityId'])?.toString();
     if (!mounted) return;
     if (notificationOpensInformationalDetail(item['type']?.toString())) {
@@ -1156,6 +1177,8 @@ class _NotificationCenterViewState extends State<NotificationCenterView> {
         'deepLinkTracked': true,
       };
       if (mounted) Navigator.pop(context);
+    } else if (target == NotificationTarget.help) {
+      await openHelpArticle(item['deepLink']?.toString() ?? data['deepLink']?.toString());
     } else if (target == NotificationTarget.appStore) {
       await openAppUpdateStore(context, widget.session,
           notificationId: item['id']?.toString(),
