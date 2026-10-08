@@ -85,10 +85,14 @@ describe('mantenimiento seguro de cuentas móviles',()=>{
     expect(audit).toMatchObject({actor_id:actor,action:'MOBILE_ACCOUNT_IDENTITY_UPDATED',reason:'Confirmado con el titular'});
     expect(audit.previous_value.email).toBe('registro@gimal.test');expect(audit.next_value.email).toBe('registro@example.test');expect(JSON.stringify(audit)).not.toContain('previous-hash');
   });
-  it('permite editar pasajero y no cambia suspensión ni contador',async()=>{
+  it('permite corregir nombre y teléfono de pasajero sin alterar correo ni suspensión',async()=>{
     await pg.query("update users set role='PASSENGER',status='SUSPENDED',email_verified_at=now(),passenger_cancellation_count=6,passenger_cancellation_suspended=true where id=$1",[id]);
-    await updateMobileIdentity(id,edit(),actor);
-    expect(await account()).toMatchObject({status:'SUSPENDED',passenger_cancellation_count:6,passenger_cancellation_suspended:true,email_verified_at:null});
+    await pg.query('delete from drivers where user_id=$1',[id]);
+    const previous=await account();
+    await updateMobileIdentity(id,edit({email:'registro@gimal.test',phone:'0987654321'}),actor);
+    expect(await account()).toMatchObject({full_name:'Nombre corregido',email:'registro@gimal.test',status:'SUSPENDED',passenger_cancellation_count:6,passenger_cancellation_suspended:true,email_verified_at:previous.email_verified_at});
+    await expect(updateMobileIdentity(id,edit({email:'otro@example.test'}),actor)).rejects.toThrow('PASSENGER_EMAIL_CHANGE_NOT_ALLOWED');
+    expect((await account()).email).toBe('registro@gimal.test');
   });
   it('editar solo nombre conserva correo verificado y sesión',async()=>{
     await pg.query('update users set email_verified_at=now() where id=$1',[id]);const previous=await account();

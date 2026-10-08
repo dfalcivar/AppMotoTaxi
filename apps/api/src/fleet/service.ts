@@ -66,10 +66,12 @@ export async function saveFleetSettings(actor: FleetActor, input: unknown) {
   });
 }
 export async function listVehicles(actor: FleetActor, search = '', page = 0, status = '', managedOnly = false,
-  relationType: 'AUTHORIZED_DRIVER'|'OWNER_MANAGER'|'' = '', authorizedOnly = false) {
+  relationType: 'AUTHORIZED_DRIVER'|'OWNER_MANAGER'|'' = '', authorizedOnly = false,
+  registeredWithin: ''|'today'|'7d'|'30d' = '', newestFirst = false) {
   const sql=database();
   return sql`select v.id,v.identifier,v.brand,v.model,v.color,v.unit_number as "unitNumber",
     v.fleet_status as status,v.photo_id as "photoId",v.cooperative_id as "cooperativeId",c.name as cooperative,
+    v.created_at as "createdAt",
     v.declared_owner_name as "declaredOwnerName",s.id as "sessionId",s.driver_id as "currentDriverId",
     u.full_name as "currentDriverName",s.started_at as "startedAt",s.last_heartbeat as "lastHeartbeat",
     coalesce(d.is_available,false) and fleet_driver_can_receive(s.driver_id) as available,
@@ -87,11 +89,16 @@ export async function listVehicles(actor: FleetActor, search = '', page = 0, sta
         and (${!authorizedOnly} or (r.relation_type='AUTHORIZED_DRIVER' and r.status='APPROVED'))))
       and (${!actor.cooperativeId} or v.cooperative_id=${actor.cooperativeId ?? null}::uuid)
       and (${!status} or v.fleet_status=${status})
+      and (${registeredWithin !== 'today'} or (v.created_at at time zone 'America/Guayaquil')::date =
+        (now() at time zone 'America/Guayaquil')::date)
+      and (${registeredWithin !== '7d'} or v.created_at >= now() - interval '7 days')
+      and (${registeredWithin !== '30d'} or v.created_at >= now() - interval '30 days')
       and (v.identifier ilike ${`%${search}%`} or coalesce(v.unit_number,'') ilike ${`%${search}%`}
         or coalesce(v.declared_owner_name,'') ilike ${`%${search}%`} or coalesce(c.name,'') ilike ${`%${search}%`}
         or exists(select 1 from user_vehicle_relations r join users person on person.id=r.user_id
           where r.vehicle_id=v.id and r.status='APPROVED' and person.full_name ilike ${`%${search}%`}))
-    order by v.identifier limit 30 offset ${page*30}`;
+    order by case when ${newestFirst} then v.created_at end desc,
+      case when ${!newestFirst} then v.identifier end asc,v.id desc limit 30 offset ${page*30}`;
 }
 export async function requestVehicle(actor: FleetActor, input: unknown) {
   const v=vehicleSchema.parse(input);

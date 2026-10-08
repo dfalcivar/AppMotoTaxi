@@ -23,8 +23,11 @@
     "note note"
     "status status"
     "name phone"
-    "email reason";
+    "email email"
+    "reason reason";
   align-items: start;
+  column-gap: 16px;
+  row-gap: 16px;
 }
 .mobile-account-system-note {
   grid-area: note;
@@ -44,7 +47,7 @@
 .mobile-account-name { grid-area: name; }
 .mobile-account-email { grid-area: email; }
 .mobile-account-phone { grid-area: phone; }
-.mobile-account-reason { grid-area: reason; }
+.mobile-account-reason { grid-area: reason; grid-column: 1 / -1; }
 .mobile-account-dialog label {
   display: grid;
   gap: 7px;
@@ -62,6 +65,17 @@
   border-radius: 10px;
 }
 .control-panel .mobile-account-dialog textarea { min-height: 92px; resize: vertical; }
+.mobile-account-email-readonly {
+  grid-area: email;
+  display: grid;
+  gap: 7px;
+  padding: 12px 14px;
+  border: 1px solid var(--cg-border);
+  border-radius: 10px;
+  background: var(--cg-bg);
+}
+.mobile-account-email-readonly strong { overflow-wrap: anywhere; font-size: .86rem; }
+.mobile-account-email-readonly small { color: var(--cg-muted); line-height: 1.4; }
 .control-panel .mobile-account-dialog input:focus,
 .control-panel .mobile-account-dialog textarea:focus {
   border-color: var(--cg-primary);
@@ -85,6 +99,7 @@
     grid-template-columns: 1fr !important;
     grid-template-areas: "note" "status" "name" "phone" "email" "reason";
   }
+  .mobile-account-reason { grid-column: 1; }
   .control-panel .mobile-account-dialog .panel-dialog-actions {
     display: grid;
     grid-template-columns: 1fr;

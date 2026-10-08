@@ -139,6 +139,20 @@ describe('fleet real SQL integration',()=>{
     expect((await fleet.fleetDetail(owner,id)).relations.filter((r:any)=>r.type==='AUTHORIZED_DRIVER')).toHaveLength(2);
     expect((await fleet.listVehicles(owner,'MT-21',0,'',true))[0]!.totalCount).toBe(1);
   });
+  it('finds recently registered vehicles and orders the admin list by registration time',async()=>{
+    const older=await unit('MT-OLDER');
+    const newer=await unit('MT-NEWER');
+    await pg.query("update vehicles set created_at=now()-interval '10 days' where id=$1",[older]);
+    await pg.query("update vehicles set created_at=now()-interval '1 day' where id=$1",[newer]);
+    const all=await fleet.listVehicles(admin,'',0,'',false,'',false,'',true);
+    expect(all.map((vehicle:any)=>vehicle.id)).toEqual([newer,older]);
+    expect(all[0]!.createdAt).toBeTruthy();
+    const lastWeek=await fleet.listVehicles(admin,'',0,'',false,'',false,'7d',true);
+    expect(lastWeek.map((vehicle:any)=>vehicle.id)).toEqual([newer]);
+    expect(lastWeek[0]!.totalCount).toBe(1);
+    expect(await fleet.listVehicles(admin,'',0,'',false,'',false,'today',true)).toHaveLength(0);
+    expect(await fleet.listVehicles(admin,'',0,'',false,'',false,'30d',true)).toHaveLength(2);
+  });
   it('hides anonymized deleted units from operational fleet lists without deleting history',async()=>{
     const active=await unit('MT-ACTIVE');
     const deleted=await unit('MT-DELETED');

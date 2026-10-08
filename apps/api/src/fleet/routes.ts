@@ -34,6 +34,7 @@ export function fleetError(error:unknown,reply:FastifyReply){
 const pathId=(req:FastifyRequest)=>z.uuid().parse((req.params as any).id);
 const query=z.object({search:z.string().max(80).default(''),page:z.coerce.number().int().min(0).max(10000).default(0),
   status:z.enum(['','PENDING','VERIFIED','SUSPENDED']).default(''),managed:z.enum(['true','false']).default('false'),
+  registeredWithin:z.enum(['','today','7d','30d']).default(''),
   relationType:z.enum(['','AUTHORIZED_DRIVER','OWNER_MANAGER']).default(''),authorizedOnly:z.enum(['true','false']).default('false'),
   from:z.iso.datetime().default('1970-01-01T00:00:00Z'),to:z.iso.datetime().default('2100-01-01T00:00:00Z')});
 type Authenticate=(req:FastifyRequest,reply:FastifyReply,options?:{allowPendingDriver?:boolean})=>Promise<SessionUser|undefined>;
@@ -53,7 +54,8 @@ export async function registerFleetRoutes(app:FastifyInstance,authenticate:Authe
     app.get(`${base}/report`,async(req,reply)=>{try{const a=await actor(req,reply);if(!a)return;return await fleetReport(a,req.query);}catch(e){return fleetError(e,reply);}});
     app.get(`${base}/vehicles`,async(req,reply)=>{try{
       const a=await actor(req,reply);if(!a)return;const q=query.parse(req.query);
-      return {items:await fleet.listVehicles(a,q.search,q.page,q.status,q.managed==='true',q.relationType,q.authorizedOnly==='true')};
+      return {items:await fleet.listVehicles(a,q.search,q.page,q.status,q.managed==='true',q.relationType,q.authorizedOnly==='true',
+        base==='/v1/admin/fleet'?q.registeredWithin:'',base==='/v1/admin/fleet')};
     }catch(e){return fleetError(e,reply);}});
     app.post(`${base}/vehicles`,async(req,reply)=>{try{const a=await actor(req,reply,true);if(!a)return;return await fleet.requestVehicle(a,req.body);}catch(e){return fleetError(e,reply);}});
     app.get(`${base}/vehicles/:id`,async(req,reply)=>{try{const a=await actor(req,reply);if(!a)return;const q=query.parse(req.query);return await fleet.fleetDetail(a,pathId(req),q.page,q.from,q.to);}catch(e){return fleetError(e,reply);}});

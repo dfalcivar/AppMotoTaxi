@@ -56,6 +56,10 @@ export async function updateMobileIdentity(id:string,input:z.infer<typeof mobile
     if(account.email!==input.expectedEmail)throw new Error('ACCOUNT_CHANGED_REFRESH');
     const emailChanged=normalizeEmail(String(account.email??''))!==input.email;
     const phoneChanged=account.phone!==input.phone;
+    if(emailChanged){
+      const [driver]=await tx`select 1 from drivers where user_id=${id} limit 1`;
+      if(!driver)throw new Error('PASSENGER_EMAIL_CHANGE_NOT_ALLOWED');
+    }
     const [active]=await tx`select 1 from trips where (driver_id=${id} or passenger_id=${id})
       and status not in ('COMPLETED','CANCELLED','NO_DRIVER') limit 1`;
     if(active)throw new Error('ACCOUNT_HAS_ACTIVE_TRIP');

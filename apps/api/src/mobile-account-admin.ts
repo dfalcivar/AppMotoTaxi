@@ -8,6 +8,7 @@ export async function registerMobileAccountAdminRoutes(app:FastifyInstance) {
     if(error instanceof z.ZodError)return reply.code(400).send({error:'INVALID_ACCOUNT_DATA'});
     const value=error as {message?:string;code?:string;constraint_name?:string};
     if(['FORBIDDEN','UNAUTHORIZED'].includes(value.message??''))return reply.code(403).send({error:'FORBIDDEN'});
+    if(value.message==='PASSENGER_EMAIL_CHANGE_NOT_ALLOWED')return reply.code(403).send({error:value.message});
     if(value.message==='MOBILE_ACCOUNT_NOT_FOUND')return reply.code(404).send({error:value.message});
     if(['ACCOUNT_CHANGED_REFRESH','ACCOUNT_HAS_ACTIVE_TRIP','EMAIL_ALREADY_EXISTS','PHONE_ALREADY_EXISTS','ACCOUNT_NOT_INCOMPLETE','ACCOUNT_HAS_OPERATIONAL_HISTORY'].includes(value.message??''))return reply.code(409).send({error:value.message});
     if(value.code==='23505')return reply.code(409).send({error:value.constraint_name?.includes('email')?'EMAIL_ALREADY_EXISTS':value.constraint_name?.includes('phone')?'PHONE_ALREADY_EXISTS':'ACCOUNT_DATA_CONFLICT'});
