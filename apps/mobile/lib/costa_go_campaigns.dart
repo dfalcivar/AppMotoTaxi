@@ -6,6 +6,97 @@ import 'package:url_launcher/url_launcher.dart';
 
 typedef CampaignData = Map<String, dynamic>;
 
+class _CampaignExternalLinkDialog extends StatelessWidget {
+  const _CampaignExternalLinkDialog(
+      {required this.destination, required this.actionText});
+
+  final Uri destination;
+  final String actionText;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final title =
+        actionText.trim().isEmpty ? 'Abrir enlace' : actionText.trim();
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+      backgroundColor: colors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            CircleAvatar(
+              radius: 23,
+              backgroundColor: colors.primaryContainer,
+              child: Icon(Icons.language_rounded,
+                  color: colors.onPrimaryContainer),
+            ),
+            const SizedBox(height: 13),
+            Text(title,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: colors.onSurface, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 5),
+            Text(destination.host,
+                textAlign: TextAlign.center,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: colors.onSurfaceVariant)),
+            const SizedBox(height: 3),
+            Text('Se abrirá fuera de Costa-Go.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: colors.onSurfaceVariant)),
+            const SizedBox(height: 22),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('Cancelar'),
+                ),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('Abrir'),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+Future<bool> _confirmCampaignExternalLink(
+    BuildContext context, String destination, String actionText) async {
+  final accepted = await showDialog<bool>(
+    context: context,
+    builder: (_) => _CampaignExternalLinkDialog(
+      destination: Uri.parse(destination),
+      actionText: actionText,
+    ),
+  );
+  return accepted == true;
+}
+
 bool showIslandSubtitle({required bool operational, required bool decorated}) =>
     operational || !decorated;
 
@@ -124,20 +215,10 @@ class CostaGoCampaignCard extends StatelessWidget {
             destination = item['ctaDestination']?.toString() ?? '';
         if (type == 'EXTERNAL_URL') {
           if (!safeCampaignExternalUri(destination)) return;
-          final yes = await showDialog<bool>(
-              context: context,
-              builder: (c) => AlertDialog(
-                      title: const Text('Abrir enlace externo'),
-                      content: Text(Uri.parse(destination).host),
-                      actions: [
-                        TextButton(
-                            onPressed: () => Navigator.pop(c, false),
-                            child: const Text('Cancelar')),
-                        FilledButton(
-                            onPressed: () => Navigator.pop(c, true),
-                            child: const Text('Abrir'))
-                      ]));
-          if (yes != true) return;
+          if (!await _confirmCampaignExternalLink(
+              context, destination, item['ctaText']?.toString() ?? '')) {
+            return;
+          }
           final latest = await store.freshDetail(item['id'].toString());
           if (latest['ctaType'] != type ||
               latest['ctaDestination'] != destination) {
@@ -818,20 +899,8 @@ class _CostaGoCampaignDetailState extends State<CostaGoCampaignDetail>
         if (!safeCampaignExternalUri(destination)) {
           throw StateError('Enlace inválido');
         }
-        final accepted = await showDialog<bool>(
-            context: context,
-            builder: (c) => AlertDialog(
-                    title: const Text('Abrir enlace externo'),
-                    content: Text(Uri.parse(destination).host),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(c, false),
-                          child: const Text('Cancelar')),
-                      FilledButton(
-                          onPressed: () => Navigator.pop(c, true),
-                          child: const Text('Abrir'))
-                    ]));
-        if (accepted == true) {
+        if (await _confirmCampaignExternalLink(
+            context, destination, campaign!['ctaText']?.toString() ?? '')) {
           final latest = await widget.store.freshDetail(widget.id);
           if (latest['ctaType'] != 'EXTERNAL_URL' ||
               latest['ctaDestination'] != destination) {

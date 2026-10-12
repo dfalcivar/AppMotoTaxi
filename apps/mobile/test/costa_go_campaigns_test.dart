@@ -151,7 +151,8 @@ void main() {
         .setMockMethodCallHandler(
             const MethodChannel('plugins.flutter.io/url_launcher'), null));
     final data = campaign(
-        action: 'EXTERNAL_URL', destination: 'https://costa-go.com/novedades');
+        action: 'EXTERNAL_URL', destination: 'https://wa.me/593999999999');
+    data['ctaText'] = 'Escribir por WhatsApp';
     final store = storeFor(
         load: () async => {
               'items': [data]
@@ -162,14 +163,20 @@ void main() {
         home: CostaGoCampaignDetail(
             store: store, id: 'campaign-1', onAction: (_, __) async {})));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Conocer más'));
-    await tester.tap(find.text('Conocer más'));
+    await tester.ensureVisible(find.text('Escribir por WhatsApp'));
+    await tester.tap(find.text('Escribir por WhatsApp'));
     await tester.pumpAndSettle();
-    expect(find.text('costa-go.com'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byType(Dialog),
+            matching: find.text('Escribir por WhatsApp')),
+        findsOneWidget);
+    expect(find.text('wa.me'), findsOneWidget);
+    expect(find.text('Se abrirá fuera de Costa-Go.'), findsOneWidget);
     expect(launched, isNull);
     await tester.tap(find.text('Abrir'));
     await tester.pumpAndSettle();
-    expect(launched, 'https://costa-go.com/novedades');
+    expect(launched, 'https://wa.me/593999999999');
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
   });

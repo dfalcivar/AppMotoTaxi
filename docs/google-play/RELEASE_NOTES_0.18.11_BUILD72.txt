@@ -1,0 +1,5 @@
+<es-419>
+  Mejoramos el acceso a los tutoriales de Costa-Go desde campañas y notificaciones.
+  Los enlaces externos muestran una confirmación más clara antes de abrir el destino configurado.
+  Ajustamos la vigencia de las cortesías para que comience con el primer viaje completado.
+</es-419>
