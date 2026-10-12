@@ -1092,6 +1092,13 @@ export async function registerAdminRoutes(app: FastifyInstance, realtime?: {
     const actor=requirePermission(request,"dashboard:view"); if(!process.env.DATABASE_URL)return [];
     return database()`select id::text,type,title,body,entity_type as "entityType",entity_id as "entityId",not (${actor.id!}=any(read_by)) as unread,created_at as "createdAt" from admin_notifications order by created_at desc limit 100`;
   } catch(e){return guardError(e,reply);} });
+  app.post("/v1/admin/notifications/:id/read", async (request, reply) => { try {
+    const actor=requirePermission(request,"dashboard:view");
+    const id=z.string().uuid().parse((request.params as {id:string}).id);
+    if(!process.env.DATABASE_URL)return {id,unread:false};
+    const [row]=await database()`update admin_notifications set read_by=case when ${actor.id!}::uuid=any(read_by) then read_by else array_append(read_by,${actor.id!}::uuid) end where id=${id} returning id::text`;
+    return row?{id:row.id,unread:false}:reply.code(404).send({error:"NOTIFICATION_NOT_FOUND"});
+  } catch(e){return guardError(e,reply);} });
   app.get("/v1/admin/drivers/:id/documents", async (request, reply) => { try {
     requirePermission(request, "drivers:documents:view");
     if (!process.env.DATABASE_URL) return [];

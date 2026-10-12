@@ -170,6 +170,15 @@ describe("consola administrativa", () => {
     expect(allowed.statusCode).toBe(200);
   });
 
+  it("solo permite marcar avisos administrativos como leídos a quien puede verlos", async () => {
+    const url="/v1/admin/notifications/11111111-1111-4111-8111-111111111111/read";
+    const passengerToken=tokenFor({email:"pasajero@example.test",name:"Pasajero",role:"PASSENGER"});
+    expect((await app.inject({method:"POST",url,headers:{authorization:`Bearer ${passengerToken}`}})).statusCode).toBe(403);
+    const response=await app.inject({method:"POST",url,headers:{authorization:`Bearer ${adminToken}`}});
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({unread:false});
+  });
+
   it("exige una observación para rechazar u observar", async () => {
     const response = await app.inject({
       method: "POST", url: "/v1/admin/driver-approvals/DRV-001/decision",
