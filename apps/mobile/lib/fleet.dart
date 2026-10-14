@@ -713,11 +713,18 @@ class _FleetProfileEntriesState extends State<FleetProfileEntries>
     setState(() => opening = true);
     try {
       if (firstUnit) {
-        await showCostaGoModalBottomSheet<bool>(
+        final saved = await showCostaGoModalBottomSheet<bool>(
             context: context,
             isScrollControlled: true,
             useSafeArea: true,
             builder: (_) => _VehicleForm(gateway: widget.gateway, owner: true));
+        if (saved == true && mounted) {
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) =>
+                      FleetScreen(gateway: widget.gateway, ownerOnly: true)));
+        }
       } else {
         await Navigator.push(
             context,
@@ -951,20 +958,17 @@ class _FleetScreenState extends State<FleetScreen> {
     try {
       final data = await widget.gateway.get(
           '/vehicles?page=$page&search=${Uri.encodeQueryComponent(search.text.trim())}&managed=${widget.ownerOnly}'
-          '&relationType=${widget.ownerOnly ? 'OWNER_MANAGER' : 'AUTHORIZED_DRIVER'}'
-          '${widget.select ? '&authorizedOnly=true&status=VERIFIED' : ''}');
+          '${widget.select ? '' : '&relationType=${widget.ownerOnly ? 'OWNER_MANAGER' : 'AUTHORIZED_DRIVER'}'}');
       final items = data['items'] as List;
       // Also separate lists when talking to the previous API, which ignores new filters.
       final filtered = items
-          .where((v) =>
-              (v['relations'] as List? ?? []).any((r) =>
+          .where((v) => (v['relations'] as List? ?? []).any((r) =>
+              (widget.select ||
                   r['type'] ==
                       (widget.ownerOnly
                           ? 'OWNER_MANAGER'
-                          : 'AUTHORIZED_DRIVER') &&
-                  (r['status'] == 'APPROVED' ||
-                      (!widget.select && r['status'] == 'PENDING'))) &&
-              (!widget.select || v['status'] == 'VERIFIED'))
+                          : 'AUTHORIZED_DRIVER')) &&
+              (r['status'] == 'APPROVED' || r['status'] == 'PENDING')))
           .toList();
       if (mounted) {
         setState(() {
@@ -1096,7 +1100,7 @@ class _FleetScreenState extends State<FleetScreen> {
               child: Column(children: [
                 Text(
                     widget.select
-                        ? 'Selecciona la unidad que conducirás hoy.'
+                        ? 'Selecciona una mototaxi autorizada. Las solicitudes en revisión aparecen aquí, pero aún no se pueden usar.'
                         : widget.ownerOnly
                             ? 'Unidades que administras como propietario o responsable.'
                             : 'Unidades que puedes conducir y solicitudes de autorización.',
@@ -1160,6 +1164,14 @@ class _FleetScreenState extends State<FleetScreen> {
                               const SizedBox(height: 12),
                           itemBuilder: (c, i) {
                             final v = rows[i];
+                            final relations = v['relations'] as List? ?? [];
+                            final driverApproved = relations.any((r) =>
+                                r['type'] == 'AUTHORIZED_DRIVER' &&
+                                r['status'] == 'APPROVED');
+                            final hasPendingRelation =
+                                relations.any((r) => r['status'] == 'PENDING');
+                            final canDrive =
+                                v['status'] == 'VERIFIED' && driverApproved;
                             final model = [v['brand'], v['model']]
                                 .where((x) =>
                                     x != null && x.toString().trim().isNotEmpty)
@@ -1178,7 +1190,7 @@ class _FleetScreenState extends State<FleetScreen> {
                                     borderRadius: BorderRadius.circular(18),
                                     onTap: busy
                                         ? null
-                                        : () => widget.select
+                                        : () => widget.select && canDrive
                                             ? choose(v)
                                             : openDetail(v),
                                     child: Padding(
@@ -1227,7 +1239,10 @@ class _FleetScreenState extends State<FleetScreen> {
                                                                 scheme.primary),
                                                         const SizedBox(
                                                             width: 4),
-                                                        Text('Verificada',
+                                                        Text(
+                                                            widget.select
+                                                                ? 'Unidad verificada'
+                                                                : 'Verificada',
                                                             style: TextStyle(
                                                                 color: scheme
                                                                     .primary,
@@ -1248,18 +1263,35 @@ class _FleetScreenState extends State<FleetScreen> {
                                                       style: Theme.of(c)
                                                           .textTheme
                                                           .bodySmall),
-                                                if ((v['relations'] as List? ??
-                                                        [])
-                                                    .any((r) =>
+                                                if (relations.any((r) =>
+                                                    (widget.select ||
                                                         r['type'] ==
-                                                            (widget
-                                                                    .ownerOnly
+                                                            (widget.ownerOnly
                                                                 ? 'OWNER_MANAGER'
-                                                                : 'AUTHORIZED_DRIVER') &&
-                                                        r['status'] ==
-                                                            'PENDING'))
+                                                                : 'AUTHORIZED_DRIVER')) &&
+                                                    r['status'] == 'PENDING'))
                                                   Text(
-                                                      'Relación pendiente de validación',
+                                                      widget.select
+                                                          ? 'En revisión · Aún no puedes conducirla'
+                                                          : 'Relación pendiente de validación',
+                                                      style: TextStyle(
+                                                          color: scheme
+                                                              .onSurfaceVariant,
+                                                          fontSize: 12))
+                                                else if (widget.select &&
+                                                    !driverApproved)
+                                                  Text(
+                                                      'Falta autorización como conductor',
+                                                      style: TextStyle(
+                                                          color: scheme
+                                                              .onSurfaceVariant,
+                                                          fontSize: 12)),
+                                                if (widget.select &&
+                                                    !canDrive &&
+                                                    !hasPendingRelation &&
+                                                    driverApproved)
+                                                  Text(
+                                                      'La unidad no está habilitada para viajes',
                                                       style: TextStyle(
                                                           color: scheme
                                                               .onSurfaceVariant,
@@ -1271,12 +1303,13 @@ class _FleetScreenState extends State<FleetScreen> {
                                               alignment: Alignment.center,
                                               decoration: BoxDecoration(
                                                   shape: BoxShape.circle,
-                                                  color: widget.select
+                                                  color: widget.select &&
+                                                          canDrive
                                                       ? scheme.primaryContainer
                                                           .withValues(alpha: .5)
                                                       : Colors.transparent),
                                               child: Icon(
-                                                  widget.select
+                                                  widget.select && canDrive
                                                       ? Icons
                                                           .radio_button_unchecked
                                                       : Icons.chevron_right,
@@ -1322,7 +1355,14 @@ class _FleetScreenState extends State<FleetScreen> {
         useSafeArea: true,
         builder: (_) =>
             _VehicleForm(gateway: widget.gateway, owner: widget.ownerOnly));
-    if (saved == true && mounted) await load();
+    if (saved == true && mounted) {
+      await load();
+      if (mounted && widget.select) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Solicitud registrada. Podrás conducir la mototaxi cuando se apruebe la unidad y tu autorización.')));
+      }
+    }
   }
 
   Future<void> openDetail(dynamic v) async {

@@ -1,0 +1,5 @@
+<es-419>
+  Ahora puedes ver las mototaxis en revisión al elegir una unidad para trabajar.
+  Aclaramos cuándo una mototaxi está verificada y cuándo aún falta la autorización para conducirla.
+  Mejoramos la confirmación después de registrar o vincular una mototaxi.
+</es-419>

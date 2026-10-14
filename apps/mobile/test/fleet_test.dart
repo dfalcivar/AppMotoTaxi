@@ -319,6 +319,8 @@ void main() {
                 : [
                     {
                       ...vehicles.first,
+                      'identifier': 'MT-2',
+                      'status': 'PENDING',
                       'totalCount': 1,
                       'relations': [
                         {'type': 'OWNER_MANAGER', 'status': 'PENDING'}
@@ -357,6 +359,11 @@ void main() {
       pending.complete({'id': 'unit-0'});
       await tester.pumpAndSettle();
       expect(find.text('Mi flota'), findsOneWidget);
+      expect(find.text('MT-2'), findsOneWidget);
+      expect(find.text('Relación pendiente de validación'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Mi flota'), findsOneWidget);
       expect(find.text('1 mototaxi'), findsOneWidget);
       expect(find.text('Mis mototaxis'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -369,7 +376,7 @@ void main() {
         {
           ...vehicles[0],
           'relations': [
-            {'type': 'OWNER_MANAGER', 'status': 'APPROVED'}
+            {'type': 'OWNER_MANAGER', 'status': 'PENDING'}
           ]
         },
         vehicles[1],
@@ -393,18 +400,21 @@ void main() {
                 ownerOnly: mode == 'owner',
                 select: mode == 'select')));
         await tester.pumpAndSettle();
-        expect(
-            find.text('MT-1'), mode == 'owner' ? findsOneWidget : findsNothing);
+        expect(find.text('MT-1'),
+            mode == 'driver' ? findsNothing : findsOneWidget);
         expect(
             find.text('MT-2'), mode == 'owner' ? findsNothing : findsOneWidget);
-        expect(find.text('MT-3'),
-            mode == 'driver' ? findsOneWidget : findsNothing);
         expect(
-            requests.last,
-            contains(
-                'relationType=${mode == 'owner' ? 'OWNER_MANAGER' : 'AUTHORIZED_DRIVER'}'));
+            find.text('MT-3'), mode == 'owner' ? findsNothing : findsOneWidget);
         if (mode == 'select') {
-          expect(requests.last, contains('authorizedOnly=true'));
+          expect(requests.last, isNot(contains('relationType=')));
+          expect(find.text('En revisión · Aún no puedes conducirla'),
+              findsNWidgets(2));
+        } else {
+          expect(
+              requests.last,
+              contains(
+                  'relationType=${mode == 'owner' ? 'OWNER_MANAGER' : 'AUTHORIZED_DRIVER'}'));
         }
         expect(tester.takeException(), isNull);
       }
@@ -555,6 +565,36 @@ void main() {
       pending.complete({'sessionId': 's1'});
       await tester.pumpAndSettle();
       expect(find.text('Abrir'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets(
+        'verified unit remains visible while driving permission is pending in ${brightness.name}',
+        (tester) async {
+      final requests = <String>[];
+      final gateway = FleetGateway((method, path, body) async {
+        requests.add(path);
+        return {
+          'items': [
+            {
+              ...vehicles.first,
+              'identifier': 'AF001G',
+              'relations': [
+                {'type': 'OWNER_MANAGER', 'status': 'PENDING'},
+                {'type': 'AUTHORIZED_DRIVER', 'status': 'REVOKED'}
+              ]
+            }
+          ]
+        };
+      }, (_) async => Uint8List(0));
+      await tester.pumpWidget(MaterialApp(
+          theme: theme(brightness),
+          home: FleetScreen(gateway: gateway, select: true)));
+      await tester.pumpAndSettle();
+      expect(find.text('AF001G'), findsOneWidget);
+      expect(find.text('Unidad verificada'), findsOneWidget);
+      expect(
+          find.text('En revisión · Aún no puedes conducirla'), findsOneWidget);
+      expect(requests.single, isNot(contains('authorizedOnly=true')));
       expect(tester.takeException(), isNull);
     });
     testWidgets(
