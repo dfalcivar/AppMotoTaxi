@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { database } from '../database.js';
 import { authorizeVehicle, FleetError, type FleetActor } from './service.js';
+import { acquireImageProcessingSlot } from './image-processing-limit.js';
 
 // Keep libvips' process-wide operation cache within a small share of the 512 MB instance.
 sharp.cache({ memory: 20, files: 0, items: 50 });
@@ -15,7 +16,7 @@ const VEHICLE_DISPLAY_MARGIN=36;
 const VEHICLE_DISPLAY_VERSION='v2';
 // No subject synthesis/removal: the complete real photograph remains as the foreground.
 // The blurred backdrop is derived only from that same photograph and fills the 4:3 frame.
-export async function vehicleDisplayImage(bytes:Buffer){
+async function vehicleDisplayImageRaw(bytes:Buffer){
   const oriented=await sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'}).rotate().toBuffer();
   const background=await sharp(oriented,{limitInputPixels:20_000_000,failOn:'error'})
     .flatten({background:'#dbe6ec'})
@@ -32,6 +33,10 @@ export async function vehicleDisplayImage(bytes:Buffer){
       left:Math.floor((VEHICLE_DISPLAY_WIDTH-foreground.info.width)/2),
       top:Math.floor((VEHICLE_DISPLAY_HEIGHT-foreground.info.height)/2)}])
     .webp({quality:85,effort:5}).toBuffer();
+}
+export async function vehicleDisplayImage(bytes:Buffer){
+  const release=await acquireImageProcessingSlot();
+  try{return await vehicleDisplayImageRaw(bytes);}finally{release();}
 }
 const webp=(b:Buffer)=>b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WEBP';
 const byteBuffer=(bytes:Buffer|Uint8Array):Buffer=>Buffer.isBuffer(bytes)?bytes:Buffer.from(bytes);
@@ -58,6 +63,8 @@ async function legacyDisplay(id:string,original:Buffer){
   return work;
 }
 export async function prepareVehicleFile(input:unknown){
+  const release=await acquireImageProcessingSlot();
+  try{
   const f=fileSchema.parse(input);const bytes=Buffer.from(f.data,'base64');
   if(!bytes.length||bytes.length>5*1024*1024)throw new FleetError('FILE_TOO_LARGE',400);
   let display:Buffer|null=null;
@@ -72,13 +79,14 @@ export async function prepareVehicleFile(input:unknown){
     if(f.kind==='PHOTO'){
       // Vehicle photos require a normalized public version. Other image/document flows
       // deliberately keep their previous processing unchanged.
-      try {display=await vehicleDisplayImage(bytes);}catch{throw new FleetError('INVALID_IMAGE',400);}
+      try {display=await vehicleDisplayImageRaw(bytes);}catch{throw new FleetError('INVALID_IMAGE',400);}
     }else{
       try {display=await sharp(bytes,{limitInputPixels:20_000_000}).rotate().resize(800,600,{fit:'inside',withoutEnlargement:true}).jpeg({quality:88}).toBuffer();}
       catch {display=null;}
     }
   }
   return {kind:f.kind,mimeType:f.mimeType,bytes,display,hash:createHash('sha256').update(bytes).digest('hex')};
+  }finally{release();}
 }
 export async function uploadVehicleFile(actor:FleetActor,vehicleId:string,input:unknown){
   const file=await prepareVehicleFile(input);
