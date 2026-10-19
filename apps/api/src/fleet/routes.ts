@@ -88,6 +88,7 @@ export async function registerFleetRoutes(app:FastifyInstance,authenticate:Authe
       });
       try{const a=await actor(req,reply);if(!a)return;
         release=await acquireFileReadSlot(controller.signal);
+        if(controller.signal.aborted){workSettled=true;release();return reply;}
         const f=await readVehicleFile(a,pathId(req),(req.query as any).original==='true');
         workSettled=true;
         if(controller.signal.aborted){release();return reply;}

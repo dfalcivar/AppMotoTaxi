@@ -3,7 +3,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {createHash} from 'node:crypto';
 import type {FastifyInstance} from 'fastify';
 const state=vi.hoisted(()=>({sql:null as any}));
-vi.mock('./database.js',()=>({database:()=>state.sql}));
+vi.mock('./database.js',()=>({database:()=>state.sql,closeFleetFileDatabase:async()=>{}}));
 import {deleteIncompleteDriver,mobileIdentitySchema,incompleteAccountDeletionSchema,updateMobileIdentity} from './mobile-account-maintenance.js';
 import {buildApp} from './app.js';
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { z } from 'zod';
-import { database } from '../database.js';
+import { database, fleetFileDatabase } from '../database.js';
 import { authorizeVehicle, FleetError, type FleetActor } from './service.js';
 import { acquireImageProcessingSlot } from './image-processing-limit.js';
 
@@ -118,7 +118,7 @@ export async function uploadVehicleFile(actor:FleetActor,vehicleId:string,input:
 }
 // Scope the server-side timeout to fleet reads only; other PostgreSQL operations keep their policy.
 async function boundedFileRead(run:(tx:any)=>Promise<any>):Promise<any>{
-  return database().begin('read only',async tx=>{
+  return fleetFileDatabase().begin('read only',async tx=>{
     await tx`set local statement_timeout = '10s'`;
     return run(tx);
   }) as Promise<any>;

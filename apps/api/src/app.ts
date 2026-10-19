@@ -21,7 +21,7 @@ import { registerAdminRoutes, tokenFor, userFrom, type SessionUser } from "./adm
 import { registerMobileAccountAdminRoutes } from './mobile-account-admin.js';
 import { registerMobileAdminAccessRoutes } from './mobile-admin-access.js';
 import { anonymizeMobileIdentity } from './mobile-account-maintenance.js';
-import { database } from "./database.js";
+import { database, closeFleetFileDatabase } from "./database.js";
 import { registerFleetRoutes } from './fleet/routes.js';
 import { currentSession, releaseSession, releaseStaleSessions } from './fleet/service.js';
 import { fleetError } from './fleet/routes.js';
@@ -503,6 +503,7 @@ export async function buildApp() {
   await registerFiscalRoutes(app);
   await registerFleetRoutes(app, authenticatedUser);
   app.addHook('onClose', async () => {
+    await closeFleetFileDatabase();
     clearRouteCache();
     clearLeadRateCache();
     clearCooperativeAttemptCache();

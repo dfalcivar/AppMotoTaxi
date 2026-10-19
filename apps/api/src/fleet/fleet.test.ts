@@ -3,7 +3,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 const state=vi.hoisted(()=>({sql:null as any,queries:[] as string[]}));
-vi.mock('../database.js',()=>({database:()=>state.sql}));
+vi.mock('../database.js',()=>({database:()=>state.sql,fleetFileDatabase:()=>state.sql}));
 vi.mock('../push.js',()=>({sendPush:vi.fn(async()=>({sent:1,skipped:false}))}));
 import * as fleet from './service.js';
 import {prepareVehicleFile,uploadVehicleFile,readVehicleFile} from './files.js';
