@@ -9,6 +9,7 @@ import * as fleet from './service.js';
 import {prepareVehicleFile,uploadVehicleFile,readVehicleFile} from './files.js';
 import {fleetReport,fleetReportOptions} from './reports.js';
 import {registerFleetRoutes} from './routes.js';
+import {fileReadStats} from './file-read-limit.js';
 import {deliverFleetNotifications} from './notifications.js';
 import {sendPush} from '../push.js';
 import Fastify from 'fastify';
@@ -342,6 +343,22 @@ describe('fleet real SQL integration',()=>{
     expect((await readVehicleFile(driver,String(file.id))).mimeType).toBe('image/webp');
     expect(state.queries.some(query=>/select display_bytes from vehicle_files/i.test(query))).toBe(true);
     expect(state.queries.some(query=>/select original_bytes from vehicle_files/i.test(query))).toBe(false);
+  });
+  it('keeps HTTP photo responses private and releases the read slot after delivery',async()=>{
+    const id=await unit();
+    const [file]=(await pg.query<any>('select id from vehicle_files where vehicle_id=$1 and kind=$2 order by created_at desc limit 1',[id,'PHOTO'])).rows;
+    const app=Fastify();
+    await registerFleetRoutes(app,async()=>({id:ids.driver,email:'driver@example.test',name:'Driver',role:'DRIVER'}));
+    try{
+      const preview=await app.inject({method:'GET',url:`/v1/fleet/files/${file.id}`});
+      expect(preview.statusCode).toBe(200);
+      expect(preview.headers['content-type']).toContain('image/webp');
+      expect(preview.headers['cache-control']).toBe('private, no-store');
+      expect(fileReadStats()).toEqual({active:0,waiting:0});
+      const original=await app.inject({method:'GET',url:`/v1/fleet/files/${file.id}?original=true`});
+      expect(original.statusCode).toBe(403);
+      expect(fileReadStats()).toEqual({active:0,waiting:0});
+    }finally{await app.close();}
   });
   it('claims ownership with evidence without replacing the vehicle or QR',async()=>{
     const id=await unit();const qr=await fleet.generateQr(admin,id);
