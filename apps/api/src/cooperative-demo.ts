@@ -18,6 +18,7 @@ export const cooperativeDemoSchema = z.object({
 
 const attempts = new BoundedTtlMap<string, number[]>(10_000, 'reject');
 export function cooperativeAttemptStats() { return { entries: attempts.size }; }
+export function clearCooperativeAttemptCache() { attempts.clear(); }
 function allowed(request: FastifyRequest) {
   const key = request.ip || "unknown";
   const now = Date.now();

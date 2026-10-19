@@ -154,6 +154,7 @@ const paymentMethodSchema=z.object({name:z.string().trim().min(2).max(120),instr
 
 const leadRate = new BoundedTtlMap<string, { count: number; expires: number }>(10_000, 'reject');
 export function leadRateStats() { return { entries: leadRate.size }; }
+export function clearLeadRateCache() { leadRate.clear(); }
 function allowLead(request: FastifyRequest): boolean {
   const key = request.ip || "unknown", now = Date.now(), current = leadRate.get(key);
   if (!current || current.expires <= now) return leadRate.set(key, { count: 1, expires: now + 3_600_000 }, now + 3_600_000);

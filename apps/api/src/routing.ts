@@ -280,6 +280,7 @@ export async function computeRoute(
   }
 }
 
+export function clearRouteCache(): void { routeCache.clear(); }
 export function clearRouteCacheForTests(): void {
   routeCache.clear();
   inFlightRoutes.clear();

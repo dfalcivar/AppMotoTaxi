@@ -35,15 +35,15 @@ import { registerSupportRoutes } from "./support.js";
 import { registerTripSharingRoutes } from "./trip-sharing.js";
 import { registerPassengerCancellationRoutes, releaseExpiredPassengerSuspensions, cancelPassengerTrip, cancellationConsequence, storedPassengerCancellationPolicy } from "./passenger-cancellations.js";
 import { reverseLocation, searchLocations, searchLocationsInArea } from "./geocoding.js";
-import { computeRoute, type RouteResult } from "./routing.js";
+import { clearRouteCache, computeRoute, type RouteResult } from "./routing.js";
 import { googleApiUsageRecorder } from "./api-usage.js";
 import { refreshDriverApprovalState } from "./driver-document-requirements.js";
 import { captureOperationalError } from "./observability.js";
 import { measuredTask, startMemoryMetrics } from './memory-metrics.js';
 import { renderCostaGoEmail, sendTransactionalEmail } from "./email.js";
 import { registerCollectionAdminRoutes } from "./collection-admin.js";
-import { advertisingSchedulerTick, registerCommercialRoutes } from "./commercial.js";
-import { registerCooperativeDemoRoutes } from "./cooperative-demo.js";
+import { advertisingSchedulerTick, clearLeadRateCache, registerCommercialRoutes } from "./commercial.js";
+import { clearCooperativeAttemptCache, registerCooperativeDemoRoutes } from "./cooperative-demo.js";
 import {
   driverMembershipEligibility,
   membershipSchedulerTick,
@@ -502,6 +502,11 @@ export async function buildApp() {
   await registerCooperativeDemoRoutes(app);
   await registerFiscalRoutes(app);
   await registerFleetRoutes(app, authenticatedUser);
+  app.addHook('onClose', async () => {
+    clearRouteCache();
+    clearLeadRateCache();
+    clearCooperativeAttemptCache();
+  });
   startMemoryMetrics(app, () => realtime.clientCount());
   const fleetScheduler = setInterval(() => {
     void measuredTask('fleet_sessions', releaseStaleSessions).catch(error => app.log.error({err:error},'fleet_scheduler_failed'));
