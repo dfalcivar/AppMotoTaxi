@@ -35,7 +35,9 @@ WITH settings AS (
   WHERE dm.cycle_closed_at IS NULL
     AND dm.status IN ('ACTIVE', 'EXPIRING') AND dm.expires_at <= now()
 ), candidates AS (
-  SELECT 'EXPIRING_NOTICE'::text AS transition_type, dm.expires_at AS due_at
+  -- Age starts when the notice window opens, not at the future expiry date.
+  SELECT 'EXPIRING_NOTICE'::text AS transition_type,
+         dm.expires_at - (settings.notice_days * interval '1 day') AS due_at
   FROM driver_memberships dm CROSS JOIN settings
   WHERE dm.cycle_closed_at IS NULL AND dm.status = 'ACTIVE'
     AND dm.expires_at > now()
@@ -71,8 +73,7 @@ WITH settings AS (
   WHERE status IN ('PENDING', 'PENDING_VERIFICATION') AND expires_at <= now()
 )
 SELECT transition_type,
-       CASE WHEN due_at > now() THEN 'upcoming'
-            WHEN due_at IS NULL THEN 'unknown'
+       CASE WHEN due_at IS NULL THEN 'unknown'
             WHEN due_at > now() - interval '1 day' THEN '0-1d'
             WHEN due_at > now() - interval '7 days' THEN '1-7d'
             WHEN due_at > now() - interval '30 days' THEN '7-30d'

@@ -35,13 +35,14 @@ it('previews every scheduler transition as aggregate read-only counts', async ()
     `);
     const source = await readFile(new URL('../scripts/check-membership-transitions.sql', import.meta.url), 'utf8');
     const results = await pg.exec(source);
-    const counts = results[2]!.rows as Array<{ transition_type: string; pending_count: number }>;
+    const counts = results[2]!.rows as Array<{ transition_type: string; age_bucket: string; pending_count: number }>;
     expect(counts.map(row => row.transition_type).sort()).toEqual([
       'DUE_TO_PENDING_ACTIVE_TRIP', 'DUE_TO_SUSPENDED_NON_PAYMENT', 'EXPIRED_TO_GRACE',
       'EXPIRED_TO_PAYMENT_DUE',
       'EXPIRING_NOTICE', 'PAYMENT_ORDER_EXPIRED', 'PENDING_TRIP_ENDED_TO_SUSPENDED'
     ].sort());
     expect(counts.every(row => Number(row.pending_count) === 1)).toBe(true);
+    expect(counts.find(row => row.transition_type === 'EXPIRING_NOTICE')?.age_bucket).toBe('1-7d');
     expect(Object.keys(counts[0]!)).toEqual(['transition_type', 'age_bucket', 'pending_count']);
     expect(results[3]!.rows).toEqual([{ current_status: 'GRACE_PERIOD', not_yet_due_count: 1 }]);
   } finally { await pg.close(); }
