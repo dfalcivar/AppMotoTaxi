@@ -18,4 +18,15 @@ describe('fleet file read admission', () => {
     }
     expect(fileReadStats()).toEqual({ active: 0, waiting: 0 });
   });
+  it('removes an abandoned request from the queue without taking a slot', async () => {
+    const active = await Promise.all(Array.from({ length: 4 }, acquireFileReadSlot));
+    const controller = new AbortController();
+    const abandoned = acquireFileReadSlot(controller.signal);
+    expect(fileReadStats()).toEqual({ active: 4, waiting: 1 });
+    controller.abort();
+    await expect(abandoned).rejects.toMatchObject({ code: 'FLEET_FILE_CANCELLED' });
+    expect(fileReadStats()).toEqual({ active: 4, waiting: 0 });
+    active.forEach(release => release());
+    expect(fileReadStats()).toEqual({ active: 0, waiting: 0 });
+  });
 });

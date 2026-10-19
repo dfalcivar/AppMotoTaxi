@@ -23,6 +23,7 @@ const messages:Record<string,string>={
   OWNERSHIP_EVIDENCE_REQUIRED:'Adjunta un documento que permita validar tu relación con la unidad.',
   INVALID_IMAGE:'Selecciona una imagen JPG o PNG válida.',FILE_TOO_LARGE:'El archivo debe pesar como máximo 5 MB.',
   FLEET_FILE_BUSY:'Hay varias imágenes cargándose. Intenta nuevamente en unos segundos.',
+  FLEET_FILE_TIMEOUT:'La imagen tardó demasiado en cargarse. Intenta nuevamente.',
   FLEET_IMAGE_BUSY:'Hay varias fotos procesándose. Intenta nuevamente en unos segundos.'
   ,USER_NOT_ELIGIBLE:'No se encontró un conductor activo con ese correo. Verifica la dirección y su registro en Costa-Go.'
 };
@@ -74,14 +75,29 @@ export async function registerFleetRoutes(app:FastifyInstance,authenticate:Authe
     }catch(e){return fleetError(e,reply);}});
     app.post(`${base}/vehicles/:id/files`,{bodyLimit:7_100_000},async(req,reply)=>{try{const a=await actor(req,reply,true);if(!a)return;return await uploadVehicleFile(a,pathId(req),req.body);}catch(e){return fleetError(e,reply);}});
     app.get(`${base}/files/:id`,async(req,reply)=>{
+      reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff');
       let release:(()=>void)|undefined;
+      let workSettled=false;
+      const controller=new AbortController();
+      const abort=()=>controller.abort();
+      req.raw.once('aborted',abort);
+      reply.raw.once('finish',()=>{if(workSettled)release?.();});
+      reply.raw.once('close',()=>{
+        abort();req.raw.removeListener('aborted',abort);
+        if(workSettled)release?.();
+      });
       try{const a=await actor(req,reply);if(!a)return;
-        release=await acquireFileReadSlot();
-        reply.raw.once('finish',release);
-        reply.raw.once('close',release);
+        release=await acquireFileReadSlot(controller.signal);
         const f=await readVehicleFile(a,pathId(req),(req.query as any).original==='true');
-        reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff');return reply.type(f.mimeType).send(f.bytes);
-      }catch(e){release?.();return fleetError(e,reply);}
+        workSettled=true;
+        if(controller.signal.aborted){release();return reply;}
+        return reply.type(f.mimeType).send(f.bytes);
+      }catch(e){
+        workSettled=true;release?.();
+        if(controller.signal.aborted)return reply;
+        if((e as {code?:string})?.code==='57014')return fleetError(new fleet.FleetError('FLEET_FILE_TIMEOUT',503),reply);
+        return fleetError(e,reply);
+      }
     });
     app.post(`${base}/sessions/:id/release`,async(req,reply)=>{try{const a=await actor(req,reply,true);if(!a)return;
       const b=z.object({reason:z.enum(['MANUAL_RELEASE','LOGOUT','ADMIN_RELEASE']).default('MANUAL_RELEASE'),note:z.string().nullable().optional()}).parse(req.body);
