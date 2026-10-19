@@ -31,7 +31,7 @@ function sqlFor(client:any):any{
       return client.query(query,args).then((r:any)=>r.rows).then(resolve,reject);
     }};return fragment;
   };
-  return Object.assign(sql,{begin:(fn:any)=>client.transaction((tx:any)=>fn(sqlFor(tx)))});
+  return Object.assign(sql,{begin:(options:any,fn?:any)=>client.transaction((tx:any)=>(fn??options)(sqlFor(tx)))});
 }
 beforeAll(async()=>{
   pg=new PGlite();state.sql=sqlFor(pg);
@@ -341,6 +341,7 @@ describe('fleet real SQL integration',()=>{
     expect(state.queries.some(query=>/select (original_bytes|display_bytes) from vehicle_files/i.test(query))).toBe(false);
     state.queries=[];
     expect((await readVehicleFile(driver,String(file.id))).mimeType).toBe('image/webp');
+    expect(state.queries.some(query=>/set local statement_timeout/i.test(query))).toBe(true);
     expect(state.queries.some(query=>/select display_bytes from vehicle_files/i.test(query))).toBe(true);
     expect(state.queries.some(query=>/select original_bytes from vehicle_files/i.test(query))).toBe(false);
   });
@@ -359,6 +360,19 @@ describe('fleet real SQL integration',()=>{
       expect(original.statusCode).toBe(403);
       expect(fileReadStats()).toEqual({active:0,waiting:0});
     }finally{await app.close();}
+  });
+  it('returns a private 503 and releases its slot after a file-only PostgreSQL timeout',async()=>{
+    const previous=state.sql;
+    state.sql={begin:async()=>{throw Object.assign(new Error('statement timeout'),{code:'57014'});}};
+    const app=Fastify();
+    await registerFleetRoutes(app,async()=>({id:ids.driver,email:'driver@example.test',name:'Driver',role:'DRIVER'}));
+    try{
+      const response=await app.inject({method:'GET',url:'/v1/fleet/files/00000000-0000-4000-8000-000000000001'});
+      expect(response.statusCode).toBe(503);
+      expect(response.json().error).toBe('FLEET_FILE_TIMEOUT');
+      expect(response.headers['cache-control']).toBe('private, no-store');
+      expect(fileReadStats()).toEqual({active:0,waiting:0});
+    }finally{state.sql=previous;await app.close();}
   });
   it('claims ownership with evidence without replacing the vehicle or QR',async()=>{
     const id=await unit();const qr=await fleet.generateQr(admin,id);

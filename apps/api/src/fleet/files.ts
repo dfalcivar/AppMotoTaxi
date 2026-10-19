@@ -17,18 +17,21 @@ const VEHICLE_DISPLAY_VERSION='v2';
 // No subject synthesis/removal: the complete real photograph remains as the foreground.
 // The blurred backdrop is derived only from that same photograph and fills the 4:3 frame.
 async function vehicleDisplayImageRaw(bytes:Buffer){
-  const oriented=await sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'}).rotate().toBuffer();
+  const oriented=await sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'}).timeout({seconds:15}).rotate().toBuffer();
   const background=await sharp(oriented,{limitInputPixels:20_000_000,failOn:'error'})
+    .timeout({seconds:15})
     .flatten({background:'#dbe6ec'})
     .resize(VEHICLE_DISPLAY_WIDTH,VEHICLE_DISPLAY_HEIGHT,{fit:'cover',position:'attention'})
     .blur(30)
     .modulate({brightness:.86,saturation:.78})
     .toBuffer();
   const foreground=await sharp(oriented,{limitInputPixels:20_000_000,failOn:'error'})
+    .timeout({seconds:15})
     .resize(VEHICLE_DISPLAY_WIDTH-VEHICLE_DISPLAY_MARGIN*2,VEHICLE_DISPLAY_HEIGHT-VEHICLE_DISPLAY_MARGIN*2,
       {fit:'inside',withoutEnlargement:true})
     .toBuffer({resolveWithObject:true});
   return sharp(background,{limitInputPixels:20_000_000,failOn:'error'})
+    .timeout({seconds:15})
     .composite([{input:foreground.data,
       left:Math.floor((VEHICLE_DISPLAY_WIDTH-foreground.info.width)/2),
       top:Math.floor((VEHICLE_DISPLAY_HEIGHT-foreground.info.height)/2)}])
@@ -72,7 +75,7 @@ export async function prepareVehicleFile(input:unknown){
     if(f.kind==='PHOTO'||bytes.subarray(0,5).toString()!=='%PDF-')throw new FleetError('INVALID_FILE',400);
   }else{
     try{
-      const image=sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'});
+      const image=sharp(bytes,{limitInputPixels:20_000_000,failOn:'error'}).timeout({seconds:15});
       const meta=await image.metadata();
       if(meta.format!==(f.mimeType==='image/png'?'png':'jpeg')||!meta.width||!meta.height)throw new Error('format');
     }catch{throw new FleetError('INVALID_IMAGE',400);}
@@ -81,7 +84,7 @@ export async function prepareVehicleFile(input:unknown){
       // deliberately keep their previous processing unchanged.
       try {display=await vehicleDisplayImageRaw(bytes);}catch{throw new FleetError('INVALID_IMAGE',400);}
     }else{
-      try {display=await sharp(bytes,{limitInputPixels:20_000_000}).rotate().resize(800,600,{fit:'inside',withoutEnlargement:true}).jpeg({quality:88}).toBuffer();}
+      try {display=await sharp(bytes,{limitInputPixels:20_000_000}).timeout({seconds:15}).rotate().resize(800,600,{fit:'inside',withoutEnlargement:true}).jpeg({quality:88}).toBuffer();}
       catch {display=null;}
     }
   }
@@ -113,28 +116,39 @@ export async function uploadVehicleFile(actor:FleetActor,vehicleId:string,input:
     return {id:saved!.id};
   });
 }
+// Scope the server-side timeout to fleet reads only; other PostgreSQL operations keep their policy.
+async function boundedFileRead(run:(tx:any)=>Promise<any>):Promise<any>{
+  return database().begin('read only',async tx=>{
+    await tx`set local statement_timeout = '10s'`;
+    return run(tx);
+  }) as Promise<any>;
+}
+
 export async function readVehicleFile(actor:FleetActor,id:string,original=false){
-  const [f]=await database()`select vehicle_id,kind,mime_type,uploaded_by from vehicle_files where id=${id}`;
-  if(!f)throw new FleetError('FILE_NOT_FOUND',404);
-  try{await authorizeVehicle(database(),actor,String(f.vehicle_id),original||f.kind!=='PHOTO');}
-  catch(error){
-    // Only the actual trip parties may read that trip's immutable vehicle photo.
-    const [trip]=!original&&f.kind==='PHOTO'?await database()`select 1 from trips t where
-      (t.passenger_id=${actor.id} or t.driver_id=${actor.id}) and t.vehicle_snapshot->>'photoId'=${id} limit 1`:[];
-    if(!trip&&f.uploaded_by!==actor.id)throw error;
-  }
+  const f=await boundedFileRead(async tx=>{
+    const [row]=await tx`select vehicle_id,kind,mime_type,uploaded_by from vehicle_files where id=${id}`;
+    if(!row)throw new FleetError('FILE_NOT_FOUND',404);
+    try{await authorizeVehicle(tx,actor,String(row.vehicle_id),original||row.kind!=='PHOTO');}
+    catch(error){
+      // Only the actual trip parties may read that trip's immutable vehicle photo.
+      const [trip]=!original&&row.kind==='PHOTO'?await tx`select 1 from trips t where
+        (t.passenger_id=${actor.id} or t.driver_id=${actor.id}) and t.vehicle_snapshot->>'photoId'=${id} limit 1`:[];
+      if(!trip&&row.uploaded_by!==actor.id)throw error;
+    }
+    return row;
+  });
   if(!original&&f.kind==='PHOTO'){
     const cached=legacyDisplayCache.get(`${VEHICLE_DISPLAY_VERSION}:${id}`);
     if(cached)return {bytes:cached,mimeType:'image/webp'};
-    const [preview]=await database()`select display_bytes from vehicle_files where id=${id}`;
+    const [preview]=await boundedFileRead(tx=>tx`select display_bytes from vehicle_files where id=${id}`);
     const display=preview?.display_bytes?byteBuffer(preview.display_bytes):null;
     if(display&&webp(display)){
       try {
-        const meta=await sharp(display,{limitInputPixels:20_000_000}).metadata();
+        const meta=await sharp(display,{limitInputPixels:20_000_000}).timeout({seconds:15}).metadata();
         if(meta.width===VEHICLE_DISPLAY_WIDTH&&meta.height===VEHICLE_DISPLAY_HEIGHT)return {bytes:display,mimeType:'image/webp'};
       }catch{/* Invalid stored preview: recover from the untouched original below. */}
     }
-    const [stored]=await database()`select original_bytes from vehicle_files where id=${id}`;
+    const [stored]=await boundedFileRead(tx=>tx`select original_bytes from vehicle_files where id=${id}`);
     if(!stored)throw new FleetError('FILE_NOT_FOUND',404);
     const bytes=byteBuffer(stored.original_bytes);
     try{return {bytes:await legacyDisplay(id,bytes),mimeType:'image/webp'};}
@@ -142,10 +156,10 @@ export async function readVehicleFile(actor:FleetActor,id:string,original=false)
     return {bytes,mimeType:String(f.mime_type)};
   }
   if(!original){
-    const [preview]=await database()`select display_bytes from vehicle_files where id=${id}`;
+    const [preview]=await boundedFileRead(tx=>tx`select display_bytes from vehicle_files where id=${id}`);
     if(preview?.display_bytes)return {bytes:byteBuffer(preview.display_bytes),mimeType:'image/jpeg'};
   }
-  const [stored]=await database()`select original_bytes from vehicle_files where id=${id}`;
+  const [stored]=await boundedFileRead(tx=>tx`select original_bytes from vehicle_files where id=${id}`);
   if(!stored)throw new FleetError('FILE_NOT_FOUND',404);
   return {bytes:byteBuffer(stored.original_bytes),mimeType:String(f.mime_type)};
 }
