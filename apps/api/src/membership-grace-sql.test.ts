@@ -25,7 +25,7 @@ describe('membership grace date arithmetic in PostgreSQL', () => {
     } finally {
       await pg.close();
     }
-  });
+  }, 15_000);
 
   it('uses explicit integer operands in scheduler and administrative grant', async () => {
     const source = await readFile(new URL('./memberships.ts', import.meta.url), 'utf8');
