@@ -8,6 +8,7 @@ import { composeAdvertisingActionValue, normalizeAdvertisingActionMessage, norma
 import { requireOrderFiscalProfile } from './fiscal/clients.js';
 import { taxBreakdown } from './taxes.js';
 import { commercialEmailSchedulerTick } from './commercial-email-notifications.js';
+import { BoundedTtlMap } from './bounded-ttl-map.js';
 
 // El cliente postgres infiere las filas en tiempo de ejecución; este módulo
 // concentra consultas comerciales heterogéneas y valida sus bordes con Zod.
@@ -151,10 +152,11 @@ const commercialSettingsSchema=z.object({
 });
 const paymentMethodSchema=z.object({name:z.string().trim().min(2).max(120),instructions:z.string().trim().max(1000),active:z.boolean(),requiresProof:z.boolean(),sortOrder:z.number().int().min(0).max(9999)});
 
-const leadRate = new Map<string, { count: number; expires: number }>();
+const leadRate = new BoundedTtlMap<string, { count: number; expires: number }>(10_000, 'reject');
+export function leadRateStats() { return { entries: leadRate.size }; }
 function allowLead(request: FastifyRequest): boolean {
   const key = request.ip || "unknown", now = Date.now(), current = leadRate.get(key);
-  if (!current || current.expires <= now) { leadRate.set(key, { count: 1, expires: now + 3_600_000 }); return true; }
+  if (!current || current.expires <= now) return leadRate.set(key, { count: 1, expires: now + 3_600_000 }, now + 3_600_000);
   current.count += 1; return current.count <= 10;
 }
 function tokenHash(token: string): string {
