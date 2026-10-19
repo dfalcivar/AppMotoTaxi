@@ -39,6 +39,7 @@ import { computeRoute, type RouteResult } from "./routing.js";
 import { googleApiUsageRecorder } from "./api-usage.js";
 import { refreshDriverApprovalState } from "./driver-document-requirements.js";
 import { captureOperationalError } from "./observability.js";
+import { measuredTask, startMemoryMetrics } from './memory-metrics.js';
 import { renderCostaGoEmail, sendTransactionalEmail } from "./email.js";
 import { registerCollectionAdminRoutes } from "./collection-admin.js";
 import { advertisingSchedulerTick, registerCommercialRoutes } from "./commercial.js";
@@ -501,37 +502,38 @@ export async function buildApp() {
   await registerCooperativeDemoRoutes(app);
   await registerFiscalRoutes(app);
   await registerFleetRoutes(app, authenticatedUser);
+  startMemoryMetrics(app, () => realtime.clientCount());
   const fleetScheduler = setInterval(() => {
-    void releaseStaleSessions().catch(error => app.log.error({err:error},'fleet_scheduler_failed'));
-    void deliverFleetNotifications().catch(error=>app.log.error({err:error},'fleet_notifications_failed'));
+    void measuredTask('fleet_sessions', releaseStaleSessions).catch(error => app.log.error({err:error},'fleet_scheduler_failed'));
+    void measuredTask('fleet_notifications', deliverFleetNotifications).catch(error=>app.log.error({err:error},'fleet_notifications_failed'));
   }, 30_000);
   fleetScheduler.unref();
   app.addHook('onClose',async()=>clearInterval(fleetScheduler));
-  const referralScheduler=setInterval(()=>void referralSchedulerTick().catch(error=>app.log.error({err:error},'referral_scheduler_failed')),15000);
+  const referralScheduler=setInterval(()=>void measuredTask('referrals',referralSchedulerTick).catch(error=>app.log.error({err:error},'referral_scheduler_failed')),15000);
   referralScheduler.unref();
   app.addHook('onClose',async()=>clearInterval(referralScheduler));
   const membershipScheduler = setInterval(() => {
-    void membershipSchedulerTick().catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
-    void packageEconomicsTick().catch(error=>app.log.error({err:error},'package_economics_failed'));
+    void measuredTask('memberships',membershipSchedulerTick).catch(error => app.log.error({ err: error }, "membership_scheduler_failed"));
+    void measuredTask('package_economics',packageEconomicsTick).catch(error=>app.log.error({err:error},'package_economics_failed'));
   }, 60_000);
   membershipScheduler.unref();
   app.addHook("onClose", async () => clearInterval(membershipScheduler));
   const advertisingScheduler = setInterval(() => {
-    void advertisingSchedulerTick().catch(error => app.log.error({ err: error }, "advertising_scheduler_failed"));
+    void measuredTask('advertising',advertisingSchedulerTick).catch(error => app.log.error({ err: error }, "advertising_scheduler_failed"));
   }, 60_000);
   advertisingScheduler.unref();
   app.addHook("onClose", async () => clearInterval(advertisingScheduler));
   const smartNotificationScheduler = setInterval(() => {
-    void smartNotificationSchedulerTick().catch(error => app.log.error({err:error},'smart_notification_scheduler_failed'));
+    void measuredTask('smart_notifications',smartNotificationSchedulerTick).catch(error => app.log.error({err:error},'smart_notification_scheduler_failed'));
   },60_000);
   smartNotificationScheduler.unref();
   app.addHook('onClose',async()=>clearInterval(smartNotificationScheduler));
   const notificationDeliveryScheduler=setInterval(()=>{
-    void notificationDeliveryTick().catch(error=>app.log.error({err:error},'notification_delivery_worker_failed'));
+    void measuredTask('notification_delivery',notificationDeliveryTick).catch(error=>app.log.error({err:error},'notification_delivery_worker_failed'));
   },2_000);
   notificationDeliveryScheduler.unref();
   const notificationRetentionScheduler=setInterval(()=>{
-    void notificationRetentionTick().catch(error=>app.log.error({err:error},'notification_retention_failed'));
+    void measuredTask('notification_retention',notificationRetentionTick).catch(error=>app.log.error({err:error},'notification_retention_failed'));
   },6*60*60_000);
   notificationRetentionScheduler.unref();
   app.addHook('onClose',async()=>{clearInterval(notificationDeliveryScheduler);clearInterval(notificationRetentionScheduler);});
@@ -3106,10 +3108,10 @@ export async function buildApp() {
   });
 
   const scheduledTimer = process.env.DATABASE_URL
-    ? setInterval(() => void activateScheduledTrips().catch(error => app.log.error({ error }, "scheduled_trip_activation_failed")), 60_000)
+    ? setInterval(() => void measuredTask('scheduled_activation',activateScheduledTrips).catch(error => app.log.error({ error }, "scheduled_trip_activation_failed")), 60_000)
     : undefined;
   const driverSearchTimer = process.env.DATABASE_URL
-    ? setInterval(() => void processDueDriverSearchRounds().catch(error => app.log.error({ error }, "driver_search_round_failed")), 2_000)
+    ? setInterval(() => void measuredTask('driver_search_round',processDueDriverSearchRounds).catch(error => app.log.error({ error }, "driver_search_round_failed")), 2_000)
     : undefined;
   scheduledTimer?.unref();
   driverSearchTimer?.unref();

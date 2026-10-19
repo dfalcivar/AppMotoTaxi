@@ -75,6 +75,7 @@ interface LiveLocation {
 }
 
 export interface RealtimeHub {
+  clientCount(): number;
   publishTripStatus(tripId: string, status: string): void;
   publishTripEvent(tripId: string, type: string, payload?: Record<string, unknown>): void;
   publishDriverUnavailable(driverId: string): void;
@@ -490,6 +491,7 @@ export function registerRealtimeRoutes(app: FastifyInstance): RealtimeHub {
   app.addHook("onClose", async () => clearInterval(heartbeat));
 
   return {
+    clientCount() { return clients.size; },
     publishTripStatus(tripId, status) {
       const presentation=pushPresentationForType(status,'Actualización del viaje','El estado de tu viaje cambió.');
       broadcastTrip(tripId, { type: "trip:status", tripId, status, ...presentation, occurredAt: new Date().toISOString() });
