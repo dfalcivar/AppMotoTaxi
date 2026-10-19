@@ -4,6 +4,9 @@ import { z } from 'zod';
 import { database } from '../database.js';
 import { authorizeVehicle, FleetError, type FleetActor } from './service.js';
 
+// Keep libvips' process-wide operation cache within a small share of the 512 MB instance.
+sharp.cache({ memory: 20, files: 0, items: 50 });
+
 const fileSchema=z.object({kind:z.enum(['PHOTO','REGISTRATION','OPERATING_PERMIT','OWNERSHIP_EVIDENCE']),
   mimeType:z.enum(['image/jpeg','image/png','application/pdf']),data:z.string().max(7_000_000)});
 const VEHICLE_DISPLAY_WIDTH=1200;
