@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { database } from "./database.js";
 import { sendTransactionalEmail } from "./email.js";
+import { BoundedTtlMap } from './bounded-ttl-map.js';
 
 export const cooperativeDemoSchema = z.object({
   cooperativeName: z.string().trim().min(3).max(160),
@@ -15,13 +16,14 @@ export const cooperativeDemoSchema = z.object({
   submissionKey: z.string().uuid()
 }).strict();
 
-const attempts = new Map<string, number[]>();
+const attempts = new BoundedTtlMap<string, number[]>(10_000, 'reject');
+export function cooperativeAttemptStats() { return { entries: attempts.size }; }
 function allowed(request: FastifyRequest) {
   const key = request.ip || "unknown";
   const now = Date.now();
   const recent = (attempts.get(key) ?? []).filter(value => now - value < 15 * 60_000);
   if (recent.length >= 5) return false;
-  recent.push(now); attempts.set(key, recent); return true;
+  recent.push(now); return attempts.set(key, recent, now + 15 * 60_000);
 }
 
 export async function registerCooperativeDemoRoutes(app: FastifyInstance) {

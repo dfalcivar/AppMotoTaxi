@@ -1,4 +1,5 @@
 import type { GoogleApiUsageRecorder } from "./api-usage.js";
+import { BoundedTtlMap } from './bounded-ttl-map.js';
 
 export interface RoutePoint {
   latitude: number;
@@ -25,9 +26,10 @@ export interface RouteOptions {
   usageRecorder?: GoogleApiUsageRecorder;
 }
 
-const routeCache = new Map<string, { expiresAt: number; route: RouteResult }>();
+const routeCache = new BoundedTtlMap<string, RouteResult>(512);
 const inFlightRoutes = new Map<string, Promise<RouteResult>>();
 const routeCacheTtlMs = 2 * 60 * 1000;
+export function routeCacheStats() { return { entries: routeCache.size, inFlight: inFlightRoutes.size }; }
 
 function routeKey(origin: RoutePoint, destination: RoutePoint, waypoints: RoutePoint[], options: RouteOptions): string {
   return [origin, ...waypoints, destination]
@@ -260,10 +262,9 @@ export async function computeRoute(
 ): Promise<RouteResult> {
   const key = routeKey(origin, destination, waypoints, options);
   const cached = routeCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    return { ...cached.route, cacheHit: true };
+  if (cached) {
+    return { ...cached, cacheHit: true };
   }
-  if (cached) routeCache.delete(key);
 
   const inFlight = inFlightRoutes.get(key);
   if (inFlight) return { ...(await inFlight), cacheHit: true };
@@ -272,7 +273,7 @@ export async function computeRoute(
   inFlightRoutes.set(key, request);
   try {
     const route = await request;
-    routeCache.set(key, { expiresAt: Date.now() + routeCacheTtlMs, route });
+    routeCache.set(key, route, Date.now() + routeCacheTtlMs);
     return route;
   } finally {
     inFlightRoutes.delete(key);
