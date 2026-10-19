@@ -1,8 +1,8 @@
 import { FleetError } from './service.js';
 
 const MAX_ACTIVE = 4;
-const MAX_WAITING = 4;
-const WAIT_MS = 10_000;
+const MAX_WAITING = 16;
+const WAIT_MS = 20_000;
 let active = 0;
 const waiting: Array<{ resolve: (release: () => void) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }> = [];
 
