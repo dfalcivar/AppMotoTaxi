@@ -5,6 +5,7 @@ import {requirePermission,type SessionUser} from '../admin.js';
 import {database} from '../database.js';
 import * as fleet from './service.js';
 import {readVehicleFile,uploadVehicleFile} from './files.js';
+import {acquireFileReadSlot} from './file-read-limit.js';
 import {fleetReport,fleetReportOptions} from './reports.js';
 
 const messages:Record<string,string>={
@@ -20,7 +21,8 @@ const messages:Record<string,string>={
   VEHICLE_QR_INVALID:'Este QR no es válido o fue reemplazado. Solicita el QR vigente.',
   VEHICLE_QR_EXPIRED:'Este QR venció, fue anulado o reemplazado. Solicita el QR vigente de la mototaxi.',
   OWNERSHIP_EVIDENCE_REQUIRED:'Adjunta un documento que permita validar tu relación con la unidad.',
-  INVALID_IMAGE:'Selecciona una imagen JPG o PNG válida.',FILE_TOO_LARGE:'El archivo debe pesar como máximo 5 MB.'
+  INVALID_IMAGE:'Selecciona una imagen JPG o PNG válida.',FILE_TOO_LARGE:'El archivo debe pesar como máximo 5 MB.',
+  FLEET_FILE_BUSY:'Hay varias imágenes cargándose. Intenta nuevamente en unos segundos.'
   ,USER_NOT_ELIGIBLE:'No se encontró un conductor activo con ese correo. Verifica la dirección y su registro en Costa-Go.'
 };
 export function fleetError(error:unknown,reply:FastifyReply){
@@ -70,10 +72,16 @@ export async function registerFleetRoutes(app:FastifyInstance,authenticate:Authe
       return await fleet.authorizeDriverByEmail(a,pathId(req),b.email,b.reason);
     }catch(e){return fleetError(e,reply);}});
     app.post(`${base}/vehicles/:id/files`,{bodyLimit:7_100_000},async(req,reply)=>{try{const a=await actor(req,reply,true);if(!a)return;return await uploadVehicleFile(a,pathId(req),req.body);}catch(e){return fleetError(e,reply);}});
-    app.get(`${base}/files/:id`,async(req,reply)=>{try{const a=await actor(req,reply);if(!a)return;
-      const f=await readVehicleFile(a,pathId(req),(req.query as any).original==='true');
-      reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff');return reply.type(f.mimeType).send(f.bytes);
-    }catch(e){return fleetError(e,reply);}});
+    app.get(`${base}/files/:id`,async(req,reply)=>{
+      let release:(()=>void)|undefined;
+      try{const a=await actor(req,reply);if(!a)return;
+        release=await acquireFileReadSlot();
+        reply.raw.once('finish',release);
+        reply.raw.once('close',release);
+        const f=await readVehicleFile(a,pathId(req),(req.query as any).original==='true');
+        reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff');return reply.type(f.mimeType).send(f.bytes);
+      }catch(e){release?.();return fleetError(e,reply);}
+    });
     app.post(`${base}/sessions/:id/release`,async(req,reply)=>{try{const a=await actor(req,reply,true);if(!a)return;
       const b=z.object({reason:z.enum(['MANUAL_RELEASE','LOGOUT','ADMIN_RELEASE']).default('MANUAL_RELEASE'),note:z.string().nullable().optional()}).parse(req.body);
       return await fleet.releaseSession(a,pathId(req),b.reason,b.note??null);

@@ -31,13 +31,15 @@ export async function vehicleDisplayImage(bytes:Buffer){
     .webp({quality:85,effort:5}).toBuffer();
 }
 const webp=(b:Buffer)=>b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WEBP';
+const byteBuffer=(bytes:Buffer|Uint8Array):Buffer=>Buffer.isBuffer(bytes)?bytes:Buffer.from(bytes);
 // Legacy immutable files are normalized on read, never overwritten. Bounded process-local cache.
 const legacyDisplayCache=new Map<string,Buffer>();
 let legacyDisplayBytes=0;
 // Serialize legacy decoding so a page of old 20 MP photos cannot exhaust API memory.
 let legacyDisplayQueue:Promise<unknown>=Promise.resolve();
 async function legacyDisplay(id:string,original:Buffer){
-  const key=`${VEHICLE_DISPLAY_VERSION}:${id}:${createHash('sha256').update(original).digest('hex')}`;
+  // Historical vehicle_files rows are immutable. The ID is sufficient for this bounded cache.
+  const key=`${VEHICLE_DISPLAY_VERSION}:${id}`;
   const cached=legacyDisplayCache.get(key);if(cached)return cached;
   const work=legacyDisplayQueue.then(async()=>{
     const existing=legacyDisplayCache.get(key);if(existing)return existing;
@@ -101,7 +103,7 @@ export async function uploadVehicleFile(actor:FleetActor,vehicleId:string,input:
   });
 }
 export async function readVehicleFile(actor:FleetActor,id:string,original=false){
-  const [f]=await database()`select * from vehicle_files where id=${id}`;
+  const [f]=await database()`select vehicle_id,kind,mime_type,uploaded_by from vehicle_files where id=${id}`;
   if(!f)throw new FleetError('FILE_NOT_FOUND',404);
   try{await authorizeVehicle(database(),actor,String(f.vehicle_id),original||f.kind!=='PHOTO');}
   catch(error){
@@ -111,17 +113,28 @@ export async function readVehicleFile(actor:FleetActor,id:string,original=false)
     if(!trip&&f.uploaded_by!==actor.id)throw error;
   }
   if(!original&&f.kind==='PHOTO'){
-    const display=f.display_bytes?Buffer.from(f.display_bytes):null;
+    const cached=legacyDisplayCache.get(`${VEHICLE_DISPLAY_VERSION}:${id}`);
+    if(cached)return {bytes:cached,mimeType:'image/webp'};
+    const [preview]=await database()`select display_bytes from vehicle_files where id=${id}`;
+    const display=preview?.display_bytes?byteBuffer(preview.display_bytes):null;
     if(display&&webp(display)){
       try {
         const meta=await sharp(display,{limitInputPixels:20_000_000}).metadata();
         if(meta.width===VEHICLE_DISPLAY_WIDTH&&meta.height===VEHICLE_DISPLAY_HEIGHT)return {bytes:display,mimeType:'image/webp'};
       }catch{/* Invalid stored preview: recover from the untouched original below. */}
     }
-    try{return {bytes:await legacyDisplay(id,Buffer.from(f.original_bytes)),mimeType:'image/webp'};}
+    const [stored]=await database()`select original_bytes from vehicle_files where id=${id}`;
+    if(!stored)throw new FleetError('FILE_NOT_FOUND',404);
+    const bytes=byteBuffer(stored.original_bytes);
+    try{return {bytes:await legacyDisplay(id,bytes),mimeType:'image/webp'};}
     catch{/* A failed optional conversion must not hide the real original. */}
-    return {bytes:f.original_bytes,mimeType:String(f.mime_type)};
+    return {bytes,mimeType:String(f.mime_type)};
   }
-  return {bytes:!original&&f.display_bytes?f.display_bytes:f.original_bytes,
-    mimeType:!original&&f.display_bytes?'image/jpeg':String(f.mime_type)};
+  if(!original){
+    const [preview]=await database()`select display_bytes from vehicle_files where id=${id}`;
+    if(preview?.display_bytes)return {bytes:byteBuffer(preview.display_bytes),mimeType:'image/jpeg'};
+  }
+  const [stored]=await database()`select original_bytes from vehicle_files where id=${id}`;
+  if(!stored)throw new FleetError('FILE_NOT_FOUND',404);
+  return {bytes:byteBuffer(stored.original_bytes),mimeType:String(f.mime_type)};
 }

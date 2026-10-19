@@ -2,7 +2,7 @@ import {beforeAll,beforeEach,afterAll,describe,it,expect,vi} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-const state=vi.hoisted(()=>({sql:null as any}));
+const state=vi.hoisted(()=>({sql:null as any,queries:[] as string[]}));
 vi.mock('../database.js',()=>({database:()=>state.sql}));
 vi.mock('../push.js',()=>({sendPush:vi.fn(async()=>({sent:1,skipped:false}))}));
 import * as fleet from './service.js';
@@ -26,7 +26,8 @@ function sqlFor(client:any):any{
     const fragment={parts,values,then(resolve:any,reject:any){const args:any[]=[];
       const compile=(f:any):string=>f.parts.reduce((s:string,p:string,i:number)=>{
         if(!i)return p;const v=f.values[i-1];return s+(v?.parts?compile(v):(args.push(v),'$'+args.length))+p;
-      },'');return client.query(compile(fragment),args).then((r:any)=>r.rows).then(resolve,reject);
+      },'');const query=compile(fragment);state.queries.push(query);
+      return client.query(query,args).then((r:any)=>r.rows).then(resolve,reject);
     }};return fragment;
   };
   return Object.assign(sql,{begin:(fn:any)=>client.transaction((tx:any)=>fn(sqlFor(tx)))});
@@ -48,6 +49,7 @@ beforeAll(async()=>{
   await pg.exec(await readFile(fileURLToPath(new URL('../../migrations/074_vehicle_session_integrity.sql',import.meta.url)),'utf8'));
 },30000);
 beforeEach(async()=>{
+  state.queries=[];
   vi.mocked(sendPush).mockClear();
   await pg.exec('truncate vehicle_audit,vehicle_ownership_claims,vehicle_qr_tokens,vehicle_session_assignments,trip_events,trips,driver_vehicle_sessions,user_vehicle_relations,vehicle_files,vehicles,drivers,users,cooperatives cascade');
   await pg.query('insert into cooperatives values($1,$2),($3,$4)',[ids.coop,'Cooperativa uno',ids.coop2,'Cooperativa dos']);
@@ -329,6 +331,17 @@ describe('fleet real SQL integration',()=>{
     await uploadVehicleFile(admin,id,{kind:'PHOTO',mimeType:'image/png',data:bytes.toString('base64')});
     expect((await pg.query<any>('select vehicle_snapshot from trips where id=$1',[t.id])).rows[0].vehicle_snapshot.photoId).toBe(photo.id);
     await expect(pg.query('delete from vehicle_files where id=$1',[photo.id])).rejects.toThrow('FLEET_HISTORY_IMMUTABLE');
+  });
+  it('authorizes before reading bytes and omits originals for a current photo preview',async()=>{
+    const id=await unit();
+    const [file]=(await pg.query<any>('select id from vehicle_files where vehicle_id=$1 and kind=$2 order by created_at desc limit 1',[id,'PHOTO'])).rows;
+    state.queries=[];
+    await expect(readVehicleFile(other,String(file.id),true)).rejects.toThrow();
+    expect(state.queries.some(query=>/select (original_bytes|display_bytes) from vehicle_files/i.test(query))).toBe(false);
+    state.queries=[];
+    expect((await readVehicleFile(driver,String(file.id))).mimeType).toBe('image/webp');
+    expect(state.queries.some(query=>/select display_bytes from vehicle_files/i.test(query))).toBe(true);
+    expect(state.queries.some(query=>/select original_bytes from vehicle_files/i.test(query))).toBe(false);
   });
   it('claims ownership with evidence without replacing the vehicle or QR',async()=>{
     const id=await unit();const qr=await fleet.generateQr(admin,id);
