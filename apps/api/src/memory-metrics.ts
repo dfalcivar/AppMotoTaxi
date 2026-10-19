@@ -4,6 +4,7 @@ import { routeCacheStats } from './routing.js';
 import { leadRateStats } from './commercial.js';
 import { cooperativeAttemptStats } from './cooperative-demo.js';
 import { fileReadStats } from './fleet/file-read-limit.js';
+import { imageProcessingStats } from './fleet/image-processing-limit.js';
 
 type TaskStats = { runs: number; errors: number; active: number };
 const tasks = new Map<string, TaskStats>();
@@ -27,7 +28,7 @@ export function memorySnapshot(websocketClients: number) {
     external: memory.external, arrayBuffers: memory.arrayBuffers,
     cacheEntries: { routes: routeCacheStats().entries, routeRequests: routeCacheStats().inFlight,
       advertisingIps: leadRateStats().entries, cooperativeIps: cooperativeAttemptStats().entries },
-    fleetFiles: fileReadStats(), websocketClients,
+    fleetFiles: fileReadStats(), imageProcessing: imageProcessingStats(), websocketClients,
     sharp: { cache: sharp.cache(), counters: sharp.counters() }, scheduler
   };
 }

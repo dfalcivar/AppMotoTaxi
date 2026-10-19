@@ -22,7 +22,8 @@ const messages:Record<string,string>={
   VEHICLE_QR_EXPIRED:'Este QR venció, fue anulado o reemplazado. Solicita el QR vigente de la mototaxi.',
   OWNERSHIP_EVIDENCE_REQUIRED:'Adjunta un documento que permita validar tu relación con la unidad.',
   INVALID_IMAGE:'Selecciona una imagen JPG o PNG válida.',FILE_TOO_LARGE:'El archivo debe pesar como máximo 5 MB.',
-  FLEET_FILE_BUSY:'Hay varias imágenes cargándose. Intenta nuevamente en unos segundos.'
+  FLEET_FILE_BUSY:'Hay varias imágenes cargándose. Intenta nuevamente en unos segundos.',
+  FLEET_IMAGE_BUSY:'Hay varias fotos procesándose. Intenta nuevamente en unos segundos.'
   ,USER_NOT_ELIGIBLE:'No se encontró un conductor activo con ese correo. Verifica la dirección y su registro en Costa-Go.'
 };
 export function fleetError(error:unknown,reply:FastifyReply){
